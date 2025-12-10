@@ -298,6 +298,11 @@ export class ParakeetModel {
     const decStartTime = perfEnabled ? performance.now() : 0;
 
     for (let t = 0; t < Tenc; ) {
+      // Yield to browser every 50 frames to keep UI responsive
+      if (t % 50 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      
       const frameBuf = transposed.subarray(t * D, (t + 1) * D);
       const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
 
@@ -443,6 +448,24 @@ export class ParakeetModel {
       } : null,
       is_final: true,
     };
+  }
+
+  /**
+   * Release all ONNX sessions and clean up resources.
+   * Call this before loading a new model or when the page unloads.
+   */
+  dispose() {
+    try {
+      this.encoderSession?.release();
+      this.joinerSession?.release();
+      this.preprocessor?.dispose();
+      this.encoderSession = null;
+      this.joinerSession = null;
+      this.preprocessor = null;
+      console.log('[Parakeet] Model sessions released');
+    } catch (e) {
+      console.warn('[Parakeet] Error releasing sessions:', e);
+    }
   }
 
   /**

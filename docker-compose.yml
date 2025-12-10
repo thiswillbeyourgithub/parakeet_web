@@ -1,0 +1,28 @@
+services:
+  parakeetweb:
+    image: node:20-alpine
+    container_name: parakeetweb
+    user: node
+    working_dir: /app
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      # Mount the entire project for library access
+      - ./:/app
+      # Use named volumes for node_modules to avoid platform conflicts
+      - ./data/react-modules:/app/ui/node_modules
+      - ./data/root-node-modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+      - VITE_ALLOWED_HOST=${VITE_ALLOWED_HOST}
+      - VITE_USE_POLLING=${VITE_USE_POLLING:-true}
+      - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
+      - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
+      - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
+    command: sh -c "npm install && cd ui && npm install && npm run dev -- --host 0.0.0.0"
+    stdin_open: true
+    tty: true

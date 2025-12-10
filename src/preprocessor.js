@@ -48,6 +48,19 @@ export class OnnxPreprocessor {
   }
 
   /**
+   * Release the preprocessor session and clean up resources.
+   */
+  dispose() {
+    try {
+      this.session?.release();
+      this.session = null;
+      console.log('[Preprocessor] Session released');
+    } catch (e) {
+      console.warn('[Preprocessor] Error releasing session:', e);
+    }
+  }
+
+  /**
    * Convert PCM audio Float32Array into log-mel features recognised by Parakeet.
    * @param {Float32Array} audio Normalised mono PCM [-1,1] at 16 kHz.
    * @returns {Promise<{features:Float32Array,length:number}>}
