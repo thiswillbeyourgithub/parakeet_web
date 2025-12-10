@@ -263,6 +263,66 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      // Don't trigger shortcuts if user is typing in an input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+
+      switch (key) {
+        case 's':
+          // Toggle settings
+          e.preventDefault();
+          setShowSettings(prev => !prev);
+          break;
+
+        case 'r':
+          // Record
+          e.preventDefault();
+          if (isRecording) {
+            stopRecording();
+          } else if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
+            startRecording();
+          }
+          break;
+
+        case 'f':
+          // Send a file
+          e.preventDefault();
+          if (fileInputRef.current && status.startsWith('Model ready ✔') && !isTranscribing && !isRecording && !pendingAudioFile && !isProcessingPreview) {
+            fileInputRef.current.click();
+          }
+          break;
+
+        case 't':
+          // Start transcribing
+          e.preventDefault();
+          if (status.startsWith('Model ready ✔') && !isTranscribing && pendingAudioFile && audioPreviewUrl && !isProcessingPreview && !hasBeenTranscribed) {
+            startTranscription();
+          }
+          break;
+
+        case 'l':
+          // Load model
+          e.preventDefault();
+          if (!status.startsWith('Model ready ✔') && (status.toLowerCase().includes('fail') || status === 'Idle')) {
+            loadModel();
+          }
+          break;
+
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [status, isRecording, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed]);
+
   // Monitor memory usage and system strain
   useEffect(() => {
     const info = {};
