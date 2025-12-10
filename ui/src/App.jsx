@@ -627,19 +627,34 @@ export default function App() {
         setHasBeenTranscribed(false);
       };
       
-      // Set up audio level monitoring
+      // Set up audio level monitoring using time-domain data for accurate level detection
       const audioCtx = new AudioContext();
       const analyser = audioCtx.createAnalyser();
       const source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      analyser.fftSize = 256;
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      analyser.fftSize = 2048; // Larger for smoother readings
+      analyser.smoothingTimeConstant = 0.8; // Smooth out rapid changes
+      const dataArray = new Uint8Array(analyser.fftSize);
 
       const updateLevel = () => {
-        analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        setAudioLevel(average);
+        // Use time-domain data for accurate amplitude measurement
+        analyser.getByteTimeDomainData(dataArray);
+        
+        // Calculate RMS (root mean square) for accurate audio level
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          // Convert from 0-255 range to -1 to 1, then square
+          const normalized = (dataArray[i] - 128) / 128;
+          sum += normalized * normalized;
+        }
+        const rms = Math.sqrt(sum / dataArray.length);
+        
+        // Scale to 0-100 range with boost for better visibility
+        // Typical speech RMS is around 0.1-0.3, so we multiply by 200-300
+        const level = Math.min(100, rms * 250);
+        
+        setAudioLevel(level);
         if (recorder.state === 'recording') {
           requestAnimationFrame(updateLevel);
         }
