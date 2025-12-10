@@ -113,7 +113,7 @@ async function clearAllSettings() {
   }
 }
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
