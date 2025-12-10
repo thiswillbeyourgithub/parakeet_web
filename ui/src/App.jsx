@@ -1432,7 +1432,7 @@ export default function App() {
           type="file" 
           accept="audio/*" 
           onChange={transcribeFile} 
-          disabled={!status.startsWith('Model ready ✔') || isTranscribing || isRecording || pendingAudioFile || isProcessingPreview}
+          disabled={!status.startsWith('Model ready ✔') || isTranscribing || isRecording || isProcessingPreview}
           style={{ display: 'none' }}
           id="audio-file-input"
         />
@@ -1440,8 +1440,8 @@ export default function App() {
           htmlFor="audio-file-input"
           className="file-upload-button"
           style={{
-            opacity: (!status.startsWith('Model ready ✔') || isTranscribing || isRecording || pendingAudioFile || isProcessingPreview) ? 0.5 : 1,
-            pointerEvents: (!status.startsWith('Model ready ✔') || isTranscribing || isRecording || pendingAudioFile || isProcessingPreview) ? 'none' : 'auto',
+            opacity: (!status.startsWith('Model ready ✔') || isTranscribing || isRecording || isProcessingPreview) ? 0.5 : 1,
+            pointerEvents: (!status.startsWith('Model ready ✔') || isTranscribing || isRecording || isProcessingPreview) ? 'none' : 'auto',
             flex: 1
           }}
           data-umami-event="upload_file_button"
@@ -1450,7 +1450,7 @@ export default function App() {
         </label>
         <button
           onClick={isRecording ? stopRecording : startRecording}
-          disabled={(!status.startsWith('Model ready ✔') && !isRecording) || isTranscribing || pendingAudioFile}
+          disabled={(!status.startsWith('Model ready ✔') && !isRecording) || isTranscribing}
           className="primary record-button"
           style={{
             background: isRecording ? '#ef4444' : '#10b981',
