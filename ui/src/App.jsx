@@ -523,9 +523,25 @@ export default function App() {
         // Stop all tracks to release microphone
         stream.getTracks().forEach(track => track.stop());
         
-        // Store the file for preview and later transcription
+        // Store the file and process preview to show what the model will hear
         setPendingAudioFile(file);
-        setAudioPreviewUrl(URL.createObjectURL(blob));
+        setIsProcessingPreview(true);
+        setStatus('Processing audio preview...');
+        
+        try {
+          const resampledBlob = await resampleToPreview(file);
+          const previewUrl = URL.createObjectURL(resampledBlob);
+          setAudioPreviewUrl(previewUrl);
+          setStatus('Model ready ✔');
+        } catch (err) {
+          console.error('[Preview] Failed to process recorded audio:', err);
+          // Fallback to original recording if processing fails
+          setAudioPreviewUrl(URL.createObjectURL(blob));
+          setStatus('Model ready ✔ (preview processing failed)');
+        } finally {
+          setIsProcessingPreview(false);
+        }
+        
         setHasBeenTranscribed(false);
       };
       
@@ -973,6 +989,7 @@ export default function App() {
     setPendingAudioFile(null);
     setAudioPreviewUrl(null);
     setHasBeenTranscribed(false);
+    setIsProcessingPreview(false); // Reset processing state
   }
 
   async function startTranscription() {
