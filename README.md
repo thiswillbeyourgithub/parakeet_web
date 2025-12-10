@@ -1,4 +1,4 @@
-# Parakeet.js (Fork)
+# ParakeetWeb
 
 > ⚠️ **EXPERIMENTAL WIP** – This is a heavily modified fork, purely vibe-coded. Expect bugs, breaking changes, and rough edges.
 
@@ -32,35 +32,6 @@ sudo docker compose up
 - Word-level timestamps and confidence scores
 - File upload or microphone recording
 - Model quantization options (fp32/int8)
-
-## Usage
-
-See the `ui/` directory for a complete React implementation you can copy/paste.
-
-Basic API:
-
-```js
-import { ParakeetModel, getParakeetModel } from 'parakeet.js';
-
-// Download model files (cached in IndexedDB)
-const { urls, filenames } = await getParakeetModel('istupakov/parakeet-tdt-0.6b-v3-onnx', {
-  backend: 'wasm',      // or 'webgpu'
-  encoderQuant: 'int8',
-  decoderQuant: 'int8',
-});
-
-// Create model instance
-const model = await ParakeetModel.fromUrls({ ...urls, filenames, backend: 'wasm' });
-
-// Transcribe 16kHz mono audio
-const result = await model.transcribe(pcmFloat32Array, 16000, {
-  returnTimestamps: true,
-  returnConfidences: true,
-});
-
-console.log(result.utterance_text);
-console.log(result.words); // [{text, start_time, end_time, confidence}, ...]
-```
 
 ## License
 
