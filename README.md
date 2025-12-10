@@ -18,16 +18,12 @@ This fork is based on **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.
 ## Quick Start
 
 ```bash
-# Run the demo locally with Docker
-docker-compose up
-
-# Or run it directly
-cd ui
-npm install
-npm run dev
+# 1.Modify .env.example into .env to set your own values
+# 2.Run the demo locally with Docker
+sudo docker compose up
 ```
 
-Then visit `http://localhost:5173`
+3. Then visit `http://localhost:5173`
 
 ## What It Does
 
