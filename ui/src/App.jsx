@@ -157,6 +157,7 @@ export default function App() {
   
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingCountdown, setRecordingCountdown] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [audioChunks, setAudioChunks] = useState([]);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -283,10 +284,10 @@ export default function App() {
         case 'r':
           // Record
           e.preventDefault();
-          if (isRecording) {
+          if (isRecording || recordingCountdown !== null) {
             stopRecording();
           } else if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
-            startRecording();
+            startRecordingCountdown();
           }
           break;
 
@@ -523,7 +524,28 @@ export default function App() {
   }
 
 
-  async function startRecording() {
+  async function startRecordingCountdown() {
+    // Start countdown from 2
+    setRecordingCountdown(2);
+    setStatus('Get ready to record... 2');
+    
+    // Countdown: 2 -> 1 -> 0 -> start
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    setRecordingCountdown(1);
+    setStatus('Get ready to record... 1');
+    
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    setRecordingCountdown(0);
+    setStatus('Recording starts now!');
+    
+    await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause at 0
+    setRecordingCountdown(null);
+    
+    // Now actually start recording
+    await startRecordingActual();
+  }
+
+  async function startRecordingActual() {
     try {
       console.log('[Record] Requesting microphone access...');
       
@@ -640,6 +662,13 @@ export default function App() {
   }
 
   function stopRecording() {
+    // Clear countdown if active
+    if (recordingCountdown !== null) {
+      setRecordingCountdown(null);
+      setStatus('Model ready ✔');
+      return;
+    }
+    
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       console.log('[Record] Stopping recording...');
       mediaRecorder.stop();
@@ -1449,18 +1478,34 @@ export default function App() {
           📁 Send mp3
         </label>
         <button
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={(!status.startsWith('Model ready ✔') && !isRecording) || isTranscribing}
+          onClick={(isRecording || recordingCountdown !== null) ? stopRecording : startRecordingCountdown}
+          disabled={(!status.startsWith('Model ready ✔') && !isRecording && recordingCountdown === null) || isTranscribing}
           className="primary record-button"
           style={{
-            background: isRecording ? '#ef4444' : '#10b981',
+            background: (isRecording || recordingCountdown !== null) ? '#ef4444' : '#10b981',
             flex: 1
           }}
           data-umami-event="record_button"
         >
-          {isRecording ? '⏹ Stop Recording' : '🎤 Record Audio'}
+          {recordingCountdown !== null ? `⏱ Get Ready (${recordingCountdown})` : (isRecording ? '⏹ Stop Recording' : '🎤 Record Audio')}
         </button>
       </div>
+      
+      {recordingCountdown !== null && (
+        <div style={{ 
+          marginTop: '0.5rem', 
+          padding: '1rem', 
+          backgroundColor: '#fffbeb', 
+          border: '2px solid #fbbf24',
+          borderRadius: '8px',
+          fontSize: '1.2em',
+          fontWeight: 'bold',
+          color: '#92400e',
+          textAlign: 'center'
+        }}>
+          ⏱ Get ready to speak in {recordingCountdown}...
+        </div>
+      )}
       
       {isRecording && (
         <div style={{ 
