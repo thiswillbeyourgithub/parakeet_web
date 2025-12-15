@@ -10,7 +10,7 @@ services:
       - ALL
     volumes:
       # Mount the entire project for library access
-      - ./:/app
+      - ./:/app:ro
       # Use named volumes for node_modules to avoid platform conflicts
       - ./data/react-modules:/app/ui/node_modules
       - ./data/root-node-modules:/app/node_modules
