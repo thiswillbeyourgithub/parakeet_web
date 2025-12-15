@@ -28,5 +28,3 @@ services:
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
-    stdin_open: true
-    tty: true
