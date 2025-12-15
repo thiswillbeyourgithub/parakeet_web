@@ -11,8 +11,11 @@ services:
     cap_drop:
       - ALL
     volumes:
-      # Mount the entire project for library access
-      - ./app:/app
+      # Mount the entire project for library access, with as little write access as possible
+      - ./app:/app:ro
+      - ./app/package-lock.json:/app/package-lock.json:rw
+      - ./app/ui:/app/ui:rw
+
       # Use named volumes for node_modules to avoid platform conflicts
       - ./data/react-modules:/app/ui/node_modules
       - ./data/root-node-modules:/app/node_modules
