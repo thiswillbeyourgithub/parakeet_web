@@ -1,6 +1,8 @@
 services:
   parakeetweb:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: parakeetweb
     user: node
     working_dir: /app
