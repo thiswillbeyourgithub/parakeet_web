@@ -12,7 +12,7 @@ This fork is based on **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.
 
 - 🚧 Work in progress
 - 🧪 Experimental and unstable
-- 📝 Licensed under GPLv3
+- 📝 Licensed under AGPLv3
 - 🎨 Vibe-coded with [aider.chat](https://github.com/Aider-AI/aider/)
 
 ## Quick Start
@@ -35,7 +35,7 @@ sudo docker compose up
 
 ## License
 
-GPLv3 – See LICENSE file
+AGPLv3 – See LICENSE file
 
 ## Acknowledgments
 
