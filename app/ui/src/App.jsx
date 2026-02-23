@@ -113,7 +113,7 @@ async function clearAllSettings() {
   }
 }
 
-const VERSION = '0.1.3';
+const VERSION = '1.0.0';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -1215,6 +1215,9 @@ export default function App() {
 
       {showInfo && (
         <div className="info-section">
+          <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem' }}>
+            Dictation for any language, without installing anything!
+          </p>
           <h3>What is this?</h3>
           <p>
             <strong>ParakeetWeb</strong> is a browser-based speech-to-text application that runs entirely in your browser using WebAssembly and WebGPU. 
@@ -1225,6 +1228,17 @@ export default function App() {
             You can transcribe audio files or record directly from your microphone.
           </p>
           <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '1rem', marginBottom: 0 }}>
+            <strong>Source code:</strong>{' '}
+            <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>github.com/thiswillbeyourgithub/parakeet_web</a>
+          </p>
+          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+            <strong>Feedback:</strong> If you have any complaint or feedback, you can reach out at{' '}
+            <a href="https://olicorne.org" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>olicorne.org</a>{' '}
+            or directly by{' '}
+            <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>opening an issue</a>{' '}
+            on the GitHub repository.
+          </p>
+          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>Privacy:</strong> This app uses privacy-respecting analytics provided by a self-hosted{' '}
             <a href="https://umami.is" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>umami.is</a>{' '}
             instance. No personal data is collected, and no cookies are used for tracking.
