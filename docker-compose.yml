@@ -24,7 +24,7 @@ services:
       - ./data/react-modules:/app/ui/node_modules
       - ./data/root-node-modules:/app/node_modules
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     environment:
       - NODE_ENV=development
       - VITE_ALLOWED_HOST=${VITE_ALLOWED_HOST}
