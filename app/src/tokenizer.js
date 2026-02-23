@@ -3,6 +3,7 @@
 /**
  * Fetch a text file (tokens.txt or vocab.txt) and return its contents.
  * @param {string} url Remote URL or relative path served by the web app.
+ * @returns {Promise<string>} Raw text content.
  */
 async function fetchText(url) {
   const resp = await fetch(url);
@@ -10,6 +11,9 @@ async function fetchText(url) {
   return resp.text();
 }
 
+/**
+ * Tokenizer/decoder for Parakeet SentencePiece-style token vocabularies.
+ */
 export class ParakeetTokenizer {
   /**
    * @param {string[]} id2token Array where index=id and value=token string
@@ -17,8 +21,25 @@ export class ParakeetTokenizer {
   constructor(id2token) {
     this.id2token = id2token;
     this.blankToken = '<blk>';
+
+    // Dynamically find blank token ID from vocabulary instead of hardcoding 1024,
+    // which would break for models with different vocab sizes.
+    this.blankId = id2token.findIndex(t => t === '<blk>');
+    if (this.blankId === -1) {
+      console.warn('[ParakeetTokenizer] Blank token <blk> not found in vocabulary, defaulting to 1024');
+      this.blankId = 1024;
+    }
+
+    // Pre-compute sanitized tokens (replace SentencePiece marker ▁ with space)
+    // so decode() doesn't repeat the replacement on every call.
+    this.sanitizedTokens = this.id2token.map(t => t ? t.replace(/\u2581/g, ' ') : t);
   }
 
+  /**
+   * Create a tokenizer from a `vocab.txt` or `tokens.txt` URL.
+   * @param {string} tokensUrl - URL to tokenizer vocabulary file.
+   * @returns {Promise<ParakeetTokenizer>} Loaded tokenizer instance.
+   */
   static async fromUrl(tokensUrl) {
     const text = await fetchText(tokensUrl);
     const lines = text.split(/\r?\n/).filter(Boolean);
@@ -26,6 +47,10 @@ export class ParakeetTokenizer {
     for (const line of lines) {
       const [tok, idStr] = line.split(/\s+/);
       const id = parseInt(idStr, 10);
+      if (isNaN(id) || !tok) {
+        console.warn(`[ParakeetTokenizer] Skipping invalid vocab line: ${JSON.stringify(line)}`);
+        continue;
+      }
       id2token[id] = tok;
     }
     return new ParakeetTokenizer(id2token);
@@ -34,21 +59,30 @@ export class ParakeetTokenizer {
   /**
    * Decode an array of token IDs into a human readable string.
    * Implements the SentencePiece rule where leading `▁` marks a space.
-   * @param {number[]} ids
-   * @returns {string}
+   * Matches the Python reference regex pattern: r"\A\s|\s\B|(\s)\b"
+   * @param {number[]} ids - Token IDs from decoder output.
+   * @returns {string} Decoded transcript text.
    */
   decode(ids) {
-    let text = '';
+    // First pass: convert tokens to text using pre-sanitized lookup (▁ → space)
+    const tokens = [];
     for (const id of ids) {
-      const token = this.id2token[id];
+      if (id === this.blankId) continue;
+      const token = this.sanitizedTokens[id];
       if (token === undefined) continue;
-      if (token === this.blankToken) continue;
-      if (token.startsWith('▁')) {
-        text += ' ' + token.slice(1);
-      } else {
-        text += token;
-      }
+      tokens.push(token);
     }
+
+    let text = tokens.join('');
+
+    // Apply cleanup matching the Python NeMo reference:
+    // - Remove leading whitespace
+    // - Remove space before punctuation (e.g. " ." → ".")
+    // - Collapse multiple spaces into one
+    text = text.replace(/^\s+/, '');
+    text = text.replace(/\s+(?=[^\w\s])/g, '');
+    text = text.replace(/\s+/g, ' ');
+
     return text.trim();
   }
-} 
+}
