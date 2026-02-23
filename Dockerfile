@@ -8,8 +8,8 @@ WORKDIR /app
 
 # Copy package files for dependency installation
 # These will be overridden by volume mounts in docker-compose for development
-COPY --chown=node:node package*.json ./
-COPY --chown=node:node ui/package*.json ./ui/
+COPY --chown=node:node app/package*.json ./
+COPY --chown=node:node app/ui/package*.json ./ui/
 
 # Install dependencies
 RUN npm install && \
