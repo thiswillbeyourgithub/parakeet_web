@@ -17,8 +17,10 @@ export class ParakeetModel {
     this.preprocessor = preprocessor;
     this.ort = ort;
 
-    // Default IDs – may later be read from model metadata.
-    this.blankId = 1024;
+    // Read blank ID from tokenizer (last vocab entry for TDT models).
+    // Dynamic instead of hardcoded so multilingual models (v3, vocabSize 4097)
+    // work without modification.
+    this.blankId = tokenizer.blankId;
 
     // Combined model specific constants
     this.predHidden = 640;
