@@ -1,6 +1,7 @@
 import { initOrt } from './backend.js';
 import { ParakeetTokenizer } from './tokenizer.js';
 import { OnnxPreprocessor } from './preprocessor.js';
+import { JsPreprocessor } from './mel.js';
 
 /**
  * Lightweight Parakeet model wrapper designed for browser usage.
@@ -55,7 +56,9 @@ export class ParakeetModel {
    * @param {string} cfg.encoderUrl URL to encoder-model.onnx
    * @param {string} cfg.decoderUrl URL to decoder_joint-model.onnx
    * @param {string} cfg.tokenizerUrl URL to vocab.txt or tokens.txt
-   * @param {string} cfg.preprocessorUrl URL to nemo80/128.onnx
+   * @param {string} [cfg.preprocessorUrl] URL to nemo80/128.onnx (required when preprocessorBackend='onnx')
+   * @param {('js'|'onnx')} [cfg.preprocessorBackend='js'] 'js' uses pure-JS mel.js, 'onnx' uses ONNX preprocessor
+   * @param {number} [cfg.nMels=128] Number of mel bins for JS preprocessor (80 or 128)
    * @param {('webgpu'|'wasm')} [cfg.backend='webgpu']
    */
   static async fromUrls(cfg) {
@@ -75,10 +78,17 @@ export class ParakeetModel {
       enableProfiling = false,
       enableGraphCapture,
       cpuThreads = undefined,
+      // 'js' uses the pure-JS mel.js preprocessor (no ONNX download needed);
+      // 'onnx' uses the OnnxPreprocessor and requires preprocessorUrl.
+      preprocessorBackend = 'js',
+      // Number of mel bins for JS preprocessor (80 or 128, auto-detected from
+      // model config preprocessor name when available)
+      nMels = 128,
     } = cfg;
 
-    if (!encoderUrl || !decoderUrl || !tokenizerUrl || !preprocessorUrl) {
-      throw new Error('fromUrls requires encoderUrl, decoderUrl, tokenizerUrl and preprocessorUrl');
+    const needsPreprocessorUrl = preprocessorBackend !== 'js';
+    if (!encoderUrl || !decoderUrl || !tokenizerUrl || (needsPreprocessorUrl && !preprocessorUrl)) {
+      throw new Error('fromUrls requires encoderUrl, decoderUrl, tokenizerUrl and preprocessorUrl (preprocessorUrl optional when preprocessorBackend="js")');
     }
 
     // 1. Init ONNX Runtime
@@ -179,7 +189,11 @@ export class ParakeetModel {
     }
 
     const tokenizerPromise = ParakeetTokenizer.fromUrl(tokenizerUrl);
-    const preprocPromise = Promise.resolve(new OnnxPreprocessor(preprocessorUrl, { backend, wasmPaths, enableProfiling, enableGraphCapture: isFullWasm ? false : graphCaptureEnabled, numThreads: cpuThreads }));
+    // Use pure-JS mel spectrogram when preprocessorBackend is 'js' (default),
+    // falling back to ONNX-based preprocessor when explicitly requested.
+    const preprocPromise = preprocessorBackend === 'js'
+      ? Promise.resolve(new JsPreprocessor({ nMels }))
+      : Promise.resolve(new OnnxPreprocessor(preprocessorUrl, { backend, wasmPaths, enableProfiling, enableGraphCapture: isFullWasm ? false : graphCaptureEnabled, numThreads: cpuThreads }));
 
     let encoderSession, joinerSession;
     if (backend === 'webgpu-hybrid') {

@@ -473,12 +473,16 @@ export default function App() {
       setProgressPct(null);
 
       // 2. Create the model instance with all file URLs
-      modelRef.current = await ParakeetModel.fromUrls({ 
+      // Determine mel bin count from model config (nemo128 → 128, nemo80 → 80)
+      const nMels = modelUrls.modelConfig?.featuresSize || 128;
+      modelRef.current = await ParakeetModel.fromUrls({
         ...modelUrls.urls,
         filenames: modelUrls.filenames,
-        backend, 
+        backend,
         verbose: verboseLog,
         cpuThreads,
+        preprocessorBackend: modelUrls.preprocessorBackend,
+        nMels,
       });
 
       // 3. Warm-up and verify (commented out - skipping verification)
