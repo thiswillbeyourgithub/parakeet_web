@@ -10,6 +10,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Read-only root filesystem for security; writable paths are explicit below
+    read_only: true
+    tmpfs:
+      - /tmp
     volumes:
       # Mount the entire project for library access, with as little write access as possible
       - ./app:/app:ro
