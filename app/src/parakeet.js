@@ -36,6 +36,15 @@ export class ParakeetModel {
     this._normalizer = normalizer;
     this.subsampling = subsampling;
     this.windowStride = windowStride;
+
+    // Pre-allocate reusable tensors for the decoder loop.
+    // ORT-WASM tensors wrapping a typed array do NOT copy the data on creation,
+    // so mutating _targetIdArray[0] before each .run() is enough — no need to
+    // create (and GC) a fresh Tensor per step.
+    this._targetIdArray = new Int32Array(1);
+    this._targetTensor = new ort.Tensor('int32', this._targetIdArray, [1, 1]);
+    this._targetLenArray = new Int32Array([1]);
+    this._targetLenTensor = new ort.Tensor('int32', this._targetLenArray, [1]);
   }
 
   /**
@@ -190,16 +199,16 @@ export class ParakeetModel {
   async _runCombinedStep(encTensor, token, currentState = null) {
     const singleToken = typeof token === 'number' ? token : this.blankId;
 
-    const targetTensor = new this.ort.Tensor('int32', new Int32Array([singleToken]), [1, 1]);
-    const lenTensor = new this.ort.Tensor('int32', new Int32Array([1]), [1]);
+    // Reuse pre-allocated tensors — just mutate the backing array
+    this._targetIdArray[0] = singleToken;
 
     const state1 = currentState?.state1 || this._combState1;
     const state2 = currentState?.state2 || this._combState2;
 
     const feeds = {
       encoder_outputs: encTensor,
-      targets: targetTensor,
-      target_length: lenTensor,
+      targets: this._targetTensor,
+      target_length: this._targetLenTensor,
       input_states_1: state1,
       input_states_2: state2,
     };
