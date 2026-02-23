@@ -243,6 +243,24 @@ export class ParakeetModel {
     return { tokenLogits, step, newState, _logitsTensor: logits };
   }
 
+  /**
+   * Dispose ORT tensors inside a decoder state object.
+   * Safely skips null states, pre-allocated initial states, and tensors
+   * shared with a `keepState` (to avoid double-dispose when the joiner
+   * falls back to reusing its input state).
+   * @param {object|null} state  - The state whose tensors should be freed.
+   * @param {object|null} [keepState] - A state whose tensors must NOT be freed.
+   */
+  _disposeDecoderState(state, keepState = null) {
+    if (!state) return;
+    if (state.state1 && state.state1 !== this._combState1 && state.state1 !== keepState?.state1) {
+      state.state1.dispose?.();
+    }
+    if (state.state2 && state.state2 !== this._combState2 && state.state2 !== keepState?.state2) {
+      state.state2.dispose?.();
+    }
+  }
+
   async computeFeatures(audio, sampleRate = 16000) {
     const { features, length } = await this.preprocessor.process(audio);
     const T = length; // number of frames returned by preprocessor
@@ -322,8 +340,7 @@ export class ParakeetModel {
       const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
 
       const prevTok = ids.length ? ids[ids.length - 1] : this.blankId;
-      const { tokenLogits, step, newState } = await this._runCombinedStep(encTensor, prevTok, decoderState);
-      decoderState = newState;
+      const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, prevTok, decoderState);
 
       // Temperature scaling & argmax
       let maxVal = -Infinity, maxId = 0;
@@ -352,11 +369,23 @@ export class ParakeetModel {
         emittedTokens += 1;
       }
 
+      // Dispose the joiner logits tensor now that subarray views are consumed
+      _logitsTensor?.dispose?.();
+
+      // Free old decoder state tensors (avoids WASM/GPU memory leak)
+      if (decoderState && decoderState !== newState) {
+        this._disposeDecoderState(decoderState, newState);
+      }
+      decoderState = newState;
+
       const shouldAdvance = maxId === this.blankId || emittedTokens >= this.maxTokensPerStep;
       t += step > 0 ? step : (shouldAdvance ? frameStride : 0);
       if (!shouldAdvance && step === 0) t += 1; // safeguard
       if (maxId === this.blankId) emittedTokens = 0;
     }
+
+    // Dispose final decoder state (no longer needed after loop)
+    this._disposeDecoderState(decoderState);
 
     if (perfEnabled) {
       tDecode = performance.now() - decStartTime;
