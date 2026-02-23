@@ -14,15 +14,16 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /home/node/.npm
     volumes:
       # Mount the entire project for library access, with as little write access as possible
       - ./app:/app:ro
       - ./app/package-lock.json:/app/package-lock.json:rw
       - ./app/ui:/app/ui:rw
 
-      # Use named volumes for node_modules to avoid platform conflicts
-      - ./data/react-modules:/app/ui/node_modules
-      - ./data/root-node-modules:/app/node_modules
+      # Named volumes for node_modules to avoid platform conflicts
+      - root-node-modules:/app/node_modules
+      - react-modules:/app/ui/node_modules
     ports:
       - "127.0.0.1:5173:5173"
     environment:
@@ -32,3 +33,7 @@ services:
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
+
+volumes:
+  root-node-modules:
+  react-modules:
