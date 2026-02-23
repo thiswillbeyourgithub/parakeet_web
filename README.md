@@ -21,6 +21,10 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 - 📝 Licensed under AGPLv3
 - 🎨 Vibe-coded with [aider.chat](https://github.com/Aider-AI/aider/) and [Claude Code](https://claude.com/claude-code)
 
+## Live Demo
+
+A running instance is available at **https://pw.olicorne.org/** (no installation required).
+
 ## Quick Start
 
 ```bash
