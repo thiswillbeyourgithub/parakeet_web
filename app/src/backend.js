@@ -47,10 +47,15 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
     throw new Error('ONNX Runtime Web loaded but env is not available. This might be a bundling issue.');
   }
   
-  // Set up WASM paths first (needed for all backends)
+  // Set up WASM paths first (needed for all backends).
+  // Auto-detect version from ORT environment to avoid hardcoding a specific
+  // onnxruntime-web release — keeps CDN URLs in sync after upgrades.
   if (!ort.env.wasm.wasmPaths) {
-    // Use the same version as in package.json
-    const ver = '1.22.0-dev.20250409-89f8206ba4';
+    const fallbackVer = '1.22.0-dev.20250409-89f8206ba4';
+    const ver = ort.env.versions?.common || fallbackVer;
+    if (!ort.env.versions?.common) {
+      console.warn('Parakeet.js: Could not auto-detect onnxruntime-web version. Using fallback version; set ort.env.wasm.wasmPaths manually for best results.');
+    }
     ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/`;
   }
 
@@ -93,6 +98,12 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
 
   // Store the final backend choice for use in model selection
   ort._selectedBackend = backend;
+
+  // Expose ort globally so other modules (like SileroVAD) can reuse the same
+  // configured instance without re-importing and re-initialising.
+  if (typeof globalThis !== 'undefined') {
+    globalThis.ort = ort;
+  }
 
   // Return the ort module for use in creating sessions and tensors
   return ort;
