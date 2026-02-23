@@ -1,6 +1,9 @@
 import { initOrt } from './backend.js';
 
-// Runs the Nemo-style preprocessor ONNX model (80- or 128-bin log-mel spectrogram).
+/**
+ * ONNX-based NeMo preprocessor (80- or 128-bin log-mel spectrogram).
+ * Produces mel features compatible with Parakeet encoder inputs.
+ */
 export class OnnxPreprocessor {
   /**
    * @param {string} modelUrl URL to the preprocessor onnx file (e.g. nemo128.onnx)
@@ -15,10 +18,27 @@ export class OnnxPreprocessor {
     }
     this.session = null;
     this.ort = null;
+    // In-flight init promise — deduplicates concurrent _ensureSession() calls
+    // so we never create two ONNX sessions for the same preprocessor instance.
+    this._sessionPromise = null;
   }
 
+  /**
+   * Lazily create and cache the ONNX Runtime session.
+   * Uses a shared promise to deduplicate concurrent callers.
+   * @returns {Promise<void>}
+   */
   async _ensureSession() {
-    if (!this.session) {
+    // Already initialised — fast path
+    if (this.session) return;
+
+    // Deduplicate concurrent initialisations: share the in-flight promise
+    if (this._sessionPromise) {
+      await this._sessionPromise;
+      return;
+    }
+
+    this._sessionPromise = (async () => {
       this.ort = await initOrt(this.opts);
       // Build session options. Workaround for ORT-web bug where
       // passing `enableGraphCapture:false` still triggers the
@@ -44,6 +64,17 @@ export class OnnxPreprocessor {
         }
       };
       this.session = await create();
+    })();
+
+    try {
+      await this._sessionPromise;
+    } catch (e) {
+      // Clear promise on failure so the next caller can retry
+      this._sessionPromise = null;
+      throw e;
+    } finally {
+      // Clear the promise once resolved — session is set and the promise is no longer needed
+      if (this.session) this._sessionPromise = null;
     }
   }
 
@@ -63,15 +94,23 @@ export class OnnxPreprocessor {
   /**
    * Convert PCM audio Float32Array into log-mel features recognised by Parakeet.
    * @param {Float32Array} audio Normalised mono PCM [-1,1] at 16 kHz.
-   * @returns {Promise<{features:Float32Array,length:number}>}
+   * @returns {Promise<{features: Float32Array, length: number}>}
    */
   async process(audio) {
     await this._ensureSession();
 
-    // The model expects [B, N] float32 waveforms and lengths.
-    const buffer = new Float32Array(audio); // copy to ensure contiguous
-    const waveforms = new this.ort.Tensor('float32', buffer, [1, buffer.length]);
+    // Avoid copying if input is already a contiguous Float32Array.
+    // Only reuse the array directly if it is a full, unsliced buffer view to avoid
+    // passing a subarray whose underlying buffer contains extra data outside the view.
+    let buffer;
+    if (audio instanceof Float32Array) {
+      const isFullBufferView = audio.byteOffset === 0 && audio.buffer.byteLength === audio.byteLength;
+      buffer = isFullBufferView ? audio : new Float32Array(audio);
+    } else {
+      buffer = new Float32Array(audio);
+    }
 
+    const waveforms = new this.ort.Tensor('float32', buffer, [1, buffer.length]);
     const lenArr = new BigInt64Array([BigInt(buffer.length)]);
     const waveforms_lens = new this.ort.Tensor('int64', lenArr, [1]);
 
@@ -81,9 +120,21 @@ export class OnnxPreprocessor {
     const featuresTensor = outs['features'];
     const features_lens = outs['features_lens'];
 
+    // Copy feature data before disposing tensors — the underlying buffer
+    // becomes invalid after dispose().
+    const featuresData = new Float32Array(featuresTensor.data);
+    const validLength = Number(features_lens.data[0]);
+
+    // Dispose of input and output tensors to prevent WASM memory leaks
+    // in long-running sessions (e.g. continuous recording).
+    waveforms.dispose?.();
+    waveforms_lens.dispose?.();
+    featuresTensor.dispose?.();
+    features_lens.dispose?.();
+
     return {
-      features: featuresTensor.data,
-      length: Number(features_lens.data[0])
+      features: featuresData,
+      length: validLength
     };
   }
-} 
+}
