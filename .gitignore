@@ -12,3 +12,4 @@ scripts/
 .git_original_during_wip
 .aider*
 data
+deploy.sh
