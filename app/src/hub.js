@@ -3,6 +3,9 @@
  * Downloads models from HF and caches them in browser storage.
  */
 
+import { MODELS, getModelConfig } from './models.js';
+/** @typedef {import('./models.js').ModelConfig} ModelConfig */
+
 const DB_NAME = 'parakeet-cache-db';
 const STORE_NAME = 'file-store';
 let dbPromise = null;
@@ -164,32 +167,41 @@ export async function getModelText(repoId, filename, options = {}) {
 
 /**
  * Convenience function to get all Parakeet model files for a given architecture.
- * @param {string} repoId HF repo (e.g., 'nvidia/parakeet-tdt-1.1b')
+ * Accepts either a HuggingFace repo ID or a known model key from the registry.
+ * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
  * @param {Object} [options]
- * @param {('int4'|'uint4'|'uint8'|'int8'|'fp32')} [options.encoderQuant='int8'] Encoder quantization
- * @param {('int4'|'uint4'|'uint8'|'int8'|'fp32')} [options.decoderQuant='int8'] Decoder quantization
- * @param {('nemo80'|'nemo128')} [options.preprocessor='nemo128'] Preprocessor variant
- * @param {('webgpu'|'wasm')} [options.backend='webgpu'] Backend to use
- * @param {Function} [options.progress] Progress callback
- * @returns {Promise<{urls: object, filenames: object}>}
+ * @param {('int8'|'fp32')} [options.encoderQuant='int8'] Encoder quantization
+ * @param {('int8'|'fp32')} [options.decoderQuant='int8'] Decoder quantization
+ * @param {('nemo80'|'nemo128')} [options.preprocessor] Preprocessor variant (auto-detected from model config if not specified)
+ * @param {('js'|'onnx')} [options.preprocessorBackend='js'] Preprocessor backend selection.
+ *   'js' uses the pure-JS mel.js (no ONNX download needed, supports streaming).
+ *   'onnx' downloads the preprocessor ONNX model from the repo.
+ * @param {('webgpu'|'webgpu-hybrid'|'webgpu-strict'|'wasm')} [options.backend='webgpu'] Backend mode
+ * @param {(progress: {loaded: number, total: number, file: string}) => void} [options.progress] Progress callback
+ * @returns {Promise<{urls: {encoderUrl: string, decoderUrl: string, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
  */
-export async function getParakeetModel(repoId, options = {}) {
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = 'nemo128', backend = 'webgpu', progress } = options;
-  
+export async function getParakeetModel(repoIdOrModelKey, options = {}) {
+  // Resolve model key to repo ID and get config from the registry
+  const modelConfig = getModelConfig(repoIdOrModelKey);
+  const repoId = modelConfig?.repoId || repoIdOrModelKey;
+
+  // Use model config defaults if available (e.g. nemo128 vs nemo80)
+  const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
+
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress } = options;
+
   // Decide quantisation per component
   let encoderQ = encoderQuant;
   let decoderQ = decoderQuant;
 
-  // WebGPU currently doesn't support quantized integer formats for encoder
-  if (backend.startsWith('webgpu') && encoderQ !== 'fp32') {
-    console.warn(`[Hub] Forcing encoder to fp32 on WebGPU (${encoderQ} quantization unsupported)`);
+  // WebGPU currently doesn't support int8 quantized encoder
+  if (backend.startsWith('webgpu') && encoderQ === 'int8') {
+    console.warn('[Hub] Forcing encoder to fp32 on WebGPU (int8 unsupported)');
     encoderQ = 'fp32';
   }
 
-  // Generate file suffix based on quantization level
-  // fp32 is the default (no suffix), all others include the quantization type
-  const encoderSuffix = encoderQ === 'fp32' ? '.onnx' : `.${encoderQ}.onnx`;
-  const decoderSuffix = decoderQ === 'fp32' ? '.onnx' : `.${decoderQ}.onnx`;
+  const encoderSuffix = encoderQ === 'int8' ? '.int8.onnx' : '.onnx';
+  const decoderSuffix = decoderQ === 'int8' ? '.int8.onnx' : '.onnx';
 
   const encoderName = `encoder-model${encoderSuffix}`;
   const decoderName = `decoder_joint-model${decoderSuffix}`;
@@ -200,8 +212,17 @@ export async function getParakeetModel(repoId, options = {}) {
     { key: 'encoderUrl', name: encoderName },
     { key: 'decoderUrl', name: decoderName },
     { key: 'tokenizerUrl', name: 'vocab.txt' },
-    { key: 'preprocessorUrl', name: `${preprocessor}.onnx` },
   ];
+
+  // Only download preprocessor ONNX when not using JS backend.
+  // The JS backend (mel.js) computes mel spectrograms locally without
+  // needing a separate ONNX model, saving download bandwidth.
+  if (preprocessorBackend !== 'js') {
+    filesToGet.push({ key: 'preprocessorUrl', name: `${preprocessor}.onnx` });
+    console.log(`[Hub] Preprocessor: ONNX — will download ${preprocessor}.onnx`);
+  } else {
+    console.log(`[Hub] Preprocessor: JS (mel.js) — skipping ${preprocessor}.onnx download`);
+  }
 
   // Conditionally include external data files only if they exist in the repo file list.
   if (repoFiles.includes(`${encoderName}.data`)) {
@@ -218,9 +239,11 @@ export async function getParakeetModel(repoId, options = {}) {
           encoder: encoderName,
           decoder: decoderName
       },
-      quantisation: { encoder: encoderQ, decoder: decoderQ }
+      quantisation: { encoder: encoderQ, decoder: decoderQ },
+      modelConfig: modelConfig || null,  // Include model config for downstream use
+      preprocessorBackend,  // Pass through so callers know which backend to use
   };
-  
+
   for (const { key, name } of filesToGet) {
     try {
         const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
@@ -234,6 +257,6 @@ export async function getParakeetModel(repoId, options = {}) {
         }
     }
   }
-  
+
   return results;
 }
