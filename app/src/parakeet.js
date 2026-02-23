@@ -220,8 +220,10 @@ export class ParakeetModel {
     const totalDim = logits.dims[3];
     const data = logits.data;
 
-    const tokenLogits = data.slice(0, vocab);
-    const durLogits = data.slice(vocab, totalDim);
+    // subarray(): zero-copy view into joiner output buffer.
+    // Do NOT mutate tokenLogits/durLogits without copying first (.slice()).
+    const tokenLogits = data.subarray(0, vocab);
+    const durLogits = data.subarray(vocab, totalDim);
 
     let step = 0;
     if (durLogits.length) {
@@ -234,7 +236,9 @@ export class ParakeetModel {
       state2: out['output_states_2'] || state2,
     };
 
-    return { tokenLogits, step, newState };
+    // Expose the logits tensor so callers can dispose it after consuming the
+    // subarray views (prevents WASM/GPU memory leaks in long decode loops).
+    return { tokenLogits, step, newState, _logitsTensor: logits };
   }
 
   async computeFeatures(audio, sampleRate = 16000) {
