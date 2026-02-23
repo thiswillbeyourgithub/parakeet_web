@@ -24,6 +24,12 @@ services:
       # Named volumes for node_modules to avoid platform conflicts
       - root-node-modules:/app/node_modules
       - react-modules:/app/ui/node_modules
+    # Resource limits to mitigate denial-of-service risk
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
     ports:
       - "127.0.0.1:5173:5173"
     environment:
