@@ -51,7 +51,7 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
   // Auto-detect version from ORT environment to avoid hardcoding a specific
   // onnxruntime-web release — keeps CDN URLs in sync after upgrades.
   if (!ort.env.wasm.wasmPaths) {
-    const fallbackVer = '1.22.0-dev.20250409-89f8206ba4';
+    const fallbackVer = '1.24.1';
     const ver = ort.env.versions?.common || fallbackVer;
     if (!ort.env.versions?.common) {
       console.warn('Parakeet.js: Could not auto-detect onnxruntime-web version. Using fallback version; set ort.env.wasm.wasmPaths manually for best results.');
@@ -95,9 +95,6 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
       backend = 'wasm';
     }
   }
-
-  // Store the final backend choice for use in model selection
-  ort._selectedBackend = backend;
 
   // Expose ort globally so other modules (like SileroVAD) can reuse the same
   // configured instance without re-importing and re-initialising.
