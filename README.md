@@ -4,9 +4,15 @@
 
 Browser-based speech-to-text running entirely client-side using NVIDIA's Parakeet models via WebGPU/WASM.
 
-## Credits
+![](./image.png)
 
-This fork is based on **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.js)** – all the heavy lifting and original implementation credit goes there. This would not exist without their excellent work.
+## What It Does
+
+- Runs speech-to-text entirely in your browser (nothing sent to servers)
+- Supports WebGPU (fast) and WASM (compatible) backends
+- Word-level timestamps and confidence scores
+- File upload or microphone recording
+- Model quantization options (fp32/int8)
 
 ## Status
 
@@ -25,14 +31,6 @@ sudo docker compose up
 
 3. Then visit `http://localhost:5173`
 
-## What It Does
-
-- Runs speech-to-text entirely in your browser (nothing sent to servers)
-- Supports WebGPU (fast) and WASM (compatible) backends
-- Word-level timestamps and confidence scores
-- File upload or microphone recording
-- Model quantization options (fp32/int8)
-
 ## License
 
 AGPLv3 – See LICENSE file
@@ -42,3 +40,8 @@ AGPLv3 – See LICENSE file
 - **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.js)** – Original project this is forked from
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Python reference implementation
 - **ONNX Runtime Web** – Makes browser inference possible
+
+## Credits
+
+This fork is based on **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.js)** – all the heavy lifting and original implementation credit goes there. This would not exist without their excellent work.
+
