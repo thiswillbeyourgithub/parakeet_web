@@ -113,7 +113,8 @@ async function clearAllSettings() {
   }
 }
 
-const VERSION = '1.0.0';
+// Keep in sync with package.json version when bumping
+const VERSION = '1.0.2';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
