@@ -877,26 +877,14 @@ export default function App() {
         note: pcm.length > 10000 ? '(min/max from first 10k samples)' : undefined
       });
 
-      // Add 1s of silent padding at the start to prevent clipping the beginning
-      // This helps the model properly transcribe the first words which can otherwise be missed
-      const paddingDuration = 1.0; // seconds
-      const paddingSamples = Math.floor(paddingDuration * 16000);
-      const paddedPcm = new Float32Array(pcm.length + paddingSamples);
-      paddedPcm.set(pcm, paddingSamples); // Copy original audio after padding (zeros by default)
-      
-      console.log(`[Transcribe] Added ${paddingDuration}s (${paddingSamples} samples) of silent padding at start`);
-      
-      // Use padded audio for transcription
-      const finalPcm = paddedPcm;
-
       // Chunk large audio files to avoid "too many function arguments" error
       // This happens when audio is very long and internal operations hit JS engine limits
       const MAX_CHUNK_DURATION = 60; // seconds
       const MAX_CHUNK_SAMPLES = MAX_CHUNK_DURATION * 16000;
       
       let res;
-      if (finalPcm.length > MAX_CHUNK_SAMPLES) {
-        console.log(`[Transcribe] Audio is long (${(finalPcm.length / 16000).toFixed(1)}s), processing in chunks...`);
+      if (pcm.length > MAX_CHUNK_SAMPLES) {
+        console.log(`[Transcribe] Audio is long (${(pcm.length / 16000).toFixed(1)}s), processing in chunks...`);
         
         // Process in chunks with overlap for better boundary handling
         const OVERLAP_DURATION = 2; // seconds of overlap
@@ -904,11 +892,11 @@ export default function App() {
         const chunks = [];
         let lastReportedProgress = -1; // Track last reported progress to update UI only every 1%
         
-        for (let start = 0; start < finalPcm.length; start += MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES) {
-          const end = Math.min(start + MAX_CHUNK_SAMPLES, finalPcm.length);
-          const chunk = finalPcm.slice(start, end);
+        for (let start = 0; start < pcm.length; start += MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES) {
+          const end = Math.min(start + MAX_CHUNK_SAMPLES, pcm.length);
+          const chunk = pcm.slice(start, end);
           const chunkNum = chunks.length + 1;
-          const totalChunks = Math.ceil(finalPcm.length / (MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES));
+          const totalChunks = Math.ceil(pcm.length / (MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES));
           
           console.log(`[Transcribe] Processing chunk ${chunkNum}/${totalChunks} (${(start/16000).toFixed(1)}s - ${(end/16000).toFixed(1)}s)`);
           
@@ -981,7 +969,7 @@ export default function App() {
         setProgressText('');
         
         // Combine metrics (use first chunk's metrics as baseline)
-        const totalDuration = finalPcm.length / 16000;
+        const totalDuration = pcm.length / 16000;
         const totalProcessingTime = chunks.reduce((sum, c) => sum + (c.metrics?.total_ms || 0), 0);
         
         res = {
@@ -1004,7 +992,7 @@ export default function App() {
           frameStride
         });
         console.time(`Transcribe-${file.name}`);
-        res = await modelRef.current.transcribe(finalPcm, 16000, {
+        res = await modelRef.current.transcribe(pcm, 16000, {
           returnTimestamps: true,
           returnConfidences: true,
           frameStride
