@@ -529,42 +529,51 @@ export default function App() {
 
 
   async function startRecordingCountdown() {
+    // Request microphone access immediately, in parallel with the countdown,
+    // so the stream is ready by the time the countdown ends. This prevents
+    // losing the first words of speech due to getUserMedia latency.
+    const streamPromise = navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: { ideal: 48000 },
+        echoCancellation,
+        noiseSuppression,
+        autoGainControl,
+      }
+    });
+
     // Start countdown from 2
     setRecordingCountdown(2);
     setStatus('Get ready to record... 2');
-    
+
     // Countdown: 2 -> 1 -> 0 -> start
     await new Promise(resolve => setTimeout(resolve, 1000));
     setRecordingCountdown(1);
     setStatus('Get ready to record... 1');
-    
+
     await new Promise(resolve => setTimeout(resolve, 1000));
     setRecordingCountdown(0);
     setStatus('Recording starts now!');
-    
+
     await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause at 0
     setRecordingCountdown(null);
-    
-    // Now actually start recording
-    await startRecordingActual();
+
+    // Stream should already be resolved after 2s countdown
+    let stream;
+    try {
+      stream = await streamPromise;
+    } catch (err) {
+      console.error('[Record] Failed to access microphone:', err);
+      alert(`Failed to access microphone: ${err.message}\n\nPlease ensure you've granted microphone permissions.`);
+      return;
+    }
+
+    // Now actually start recording with the pre-acquired stream
+    await startRecordingActual(stream);
   }
 
-  async function startRecordingActual() {
+  async function startRecordingActual(stream) {
     try {
-      console.log('[Record] Requesting microphone access...');
-      
-      // Request high quality audio - prefer 48kHz native rate
-      // Audio processing settings are controlled by individual checkboxes
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          channelCount: 1,
-          sampleRate: { ideal: 48000 },  // Request high sample rate
-          echoCancellation,
-          noiseSuppression,
-          autoGainControl,
-        } 
-      });
-      
       // Log actual track settings
       const audioTrack = stream.getAudioTracks()[0];
       const settings = audioTrack.getSettings();
@@ -676,7 +685,8 @@ export default function App() {
       
     } catch (err) {
       console.error('[Record] Failed to start recording:', err);
-      alert(`Failed to access microphone: ${err.message}\n\nPlease ensure you've granted microphone permissions.`);
+      stream.getTracks().forEach(track => track.stop());
+      alert(`Failed to start recording: ${err.message}`);
     }
   }
 
