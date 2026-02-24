@@ -114,7 +114,7 @@ async function clearAllSettings() {
 }
 
 // Keep in sync with package.json version when bumping
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -155,6 +155,8 @@ export default function App() {
   const [cpuThreads, setCpuThreads] = useState(Math.max(1, maxCores - 2));
   const modelRef = useRef(null);
   const fileInputRef = useRef(null);
+  // Ref to access autoTranscribe inside recorder.onstop callback without stale closure
+  const autoTranscribeRef = useRef(true);
   
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -176,6 +178,8 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
+  // Auto-transcribe: when enabled, transcription starts automatically after recording stops
+  const [autoTranscribe, setAutoTranscribe] = useState(true);
 
   // Load settings from IndexedDB on mount
   useEffect(() => {
@@ -206,6 +210,7 @@ export default function App() {
           savedEchoCancellation,
           savedAutoGainControl,
           savedShowConfidenceHeatmap,
+          savedAutoTranscribe,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('encoderQuant', 'fp32'),
@@ -219,8 +224,9 @@ export default function App() {
           loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', false),
           loadSetting('showConfidenceHeatmap', true),
+          loadSetting('autoTranscribe', true),
         ]);
-        
+
         setBackend(savedBackend);
         setEncoderQuant(savedEncoderQuant);
         setDecoderQuant(savedDecoderQuant);
@@ -233,6 +239,7 @@ export default function App() {
         setEchoCancellation(savedEchoCancellation);
         setAutoGainControl(savedAutoGainControl);
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
+        setAutoTranscribe(savedAutoTranscribe);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -437,6 +444,9 @@ export default function App() {
   useEffect(() => { if (settingsLoaded) saveSetting('echoCancellation', echoCancellation); }, [echoCancellation, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('autoGainControl', autoGainControl); }, [autoGainControl, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('showConfidenceHeatmap', showConfidenceHeatmap); }, [showConfidenceHeatmap, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) saveSetting('autoTranscribe', autoTranscribe); }, [autoTranscribe, settingsLoaded]);
+  // Keep ref in sync so recorder.onstop callback always reads the latest value
+  useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { if (settingsLoaded) saveSetting('transcriptions', transcriptions); }, [transcriptions, settingsLoaded]);
 
   async function loadModel() {
@@ -639,6 +649,16 @@ export default function App() {
         }
         
         setHasBeenTranscribed(false);
+
+        // Auto-transcribe if enabled and model is loaded
+        if (autoTranscribeRef.current && modelRef.current) {
+          console.log('[Record] Auto-transcribing...');
+          // Call processAudioFile directly with the file since pendingAudioFile state
+          // hasn't been committed yet at this point in the callback
+          processAudioFile(file).then(() => {
+            setHasBeenTranscribed(true);
+          });
+        }
       };
       
       // Set up audio level monitoring using time-domain data for accurate level detection
@@ -1349,6 +1369,14 @@ export default function App() {
                 <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
                 Show Confidence Heatmap
                 <InfoTooltip text="Highlights words with color-coded backgrounds based on transcription confidence. Red = low confidence, yellow = medium, green = high." />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={autoTranscribe} onChange={e => setAutoTranscribe(e.target.checked)} />
+                Auto-transcribe after recording
+                <InfoTooltip text="Automatically starts transcription when a recording is stopped. Disable to review the audio before transcribing." />
               </label>
             </div>
 
