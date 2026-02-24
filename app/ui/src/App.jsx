@@ -114,7 +114,7 @@ async function clearAllSettings() {
 }
 
 // Keep in sync with package.json version when bumping
-const VERSION = '1.0.3';
+const VERSION = '1.1.0';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -177,7 +177,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(true);
+  const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
+  // Auto-copy: when enabled, transcription text is automatically copied to clipboard
+  const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   // Auto-transcribe: when enabled, transcription starts automatically after recording stops
   const [autoTranscribe, setAutoTranscribe] = useState(true);
@@ -212,6 +214,7 @@ export default function App() {
           savedAutoGainControl,
           savedShowConfidenceHeatmap,
           savedAutoTranscribe,
+          savedAutoCopyToClipboard,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('encoderQuant', 'fp32'),
@@ -224,8 +227,9 @@ export default function App() {
           loadSetting('noiseSuppression', false),
           loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', false),
-          loadSetting('showConfidenceHeatmap', true),
+          loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
+          loadSetting('autoCopyToClipboard', false),
         ]);
 
         setBackend(savedBackend);
@@ -241,6 +245,7 @@ export default function App() {
         setAutoGainControl(savedAutoGainControl);
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
         setAutoTranscribe(savedAutoTranscribe);
+        setAutoCopyToClipboard(savedAutoCopyToClipboard);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -446,6 +451,7 @@ export default function App() {
   useEffect(() => { if (settingsLoaded) saveSetting('autoGainControl', autoGainControl); }, [autoGainControl, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('showConfidenceHeatmap', showConfidenceHeatmap); }, [showConfidenceHeatmap, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('autoTranscribe', autoTranscribe); }, [autoTranscribe, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) saveSetting('autoCopyToClipboard', autoCopyToClipboard); }, [autoCopyToClipboard, settingsLoaded]);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { if (settingsLoaded) saveSetting('transcriptions', transcriptions); }, [transcriptions, settingsLoaded]);
@@ -1040,6 +1046,18 @@ export default function App() {
       setTranscriptions(prev => [newTranscription, ...prev]);
       setText(res.utterance_text); // Show latest transcription
       setStatus('Model ready ✔'); // Ready for next file
+
+      // Auto-copy transcription to clipboard if enabled
+      if (autoCopyToClipboard && res.utterance_text) {
+        try {
+          await navigator.clipboard.writeText(res.utterance_text);
+          setCopySuccess(true);
+          setTimeout(() => setCopySuccess(false), 2000);
+          console.log('[Transcribe] Auto-copied transcription to clipboard');
+        } catch (err) {
+          console.error('[Transcribe] Auto-copy to clipboard failed:', err);
+        }
+      }
       
     } catch (error) {
       console.error('[Transcribe] Transcription failed with error:', error);
@@ -1378,6 +1396,13 @@ export default function App() {
                 <input type="checkbox" checked={autoTranscribe} onChange={e => setAutoTranscribe(e.target.checked)} />
                 Auto-transcribe after recording
                 <InfoTooltip text="Automatically starts transcription when a recording is stopped. Disable to review the audio before transcribing." />
+              </label>
+            </div>
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
+                Auto-copy to clipboard
+                <InfoTooltip text="Automatically copies the transcribed text to your clipboard after transcription completes." />
               </label>
             </div>
 
