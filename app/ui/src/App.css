@@ -90,7 +90,7 @@
 
 .controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.75rem;
   align-items: center;
   margin-bottom: 1rem;
@@ -177,10 +177,10 @@ button.primary:disabled {
 }
 
 .record-button {
-  padding: 0.75rem 1.5rem !important;
+  padding: 0.75rem 1rem !important;
   font-size: 1.1rem !important;
   font-weight: 600;
-  min-width: 180px;
+  min-width: 0;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   transition: all 0.2s;
 }
@@ -203,7 +203,7 @@ button.primary:disabled {
   text-align: center;
   transition: all 0.2s;
   box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
-  min-width: 180px;
+  min-width: 0;
 }
 
 .file-upload-button:hover {
