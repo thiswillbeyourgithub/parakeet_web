@@ -175,6 +175,7 @@ export default function App() {
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
@@ -1440,6 +1441,47 @@ export default function App() {
           >
             ⚠️ Reset All Settings and Data
           </button>
+
+          <button
+            onClick={() => setShowShortcuts(prev => !prev)}
+            style={{ marginTop: '0.5rem', width: '100%' }}
+            className="primary"
+          >
+            {showShortcuts ? 'Hide' : 'Show'} Keyboard Shortcuts
+          </button>
+
+          {showShortcuts && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.75rem',
+              background: '#f9fafb',
+              borderRadius: '4px',
+              border: '1px solid #e5e7eb',
+              fontSize: '0.9rem',
+              lineHeight: '1.8'
+            }}>
+              <strong>Keyboard Shortcuts</strong>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.4rem' }}>
+                <tbody>
+                  {[
+                    ['S', 'Toggle settings panel'],
+                    ['R', 'Record / stop recording'],
+                    ['F', 'Select audio file'],
+                    ['T', 'Start transcription'],
+                    ['L', 'Load model'],
+                  ].map(([key, desc]) => (
+                    <tr key={key}>
+                      <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', fontWeight: 'bold', fontFamily: 'monospace' }}>{key}</td>
+                      <td style={{ padding: '0.15rem 0' }}>{desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#888' }}>
+                Shortcuts are disabled while typing in input fields.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
