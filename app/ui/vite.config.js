@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -26,7 +27,38 @@ try {
 }
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // PWA plugin: generates manifest.webmanifest and a service worker for offline support.
+    // Models are cached in IndexedDB by the app itself, so the SW only handles static assets.
+    VitePWA({
+      registerType: 'autoUpdate',
+      // NetworkFirst so the app always fetches fresh assets when online,
+      // but falls back to cache when offline (app shell only — models use IndexedDB).
+      workbox: {
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.destination === 'document' || request.destination === 'script' || request.destination === 'style',
+            handler: 'NetworkFirst',
+            options: { cacheName: 'app-shell' },
+          },
+        ],
+      },
+      manifest: {
+        name: 'ParakeetWeb',
+        short_name: 'ParakeetWeb',
+        description: 'Browser-based speech-to-text running entirely client-side',
+        theme_color: '#1a1a2e',
+        background_color: '#1a1a2e',
+        display: 'standalone',
+        start_url: '/',
+        icons: [
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+        ],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       'parakeet.js': path.resolve(__dirname, '../src/index.js'),
