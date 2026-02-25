@@ -13,6 +13,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 - Word-level timestamps and confidence scores
 - File upload or microphone recording
 - Model quantization options (fp32/int8)
+- Installable as a PWA (Progressive Web App) for app-like experience
 
 ## Status
 
