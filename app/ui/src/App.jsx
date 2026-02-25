@@ -114,7 +114,7 @@ async function clearAllSettings() {
 }
 
 // Keep in sync with package.json version when bumping
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -1233,8 +1233,35 @@ export default function App() {
     return `rgba(239, 68, 68, ${opacity})`;
   }
 
+  // Low-RAM / mobile warning banner — dismissed per session via sessionStorage.
+  // Uses navigator.deviceMemory (Chrome/Edge only, returns GB) to detect low memory,
+  // and falls back to mobile UA sniffing when the API is unavailable.
+  const [showLowRamBanner, setShowLowRamBanner] = useState(() => {
+    if (typeof window !== 'undefined' && sessionStorage.getItem('parakeetweb_lowram_dismissed')) return false;
+    const mem = navigator.deviceMemory; // undefined on Firefox/Safari
+    if (mem !== undefined) return mem < 4;
+    // Fallback: assume mobile devices are memory-constrained
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  });
+
+  const dismissLowRamBanner = () => {
+    sessionStorage.setItem('parakeetweb_lowram_dismissed', '1');
+    setShowLowRamBanner(false);
+  };
+
   return (
     <div className="app">
+      {/* Warning banner for devices that may not have enough RAM for the ~100-200 MB model */}
+      {showLowRamBanner && (
+        <div style={{
+          background: '#fef3c7', color: '#92400e', padding: '0.5rem 1rem',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          fontSize: '0.9rem', borderBottom: '1px solid #f59e0b',
+        }}>
+          <span>⚠️ Your device may have limited memory. The speech recognition model (~100–200 MB) might fail to load. Consider using <strong>int8 quantization</strong> for lower memory usage.</span>
+          <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#92400e', marginLeft: '0.5rem' }} aria-label="Dismiss">×</button>
+        </div>
+      )}
       <div className="app-header">
         <h2>ParakeetWeb v{VERSION}</h2>
         <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: '#666' }}>Status: {status}</p>
@@ -1280,6 +1307,9 @@ export default function App() {
             or directly by{' '}
             <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>opening an issue</a>{' '}
             on the GitHub repository.
+          </p>
+          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+            <strong>Install:</strong> You can install ParakeetWeb as a PWA (Progressive Web App) from your browser for quick, app-like access.
           </p>
           <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>Privacy:</strong> This app uses privacy-respecting analytics provided by a self-hosted{' '}
