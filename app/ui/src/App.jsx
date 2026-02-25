@@ -151,6 +151,8 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [verboseLog, setVerboseLog] = useState(true);
   const [frameStride, setFrameStride] = useState(1);
+  // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident
+  const [temperature, setTemperature] = useState(1.2);
   const maxCores = navigator.hardwareConcurrency || 8;
   const [cpuThreads, setCpuThreads] = useState(Math.max(1, maxCores - 2));
   const modelRef = useRef(null);
@@ -210,6 +212,7 @@ export default function App() {
           savedTranscriptions,
           savedVerboseLog,
           savedFrameStride,
+          savedTemperature,
           savedCpuThreads,
           savedNoiseSuppression,
           savedEchoCancellation,
@@ -226,6 +229,7 @@ export default function App() {
           loadSetting('transcriptions', []),
           loadSetting('verboseLog', true),
           loadSetting('frameStride', 1),
+          loadSetting('temperature', 1.2),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', false),
           loadSetting('echoCancellation', false),
@@ -243,6 +247,7 @@ export default function App() {
         setTranscriptions(savedTranscriptions);
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
+        setTemperature(savedTemperature);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
@@ -450,6 +455,7 @@ export default function App() {
   useEffect(() => { if (settingsLoaded) saveSetting('preprocessor', preprocessor); }, [preprocessor, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('verboseLog', verboseLog); }, [verboseLog, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('frameStride', frameStride); }, [frameStride, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) saveSetting('temperature', temperature); }, [temperature, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('cpuThreads', cpuThreads); }, [cpuThreads, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('noiseSuppression', noiseSuppression); }, [noiseSuppression, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('echoCancellation', echoCancellation); }, [echoCancellation, settingsLoaded]);
@@ -938,7 +944,8 @@ export default function App() {
           const chunkRes = await modelRef.current.transcribe(chunk, 16000, {
             returnTimestamps: true,
             returnConfidences: true,
-            frameStride
+            frameStride,
+            temperature
           });
           console.timeEnd(`Transcribe-chunk-${chunkNum}`);
           const chunkElapsed = performance.now() - chunkStartTime;
@@ -1389,6 +1396,22 @@ export default function App() {
                 value={frameStride} 
                 onChange={e=>setFrameStride(Number(e.target.value))} 
                 style={{flexBasis: '100%', marginTop: '0.25rem'}} 
+              />
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                Temperature: {temperature.toFixed(1)}
+                <InfoTooltip text="Decoder softmax temperature. Lower values (0.5-1.0) produce more confident/greedy output. Higher values (1.2-2.0) allow more diversity. Default: 1.2" />
+              </span>
+              <input
+                type="range"
+                min="0.1"
+                max="3.0"
+                step="0.1"
+                value={temperature}
+                onChange={e=>setTemperature(Number(e.target.value))}
+                style={{flexBasis: '100%', marginTop: '0.25rem'}}
               />
             </div>
 
