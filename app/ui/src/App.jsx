@@ -303,7 +303,7 @@ export default function App() {
       if ((isRecording || recordingCountdown !== null) && (key === 'r' || key === 's' || key === ' ')) {
         e.preventDefault();
         stopRecording();
-        break;
+        return;
       }
 
       switch (key) {
