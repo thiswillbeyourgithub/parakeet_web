@@ -114,7 +114,7 @@ async function clearAllSettings() {
 }
 
 // Keep in sync with package.json version when bumping
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -152,7 +152,7 @@ export default function App() {
   const [verboseLog, setVerboseLog] = useState(true);
   const [frameStride, setFrameStride] = useState(1);
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident
-  const [temperature, setTemperature] = useState(1.2);
+  const [temperature, setTemperature] = useState(0.5);
   const maxCores = navigator.hardwareConcurrency || 8;
   const [cpuThreads, setCpuThreads] = useState(Math.max(1, maxCores - 2));
   const modelRef = useRef(null);
@@ -173,9 +173,9 @@ export default function App() {
   const [audioPreviewUrl, setAudioPreviewUrl] = useState(null);
   const [isProcessingPreview, setIsProcessingPreview] = useState(false);
   const [hasBeenTranscribed, setHasBeenTranscribed] = useState(false);
-  const [noiseSuppression, setNoiseSuppression] = useState(false);
-  const [echoCancellation, setEchoCancellation] = useState(false);
-  const [autoGainControl, setAutoGainControl] = useState(false);
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [echoCancellation, setEchoCancellation] = useState(true);
+  const [autoGainControl, setAutoGainControl] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -183,7 +183,7 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
   // Auto-copy: when enabled, transcription text is automatically copied to clipboard
-  const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(false);
+  const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(true);
   // Info panel is shown by default; collapses once model loading begins
   const [showInfo, setShowInfo] = useState(true);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
@@ -232,14 +232,14 @@ export default function App() {
           loadSetting('transcriptions', []),
           loadSetting('verboseLog', true),
           loadSetting('frameStride', 1),
-          loadSetting('temperature', 1.2),
+          loadSetting('temperature', 0.5),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
-          loadSetting('noiseSuppression', false),
-          loadSetting('echoCancellation', false),
-          loadSetting('autoGainControl', false),
+          loadSetting('noiseSuppression', true),
+          loadSetting('echoCancellation', true),
+          loadSetting('autoGainControl', true),
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
-          loadSetting('autoCopyToClipboard', false),
+          loadSetting('autoCopyToClipboard', true),
           loadSetting('showAdvancedInfo', false),
         ]);
 
