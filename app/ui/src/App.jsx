@@ -152,7 +152,7 @@ export default function App() {
   const [verboseLog, setVerboseLog] = useState(true);
   const [frameStride, setFrameStride] = useState(1);
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident
-  const [temperature, setTemperature] = useState(0.5);
+  const [temperature, setTemperature] = useState(0.0);
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -317,7 +317,8 @@ export default function App() {
           break;
 
         case 'r':
-          // Start recording
+        case ' ':
+          // Start recording (R or Space)
           e.preventDefault();
           if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
             startRecordingCountdown();
@@ -1420,22 +1421,6 @@ export default function App() {
               />
             </div>
 
-            <div className="setting-row">
-              <span className="setting-label">
-                Temperature: {temperature.toFixed(1)}
-                <InfoTooltip text="Decoder softmax temperature. Lower values (0.5-1.0) produce more confident/greedy output. Higher values (1.2-2.0) allow more diversity. Default: 1.2" />
-              </span>
-              <input
-                type="range"
-                min="0.0"
-                max="3.0"
-                step="0.1"
-                value={temperature}
-                onChange={e=>setTemperature(Number(e.target.value))}
-                style={{flexBasis: '100%', marginTop: '0.25rem'}}
-              />
-            </div>
-
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (
               <div className="setting-row">
                 <span className="setting-label">
@@ -1455,11 +1440,19 @@ export default function App() {
             )}
 
             <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
-                Verbose Log
-                <InfoTooltip text="Enables detailed logging in browser console. Useful for debugging or performance analysis." />
-              </label>
+              <span className="setting-label">
+                Temperature: {temperature.toFixed(1)}
+                <InfoTooltip text="Decoder softmax temperature. Lower values (0.0-1.0) produce more confident/greedy output. Higher values (1.2-2.0) allow more diversity. Default: 0.0" />
+              </span>
+              <input
+                type="range"
+                min="0.0"
+                max="3.0"
+                step="0.1"
+                value={temperature}
+                onChange={e=>setTemperature(Number(e.target.value))}
+                style={{flexBasis: '100%', marginTop: '0.25rem'}}
+              />
             </div>
 
             <div className="setting-row">
@@ -1480,7 +1473,7 @@ export default function App() {
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
-                Auto-copy to clipboard
+                Auto-copy transcribed text to clipboard
                 <InfoTooltip text="Automatically copies the transcribed text to your clipboard after transcription completes." />
               </label>
             </div>
@@ -1489,6 +1482,13 @@ export default function App() {
                 <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
                 Show advanced info
                 <InfoTooltip text="Displays system memory/heap usage, per-transcription performance metrics (RTF, timings), and detailed audio metadata." />
+              </label>
+            </div>
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
+                Verbose Log
+                <InfoTooltip text="Enables detailed logging in browser console. Useful for debugging or performance analysis." />
               </label>
             </div>
 
@@ -1577,7 +1577,7 @@ export default function App() {
                   {[
                     ['S', 'Toggle settings panel'],
                     ['R / S / Space', 'Stop recording (while recording)'],
-                    ['R', 'Start recording'],
+                    ['R / Space', 'Start recording'],
                     ['F', 'Select audio file'],
                     ['T', 'Start transcription'],
                     ['L', 'Load model'],
@@ -1793,16 +1793,19 @@ export default function App() {
         </div>
       )}
 
-      {/* Transcribe button - always visible */}
-      <button
-        onClick={startTranscription}
-        disabled={!status.startsWith('Model ready ✔') || isTranscribing || !pendingAudioFile || !audioPreviewUrl || isProcessingPreview || hasBeenTranscribed}
-        className="primary transcribe-button"
-        style={{ marginTop: pendingAudioFile ? '0' : '1rem', marginBottom: '1rem' }}
-        data-umami-event="transcribe_button"
-      >
-        {isTranscribing ? 'Transcribing...' : hasBeenTranscribed ? '✓ Transcribed' : '🎯 Transcribe'}
-      </button>
+      {/* Transcribe button — only shown while transcribing, or when there is
+          pending audio but auto-transcribe is off (so the user must trigger it manually) */}
+      {(isTranscribing || (pendingAudioFile && !autoTranscribe && !hasBeenTranscribed)) && (
+        <button
+          onClick={startTranscription}
+          disabled={!status.startsWith('Model ready ✔') || isTranscribing || !pendingAudioFile || !audioPreviewUrl || isProcessingPreview || hasBeenTranscribed}
+          className="primary transcribe-button"
+          style={{ marginTop: pendingAudioFile ? '0' : '1rem', marginBottom: '1rem' }}
+          data-umami-event="transcribe_button"
+        >
+          {isTranscribing ? 'Transcribing...' : '🎯 Transcribe'}
+        </button>
+      )}
 
       {progressPct!==null && (
         <div className="progress-wrapper">
