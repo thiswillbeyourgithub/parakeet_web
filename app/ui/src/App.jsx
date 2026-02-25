@@ -182,7 +182,8 @@ export default function App() {
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
   // Auto-copy: when enabled, transcription text is automatically copied to clipboard
   const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(false);
-  const [showInfo, setShowInfo] = useState(false);
+  // Info panel is shown by default; collapses once model loading begins
+  const [showInfo, setShowInfo] = useState(true);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
   // Auto-transcribe: when enabled, transcription starts automatically after recording stops
@@ -481,6 +482,8 @@ export default function App() {
     }
 
     setStatus('Loading model…');
+    // Collapse the info panel once model loading begins
+    setShowInfo(false);
     setProgress('');
     setProgressText('');
     setProgressPct(0);
@@ -1639,16 +1642,20 @@ export default function App() {
         </div>
       )}
 
-      <button 
-        onClick={loadModel} 
-        disabled={status.startsWith('Model ready ✔') || (!status.toLowerCase().includes('fail') && status !== 'Idle')}
-        className="primary"
-        style={{ marginBottom: '1rem', width: '100%' }}
-        data-umami-event="load_model_button"
-      >
-        Load Model
-      </button>
+      {/* Load Model button: visible on initial load or after failure, hidden once model is loading/ready */}
+      {(status === 'Idle' || status.toLowerCase().includes('fail')) && (
+        <button
+          onClick={loadModel}
+          className="primary"
+          style={{ marginBottom: '1rem', width: '100%' }}
+          data-umami-event="load_model_button"
+        >
+          Load Model
+        </button>
+      )}
 
+      {/* Controls, transcribe button, and transcription history: hidden until model loading has been initiated */}
+      {status !== 'Idle' && !status.toLowerCase().includes('fail') && (<>
       {typeof SharedArrayBuffer === 'undefined' && backend === 'wasm' && (
         <div style={{ 
           marginBottom: '1rem', 
@@ -1889,6 +1896,7 @@ export default function App() {
           </div>
         </div>
       )}
+      </>)}
     </div>
   );
 } 
