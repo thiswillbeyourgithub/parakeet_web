@@ -114,7 +114,7 @@ async function clearAllSettings() {
 }
 
 // Keep in sync with package.json version when bumping
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -181,6 +181,8 @@ export default function App() {
   // Auto-copy: when enabled, transcription text is automatically copied to clipboard
   const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
+  const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
   // Auto-transcribe: when enabled, transcription starts automatically after recording stops
   const [autoTranscribe, setAutoTranscribe] = useState(true);
 
@@ -215,6 +217,7 @@ export default function App() {
           savedShowConfidenceHeatmap,
           savedAutoTranscribe,
           savedAutoCopyToClipboard,
+          savedShowAdvancedInfo,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('encoderQuant', 'fp32'),
@@ -230,6 +233,7 @@ export default function App() {
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
           loadSetting('autoCopyToClipboard', false),
+          loadSetting('showAdvancedInfo', false),
         ]);
 
         setBackend(savedBackend);
@@ -246,6 +250,7 @@ export default function App() {
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
         setAutoTranscribe(savedAutoTranscribe);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
+        setShowAdvancedInfo(savedShowAdvancedInfo);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -1405,6 +1410,13 @@ export default function App() {
                 <InfoTooltip text="Automatically copies the transcribed text to your clipboard after transcription completes." />
               </label>
             </div>
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
+                Show advanced info
+                <InfoTooltip text="Displays system memory/heap usage, per-transcription performance metrics (RTF, timings), and detailed audio metadata." />
+              </label>
+            </div>
 
             <div className="setting-row">
               <span className="setting-label">
@@ -1510,7 +1522,7 @@ export default function App() {
         </div>
       )}
 
-      {memoryInfo && Object.keys(memoryInfo).length > 0 && (
+      {showAdvancedInfo && memoryInfo && Object.keys(memoryInfo).length > 0 && (
         <div style={{ 
           fontSize: '0.85rem', 
           color: '#666', 
@@ -1720,8 +1732,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Latest transcription performace info */}
-      {latestMetrics && (
+      {/* Latest transcription performance info (advanced) */}
+      {showAdvancedInfo && latestMetrics && (
         <div className="performance">
           <strong>RTF:</strong> {latestMetrics.rtf?.toFixed(2)}x &nbsp;|&nbsp; Total: {(latestMetrics.total_ms / 1000).toFixed(2)} s<br/>
           Preprocess {latestMetrics.preprocess_ms} ms · Encode {(latestMetrics.encode_ms / 1000).toFixed(2)} s · Decode {(latestMetrics.decode_ms / 1000).toFixed(2)} s · Tokenize {latestMetrics.tokenize_ms} ms
@@ -1752,10 +1764,12 @@ export default function App() {
                 <div className="history-item" key={trans.id}>
                   <div className="history-meta">
                     <strong>{truncateFilename(trans.filename)}</strong>
-                    <span style={{ fontSize: '0.85em', color: '#6b7280', marginLeft: '0.5rem' }}>
-                      {trans.duration.toFixed(1)}s | {trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
-                      {avgConf !== null && minConf !== null && ` | Avg: ${(avgConf * 100).toFixed(1)}% | Min: ${(minConf * 100).toFixed(1)}%`}
-                    </span>
+                    {showAdvancedInfo && (
+                      <span style={{ fontSize: '0.85em', color: '#6b7280', marginLeft: '0.5rem' }}>
+                        {trans.duration.toFixed(1)}s | {trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
+                        {avgConf !== null && minConf !== null && ` | Avg: ${(avgConf * 100).toFixed(1)}% | Min: ${(minConf * 100).toFixed(1)}%`}
+                      </span>
+                    )}
                     <span>{trans.timestamp}</span>
                   </div>
                   <div className="history-text-container">
