@@ -163,7 +163,9 @@ export default function App() {
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingCountdown, setRecordingCountdown] = useState(null);
-  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [mediaRecorder, setMediaRecorder] = useState(null); // legacy name kept for stopRecording guard
+  const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
+  const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioChunks, setAudioChunks] = useState([]);
   const [audioLevel, setAudioLevel] = useState(0);
   const [audioContext, setAudioContext] = useState(null);
@@ -615,125 +617,66 @@ export default function App() {
 
   async function startRecordingActual(stream) {
     try {
-      // Log actual track settings
       const audioTrack = stream.getAudioTracks()[0];
       const settings = audioTrack.getSettings();
       console.log('[Record] Microphone access granted');
       console.log('[Record] Actual mic settings:', settings);
-      
-      // Prefer higher quality codecs/bitrates
-      let mimeType = 'audio/webm'; // default fallback
-      const recorderOptions = {};
-      
-      // Try to use high-quality codec
-      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        mimeType = 'audio/webm;codecs=opus';
-        recorderOptions.mimeType = mimeType;
-        recorderOptions.audioBitsPerSecond = 256000;  // 256kbps for high quality
-      } else if (MediaRecorder.isTypeSupported('audio/wav')) {
-        mimeType = 'audio/wav';  // Lossless if available
-        recorderOptions.mimeType = mimeType;
-      } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-        mimeType = 'audio/webm';
-        recorderOptions.mimeType = mimeType;
-        recorderOptions.audioBitsPerSecond = 256000;
-      }
-      
-      console.log('[Record] Using recorder options:', recorderOptions);
-      
-      const recorder = new MediaRecorder(stream, recorderOptions);
-      const chunks = [];
-      
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-          console.log('[Record] Chunk received:', e.data.size, 'bytes');
-        }
-      };
-      
-      recorder.onstop = async () => {
-        console.log('[Record] Recording stopped, preparing audio file...');
-        const blob = new Blob(chunks, { type: mimeType });
-        const file = new File([blob], `recording-${Date.now()}.webm`, { type: mimeType });
-        
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
-        
-        // Store the file and process preview to show what the model will hear
-        setPendingAudioFile(file);
-        setIsProcessingPreview(true);
-        setStatus('Processing audio preview...');
-        
-        try {
-          const resampledBlob = await resampleToPreview(file);
-          const previewUrl = URL.createObjectURL(resampledBlob);
-          setAudioPreviewUrl(previewUrl);
-          setStatus('Model ready ✔');
-        } catch (err) {
-          console.error('[Preview] Failed to process recorded audio:', err);
-          // Fallback to original recording if processing fails
-          setAudioPreviewUrl(URL.createObjectURL(blob));
-          setStatus('Model ready ✔ (preview processing failed)');
-        } finally {
-          setIsProcessingPreview(false);
-        }
-        
-        setHasBeenTranscribed(false);
 
-        // Auto-transcribe if enabled and model is loaded
-        if (autoTranscribeRef.current && modelRef.current) {
-          console.log('[Record] Auto-transcribing...');
-          // Call processAudioFile directly with the file since pendingAudioFile state
-          // hasn't been committed yet at this point in the callback
-          processAudioFile(file).then(() => {
-            setHasBeenTranscribed(true);
-          });
-        }
+      // Use 48kHz AudioContext — matches most mic hardware natively.
+      // Raw PCM is captured via AudioWorklet, bypassing MediaRecorder's Opus codec
+      // entirely. This eliminates the ~26.5ms Opus priming delay that garbled
+      // the first word of recordings.
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
+
+      await audioCtx.audioWorklet.addModule('pcm-recorder-worklet.js');
+      console.log('[Record] AudioWorklet module registered');
+
+      const sourceNode = audioCtx.createMediaStreamSource(stream);
+      const workletNode = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
+
+      // Accumulate raw PCM chunks from the worklet processor
+      pcmChunksRef.current = [];
+      workletNode.port.onmessage = (e) => {
+        pcmChunksRef.current.push(e.data); // Float32Array, 128 samples each
       };
-      
-      // Set up audio level monitoring using time-domain data for accurate level detection
-      const audioCtx = new AudioContext();
+
+      sourceNode.connect(workletNode);
+      // workletNode does NOT connect to destination — we capture only, no feedback loop
+
+      workletNodeRef.current = workletNode;
+
+      // Audio level monitoring via an AnalyserNode on the same graph
       const analyser = audioCtx.createAnalyser();
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      analyser.fftSize = 2048; // Larger for smoother readings
-      analyser.smoothingTimeConstant = 0.8; // Smooth out rapid changes
+      sourceNode.connect(analyser);
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.8;
       const dataArray = new Uint8Array(analyser.fftSize);
 
+      // `recording` flag is closed over; flipped to false in stopRecording
+      let recording = true;
       const updateLevel = () => {
-        // Use time-domain data for accurate amplitude measurement
         analyser.getByteTimeDomainData(dataArray);
-        
-        // Calculate RMS (root mean square) for accurate audio level
         let sum = 0;
         for (let i = 0; i < dataArray.length; i++) {
-          // Convert from 0-255 range to -1 to 1, then square
           const normalized = (dataArray[i] - 128) / 128;
           sum += normalized * normalized;
         }
         const rms = Math.sqrt(sum / dataArray.length);
-        
-        // Scale to 0-100 range with boost for better visibility
-        // Typical speech RMS is around 0.1-0.3, so we multiply by 200-300
         const level = Math.min(100, rms * 250);
-        
         setAudioLevel(level);
-        if (recorder.state === 'recording') {
-          requestAnimationFrame(updateLevel);
-        }
+        if (recording) requestAnimationFrame(updateLevel);
       };
       updateLevel();
 
-      // Store audio context for cleanup
-      setAudioContext(audioCtx);
+      // Stash a stop-helper on the audioCtx so stopRecording can flip the flag
+      audioCtx._stopLevelMonitor = () => { recording = false; };
 
-      recorder.start();
-      setMediaRecorder(recorder);
+      setAudioContext(audioCtx);
+      setMediaRecorder(stream); // reuse state slot to hold the stream for cleanup
       setIsRecording(true);
       setStatus('Recording... (click Stop to transcribe)');
-      console.log('[Record] Recording started');
-      
+      console.log('[Record] Recording started (AudioWorklet PCM capture)');
+
     } catch (err) {
       console.error('[Record] Failed to start recording:', err);
       stream.getTracks().forEach(track => track.stop());
@@ -741,31 +684,90 @@ export default function App() {
     }
   }
 
-  function stopRecording() {
+  async function stopRecording() {
     // Clear countdown if active
     if (recordingCountdown !== null) {
       setRecordingCountdown(null);
       setStatus('Model ready ✔');
       return;
     }
-    
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      console.log('[Record] Stopping recording...');
-      mediaRecorder.stop();
-      setIsRecording(false);
-      setMediaRecorder(null);
-      setAudioLevel(0); // Reset volume indicator
-      
-      // Clean up audio context to prevent memory leaks
-      if (audioContext) {
-        try {
-          audioContext.close();
-          console.log('[Record] AudioContext closed');
-        } catch (e) {
-          console.warn('[Record] Error closing AudioContext:', e);
-        }
-        setAudioContext(null);
-      }
+
+    if (!isRecording) return;
+
+    console.log('[Record] Stopping recording...');
+    setIsRecording(false);
+    setAudioLevel(0);
+
+    // Stop level-monitor animation loop
+    if (audioContext?._stopLevelMonitor) audioContext._stopLevelMonitor();
+
+    // Disconnect worklet and release mic
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
+
+    // mediaRecorder state slot now holds the MediaStream
+    const stream = mediaRecorder;
+    if (stream && stream.getTracks) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setMediaRecorder(null);
+
+    // Concatenate PCM chunks captured by the AudioWorklet into one buffer
+    const chunks = pcmChunksRef.current;
+    pcmChunksRef.current = [];
+    const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
+    const rawPcm48k = new Float32Array(totalSamples);
+    let offset = 0;
+    for (const chunk of chunks) {
+      rawPcm48k.set(chunk, offset);
+      offset += chunk.length;
+    }
+    console.log(`[Record] Captured ${totalSamples} samples at 48kHz (${(totalSamples / 48000).toFixed(2)}s)`);
+
+    // Resample 48kHz → 16kHz mono via OfflineAudioContext
+    const targetSampleRate = 16000;
+    const sourceSampleRate = audioContext?.sampleRate ?? 48000;
+    const offlineCtx = new OfflineAudioContext(
+      1,
+      Math.ceil((totalSamples / sourceSampleRate) * targetSampleRate),
+      targetSampleRate
+    );
+    const buf = offlineCtx.createBuffer(1, totalSamples, sourceSampleRate);
+    buf.getChannelData(0).set(rawPcm48k);
+    const src = offlineCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(offlineCtx.destination);
+    src.start();
+    const resampled = await offlineCtx.startRendering();
+    const pcm16k = resampled.getChannelData(0);
+    console.log(`[Record] Resampled to 16kHz (${pcm16k.length} samples, ${(pcm16k.length / 16000).toFixed(2)}s)`);
+
+    // Close the recording AudioContext
+    if (audioContext) {
+      try { audioContext.close(); } catch (_) { /* ignore */ }
+      setAudioContext(null);
+    }
+
+    // Build a WAV file from the 16kHz PCM — used for both preview and transcription
+    const wavBlob = createWavBlob(pcm16k, targetSampleRate);
+    const file = new File([wavBlob], `recording-${Date.now()}.wav`, { type: 'audio/wav' });
+
+    // Preview
+    setPendingAudioFile(file);
+    const previewUrl = URL.createObjectURL(wavBlob);
+    setAudioPreviewUrl(previewUrl);
+    setStatus('Model ready ✔');
+
+    setHasBeenTranscribed(false);
+
+    // Auto-transcribe if enabled
+    if (autoTranscribeRef.current && modelRef.current) {
+      console.log('[Record] Auto-transcribing...');
+      processAudioFile(file).then(() => {
+        setHasBeenTranscribed(true);
+      });
     }
   }
 
@@ -907,16 +909,9 @@ export default function App() {
       // Yield to UI after heavy resampling operation
       await new Promise(resolve => setTimeout(resolve, 0));
       
-      const rawPcm = resampled.getChannelData(0);
+      const pcm = resampled.getChannelData(0);
 
-      // Prepend 100ms of silence (1600 samples at 16kHz) to compensate for
-      // Opus codec priming delay and OfflineAudioContext resampler group delay,
-      // both of which can clip the very first syllable.
-      const SILENCE_SAMPLES = 1600;
-      const pcm = new Float32Array(SILENCE_SAMPLES + rawPcm.length);
-      pcm.set(rawPcm, SILENCE_SAMPLES);
-
-      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz (prepended ${SILENCE_SAMPLES} silence samples)`);
+      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz`);
       const audioDuration = pcm.length / 16000;
       
       // Find min/max without spreading to avoid "too many arguments" error
