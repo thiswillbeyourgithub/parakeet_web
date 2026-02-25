@@ -1276,7 +1276,7 @@ export default function App() {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           fontSize: '0.9rem', borderBottom: '1px solid #f59e0b',
         }}>
-          <span>⚠️ Your device may have limited memory. The speech recognition model (~100–200 MB) might fail to load. Consider using <strong>int8 quantization</strong> for lower memory usage.</span>
+          <span>⚠️ Your device may have limited memory. The speech recognition model (~100–200 MB) might fail to load.</span>
           <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#92400e', marginLeft: '0.5rem' }} aria-label="Dismiss">×</button>
         </div>
       )}
