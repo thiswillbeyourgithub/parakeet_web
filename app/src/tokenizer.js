@@ -75,12 +75,17 @@ export class ParakeetTokenizer {
 
     let text = tokens.join('');
 
-    // Apply cleanup matching the Python NeMo reference:
+    // Apply cleanup:
     // - Remove leading whitespace
-    // - Remove space before punctuation (e.g. " ." → ".")
+    // - Remove space before sentence-ending punctuation only (. , ; : ! ?)
+    //   The previous regex /\s+(?=[^\w\s])/g was too aggressive: it stripped
+    //   spaces before ANY non-word character (including accented letters in JS
+    //   without the /u flag, hyphens, quotes, etc.), causing words to squash.
+    // - Collapse multiple consecutive punctuation (e.g. "..." → ".")
     // - Collapse multiple spaces into one
     text = text.replace(/^\s+/, '');
-    text = text.replace(/\s+(?=[^\w\s])/g, '');
+    text = text.replace(/\s+(?=[.,;:!?])/g, '');
+    text = text.replace(/([.!?]){2,}/g, '$1');
     text = text.replace(/\s+/g, ' ');
 
     return text.trim();
