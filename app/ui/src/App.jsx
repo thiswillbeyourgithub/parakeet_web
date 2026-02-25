@@ -1455,7 +1455,7 @@ export default function App() {
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
-                Show Confidence Heatmap
+                Show Certainty Heatmap
                 <InfoTooltip text="Highlights words with color-coded backgrounds based on transcription confidence. Red = low confidence, yellow = medium, green = high." />
               </label>
             </div>
@@ -1812,9 +1812,9 @@ export default function App() {
             <button
               onClick={() => setShowConfidenceHeatmap(!showConfidenceHeatmap)}
               className="heatmap-toggle-button"
-              title={showConfidenceHeatmap ? 'Hide confidence heatmap' : 'Show confidence heatmap'}
+              title={showConfidenceHeatmap ? 'Hide certainty heatmap' : 'Show certainty heatmap'}
             >
-              {showConfidenceHeatmap ? '🎨 Hide Colors' : '🎨 Show Colors'}
+              {showConfidenceHeatmap ? '🎨 Hide Certainty' : '🎨 Show Certainty'}
             </button>
           </div>
           <div>
