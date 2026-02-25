@@ -571,10 +571,10 @@ export default function App() {
       }
     });
 
-    // Acquire the stream early so the mic is warm and the Opus encoder
-    // has time to prime its internal buffer (~26.5ms lookahead) before the
-    // user starts speaking. Starting the recorder during the countdown
-    // avoids losing the first syllable to codec priming latency.
+    // Acquire the stream early so the mic hardware is warm by the time
+    // the countdown finishes. But do NOT start recording yet — we only
+    // want to capture audio from ~100ms before the countdown ends, to
+    // avoid feeding seconds of silence/noise to the model.
     let stream;
     try {
       stream = await streamPromise;
@@ -584,12 +584,7 @@ export default function App() {
       return;
     }
 
-    // Start recording immediately so the Opus codec is primed during countdown
-    await startRecordingActual(stream);
-
-    // Countdown from 2 — the recorder is already running, capturing silence
-    // while the user prepares. This silence is harmless and gets trimmed or
-    // ignored by the model, but ensures the codec is fully warmed up.
+    // Run the countdown while the mic stream stays open but idle.
     setRecordingCountdown(2);
     setStatus('Get ready to record... 2');
 
@@ -597,7 +592,12 @@ export default function App() {
     setRecordingCountdown(1);
     setStatus('Get ready to record... 1');
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Start recording ~100ms before the countdown visually hits 0.
+    // This gives the Opus codec just enough time to prime its internal
+    // buffer (~26.5ms lookahead) without capturing seconds of silence.
+    await new Promise(resolve => setTimeout(resolve, 900));
+    await startRecordingActual(stream);
+
     setRecordingCountdown(0);
     setStatus('Recording starts now!');
 
