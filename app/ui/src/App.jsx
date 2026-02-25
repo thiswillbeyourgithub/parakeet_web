@@ -571,11 +571,28 @@ export default function App() {
       }
     });
 
-    // Start countdown from 2
+    // Acquire the stream early so the mic is warm and the Opus encoder
+    // has time to prime its internal buffer (~26.5ms lookahead) before the
+    // user starts speaking. Starting the recorder during the countdown
+    // avoids losing the first syllable to codec priming latency.
+    let stream;
+    try {
+      stream = await streamPromise;
+    } catch (err) {
+      console.error('[Record] Failed to access microphone:', err);
+      alert(`Failed to access microphone: ${err.message}\n\nPlease ensure you've granted microphone permissions.`);
+      return;
+    }
+
+    // Start recording immediately so the Opus codec is primed during countdown
+    await startRecordingActual(stream);
+
+    // Countdown from 2 — the recorder is already running, capturing silence
+    // while the user prepares. This silence is harmless and gets trimmed or
+    // ignored by the model, but ensures the codec is fully warmed up.
     setRecordingCountdown(2);
     setStatus('Get ready to record... 2');
 
-    // Countdown: 2 -> 1 -> 0 -> start
     await new Promise(resolve => setTimeout(resolve, 1000));
     setRecordingCountdown(1);
     setStatus('Get ready to record... 1');
@@ -586,19 +603,6 @@ export default function App() {
 
     await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause at 0
     setRecordingCountdown(null);
-
-    // Stream should already be resolved after 2s countdown
-    let stream;
-    try {
-      stream = await streamPromise;
-    } catch (err) {
-      console.error('[Record] Failed to access microphone:', err);
-      alert(`Failed to access microphone: ${err.message}\n\nPlease ensure you've granted microphone permissions.`);
-      return;
-    }
-
-    // Now actually start recording with the pre-acquired stream
-    await startRecordingActual(stream);
   }
 
   async function startRecordingActual(stream) {
@@ -895,9 +899,16 @@ export default function App() {
       // Yield to UI after heavy resampling operation
       await new Promise(resolve => setTimeout(resolve, 0));
       
-      const pcm = resampled.getChannelData(0);
-      
-      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz`);
+      const rawPcm = resampled.getChannelData(0);
+
+      // Prepend 100ms of silence (1600 samples at 16kHz) to compensate for
+      // Opus codec priming delay and OfflineAudioContext resampler group delay,
+      // both of which can clip the very first syllable.
+      const SILENCE_SAMPLES = 1600;
+      const pcm = new Float32Array(SILENCE_SAMPLES + rawPcm.length);
+      pcm.set(rawPcm, SILENCE_SAMPLES);
+
+      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz (prepended ${SILENCE_SAMPLES} silence samples)`);
       const audioDuration = pcm.length / 16000;
       
       // Find min/max without spreading to avoid "too many arguments" error
