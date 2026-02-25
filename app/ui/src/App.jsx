@@ -1420,7 +1420,7 @@ export default function App() {
               </span>
               <input
                 type="range"
-                min="0.1"
+                min="0.0"
                 max="3.0"
                 step="0.1"
                 value={temperature}
