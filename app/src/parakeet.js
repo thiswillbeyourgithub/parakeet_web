@@ -11,7 +11,7 @@ import { JsPreprocessor } from './mel.js';
  * NOTE: This is an *early* scaffold – the `transcribe` method is TODO.
  */
 export class ParakeetModel {
-  constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s }) {
+  constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s, verbose = false }) {
     this.tokenizer = tokenizer;
     this.encoderSession = encoderSession;
     this.joinerSession = joinerSession;
@@ -37,6 +37,7 @@ export class ParakeetModel {
     this._combState2 = new ort.Tensor('float32', z.slice(), [numLayers, 1, hidden]);
 
     this._normalizer = normalizer;
+    this.verbose = verbose;
     this.subsampling = subsampling;
     this.windowStride = windowStride;
 
@@ -209,7 +210,7 @@ export class ParakeetModel {
 
     const [tokenizer, preprocessor] = await Promise.all([tokenizerPromise, preprocPromise]);
 
-    return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride });
+    return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose });
   }
 
   async _runCombinedStep(encTensor, token, currentState = null) {
@@ -407,7 +408,10 @@ export class ParakeetModel {
 
     let tokenStart;
     if (perfEnabled) tokenStart = performance.now();
-    const text = this._normalizer(this.tokenizer.decode(ids));
+    const rawText = this.tokenizer.decode(ids);
+    if (this.verbose) console.log('[Parakeet.js] Raw decoded text:', rawText);
+    const text = this._normalizer(rawText);
+    if (this.verbose) console.log('[Parakeet.js] Normalized text (final):', text);
     if (perfEnabled) tToken = performance.now() - tokenStart;
 
     // Early exit if no extras requested
