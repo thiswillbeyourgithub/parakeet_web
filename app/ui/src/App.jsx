@@ -154,7 +154,8 @@ export default function App() {
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident
   const [temperature, setTemperature] = useState(0.5);
   const maxCores = navigator.hardwareConcurrency || 8;
-  const [cpuThreads, setCpuThreads] = useState(Math.max(1, maxCores - 2));
+  // Default to all available CPU cores for best transcription throughput
+  const [cpuThreads, setCpuThreads] = useState(maxCores);
   const modelRef = useRef(null);
   const fileInputRef = useRef(null);
   // Ref to access autoTranscribe inside recorder.onstop callback without stale closure
@@ -1255,12 +1256,18 @@ export default function App() {
   }
 
   // Low-RAM / mobile warning banner — dismissed per session via sessionStorage.
-  // Uses navigator.deviceMemory (Chrome/Edge only, returns GB) to detect low memory,
-  // and falls back to mobile UA sniffing when the API is unavailable.
+  // Triggers when JS heap limit is below 2 GB (the model needs ~100-200 MB plus runtime overhead).
+  // Falls back to navigator.deviceMemory (Chrome/Edge) or mobile UA sniffing when heap info
+  // is unavailable.
   const [showLowRamBanner, setShowLowRamBanner] = useState(() => {
     if (typeof window !== 'undefined' && sessionStorage.getItem('parakeetweb_lowram_dismissed')) return false;
-    const mem = navigator.deviceMemory; // undefined on Firefox/Safari
-    if (mem !== undefined) return mem < 4;
+    const TWO_GB = 2 * 1024 * 1024 * 1024;
+    // Chrome exposes JS heap size limit — most reliable signal
+    const heapLimit = performance?.memory?.jsHeapSizeLimit;
+    if (heapLimit !== undefined) return heapLimit < TWO_GB;
+    // Chrome/Edge expose device RAM in GB
+    const mem = navigator.deviceMemory;
+    if (mem !== undefined) return mem < 2;
     // Fallback: assume mobile devices are memory-constrained
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   });
