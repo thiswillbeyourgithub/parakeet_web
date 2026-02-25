@@ -298,6 +298,13 @@ export default function App() {
 
       const key = e.key.toLowerCase();
 
+      // If recording, R / S / Space all stop recording
+      if ((isRecording || recordingCountdown !== null) && (key === 'r' || key === 's' || key === ' ')) {
+        e.preventDefault();
+        stopRecording();
+        break;
+      }
+
       switch (key) {
         case 's':
           // Toggle settings
@@ -306,11 +313,9 @@ export default function App() {
           break;
 
         case 'r':
-          // Record
+          // Start recording
           e.preventDefault();
-          if (isRecording || recordingCountdown !== null) {
-            stopRecording();
-          } else if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
+          if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
             startRecordingCountdown();
           }
           break;
@@ -1566,7 +1571,8 @@ export default function App() {
                 <tbody>
                   {[
                     ['S', 'Toggle settings panel'],
-                    ['R', 'Record / stop recording'],
+                    ['R / S / Space', 'Stop recording (while recording)'],
+                    ['R', 'Start recording'],
                     ['F', 'Select audio file'],
                     ['T', 'Start transcription'],
                     ['L', 'Load model'],
