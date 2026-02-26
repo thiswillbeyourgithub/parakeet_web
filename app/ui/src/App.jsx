@@ -148,6 +148,8 @@ export default function App() {
   const [text, setText] = useState('');
   const [latestMetrics, setLatestMetrics] = useState(null);
   const [transcriptions, setTranscriptions] = useState([]);
+  // Track the most recently added transcription ID for fade-in animation
+  const newestTranscriptionIdRef = useRef(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [verboseLog, setVerboseLog] = useState(true);
   const [frameStride, setFrameStride] = useState(1);
@@ -1066,6 +1068,7 @@ export default function App() {
         words: res.words || [] // Store word-level data with confidence scores
       };
 
+      newestTranscriptionIdRef.current = newTranscription.id;
       setTranscriptions(prev => [newTranscription, ...prev]);
       setText(res.utterance_text); // Show latest transcription
       setStatus('Model ready ✔'); // Ready for next file
@@ -1366,6 +1369,11 @@ export default function App() {
       )}
 
       {showSettings && (
+        <>
+        {/* Backdrop overlay — click to close sidebar */}
+        <div className="settings-sidebar-overlay" onClick={() => setShowSettings(false)} />
+        <div className="settings-sidebar">
+        <button className="settings-sidebar-close" onClick={() => setShowSettings(false)} aria-label="Close settings">×</button>
         <div className="settings-section">
         <p>
           <strong>Model:</strong> {repoId} <span style={{fontSize:'0.9em', color: '#666'}}>(nemo128)</span>
@@ -1612,6 +1620,8 @@ export default function App() {
             </div>
           )}
         </div>
+        </div>
+        </>
       )}
 
       {showAdvancedInfo && memoryInfo && Object.keys(memoryInfo).length > 0 && (
@@ -1860,7 +1870,7 @@ export default function App() {
               const minConf = wordConfs.length > 0 ? Math.min(...wordConfs) : null;
               
               return (
-                <div className="history-item" key={trans.id}>
+                <div className={`history-item${trans.id === newestTranscriptionIdRef.current ? ' history-item-enter' : ''}`} key={trans.id}>
                   <div className="history-meta">
                     <strong>{truncateFilename(trans.filename)}</strong>
                     {showAdvancedInfo && (
