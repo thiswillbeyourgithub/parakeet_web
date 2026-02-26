@@ -356,7 +356,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [status, isRecording, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed]);
+  }, [status, isRecording, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed, recordingCountdown]);
 
   // Monitor memory usage and system strain
   useEffect(() => {
@@ -596,24 +596,18 @@ export default function App() {
       return;
     }
 
-    // Run the countdown while the mic stream stays open but idle.
-    setRecordingCountdown(2);
-    setStatus('Get ready to record... 2');
-
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Brief delay to let the mic hardware warm up before recording.
+    // Previously a 2s countdown, reduced now that the underlying bug is fixed.
     setRecordingCountdown(1);
-    setStatus('Get ready to record... 1');
+    setStatus('Starting recording...');
 
-    // Start recording ~100ms before the countdown visually hits 0.
-    // This gives the Opus codec just enough time to prime its internal
-    // buffer (~26.5ms lookahead) without capturing seconds of silence.
-    await new Promise(resolve => setTimeout(resolve, 900));
+    await new Promise(resolve => setTimeout(resolve, 250));
     await startRecordingActual(stream);
 
     setRecordingCountdown(0);
     setStatus('Recording starts now!');
 
-    await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause at 0
+    await new Promise(resolve => setTimeout(resolve, 100)); // Brief visual feedback at 0
     setRecordingCountdown(null);
   }
 
@@ -1257,21 +1251,43 @@ export default function App() {
   }
 
   // Low-RAM / mobile warning banner — dismissed per session via sessionStorage.
-  // Triggers when JS heap limit is below 2 GB (the model needs ~100-200 MB plus runtime overhead).
+  // Triggers when JS heap limit is below 3 GB (the model needs ~100-200 MB plus runtime overhead).
   // Falls back to navigator.deviceMemory (Chrome/Edge) or mobile UA sniffing when heap info
-  // is unavailable.
+  // is unavailable. Stores detected RAM info for display in the banner text.
+  const RAM_THRESHOLD_GB = 3;
+  const RAM_THRESHOLD_BYTES = RAM_THRESHOLD_GB * 1024 * 1024 * 1024;
+  const [lowRamInfo, setLowRamInfo] = useState(null); // { detectedGB, source }
   const [showLowRamBanner, setShowLowRamBanner] = useState(() => {
     if (typeof window !== 'undefined' && sessionStorage.getItem('parakeetweb_lowram_dismissed')) return false;
-    const TWO_GB = 2 * 1024 * 1024 * 1024;
     // Chrome exposes JS heap size limit — most reliable signal
     const heapLimit = performance?.memory?.jsHeapSizeLimit;
-    if (heapLimit !== undefined) return heapLimit < TWO_GB;
+    if (heapLimit !== undefined) {
+      const detectedGB = (heapLimit / 1024 / 1024 / 1024).toFixed(1);
+      // Cannot call setLowRamInfo during useState init — stored on ref below
+      window.__parakeet_lowram = { detectedGB, source: 'heap limit' };
+      return heapLimit < RAM_THRESHOLD_BYTES;
+    }
     // Chrome/Edge expose device RAM in GB
     const mem = navigator.deviceMemory;
-    if (mem !== undefined) return mem < 2;
+    if (mem !== undefined) {
+      window.__parakeet_lowram = { detectedGB: String(mem), source: 'device memory' };
+      return mem < RAM_THRESHOLD_GB;
+    }
     // Fallback: assume mobile devices are memory-constrained
-    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      window.__parakeet_lowram = { detectedGB: '?', source: 'mobile device' };
+      return true;
+    }
+    return false;
   });
+
+  // Populate lowRamInfo from the window scratch space set during useState init
+  useEffect(() => {
+    if (window.__parakeet_lowram) {
+      setLowRamInfo(window.__parakeet_lowram);
+      delete window.__parakeet_lowram;
+    }
+  }, []);
 
   const dismissLowRamBanner = () => {
     sessionStorage.setItem('parakeetweb_lowram_dismissed', '1');
@@ -1280,14 +1296,14 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Warning banner for devices that may not have enough RAM for the ~100-200 MB model */}
+      {/* Warning banner for devices with heap < 3 GB, showing detected RAM and threshold */}
       {showLowRamBanner && (
         <div style={{
           background: '#fef3c7', color: '#92400e', padding: '0.5rem 1rem',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           fontSize: '0.9rem', borderBottom: '1px solid #f59e0b',
         }}>
-          <span>⚠️ Your device may have limited memory. The speech recognition model (~100–200 MB) might fail to load.</span>
+          <span>⚠️ Your device may have limited memory{lowRamInfo ? ` (detected: ${lowRamInfo.detectedGB} GB ${lowRamInfo.source}, threshold: ${RAM_THRESHOLD_GB} GB)` : ''}. The speech recognition model (~100–200 MB) might fail to load.</span>
           <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#92400e', marginLeft: '0.5rem' }} aria-label="Dismiss">×</button>
         </div>
       )}
