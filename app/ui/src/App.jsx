@@ -318,7 +318,16 @@ export default function App() {
 
         case 'r':
         case ' ':
-          // Start recording (R or Space)
+        case 'enter':
+          // Before model is loaded: Space/Enter trigger model loading
+          if (!status.startsWith('Model ready ✔') && (key === ' ' || key === 'enter')) {
+            if (status.toLowerCase().includes('fail') || status === 'Idle') {
+              e.preventDefault();
+              loadModel();
+            }
+            break;
+          }
+          // After model is loaded: R/Space start recording
           e.preventDefault();
           if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
             startRecordingCountdown();
@@ -338,14 +347,6 @@ export default function App() {
           e.preventDefault();
           if (status.startsWith('Model ready ✔') && !isTranscribing && pendingAudioFile && audioPreviewUrl && !isProcessingPreview && !hasBeenTranscribed) {
             startTranscription();
-          }
-          break;
-
-        case 'l':
-          // Load model
-          e.preventDefault();
-          if (!status.startsWith('Model ready ✔') && (status.toLowerCase().includes('fail') || status === 'Idle')) {
-            loadModel();
           }
           break;
 
