@@ -1,5 +1,5 @@
 export { ParakeetModel } from './parakeet.js';
-export { getModelFile, getModelText, getParakeetModel } from './hub.js';
+export { getModelFile, getModelText, getParakeetModel, getLocalModelFile, HubDownloadError } from './hub.js';
 
 /**
  * Convenience factory to load from a local path.

@@ -1,10 +1,26 @@
 /**
  * Simplified HuggingFace Hub utilities for parakeet.js
  * Downloads models from HF and caches them in browser storage.
+ * Supports an optional local fallback: if HuggingFace is unreachable
+ * (firewalled, blocked, etc.), callers can provide a local base URL
+ * from which the same model files are served.
  */
 
 import { MODELS, getModelConfig } from './models.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
+
+/**
+ * Custom error for HuggingFace download failures, so the UI can
+ * distinguish "HF is blocked" from other errors and offer a fallback.
+ */
+export class HubDownloadError extends Error {
+  constructor(filename, cause) {
+    super(`Failed to download ${filename} from HuggingFace`);
+    this.name = 'HubDownloadError';
+    this.filename = filename;
+    this.cause = cause;
+  }
+}
 
 const DB_NAME = 'parakeet-cache-db';
 const STORE_NAME = 'file-store';
@@ -109,9 +125,16 @@ export async function getModelFile(repoId, filename, options = {}) {
   
   // Download from HF
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${filename}: ${response.status} ${response.statusText}`);
+  let response;
+  try {
+    response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+  } catch (fetchErr) {
+    // Wrap in HubDownloadError so the UI can detect HF-specific failures
+    // (network errors, CORS blocks, firewalls, HTTP errors, etc.)
+    throw new HubDownloadError(filename, fetchErr);
   }
   
   // Stream with progress
@@ -166,6 +189,72 @@ export async function getModelText(repoId, filename, options = {}) {
 }
 
 /**
+ * Download a file from a local server path (fallback when HuggingFace is unreachable).
+ * Uses the same IndexedDB caching and progress streaming as getModelFile.
+ * Files are expected at <baseUrl>/<repoId>/<filename>.
+ * @param {string} baseUrl Local base URL (e.g., '/models')
+ * @param {string} repoId Repo ID — used as subfolder path on the local server
+ * @param {string} filename File to download
+ * @param {Object} [options]
+ * @param {Function} [options.progress] Progress callback
+ * @returns {Promise<string>} Blob URL to the downloaded file
+ */
+export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
+  const { progress } = options;
+
+  // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
+  const cacheKey = `hf-${repoId}-main--${filename}`;
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      const cachedBlob = await getFileFromDb(cacheKey);
+      if (cachedBlob) {
+        console.log(`[Hub:local] Using cached ${filename} from IndexedDB`);
+        return URL.createObjectURL(cachedBlob);
+      }
+    } catch (e) {
+      console.warn('[Hub:local] IndexedDB cache check failed:', e);
+    }
+  }
+
+  const url = `${baseUrl}/${repoId}/${filename}`;
+  console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Local fallback failed for ${filename}: ${response.status} ${response.statusText}`);
+  }
+
+  // Stream with progress (same logic as getModelFile)
+  const contentLength = response.headers.get('content-length');
+  const total = contentLength ? parseInt(contentLength) : 0;
+  let loaded = 0;
+  const reader = response.body.getReader();
+  const chunks = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    if (progress && total > 0) {
+      progress({ loaded, total, file: filename });
+    }
+  }
+
+  const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
+
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      await saveFileToDb(cacheKey, blob);
+      console.log(`[Hub:local] Cached ${filename} in IndexedDB`);
+    } catch (e) {
+      console.warn('[Hub:local] Failed to cache in IndexedDB:', e);
+    }
+  }
+
+  return URL.createObjectURL(blob);
+}
+
+/**
  * Convenience function to get all Parakeet model files for a given architecture.
  * Accepts either a HuggingFace repo ID or a known model key from the registry.
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
@@ -178,6 +267,8 @@ export async function getModelText(repoId, filename, options = {}) {
  *   'onnx' downloads the preprocessor ONNX model from the repo.
  * @param {('webgpu'|'webgpu-hybrid'|'webgpu-strict'|'wasm')} [options.backend='webgpu'] Backend mode
  * @param {(progress: {loaded: number, total: number, file: string}) => void} [options.progress] Progress callback
+ * @param {string} [options.localFallbackBaseUrl] When set, download files from this local
+ *   base URL instead of HuggingFace (e.g., '/models'). Used as a fallback when HF is blocked.
  * @returns {Promise<{urls: {encoderUrl: string, decoderUrl: string, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
  */
 export async function getParakeetModel(repoIdOrModelKey, options = {}) {
@@ -188,7 +279,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl } = options;
 
   // Decide quantisation per component
   let encoderQ = encoderQuant;
@@ -206,7 +297,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const encoderName = `encoder-model${encoderSuffix}`;
   const decoderName = `decoder_joint-model${decoderSuffix}`;
 
-  const repoFiles = await listRepoFiles(repoId, options.revision || 'main');
+  // When using local fallback, skip the HF API call (it would fail anyway).
+  // In local mode we optimistically try .data files and let 404s be caught below.
+  const repoFiles = localFallbackBaseUrl
+    ? [`${encoderName}.data`, `${decoderName}.data`]  // optimistic — caught as optional below
+    : await listRepoFiles(repoId, options.revision || 'main');
 
   const filesToGet = [
     { key: 'encoderUrl', name: encoderName },
@@ -247,7 +342,12 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   for (const { key, name } of filesToGet) {
     try {
         const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
-        results.urls[key] = await getModelFile(repoId, name, { ...options, progress: wrappedProgress });
+        if (localFallbackBaseUrl) {
+          // Local fallback mode: download from the instance instead of HuggingFace
+          results.urls[key] = await getLocalModelFile(localFallbackBaseUrl, repoId, name, { progress: wrappedProgress });
+        } else {
+          results.urls[key] = await getModelFile(repoId, name, { ...options, progress: wrappedProgress });
+        }
     } catch (e) {
         if (key.endsWith('DataUrl')) {
             console.warn(`[Hub] Optional external data file not found: ${name}. This is expected if the model is small.`);
