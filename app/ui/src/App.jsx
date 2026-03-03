@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition } from 'react';
-import { ParakeetModel, getParakeetModel, HubDownloadError } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
 import './App.css';
 
 // Simple help icon component with click-based tooltip
@@ -140,6 +140,8 @@ export default function App() {
   const localFallbackEnabled = import.meta.env.VITE_LOCAL_MODEL_FALLBACK === 'true';
   // Tracks whether we should show the "HF blocked, try local?" prompt
   const [showFallbackPrompt, setShowFallbackPrompt] = useState(false);
+  // Warning message when local fallback is enabled but model files are missing
+  const [fallbackWarning, setFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [isPending, startTransition] = useTransition();
@@ -298,6 +300,20 @@ export default function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
+
+  // When local fallback is enabled, verify model files are actually present
+  // on the server so the admin gets early feedback about misconfiguration.
+  useEffect(() => {
+    if (!localFallbackEnabled) return;
+    checkLocalModelFiles('/models', repoId).then((result) => {
+      if (result.ok) {
+        console.log('[App] Local fallback check passed:', result.message);
+      } else {
+        console.warn('[App] Local fallback check failed:', result.message);
+        setFallbackWarning(result.message);
+      }
+    });
+  }, [localFallbackEnabled, repoId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1833,6 +1849,16 @@ export default function App() {
         <div className="progress-wrapper">
           <div className="progress-bar"><div style={{ width: `${progressPct}%` }} /></div>
           <p className="progress-text">{progressText}</p>
+        </div>
+      )}
+
+      {/* Warning banner: local fallback is enabled but model files are missing */}
+      {fallbackWarning && (
+        <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
+          <p>⚠ {fallbackWarning}</p>
+          <button onClick={() => setFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
+            Dismiss
+          </button>
         </div>
       )}
 

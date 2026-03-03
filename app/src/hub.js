@@ -255,6 +255,40 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 }
 
 /**
+ * Verify that local fallback model files are accessible on the server.
+ * Performs a HEAD request against a small, required file (vocab.txt) to confirm
+ * the model directory is properly set up. Call this at startup when local
+ * fallback is enabled so the admin gets early feedback about missing files.
+ *
+ * @param {string} baseUrl Local base URL (e.g., '/models')
+ * @param {string} repoId Repo ID — used as subfolder path
+ * @returns {Promise<{ok: boolean, message: string}>} Result with ok=true if the
+ *   file is reachable, or ok=false with a descriptive message otherwise.
+ */
+export async function checkLocalModelFiles(baseUrl, repoId) {
+  // vocab.txt is small and always required — a good canary file.
+  const testFile = 'vocab.txt';
+  const url = `${baseUrl}/${repoId}/${testFile}`;
+
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    if (res.ok) {
+      return { ok: true, message: 'Local model files are accessible.' };
+    }
+    return {
+      ok: false,
+      message: `Local fallback is enabled but ${testFile} returned ${res.status}. `
+        + `Make sure model files are placed in public/models/${repoId}/.`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      message: `Local fallback is enabled but could not reach ${url}: ${e.message}`,
+    };
+  }
+}
+
+/**
  * Convenience function to get all Parakeet model files for a given architecture.
  * Accepts either a HuggingFace repo ID or a known model key from the registry.
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
