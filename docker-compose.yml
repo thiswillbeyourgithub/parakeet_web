@@ -39,6 +39,10 @@ services:
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
+      # Enable to allow downloading model weights from this instance as a fallback
+      # when HuggingFace is blocked or unreachable. Place ONNX files in
+      # app/ui/public/models/<repo-name>/ (e.g. app/ui/public/models/istupakov/parakeet-tdt-0.6b-v3-onnx/)
+      # - VITE_LOCAL_MODEL_FALLBACK=true
 
 volumes:
   root-node-modules:
