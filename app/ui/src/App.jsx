@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition } from 'react';
-import { ParakeetModel, getParakeetModel } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, HubDownloadError } from 'parakeet.js';
 import './App.css';
 
 // Simple help icon component with click-based tooltip
@@ -135,6 +135,11 @@ function truncateFilename(filename, maxLength = 40) {
 
 export default function App() {
   const repoId = import.meta.env.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
+  // Whether the instance can serve model weights locally (under /models/) as
+  // a fallback when HuggingFace is blocked or unreachable.
+  const localFallbackEnabled = import.meta.env.VITE_LOCAL_MODEL_FALLBACK === 'true';
+  // Tracks whether we should show the "HF blocked, try local?" prompt
+  const [showFallbackPrompt, setShowFallbackPrompt] = useState(false);
   const [backend, setBackend] = useState('wasm');
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [isPending, startTransition] = useTransition();
@@ -480,7 +485,13 @@ export default function App() {
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { if (settingsLoaded) saveSetting('transcriptions', transcriptions); }, [transcriptions, settingsLoaded]);
 
-  async function loadModel() {
+  /**
+   * Load model weights and create an ONNX inference session.
+   * @param {Object} [opts]
+   * @param {boolean} [opts.useLocalFallback=false] When true, download weights
+   *   from this instance (/models/) instead of HuggingFace.
+   */
+  async function loadModel({ useLocalFallback = false } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');
@@ -488,6 +499,7 @@ export default function App() {
       modelRef.current = null;
     }
 
+    setShowFallbackPrompt(false);
     setStatus('Loading model…');
     // Collapse the info panel once model loading begins
     setShowInfo(false);
@@ -503,13 +515,19 @@ export default function App() {
         setProgressPct(pct);
       };
 
-      // 1. Download all model files from HuggingFace Hub
-      const modelUrls = await getParakeetModel(repoId, { 
+      // 1. Download all model files (from HF or local fallback)
+      const downloadOpts = {
         encoderQuant,
         decoderQuant,
         preprocessor,
-        progress: progressCallback 
-      });
+        progress: progressCallback,
+      };
+      if (useLocalFallback) {
+        // Serve weights from this instance under /models/<repoId>/
+        downloadOpts.localFallbackBaseUrl = '/models';
+        console.log('[App] Using local fallback for model download');
+      }
+      const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
       // Show compiling sessions stage
       setStatus('Creating sessions…');
@@ -529,45 +547,22 @@ export default function App() {
         nMels,
       });
 
-      // 3. Warm-up and verify (commented out - skipping verification)
-      // setStatus('Warming up & verifying…');
-      // setProgressText('Running a test transcription…');
-      // const expectedText = 'it is not life as we know or understand it';
-      // 
-      // try {
-      //   const audioRes = await fetch('/assets/life_Jim.wav');
-      //   const buf = await audioRes.arrayBuffer();
-      //   const audioCtx = new AudioContext({ sampleRate: 16000 });
-      //   const decoded = await audioCtx.decodeAudioData(buf);
-      //   const pcm = decoded.getChannelData(0);
-      //   
-      //   const { utterance_text } = await modelRef.current.transcribe(pcm, 16000);
-      //
-      //   // Normalize both texts: lowercase and remove punctuation
-      //   const normalize = (str) => str.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"");
-      //
-      //   if (normalize(utterance_text).includes(normalize(expectedText))) {
-      //     console.log('[App] Model verification successful.');
-      //     setStatus('Model ready ✔');
-      //   } else {
-      //     console.warn(`[App] Model verification mismatch - Expected: "${expectedText}", Got: "${utterance_text}"`);
-      //     console.warn('[App] Proceeding anyway - please verify results meet your needs.');
-      //     setStatus('Model ready ✔ (verification mismatch - check console)');
-      //   }
-      // } catch (err) {
-      //   console.error('[App] Warm-up transcription failed', err);
-      //   console.warn('[App] Proceeding anyway - model may still work for your use case.');
-      //   setStatus('Model ready ✔ (warm-up failed - check console)');
-      // }
-
       console.timeEnd('LoadModel');
       setStatus('Model ready ✔');
       setProgressText('');
       setProgressPct(null);
     } catch (e) {
       console.error(e);
-      setStatus(`Failed: ${e.message}`);
-      setProgress('');
+      // If HuggingFace is blocked and local fallback is available, prompt the user
+      if (e instanceof HubDownloadError && localFallbackEnabled && !useLocalFallback) {
+        setStatus('HuggingFace appears unreachable');
+        setProgressText('');
+        setProgressPct(null);
+        setShowFallbackPrompt(true);
+      } else {
+        setStatus(`Failed: ${e.message}`);
+        setProgress('');
+      }
     }
   }
 
@@ -1838,6 +1833,29 @@ export default function App() {
         <div className="progress-wrapper">
           <div className="progress-bar"><div style={{ width: `${progressPct}%` }} /></div>
           <p className="progress-text">{progressText}</p>
+        </div>
+      )}
+
+      {/* Fallback prompt: shown when HuggingFace is unreachable and
+          the instance has local model weights available */}
+      {showFallbackPrompt && (
+        <div className="fallback-prompt">
+          <p>
+            Could not reach HuggingFace to download model weights.
+            {localFallbackEnabled
+              ? ' This instance has a local copy of the weights — would you like to use it instead?'
+              : ' Local fallback is not enabled on this instance.'}
+          </p>
+          {localFallbackEnabled && (
+            <div className="fallback-actions">
+              <button onClick={() => loadModel({ useLocalFallback: true })}>
+                Download from this server
+              </button>
+              <button onClick={() => setShowFallbackPrompt(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       )}
 
