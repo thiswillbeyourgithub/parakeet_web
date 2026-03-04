@@ -20,6 +20,8 @@ services:
       - ./app:/app:ro
       - ./app/package-lock.json:/app/package-lock.json:rw
       - ./app/ui:/app/ui:rw
+      # Uncomment to enable local model fallback (see fallback_models/download_hf_model)
+      # - ./fallback_models:/app/ui/public/models:ro
 
       # Named volumes for node_modules to avoid platform conflicts
       - root-node-modules:/app/node_modules
@@ -39,9 +41,10 @@ services:
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
-      # Enable to allow downloading model weights from this instance as a fallback
-      # when HuggingFace is blocked or unreachable. Place ONNX files in
-      # app/ui/public/models/<repo-name>/ (e.g. app/ui/public/models/istupakov/parakeet-tdt-0.6b-v3-onnx/)
+      # Local model fallback: serve model weights from this instance when
+      # HuggingFace is blocked or unreachable. To use:
+      #   1. Run: cd fallback_models && ./download_hf_model --repo istupakov/parakeet-tdt-0.6b-v3-onnx
+      #   2. Uncomment the volume and env var below
       # - VITE_LOCAL_MODEL_FALLBACK=true
 
 volumes:

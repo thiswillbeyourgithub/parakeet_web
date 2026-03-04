@@ -36,6 +36,24 @@ sudo docker compose up
 
 3. Then visit `http://localhost:5173`
 
+## Local Model Fallback
+
+If HuggingFace is blocked or unreachable in your environment, you can serve model weights directly from the container:
+
+```bash
+# 1. Download the model files locally
+cd fallback_models
+./download_hf_model --repo istupakov/parakeet-tdt-0.6b-v3-onnx
+
+# 2. In docker-compose.yml, uncomment the volume bind:
+#   - ./fallback_models:/app/ui/public/models:ro
+
+# 3. In your .env, enable the fallback:
+VITE_LOCAL_MODEL_FALLBACK=true
+```
+
+The download script requires `huggingface-cli` (`pip install huggingface-hub`). The downloaded files are git-ignored.
+
 ## License
 
 AGPLv3 – See LICENSE file

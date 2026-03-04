@@ -14,3 +14,6 @@ scripts/
 data
 deploy.sh
 CLAUDE.md
+
+# Downloaded model files (keep the script and .gitkeep)
+fallback_models/*/
