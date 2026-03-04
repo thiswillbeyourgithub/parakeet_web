@@ -114,7 +114,7 @@ async function clearAllSettings() {
 }
 
 // Keep in sync with package.json version when bumping
-const VERSION = '1.9.0';
+const VERSION = '1.12.0';
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -309,8 +309,13 @@ export default function App() {
       if (result.ok) {
         console.log('[App] Local fallback check passed:', result.message);
       } else {
-        console.warn('[App] Local fallback check failed:', result.message);
-        setFallbackWarning(result.message);
+        const msg = `Local model fallback is enabled but model files are missing. `
+          + `Download them first:\n\n`
+          + `  hf download ${repoId} --local-dir ./fallback_models/${repoId.replace('/', '__')}\n\n`
+          + `Then uncomment the volume bind in docker-compose.yml and restart.`;
+        console.error('[App] FATAL:', msg);
+        setFallbackWarning(msg);
+        throw new Error(msg);
       }
     });
   }, [localFallbackEnabled, repoId]);
