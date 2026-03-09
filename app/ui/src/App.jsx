@@ -1174,6 +1174,12 @@ export default function App() {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+
+    // Auto-transcribe the uploaded file if the setting is enabled
+    if (autoTranscribeRef.current) {
+      await processAudioFile(file);
+      setHasBeenTranscribed(true);
+    }
   }
 
   function clearPendingAudio() {
