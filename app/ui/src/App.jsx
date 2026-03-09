@@ -162,6 +162,9 @@ export default function App() {
   const [frameStride, setFrameStride] = useState(1);
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident
   const [temperature, setTemperature] = useState(0.0);
+  // Chunking: split long audio into smaller segments before transcribing
+  const [enableChunking, setEnableChunking] = useState(true);
+  const [chunkDuration, setChunkDuration] = useState(60); // seconds
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -251,6 +254,8 @@ export default function App() {
           loadSetting('autoTranscribe', true),
           loadSetting('autoCopyToClipboard', true),
           loadSetting('showAdvancedInfo', false),
+          loadSetting('enableChunking', true),
+          loadSetting('chunkDuration', 60),
         ]);
 
         setBackend(savedBackend);
@@ -269,6 +274,8 @@ export default function App() {
         setAutoTranscribe(savedAutoTranscribe);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
         setShowAdvancedInfo(savedShowAdvancedInfo);
+        setEnableChunking(savedEnableChunking);
+        setChunkDuration(savedChunkDuration);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -502,6 +509,8 @@ export default function App() {
   useEffect(() => { if (settingsLoaded) saveSetting('showConfidenceHeatmap', showConfidenceHeatmap); }, [showConfidenceHeatmap, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('autoTranscribe', autoTranscribe); }, [autoTranscribe, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('autoCopyToClipboard', autoCopyToClipboard); }, [autoCopyToClipboard, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) saveSetting('enableChunking', enableChunking); }, [enableChunking, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) saveSetting('chunkDuration', chunkDuration); }, [chunkDuration, settingsLoaded]);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { if (settingsLoaded) saveSetting('transcriptions', transcriptions); }, [transcriptions, settingsLoaded]);
@@ -953,11 +962,12 @@ export default function App() {
 
       // Chunk large audio files to avoid "too many function arguments" error
       // This happens when audio is very long and internal operations hit JS engine limits
-      const MAX_CHUNK_DURATION = 60; // seconds
+      // Chunking can be toggled off to send full audio to the model in one pass
+      const MAX_CHUNK_DURATION = chunkDuration; // seconds (user-configurable)
       const MAX_CHUNK_SAMPLES = MAX_CHUNK_DURATION * 16000;
-      
+
       let res;
-      if (pcm.length > MAX_CHUNK_SAMPLES) {
+      if (enableChunking && pcm.length > MAX_CHUNK_SAMPLES) {
         console.log(`[Transcribe] Audio is long (${(pcm.length / 16000).toFixed(1)}s), processing in chunks...`);
         
         // Process in chunks with overlap for better boundary handling
@@ -1505,6 +1515,30 @@ export default function App() {
                 onChange={e=>setTemperature(Number(e.target.value))}
                 style={{flexBasis: '100%', marginTop: '0.25rem'}}
               />
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
+                Chunk long audio
+                <InfoTooltip text="Split audio longer than the chunk duration into overlapping segments before transcribing. Disable to send the full audio to the model in one pass (may use more memory but avoids chunk boundary issues)." />
+              </label>
+              {enableChunking && (
+                <div style={{ marginTop: '0.25rem', width: '100%' }}>
+                  <span className="setting-label">
+                    Chunk duration: {chunkDuration}s
+                  </span>
+                  <input
+                    type="range"
+                    min="15"
+                    max="300"
+                    step="5"
+                    value={chunkDuration}
+                    onChange={e => setChunkDuration(Number(e.target.value))}
+                    style={{ flexBasis: '100%', marginTop: '0.25rem', width: '100%' }}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="setting-row">
