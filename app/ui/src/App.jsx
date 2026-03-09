@@ -1175,11 +1175,10 @@ export default function App() {
       fileInputRef.current.value = '';
     }
 
-    // Auto-transcribe the uploaded file if the setting is enabled
-    if (autoTranscribeRef.current) {
-      await processAudioFile(file);
-      setHasBeenTranscribed(true);
-    }
+    // Always transcribe uploaded files immediately — unlike recordings,
+    // there's no separate trigger to start transcription for file uploads.
+    await processAudioFile(file);
+    setHasBeenTranscribed(true);
   }
 
   function clearPendingAudio() {
