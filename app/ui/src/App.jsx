@@ -637,11 +637,17 @@ export default function App() {
       console.log('[Record] Microphone access granted');
       console.log('[Record] Actual mic settings:', settings);
 
-      // Use 48kHz AudioContext — matches most mic hardware natively.
+      // Create AudioContext matching the mic's actual sample rate.
+      // Some devices (e.g. Philips SpeechMike) use non-standard rates like 16kHz;
+      // forcing a different rate causes Firefox to throw
+      // "Connecting AudioNodes from AudioContexts with different sample-rate".
       // Raw PCM is captured via AudioWorklet, bypassing MediaRecorder's Opus codec
       // entirely. This eliminates the ~26.5ms Opus priming delay that garbled
       // the first word of recordings.
-      const audioCtx = new AudioContext({ sampleRate: 48000 });
+      // The downstream resample step (stopRecording) converts to 16kHz for the model.
+      const micSampleRate = settings.sampleRate || 48000;
+      console.log(`[Record] Creating AudioContext at mic sample rate: ${micSampleRate}Hz`);
+      const audioCtx = new AudioContext({ sampleRate: micSampleRate });
 
       await audioCtx.audioWorklet.addModule('pcm-recorder-worklet.js');
       console.log('[Record] AudioWorklet module registered');
@@ -733,24 +739,24 @@ export default function App() {
     const chunks = pcmChunksRef.current;
     pcmChunksRef.current = [];
     const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
-    const rawPcm48k = new Float32Array(totalSamples);
+    const rawPcm = new Float32Array(totalSamples);
     let offset = 0;
     for (const chunk of chunks) {
-      rawPcm48k.set(chunk, offset);
+      rawPcm.set(chunk, offset);
       offset += chunk.length;
     }
-    console.log(`[Record] Captured ${totalSamples} samples at 48kHz (${(totalSamples / 48000).toFixed(2)}s)`);
-
-    // Resample 48kHz → 16kHz mono via OfflineAudioContext
-    const targetSampleRate = 16000;
     const sourceSampleRate = audioContext?.sampleRate ?? 48000;
+    console.log(`[Record] Captured ${totalSamples} samples at ${sourceSampleRate}Hz (${(totalSamples / sourceSampleRate).toFixed(2)}s)`);
+
+    // Resample from mic native rate → 16kHz mono via OfflineAudioContext
+    const targetSampleRate = 16000;
     const offlineCtx = new OfflineAudioContext(
       1,
       Math.ceil((totalSamples / sourceSampleRate) * targetSampleRate),
       targetSampleRate
     );
     const buf = offlineCtx.createBuffer(1, totalSamples, sourceSampleRate);
-    buf.getChannelData(0).set(rawPcm48k);
+    buf.getChannelData(0).set(rawPcm);
     const src = offlineCtx.createBufferSource();
     src.buffer = buf;
     src.connect(offlineCtx.destination);
