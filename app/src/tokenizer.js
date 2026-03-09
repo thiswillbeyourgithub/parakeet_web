@@ -21,6 +21,7 @@ export class ParakeetTokenizer {
   constructor(id2token) {
     this.id2token = id2token;
     this.blankToken = '<blk>';
+    this.unkToken = '<unk>';
 
     // Dynamically find blank token ID from vocabulary instead of hardcoding 1024,
     // which would break for models with different vocab sizes.
@@ -70,6 +71,9 @@ export class ParakeetTokenizer {
       if (id === this.blankId) continue;
       const token = this.sanitizedTokens[id];
       if (token === undefined) continue;
+      // Skip <unk> tokens — the model emits these when it can't confidently
+      // decode a frame; including them produces unreadable "<unk><unk>..." output.
+      if (this.id2token[id] === this.unkToken) continue;
       tokens.push(token);
     }
 

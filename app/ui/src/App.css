@@ -459,6 +459,11 @@ button.primary:disabled {
   border-radius: 4px;
   border: 1px solid #e5e7eb;
   font-size: 0.9rem;
+  /* Ensure long unbroken strings (e.g. repeated tokens) wrap instead of
+     overflowing the container horizontally */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 
 /* Help icon styles */

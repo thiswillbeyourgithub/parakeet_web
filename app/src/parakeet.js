@@ -443,6 +443,7 @@ export class ParakeetModel {
     ids.forEach((tokId, i) => {
       const raw = this.tokenizer.id2token[tokId];
       if (raw === this.tokenizer.blankToken) return;
+      if (raw === this.tokenizer.unkToken) return;
 
       const isWordStart = raw.startsWith('▁');
       const cleanTok = isWordStart ? raw.slice(1) : raw;
