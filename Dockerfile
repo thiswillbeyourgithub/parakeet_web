@@ -1,30 +1,32 @@
-FROM node:20-alpine
-
 # Optional: bake a HuggingFace model into the image so the container can serve
 # weights locally when HuggingFace is unreachable.  When set, the build will
 # fail immediately if the download fails — no silent missing-model surprises.
 # Example: FALLBACK_MODEL_REPO=istupakov/parakeet-tdt-0.6b-v3-onnx
 ARG FALLBACK_MODEL_REPO=""
 
-# Download the model at build time (runs as root so we can install pip).
-# The entire python3/pip layer is removed afterwards to keep the image lean.
-# Files land in /fallback_models/<org>/<repo>/ mirroring the repo ID path the
-# frontend expects under /models/.
+# ---------- Stage 1: download model (only when FALLBACK_MODEL_REPO is set) ---
+# Uses a python image where huggingface-hub installs cleanly, then we copy
+# only the downloaded files into the final node image — zero python bloat.
+FROM python:3.12-alpine AS model-downloader
+ARG FALLBACK_MODEL_REPO=""
 RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       set -e; \
-      apk add --no-cache python3 py3-pip; \
-      python3 -m pip install --break-system-packages huggingface-hub; \
-      # Convert "org/repo" → directory path and download
+      pip install --no-cache-dir huggingface-hub; \
       mkdir -p "/fallback_models/${FALLBACK_MODEL_REPO}"; \
-      python3 -m huggingface_hub.commands.huggingface_cli download "$FALLBACK_MODEL_REPO" \
+      huggingface-cli download "$FALLBACK_MODEL_REPO" \
         --local-dir "/fallback_models/${FALLBACK_MODEL_REPO}"; \
       # Sanity check: vocab.txt must exist (same file the UI checks at startup)
       test -f "/fallback_models/${FALLBACK_MODEL_REPO}/vocab.txt" \
         || { echo "ERROR: vocab.txt not found after download — model may be invalid"; exit 1; }; \
-      # Clean up python to save image space
-      apk del python3 py3-pip; \
-      rm -rf /root/.cache /tmp/*; \
+    else \
+      mkdir -p /fallback_models; \
     fi
+
+# ---------- Stage 2: final image ----------------------------------------
+FROM node:20-alpine
+
+# Copy downloaded model files (empty dir if FALLBACK_MODEL_REPO was not set)
+COPY --from=model-downloader /fallback_models /fallback_models
 
 # Run as non-root user
 USER node
