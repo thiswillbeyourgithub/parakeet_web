@@ -358,16 +358,26 @@ export class ParakeetModel {
       const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, prevTok, decoderState);
 
       // Temperature scaling & argmax
+      // When temperature is 0 (or near-zero), use pure argmax without division
+      // to avoid Infinity/NaN from division by zero, which would always select
+      // index 0 (<unk> in SentencePiece vocabularies).
+      const useTemp = temperature > 1e-8;
       let maxVal = -Infinity, maxId = 0;
       for (let i = 0; i < tokenLogits.length; i++) {
-        const v = tokenLogits[i] / temperature;
+        const v = useTemp ? tokenLogits[i] / temperature : tokenLogits[i];
         if (v > maxVal) { maxVal = v; maxId = i; }
       }
-      let sumExp = 0;
-      for (let i = 0; i < tokenLogits.length; i++) {
-        sumExp += Math.exp((tokenLogits[i] / temperature) - maxVal);
+      let confVal;
+      if (useTemp) {
+        let sumExp = 0;
+        for (let i = 0; i < tokenLogits.length; i++) {
+          sumExp += Math.exp((tokenLogits[i] / temperature) - maxVal);
+        }
+        confVal = 1 / sumExp;
+      } else {
+        // At temperature=0, the model is fully greedy — confidence is 1.0
+        confVal = 1.0;
       }
-      const confVal = 1 / sumExp;
       frameConfs.push(confVal);
       overallLogProb += Math.log(confVal);
 
