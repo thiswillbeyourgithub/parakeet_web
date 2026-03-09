@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Set to a HuggingFace repo ID (e.g. istupakov/parakeet-tdt-0.6b-v3-onnx)
+        # to bake model weights into the image.  The build will fail if the
+        # download fails, giving you immediate feedback.
+        FALLBACK_MODEL_REPO: ${FALLBACK_MODEL_REPO:-}
     container_name: parakeetweb
     user: node
     working_dir: /app
@@ -20,8 +25,8 @@ services:
       - ./app:/app:ro
       - ./app/package-lock.json:/app/package-lock.json:rw
       - ./app/ui:/app/ui:rw
-      # Uncomment to enable local model fallback (see README.md)
-      # - ./fallback_models/istupakov__parakeet-tdt-0.6b-v3-onnx:/app/ui/public/models/istupakov/parakeet-tdt-0.6b-v3-onnx:ro
+      # Local model fallback: no manual volume mount needed when using
+      # FALLBACK_MODEL_REPO build arg — the entrypoint symlinks automatically.
 
       # Named volumes for node_modules to avoid platform conflicts
       - root-node-modules:/app/node_modules
@@ -41,11 +46,9 @@ services:
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
-      # Local model fallback: serve model weights from this instance when
-      # HuggingFace is blocked or unreachable. To use:
-      #   1. hf download istupakov/parakeet-tdt-0.6b-v3-onnx --local-dir ./fallback_models/istupakov__parakeet-tdt-0.6b-v3-onnx
-      #   2. Uncomment the volume and env var below
-      # - VITE_LOCAL_MODEL_FALLBACK=true
+      # Local model fallback: auto-enabled when FALLBACK_MODEL_REPO is set.
+      # Can also be forced on/off explicitly.
+      - VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-${FALLBACK_MODEL_REPO:+true}}
 
 volumes:
   root-node-modules:
