@@ -191,6 +191,10 @@ export default function App() {
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState(null);
+  // Tracks which history item has its kebab menu open (by transcription id)
+  const [openKebabId, setOpenKebabId] = useState(null);
+  // Tracks which history item is showing its confidence score overlay
+  const [showConfidenceId, setShowConfidenceId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -1265,6 +1269,24 @@ export default function App() {
     }
   }
 
+  // Remove a single transcription entry from the list
+  function deleteTranscription(id) {
+    setTranscriptions(prev => prev.filter(t => t.id !== id));
+    setOpenKebabId(null);
+  }
+
+  // Close kebab menu when clicking outside
+  useEffect(() => {
+    if (openKebabId === null) return;
+    const handleClick = () => setOpenKebabId(null);
+    // Delay listener so the opening click doesn't immediately close it
+    const timer = setTimeout(() => document.addEventListener('click', handleClick), 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('click', handleClick);
+    };
+  }, [openKebabId]);
+
   // Adaptive confidence color mapping per transcript
   // Maps confidence to a red gradient: lowest confidence = most red, 100% = transparent
   // Uses 80% threshold: if min confidence >= 80%, colors are less intense
@@ -1984,7 +2006,7 @@ export default function App() {
                           const confidences = trans.words.map(w => w.confidence).filter(c => c != null);
                           const minConf = confidences.length > 0 ? Math.min(...confidences) : 0;
                           const maxConf = confidences.length > 0 ? Math.max(...confidences) : 1;
-                          
+
                           return trans.words.map((word, i) => (
                             <span
                               key={i}
@@ -2007,14 +2029,38 @@ export default function App() {
                         trans.text
                       )}
                     </div>
-                    <button
-                      onClick={() => copyHistoryItem(trans)}
-                      className="copy-button copy-button-small"
-                      title={copiedHistoryId === trans.id ? 'Copied!' : 'Copy to clipboard'}
-                      aria-label="Copy to clipboard"
-                    >
-                      {copiedHistoryId === trans.id ? '✓' : '📋'}
-                    </button>
+                    {/* Confidence score overlay shown when toggled via kebab menu */}
+                    {showConfidenceId === trans.id && avgConf !== null && (
+                      <div className="confidence-overlay">
+                        Avg: {(avgConf * 100).toFixed(1)}% &nbsp;|&nbsp; Min: {(minConf * 100).toFixed(1)}%
+                      </div>
+                    )}
+                    {/* Kebab (three-dot) menu for per-entry actions */}
+                    <div className="kebab-menu-wrapper">
+                      <button
+                        className="kebab-button"
+                        title="More actions"
+                        aria-label="More actions"
+                        onClick={(e) => { e.stopPropagation(); setOpenKebabId(openKebabId === trans.id ? null : trans.id); }}
+                      >
+                        ⋮
+                      </button>
+                      {openKebabId === trans.id && (
+                        <div className="kebab-dropdown">
+                          <button onClick={() => { copyHistoryItem(trans); setOpenKebabId(null); }}>
+                            {copiedHistoryId === trans.id ? '✓ Copied' : '📋 Copy text'}
+                          </button>
+                          {avgConf !== null && (
+                            <button onClick={() => { setShowConfidenceId(showConfidenceId === trans.id ? null : trans.id); setOpenKebabId(null); }}>
+                              📊 {showConfidenceId === trans.id ? 'Hide' : 'Show'} confidence
+                            </button>
+                          )}
+                          <button className="kebab-delete" onClick={() => deleteTranscription(trans.id)}>
+                            🗑️ Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

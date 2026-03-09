@@ -453,6 +453,22 @@ button.primary:disabled {
   pointer-events: auto;
 }
 
+/* Kebab button only visible on hover (like the old copy button) */
+.history-text-container .kebab-button {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.history-text-container:hover .kebab-button,
+.history-text-container .kebab-button[aria-expanded="true"] {
+  opacity: 1;
+}
+
+/* Keep kebab visible when its dropdown is open */
+.kebab-menu-wrapper:has(.kebab-dropdown) .kebab-button {
+  opacity: 1;
+}
+
 .history-text {
   background: #f9fafb;
   padding: 0.5rem 0.75rem;
@@ -464,6 +480,76 @@ button.primary:disabled {
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: normal;
+}
+
+/* Kebab (three-dot) menu for per-entry actions */
+.kebab-menu-wrapper {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+}
+
+.kebab-button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+  color: #9ca3af;
+  transition: color 0.15s, background 0.15s;
+}
+
+.kebab-button:hover {
+  color: #374151;
+  background: #f3f4f6;
+}
+
+.kebab-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  z-index: 20;
+  min-width: 170px;
+  overflow: hidden;
+}
+
+.kebab-dropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kebab-dropdown button:hover {
+  background: #f3f4f6;
+}
+
+.kebab-dropdown .kebab-delete:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+/* Confidence score overlay shown inline below the text */
+.confidence-overlay {
+  margin-top: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #0369a1;
+  display: inline-block;
 }
 
 /* Help icon styles */
