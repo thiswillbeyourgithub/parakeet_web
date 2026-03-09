@@ -16,8 +16,12 @@ RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       huggingface-cli download "$FALLBACK_MODEL_REPO" \
         --local-dir "/fallback_models/${FALLBACK_MODEL_REPO}"; \
       # Sanity check: vocab.txt must exist (same file the UI checks at startup)
-      test -f "/fallback_models/${FALLBACK_MODEL_REPO}/vocab.txt" \
-        || { echo "ERROR: vocab.txt not found after download — model may be invalid"; exit 1; }; \
+      if [ ! -f "/fallback_models/${FALLBACK_MODEL_REPO}/vocab.txt" ]; then \
+        echo "ERROR: vocab.txt not found in /fallback_models/${FALLBACK_MODEL_REPO}/"; \
+        echo "Directory contents:"; \
+        ls -lhR "/fallback_models/${FALLBACK_MODEL_REPO}/" 2>&1 || echo "(directory does not exist)"; \
+        exit 1; \
+      fi; \
     else \
       mkdir -p /fallback_models; \
     fi
