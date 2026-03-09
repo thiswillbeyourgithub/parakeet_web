@@ -13,16 +13,15 @@ ARG FALLBACK_MODEL_REPO=""
 RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       set -e; \
       apk add --no-cache python3 py3-pip; \
-      pip install --break-system-packages huggingface-hub; \
+      python3 -m pip install --break-system-packages huggingface-hub; \
       # Convert "org/repo" → directory path and download
       mkdir -p "/fallback_models/${FALLBACK_MODEL_REPO}"; \
-      huggingface-cli download "$FALLBACK_MODEL_REPO" \
+      python3 -m huggingface_hub.commands.huggingface_cli download "$FALLBACK_MODEL_REPO" \
         --local-dir "/fallback_models/${FALLBACK_MODEL_REPO}"; \
       # Sanity check: vocab.txt must exist (same file the UI checks at startup)
       test -f "/fallback_models/${FALLBACK_MODEL_REPO}/vocab.txt" \
         || { echo "ERROR: vocab.txt not found after download — model may be invalid"; exit 1; }; \
       # Clean up python to save image space
-      pip uninstall -y huggingface-hub; \
       apk del python3 py3-pip; \
       rm -rf /root/.cache /tmp/*; \
     fi
