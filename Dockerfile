@@ -3,12 +3,15 @@
 # fail immediately if the download fails — no silent missing-model surprises.
 # Example: FALLBACK_MODEL_REPO=istupakov/parakeet-tdt-0.6b-v3-onnx
 ARG FALLBACK_MODEL_REPO=""
+ARG HF_TOKEN=""
 
 # ---------- Stage 1: download model (only when FALLBACK_MODEL_REPO is set) ---
 # Uses a python image where huggingface-hub installs cleanly, then we copy
 # only the downloaded files into the final node image — zero python bloat.
 FROM python:3.12-alpine AS model-downloader
 ARG FALLBACK_MODEL_REPO=""
+ARG HF_TOKEN=""
+ENV HF_TOKEN=${HF_TOKEN}
 RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       set -e; \
       python3 -m ensurepip --upgrade 2>/dev/null || true; \
