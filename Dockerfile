@@ -11,10 +11,10 @@ FROM python:3.12-alpine AS model-downloader
 ARG FALLBACK_MODEL_REPO=""
 RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       set -e; \
-      python3 -m ensurepip --upgrade 2>/dev/null; \
+      python3 -m ensurepip --upgrade 2>/dev/null || true; \
       python3 -m pip install --no-cache-dir huggingface-hub; \
       mkdir -p "/fallback_models/${FALLBACK_MODEL_REPO}"; \
-      python3 -m huggingface_hub.commands.huggingface_cli download "$FALLBACK_MODEL_REPO" \
+      huggingface-cli download "$FALLBACK_MODEL_REPO" \
         --local-dir "/fallback_models/${FALLBACK_MODEL_REPO}"; \
       # Sanity check: vocab.txt must exist (same file the UI checks at startup)
       if [ ! -f "/fallback_models/${FALLBACK_MODEL_REPO}/vocab.txt" ]; then \
