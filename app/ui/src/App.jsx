@@ -650,22 +650,49 @@ export default function App() {
       console.log('[Record] Microphone access granted');
       console.log('[Record] Actual mic settings:', settings);
 
-      // Create AudioContext matching the mic's actual sample rate.
-      // Some devices (e.g. Philips SpeechMike) use non-standard rates like 16kHz;
-      // forcing a different rate causes Firefox to throw
-      // "Connecting AudioNodes from AudioContexts with different sample-rate".
-      // Raw PCM is captured via AudioWorklet, bypassing MediaRecorder's Opus codec
-      // entirely. This eliminates the ~26.5ms Opus priming delay that garbled
-      // the first word of recordings.
-      // The downstream resample step (stopRecording) converts to 16kHz for the model.
-      const micSampleRate = settings.sampleRate || 48000;
-      console.log(`[Record] Creating AudioContext at mic sample rate: ${micSampleRate}Hz`);
-      const audioCtx = new AudioContext({ sampleRate: micSampleRate });
+      // Try to create an AudioContext that matches the mic's actual sample rate.
+      // Some devices (e.g. Philips SpeechMike) use non-standard rates (16k, 22.05k, 44.1k)
+      // and connecting AudioNodes across mismatched sample rates throws an error.
+      // Strategy: try the reported rate first, then SpeechMike-specific rates, then
+      // fall back to the browser default and infer the actual rate from the context.
+      const reportedRate = settings.sampleRate;
+      const ratesToTry = [
+        reportedRate,           // what the browser reports (may be undefined/0)
+        16000, 22050, 44100,    // SpeechMike-specific rates
+        48000,                  // common default
+        undefined,              // browser default (no sampleRate option)
+      ].filter((r, i, a) => r && a.indexOf(r) === i); // dedupe, drop falsy
+      // Always include a browser-default fallback at the end
+      ratesToTry.push(undefined);
 
-      await audioCtx.audioWorklet.addModule('pcm-recorder-worklet.js');
-      console.log('[Record] AudioWorklet module registered');
+      let audioCtx = null;
+      let sourceNode = null;
+      const attempts = [];
+      console.log(`[Record] Will try sample rates: ${ratesToTry.map(r => r ?? 'browser-default').join(', ')}`);
+      for (const rate of ratesToTry) {
+        const label = rate ? `${rate}Hz` : 'browser-default';
+        try {
+          const opts = rate ? { sampleRate: rate } : undefined;
+          const ctx = new AudioContext(opts);
+          console.log(`[Record] Trying AudioContext at ${label} (actual: ${ctx.sampleRate}Hz)`);
+          await ctx.audioWorklet.addModule('pcm-recorder-worklet.js');
+          const src = ctx.createMediaStreamSource(stream);
+          audioCtx = ctx;
+          sourceNode = src;
+          attempts.push({ rate: label, actual: ctx.sampleRate, success: true });
+          console.log(`[Record] SUCCESS: AudioContext at ${ctx.sampleRate}Hz`);
+          break;
+        } catch (e) {
+          attempts.push({ rate: label, error: e.message });
+          console.warn(`[Record] FAILED at ${label}:`, e.message);
+        }
+      }
+      console.log('[Record] Sample rate attempts summary:', JSON.stringify(attempts, null, 2));
+      if (!audioCtx) {
+        const summary = attempts.map(a => `  ${a.rate}: ${a.error}`).join('\n');
+        throw new Error(`Could not create AudioContext at any sample rate.\nAttempts:\n${summary}`);
+      }
 
-      const sourceNode = audioCtx.createMediaStreamSource(stream);
       const workletNode = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
 
       // Accumulate raw PCM chunks from the worklet processor
