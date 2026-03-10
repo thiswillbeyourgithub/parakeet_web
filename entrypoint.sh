@@ -32,4 +32,4 @@ fi
 
 # Run npm install (picks up any new deps) then start the Vite dev server.
 # The CMD from Dockerfile/docker-compose is passed as arguments to this script.
-exec sh -c "$@ && cd ui && npm install && npm run dev -- --host 0.0.0.0"
+exec sh -c "$* && cd ui && npm install && npm run dev -- --host 0.0.0.0"
