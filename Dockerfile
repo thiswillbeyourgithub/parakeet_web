@@ -14,8 +14,7 @@ RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       python3 -m ensurepip --upgrade 2>/dev/null || true; \
       python3 -m pip install --no-cache-dir huggingface-hub; \
       mkdir -p "/fallback_models/${FALLBACK_MODEL_REPO}"; \
-      huggingface-cli download "$FALLBACK_MODEL_REPO" \
-        --local-dir "/fallback_models/${FALLBACK_MODEL_REPO}"; \
+      python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${FALLBACK_MODEL_REPO}', local_dir='/fallback_models/${FALLBACK_MODEL_REPO}')"; \ \
       # Sanity check: vocab.txt must exist (same file the UI checks at startup)
       if [ ! -f "/fallback_models/${FALLBACK_MODEL_REPO}/vocab.txt" ]; then \
         echo "ERROR: vocab.txt not found in /fallback_models/${FALLBACK_MODEL_REPO}/"; \
