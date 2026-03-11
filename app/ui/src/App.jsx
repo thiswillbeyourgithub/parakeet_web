@@ -175,6 +175,7 @@ export default function App() {
   
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false); // pause/resume support for long recordings
   const [recordingCountdown, setRecordingCountdown] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null); // legacy name kept for stopRecording guard
   const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
@@ -341,6 +342,14 @@ export default function App() {
 
       const key = e.key.toLowerCase();
 
+      // If recording, P toggles pause/resume
+      if (isRecording && key === 'p') {
+        e.preventDefault();
+        if (isPaused) resumeRecording();
+        else pauseRecording();
+        return;
+      }
+
       // If recording, R / S / Space all stop recording
       if ((isRecording || recordingCountdown !== null) && (key === 'r' || key === 's' || key === ' ')) {
         e.preventDefault();
@@ -396,7 +405,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [status, isRecording, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed, recordingCountdown]);
+  }, [status, isRecording, isPaused, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed, recordingCountdown]);
 
   // Monitor memory usage and system strain
   useEffect(() => {
@@ -757,7 +766,13 @@ export default function App() {
 
     console.log('[Record] Stopping recording...');
     setIsRecording(false);
+    setIsPaused(false);
     setAudioLevel(0);
+
+    // Resume AudioContext if paused, so cleanup and close work correctly
+    if (audioContext?.state === 'suspended') {
+      try { await audioContext.resume(); } catch (_) { /* ignore */ }
+    }
 
     // Stop level-monitor animation loop
     if (audioContext?._stopLevelMonitor) audioContext._stopLevelMonitor();
@@ -829,6 +844,69 @@ export default function App() {
       processAudioFile(file).then(() => {
         setHasBeenTranscribed(true);
       });
+    }
+  }
+
+  // Pause recording by suspending the AudioContext. The worklet stops receiving
+  // audio frames while suspended, so pcmChunksRef accumulation pauses too.
+  // The mic stream stays open so resume is instant (no re-negotiation).
+  async function pauseRecording() {
+    if (!isRecording || isPaused || !audioContext) return;
+    try {
+      // Stop level-monitor animation loop while paused
+      if (audioContext._stopLevelMonitor) audioContext._stopLevelMonitor();
+      await audioContext.suspend();
+      setIsPaused(true);
+      setAudioLevel(0);
+      setStatus('Recording paused ⏸');
+      console.log('[Record] Paused');
+    } catch (err) {
+      console.error('[Record] Failed to pause:', err);
+    }
+  }
+
+  // Resume a paused recording by resuming the AudioContext and restarting
+  // the level-monitor animation loop.
+  async function resumeRecording() {
+    if (!isRecording || !isPaused || !audioContext) return;
+    try {
+      await audioContext.resume();
+
+      // Restart level-monitor animation loop with a fresh `recording` flag
+      const analyser = audioContext.createAnalyser();
+      // Re-use the existing source node — it is still connected to the worklet.
+      // We need a new analyser because the old one's animation loop has stopped.
+      // The source → worklet connection is still intact; just tap the source again.
+      // mediaRecorder state slot holds the MediaStream
+      const stream = mediaRecorder;
+      if (stream) {
+        const src = audioContext.createMediaStreamSource(stream);
+        src.connect(analyser);
+      }
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.8;
+      const dataArray = new Uint8Array(analyser.fftSize);
+      let monitoring = true;
+      const updateLevel = () => {
+        analyser.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const normalized = (dataArray[i] - 128) / 128;
+          sum += normalized * normalized;
+        }
+        const rms = Math.sqrt(sum / dataArray.length);
+        const level = Math.min(100, rms * 250);
+        setAudioLevel(level);
+        if (monitoring) requestAnimationFrame(updateLevel);
+      };
+      updateLevel();
+      audioContext._stopLevelMonitor = () => { monitoring = false; };
+
+      setIsPaused(false);
+      setStatus('Recording... (click Stop to transcribe)');
+      console.log('[Record] Resumed');
+    } catch (err) {
+      console.error('[Record] Failed to resume:', err);
     }
   }
 
@@ -1832,18 +1910,40 @@ export default function App() {
         >
           📁 Send mp3
         </label>
-        <button
-          onClick={(isRecording || recordingCountdown !== null) ? stopRecording : startRecordingCountdown}
-          disabled={(!status.startsWith('Model ready ✔') && !isRecording && recordingCountdown === null) || isTranscribing}
-          className="primary record-button"
-          style={{
-            background: (isRecording || recordingCountdown !== null) ? '#ef4444' : '#10b981',
-            flex: 1
-          }}
-          data-umami-event="record_button"
-        >
-          {recordingCountdown !== null ? `⏱ Get Ready (${recordingCountdown})` : (isRecording ? '⏹ Stop Recording' : '🎤 Record Audio')}
-        </button>
+        {/* When recording, show Stop + Pause/Resume side by side; otherwise single Record button */}
+        {isRecording ? (
+          <>
+            <button
+              onClick={stopRecording}
+              className="primary record-button"
+              style={{ background: '#ef4444', flex: 1 }}
+              data-umami-event="stop_record_button"
+            >
+              ⏹ Stop
+            </button>
+            <button
+              onClick={isPaused ? resumeRecording : pauseRecording}
+              className="primary record-button"
+              style={{ background: isPaused ? '#10b981' : '#f59e0b', flex: 1 }}
+              data-umami-event="pause_record_button"
+            >
+              {isPaused ? '▶ Resume' : '⏸ Pause'}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
+            disabled={(!status.startsWith('Model ready ✔') && recordingCountdown === null) || isTranscribing}
+            className="primary record-button"
+            style={{
+              background: recordingCountdown !== null ? '#ef4444' : '#10b981',
+              flex: 1
+            }}
+            data-umami-event="record_button"
+          >
+            {recordingCountdown !== null ? `⏱ Get Ready (${recordingCountdown})` : '🎤 Record Audio'}
+          </button>
+        )}
       </div>
       
       {recordingCountdown !== null && (
@@ -1872,7 +1972,7 @@ export default function App() {
           fontSize: '0.9em',
           color: '#991b1b'
         }}>
-          🔴 Recording in progress... Click "Stop Recording" when done.
+          {isPaused ? '⏸ Recording paused. Click "Resume" to continue or "Stop" to finish.' : '🔴 Recording in progress... Click "Stop" when done, or "Pause" to take a break (P key).'}
           <div style={{ marginTop: '0.5rem' }}>
             <div style={{ 
               width: '100%', 
