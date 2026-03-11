@@ -2,6 +2,18 @@ import React, { useState, useRef, useEffect, useTransition } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
 import './App.css';
 
+// Dictation device support (Philips SpeechMike etc.) via WebHID.
+// Conditionally imported so the feature can be fully disabled via env var.
+const dictationEnabled = import.meta.env.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
+// Lazy-loaded on first use to avoid top-level await issues
+let _dictationLib = null;
+async function getDictationLib() {
+  if (!_dictationLib && dictationEnabled) {
+    _dictationLib = await import('dictation_support');
+  }
+  return _dictationLib;
+}
+
 // Simple help icon component with click-based tooltip
 function InfoTooltip({ text }) {
   const [isOpen, setIsOpen] = React.useState(false);
@@ -208,6 +220,10 @@ export default function App() {
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
   // Auto-transcribe: when enabled, transcription starts automatically after recording stops
   const [autoTranscribe, setAutoTranscribe] = useState(true);
+
+  // Dictation device (Philips SpeechMike) — WebHID connection state
+  const [dictationDevice, setDictationDevice] = useState(null); // connected device name or null
+  const dictationManagerRef = useRef(null);
 
   // Load settings from IndexedDB on mount
   useEffect(() => {
@@ -909,6 +925,106 @@ export default function App() {
       console.error('[Record] Failed to resume:', err);
     }
   }
+
+  // --- Dictation device (SpeechMike) integration ---
+  // Sets up a DictationDeviceManager, wires RECORD/STOP button events to the
+  // recording lifecycle, and stores the manager for cleanup.  The `isRecordingRef`
+  // / `isPausedRef` pattern avoids stale-closure issues inside the HID callback.
+  const isRecordingRef = useRef(isRecording);
+  const isPausedRef = useRef(isPaused);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+
+  // Initialise a DictationDeviceManager, register button listener, and
+  // optionally trigger the WebHID device-picker (requestDevice = true).
+  async function initDictationManager(requestDevice = false) {
+    if (!dictationEnabled) return;
+    // Avoid creating multiple managers
+    if (dictationManagerRef.current) return dictationManagerRef.current;
+
+    const lib = await getDictationLib();
+    if (!lib) return;
+    const { DictationDeviceManager, ButtonEvent } = lib;
+
+    const manager = new DictationDeviceManager();
+    await manager.init();
+
+    // Wire physical buttons to recording actions
+    manager.addButtonEventListener((_device, bitMask) => {
+      // RECORD pressed → toggle start / pause / resume
+      if (bitMask & ButtonEvent.RECORD) {
+        if (!isRecordingRef.current) {
+          startRecordingCountdown();
+        } else if (!isPausedRef.current) {
+          pauseRecording();
+        } else {
+          resumeRecording();
+        }
+      }
+      // STOP pressed → stop the current recording
+      if (bitMask & ButtonEvent.STOP) {
+        if (isRecordingRef.current) {
+          stopRecording();
+        }
+      }
+    });
+
+    // Update UI when a device is physically disconnected
+    manager.addDeviceDisconnectedEventListener(() => {
+      const remaining = manager.getDevices();
+      setDictationDevice(remaining.length > 0
+        ? (remaining[0].hidDevice.productName || 'Dictation device')
+        : null);
+    });
+
+    // Update UI when a new device is connected (e.g. re-plugged)
+    manager.addDeviceConnectedEventListener((device) => {
+      setDictationDevice(device.hidDevice.productName || 'Dictation device');
+    });
+
+    if (requestDevice) {
+      const devices = await manager.requestDevice();
+      if (devices.length > 0) {
+        setDictationDevice(devices[0].hidDevice.productName || 'Dictation device');
+      }
+    } else {
+      // Auto-reconnect: check for already-paired devices (no user gesture needed)
+      const devices = manager.getDevices();
+      if (devices.length > 0) {
+        setDictationDevice(devices[0].hidDevice.productName || 'Dictation device');
+      }
+    }
+
+    dictationManagerRef.current = manager;
+    return manager;
+  }
+
+  // User-triggered: opens the WebHID picker to pair a new device
+  async function connectDictationDevice() {
+    try {
+      const manager = dictationManagerRef.current || await initDictationManager(false);
+      if (!manager) return;
+      const devices = await manager.requestDevice();
+      if (devices.length > 0) {
+        setDictationDevice(devices[0].hidDevice.productName || 'Dictation device');
+      }
+    } catch (err) {
+      console.error('[Dictation] Failed to connect device:', err);
+    }
+  }
+
+  // Auto-reconnect previously paired devices on mount (no user gesture needed
+  // for devices the user already granted permission to).
+  useEffect(() => {
+    if (!dictationEnabled || !navigator.hid) return;
+    initDictationManager(false);
+    return () => {
+      if (dictationManagerRef.current) {
+        dictationManagerRef.current.shutdown().catch(console.error);
+        dictationManagerRef.current = null;
+      }
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Helper function to resample audio to 16kHz mono and create a WAV blob for preview
   async function resampleToPreview(file) {
@@ -1744,8 +1860,29 @@ export default function App() {
             </div>
           </div>
         
-          <button 
-            onClick={clearTranscriptions} 
+          {/* Dictation device (SpeechMike) connect button — only shown when
+              the feature is enabled and WebHID is available in this browser. */}
+          {dictationEnabled && typeof navigator !== 'undefined' && navigator.hid && (
+            <div className="setting-row" style={{ marginTop: '1rem' }}>
+              <button
+                onClick={connectDictationDevice}
+                style={{ width: '100%' }}
+                className="primary"
+              >
+                {dictationDevice
+                  ? `🎙 Connected: ${dictationDevice}`
+                  : '🎙 Connect Dictation Device'}
+              </button>
+              {dictationDevice && (
+                <p style={{ fontSize: '0.8rem', color: '#16a34a', margin: '0.25rem 0 0' }}>
+                  RECORD = start/pause/resume · STOP = stop recording
+                </p>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={clearTranscriptions}
             disabled={transcriptions.length === 0}
             style={{ marginTop: '1rem', width: '100%' }}
             className="primary"
