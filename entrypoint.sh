@@ -10,6 +10,20 @@
 
 set -e
 
+# Print detected environment variables so operators can verify configuration
+# at a glance in the container logs.
+echo "[entrypoint] === Environment variables ==="
+echo "[entrypoint] VITE_ALLOWED_HOST=${VITE_ALLOWED_HOST:-(not set)}"
+echo "[entrypoint] VITE_USE_POLLING=${VITE_USE_POLLING:-(not set)}"
+echo "[entrypoint] VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL:-(not set)}"
+echo "[entrypoint] VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID:-(not set)}"
+echo "[entrypoint] VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-(not set)}"
+echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
+echo "[entrypoint] VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-(not set)}"
+echo "[entrypoint] FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-(not set)}"
+echo "[entrypoint] HF_TOKEN=$([ -n "$HF_TOKEN" ] && echo '****(set)' || echo '(not set)')"
+echo "[entrypoint] =============================="
+
 # Wire up fallback model files via symlink if they exist.
 if [ -d /fallback_models ] && [ "$(ls -A /fallback_models 2>/dev/null)" ]; then
   echo "[entrypoint] Fallback model detected in /fallback_models — creating symlinks..."
