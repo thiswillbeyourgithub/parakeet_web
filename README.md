@@ -29,9 +29,11 @@ A running instance is available at **https://pw.olicorne.org/** (no installation
 ## Quick Start
 
 ```bash
-# 1.Modify .env.example into .env to set your own values
-# 2.Run the demo locally with Docker
-sudo docker compose up
+# 1. Copy the example env file and edit it with your own values
+cp docker/env.example docker/.env
+
+# 2. Run the demo locally with Docker
+sudo docker compose -f docker/docker-compose.yml up
 ```
 
 3. Then visit `http://localhost:5173`
@@ -45,10 +47,10 @@ If HuggingFace is blocked or unreachable in your environment, you can serve mode
 pip install huggingface-hub
 hf download istupakov/parakeet-tdt-0.6b-v3-onnx --local-dir ./fallback_models/istupakov__parakeet-tdt-0.6b-v3-onnx
 
-# 2. In docker-compose.yml, uncomment the volume bind:
+# 2. In docker/docker-compose.yml, uncomment the volume bind:
 #   - ./fallback_models/istupakov__parakeet-tdt-0.6b-v3-onnx:/app/ui/public/models/istupakov/parakeet-tdt-0.6b-v3-onnx:ro
 
-# 3. In your .env, enable the fallback:
+# 3. In docker/.env, enable the fallback:
 VITE_LOCAL_MODEL_FALLBACK=true
 ```
 

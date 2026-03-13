@@ -52,7 +52,7 @@ RUN npm install && \
     npm install
 
 # Copy the entrypoint script that sets up model symlinks before starting Vite
-COPY --chown=node:node entrypoint.sh /entrypoint.sh
+COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 
 # Expose Vite dev server port
 EXPOSE 5173
