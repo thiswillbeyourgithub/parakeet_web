@@ -1,5 +1,5 @@
 {
-  "name": "parakeet.js",
+  "name": "parakeet-web",
   "version": "1.15.0",
   "description": "NVIDIA Parakeet speech recognition for the browser (WebGPU/WASM) powered by ONNX Runtime Web.",
   "type": "module",
@@ -17,14 +17,14 @@
   "dependencies": {
     "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4"
   },
-  "author": "Yunus Seyhan Dede",
-  "license": "MIT",
-  "homepage": "https://github.com/ysdede/parakeet.js",
+  "author": "Olivier Cornelis",
+  "license": "AGPL-3.0",
+  "homepage": "https://github.com/thiswillbeyourgithub/parakeet_web/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ysdede/parakeet.js.git"
+    "url": "git+https://github.com/thiswillbeyourgithub/parakeet_web.git"
   },
   "bugs": {
-    "url": "https://github.com/ysdede/parakeet.js/issues"
+    "url": "https://github.com/thiswillbeyourgithub/parakeet_web/issues"
   }
 } 
