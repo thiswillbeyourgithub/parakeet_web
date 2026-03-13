@@ -20,7 +20,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /home/node/.npm
+      - /home/node/.npm:uid=1000,gid=1000
     volumes:
       # Mount the entire project for library access, with as little write access as possible
       - ./app:/app:ro
