@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "dictation_support": "file:../../dictation_support",
+    "dictation_support": "1.0.5",
     "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "parakeet.js": "^0.0.3",
     "react": "^18.2.0",
