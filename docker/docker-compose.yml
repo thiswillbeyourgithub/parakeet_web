@@ -9,6 +9,7 @@ services:
         # download fails, giving you immediate feedback.
         FALLBACK_MODEL_REPO: ${FALLBACK_MODEL_REPO:-}
         HF_TOKEN: ${HF_TOKEN:-}
+    restart: unless-stopped
     container_name: parakeetweb
     user: node
     working_dir: /app
