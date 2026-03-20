@@ -493,17 +493,17 @@ button.primary:disabled {
   background: none;
   border: 1px solid transparent;
   border-radius: 4px;
-  font-size: 1.2rem;
+  font-size: 1.5rem;
   line-height: 1;
   cursor: pointer;
-  padding: 0.15rem 0.4rem;
-  color: #9ca3af;
+  padding: 0.2rem 0.5rem;
+  color: #6b7280;
   transition: color 0.15s, background 0.15s;
 }
 
 .kebab-button:hover {
-  color: #374151;
-  background: #f3f4f6;
+  color: #1f2937;
+  background: #e5e7eb;
 }
 
 .kebab-dropdown {
