@@ -44,6 +44,30 @@ if [ -d /fallback_models ] && [ "$(ls -A /fallback_models 2>/dev/null)" ]; then
   done
 fi
 
+# Download dictation regex rules from Murmure (framagit.org/interhop/murmure)
+# These CSV files define speech-to-text post-processing rules for French dictation.
+REGEX_DIR="/app/ui/public/dictation-regex"
+MURMURE_BASE="https://framagit.org/interhop/murmure/-/raw/main/regex"
+REGEX_FILES="ponctuation.csv constante.csv controle.csv medicament.csv vocabulaire_medical.csv"
+
+if [ ! -d "$REGEX_DIR" ] || [ -z "$(ls -A "$REGEX_DIR" 2>/dev/null)" ]; then
+  echo "[entrypoint] Downloading dictation regex rules from Murmure..."
+  mkdir -p "$REGEX_DIR"
+  for f in $REGEX_FILES; do
+    if wget -q -O "$REGEX_DIR/$f" "$MURMURE_BASE/$f" 2>/dev/null || \
+       curl -sfL -o "$REGEX_DIR/$f" "$MURMURE_BASE/$f" 2>/dev/null; then
+      echo "[entrypoint] Downloaded $f"
+    else
+      echo "[entrypoint] WARNING: Failed to download $f"
+    fi
+  done
+  # Write a manifest so the frontend knows which files are available
+  ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
+  echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
+else
+  echo "[entrypoint] Dictation regex rules already present in $REGEX_DIR"
+fi
+
 # Run npm install (picks up any new deps) then start the Vite dev server.
 # The CMD from Dockerfile/docker-compose is passed as arguments to this script.
 exec sh -c "$* && cd ui && npm install && npm run dev -- --host 0.0.0.0"

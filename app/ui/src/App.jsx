@@ -225,6 +225,14 @@ export default function App() {
   const [dictationDevice, setDictationDevice] = useState(null); // connected device name or null
   const dictationManagerRef = useRef(null);
 
+  // Dictation regex post-processing
+  // Display mode: 'raw' = plain transcription, 'confidence' = with heatmap, 'dictation' = regex-cleaned
+  const [transcriptDisplayMode, setTranscriptDisplayMode] = useState('raw');
+  const [dictationRegexRules, setDictationRegexRules] = useState([]); // [{regex, replacement, source}]
+  const [dictationRegexLoaded, setDictationRegexLoaded] = useState(false);
+  // Track which transcriptions have had dictation applied (id -> cleaned text)
+  const [dictationCache, setDictationCache] = useState({});
+
   // Load settings from IndexedDB on mount
   useEffect(() => {
     async function loadSettings() {
@@ -258,6 +266,9 @@ export default function App() {
           savedAutoTranscribe,
           savedAutoCopyToClipboard,
           savedShowAdvancedInfo,
+          savedEnableChunking,
+          savedChunkDuration,
+          savedTranscriptDisplayMode,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('encoderQuant', 'fp32'),
@@ -277,6 +288,7 @@ export default function App() {
           loadSetting('showAdvancedInfo', false),
           loadSetting('enableChunking', true),
           loadSetting('chunkDuration', 60),
+          loadSetting('transcriptDisplayMode', 'raw'),
         ]);
 
         setBackend(savedBackend);
@@ -297,6 +309,7 @@ export default function App() {
         setShowAdvancedInfo(savedShowAdvancedInfo);
         setEnableChunking(savedEnableChunking);
         setChunkDuration(savedChunkDuration);
+        setTranscriptDisplayMode(savedTranscriptDisplayMode);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -540,6 +553,7 @@ export default function App() {
   useEffect(() => { if (settingsLoaded) saveSetting('autoCopyToClipboard', autoCopyToClipboard); }, [autoCopyToClipboard, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('enableChunking', enableChunking); }, [enableChunking, settingsLoaded]);
   useEffect(() => { if (settingsLoaded) saveSetting('chunkDuration', chunkDuration); }, [chunkDuration, settingsLoaded]);
+  useEffect(() => { if (settingsLoaded) saveSetting('transcriptDisplayMode', transcriptDisplayMode); }, [transcriptDisplayMode, settingsLoaded]);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { if (settingsLoaded) saveSetting('transcriptions', transcriptions); }, [transcriptions, settingsLoaded]);
@@ -1479,9 +1493,9 @@ export default function App() {
 
   async function copyHistoryItem(transcription) {
     if (!transcription?.text) return;
-    
+
     try {
-      await navigator.clipboard.writeText(transcription.text);
+      await navigator.clipboard.writeText(getDisplayText(transcription));
       setCopiedHistoryId(transcription.id);
       setTimeout(() => setCopiedHistoryId(null), 2000); // Reset after 2 seconds
     } catch (err) {
@@ -1494,6 +1508,118 @@ export default function App() {
   function deleteTranscription(id) {
     setTranscriptions(prev => prev.filter(t => t.id !== id));
     setOpenKebabId(null);
+  }
+
+  // Load dictation regex rules from CSV files served at /dictation-regex/
+  useEffect(() => {
+    async function loadDictationRegex() {
+      try {
+        // Try to fetch the manifest first
+        const manifestRes = await fetch('/dictation-regex/manifest.txt');
+        if (!manifestRes.ok) {
+          console.log('[Dictation] No regex manifest found — dictation mode unavailable (download rules via Docker entrypoint)');
+          setDictationRegexLoaded(true);
+          return;
+        }
+        const manifestText = await manifestRes.text();
+        const files = manifestText.trim().split('\n').filter(f => f.endsWith('.csv'));
+
+        const rules = [];
+        for (const file of files) {
+          try {
+            const res = await fetch(`/dictation-regex/${file}`);
+            if (!res.ok) continue;
+            const csvText = await res.text();
+            const lines = csvText.trim().split('\n');
+            // Skip header row (regex,remplacement,exemple)
+            for (let i = 1; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (!line || line === ',,') continue;
+              // Parse CSV: handle quoted fields
+              const fields = parseCSVLine(line);
+              if (fields.length >= 2 && fields[0]) {
+                try {
+                  // Validate regex
+                  new RegExp(fields[0], 'gi');
+                  rules.push({
+                    regex: fields[0],
+                    replacement: fields[1]
+                      .replace(/\\n/g, '\n') // support \n in replacements
+                      .replace(/^"(.*)"$/, '$1'), // strip outer quotes
+                    source: file.replace('.csv', '')
+                  });
+                } catch (e) {
+                  console.warn(`[Dictation] Invalid regex in ${file} line ${i + 1}: ${fields[0]}`, e.message);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn(`[Dictation] Failed to load ${file}:`, e);
+          }
+        }
+
+        console.log(`[Dictation] Loaded ${rules.length} regex rules from ${files.length} files`);
+        setDictationRegexRules(rules);
+        setDictationRegexLoaded(true);
+      } catch (e) {
+        console.warn('[Dictation] Failed to load regex rules:', e);
+        setDictationRegexLoaded(true);
+      }
+    }
+    loadDictationRegex();
+  }, []);
+
+  // Simple CSV line parser that handles quoted fields with commas
+  function parseCSVLine(line) {
+    const fields = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++; // skip escaped quote
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === ',' && !inQuotes) {
+        fields.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    fields.push(current);
+    return fields;
+  }
+
+  // Apply dictation regex rules to a text string
+  function applyDictationRegex(text) {
+    if (!dictationRegexRules.length || !text) return text;
+    let result = text;
+    for (const rule of dictationRegexRules) {
+      try {
+        const re = new RegExp(rule.regex, 'gi');
+        result = result.replace(re, rule.replacement);
+      } catch (e) {
+        // Skip invalid regex at runtime
+      }
+    }
+    return result;
+  }
+
+  // Get the display text for a transcription based on current display mode
+  function getDisplayText(trans) {
+    if (transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0) {
+      // Use cache if available
+      if (dictationCache[trans.id]) return dictationCache[trans.id];
+      const cleaned = applyDictationRegex(trans.text);
+      // Cache the result
+      setDictationCache(prev => ({ ...prev, [trans.id]: cleaned }));
+      return cleaned;
+    }
+    return trans.text;
   }
 
   // Close kebab menu when clicking outside
@@ -1790,6 +1916,22 @@ export default function App() {
                 Show Certainty Heatmap
                 <InfoTooltip text="Highlights words with color-coded backgrounds based on transcription confidence. Red = low confidence, yellow = medium, green = high." />
               </label>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                Default transcript display:
+                <InfoTooltip text="Choose how transcriptions are displayed by default. Raw = unmodified text. Confidence = word-level confidence heatmap. Dictation = text cleaned with regex rules (punctuation, medical vocab, etc.)." />
+              </span>
+              <select
+                value={transcriptDisplayMode}
+                onChange={e => setTranscriptDisplayMode(e.target.value)}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="raw">Raw</option>
+                <option value="confidence">Confidence</option>
+                {dictationRegexRules.length > 0 && <option value="dictation">Dictation ({dictationRegexRules.length} rules)</option>}
+              </select>
             </div>
 
             <div className="setting-row">
@@ -2234,13 +2376,31 @@ export default function App() {
         <div className="history">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1rem 0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
             <h3 style={{ margin: 0 }}>Transcriptions</h3>
-            <button
-              onClick={() => setShowConfidenceHeatmap(!showConfidenceHeatmap)}
-              className="heatmap-toggle-button"
-              title={showConfidenceHeatmap ? 'Hide certainty heatmap' : 'Show certainty heatmap'}
-            >
-              {showConfidenceHeatmap ? '🎨 Hide Certainty' : '🎨 Show Certainty'}
-            </button>
+            <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+              <button
+                onClick={() => setTranscriptDisplayMode('raw')}
+                className={`display-mode-button${transcriptDisplayMode === 'raw' ? ' active' : ''}`}
+                title="Raw transcription"
+              >
+                Raw
+              </button>
+              <button
+                onClick={() => { setTranscriptDisplayMode('confidence'); setShowConfidenceHeatmap(true); }}
+                className={`display-mode-button${transcriptDisplayMode === 'confidence' ? ' active' : ''}`}
+                title="Show confidence heatmap"
+              >
+                Confidence
+              </button>
+              {dictationRegexRules.length > 0 && (
+                <button
+                  onClick={() => setTranscriptDisplayMode('dictation')}
+                  className={`display-mode-button${transcriptDisplayMode === 'dictation' ? ' active' : ''}`}
+                  title={`Dictation mode — ${dictationRegexRules.length} regex rules applied`}
+                >
+                  Dictation
+                </button>
+              )}
+            </div>
           </div>
           <div>
             {transcriptions.map((trans) => {
@@ -2263,7 +2423,7 @@ export default function App() {
                   </div>
                   <div className="history-text-container">
                     <div className="history-text">
-                      {showConfidenceHeatmap && trans.words && trans.words.length > 0 ? (
+                      {showConfidenceHeatmap && transcriptDisplayMode === 'confidence' && trans.words && trans.words.length > 0 ? (
                         // Render word-by-word with adaptive confidence heatmap
                         (() => {
                           // Calculate min/max confidence for adaptive coloring
@@ -2289,8 +2449,8 @@ export default function App() {
                           ));
                         })()
                       ) : (
-                        // Fallback to plain text if heatmap is disabled or no word data
-                        trans.text
+                        // Show raw or dictation-cleaned text
+                        <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
                       )}
                     </div>
                     {/* Confidence score overlay shown when toggled via kebab menu */}
@@ -2314,6 +2474,15 @@ export default function App() {
                           <button onClick={() => { copyHistoryItem(trans); setOpenKebabId(null); }}>
                             {copiedHistoryId === trans.id ? '✓ Copied' : '📋 Copy text'}
                           </button>
+                          {dictationRegexRules.length > 0 && (
+                            <button onClick={async () => {
+                              const cleaned = applyDictationRegex(trans.text);
+                              try { await navigator.clipboard.writeText(cleaned); setCopiedHistoryId(trans.id); setTimeout(() => setCopiedHistoryId(null), 2000); } catch (e) { console.error('[Copy] Failed:', e); }
+                              setOpenKebabId(null);
+                            }}>
+                              ✨ Copy dictation
+                            </button>
+                          )}
                           {avgConf !== null && (
                             <button onClick={() => { setShowConfidenceId(showConfidenceId === trans.id ? null : trans.id); setOpenKebabId(null); }}>
                               📊 {showConfidenceId === trans.id ? 'Hide' : 'Show'} confidence

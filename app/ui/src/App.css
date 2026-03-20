@@ -761,6 +761,27 @@ label .info-help-text {
   transform: scale(0.98);
 }
 
+/* Transcript display mode toggle buttons */
+.display-mode-button {
+  padding: 0.3rem 0.6rem;
+  background: #ffffff;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.display-mode-button:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+.display-mode-button.active {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
 /* Confidence heatmap legend */
 .confidence-legend {
   display: flex;
