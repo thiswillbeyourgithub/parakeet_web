@@ -46,21 +46,44 @@ fi
 
 # Download dictation regex rules from Murmure (framagit.org/interhop/murmure)
 # These CSV files define speech-to-text post-processing rules for French dictation.
+# Uses the GitLab API to discover all CSV files dynamically so new rules are picked up automatically.
 REGEX_DIR="/app/ui/public/dictation-regex"
-MURMURE_BASE="https://framagit.org/interhop/murmure/-/raw/main/regex"
-REGEX_FILES="ponctuation.csv constante.csv controle.csv medicament.csv vocabulaire_medical.csv"
+MURMURE_API="https://framagit.org/api/v4/projects/interhop%2Fmurmure/repository/tree?path=regex&per_page=100"
+MURMURE_RAW="https://framagit.org/interhop/murmure/-/raw/main/regex"
+
+# pick whichever HTTP client is available
+_fetch() {
+  if command -v wget >/dev/null 2>&1; then wget -q -O "$1" "$2"
+  elif command -v curl >/dev/null 2>&1; then curl -sfL -o "$1" "$2"
+  else echo "[entrypoint] WARNING: neither wget nor curl found"; return 1; fi
+}
 
 if [ ! -d "$REGEX_DIR" ] || [ -z "$(ls -A "$REGEX_DIR" 2>/dev/null)" ]; then
   echo "[entrypoint] Downloading dictation regex rules from Murmure..."
   mkdir -p "$REGEX_DIR"
-  for f in $REGEX_FILES; do
-    if wget -q -O "$REGEX_DIR/$f" "$MURMURE_BASE/$f" 2>/dev/null || \
-       curl -sfL -o "$REGEX_DIR/$f" "$MURMURE_BASE/$f" 2>/dev/null; then
+
+  # List CSV files via GitLab API (JSON array of {name, type, ...})
+  _tmplist=$(mktemp)
+  if _fetch "$_tmplist" "$MURMURE_API"; then
+    # Extract .csv filenames with lightweight sed (no jq in Alpine by default)
+    CSV_FILES=$(sed 's/},{/}\n{/g' "$_tmplist" | grep '"name"' | sed 's/.*"name":"\([^"]*\.csv\)".*/\1/' | grep '\.csv$')
+  fi
+  rm -f "$_tmplist"
+
+  # Fallback: if API call failed or returned nothing, try known files
+  if [ -z "$CSV_FILES" ]; then
+    echo "[entrypoint] API listing failed, falling back to known file list"
+    CSV_FILES="ponctuation.csv constante.csv controle.csv medicament.csv vocabulaire_medical.csv"
+  fi
+
+  for f in $CSV_FILES; do
+    if _fetch "$REGEX_DIR/$f" "$MURMURE_RAW/$f"; then
       echo "[entrypoint] Downloaded $f"
     else
       echo "[entrypoint] WARNING: Failed to download $f"
     fi
   done
+
   # Write a manifest so the frontend knows which files are available
   ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
   echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
