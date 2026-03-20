@@ -1347,7 +1347,10 @@ export default function App() {
       // Auto-copy transcription to clipboard if enabled
       if (autoCopyToClipboard && res.utterance_text) {
         try {
-          await navigator.clipboard.writeText(res.utterance_text);
+          const textToCopy = transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0
+            ? applyDictationRegex(res.utterance_text)
+            : res.utterance_text;
+          await navigator.clipboard.writeText(textToCopy);
           setCopySuccess(true);
           setTimeout(() => setCopySuccess(false), 2000);
           console.log('[Transcribe] Auto-copied transcription to clipboard');
