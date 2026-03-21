@@ -43,6 +43,7 @@ services:
       - "127.0.0.1:5173:5173"
     environment:
       - NODE_ENV=development
+      - VITE_DEV_MODE=${VITE_DEV_MODE}
       - VITE_ALLOWED_HOST=${VITE_ALLOWED_HOST}
       - VITE_USE_POLLING=${VITE_USE_POLLING:-true}
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
