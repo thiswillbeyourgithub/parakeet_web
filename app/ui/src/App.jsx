@@ -126,8 +126,8 @@ async function clearAllSettings() {
   }
 }
 
-// Keep in sync with package.json version when bumping
-const VERSION = '1.17.0';
+// Injected by Vite from app/package.json — no need to manually sync
+const VERSION = __APP_VERSION__;
 
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
@@ -295,7 +295,7 @@ export default function App() {
         setEncoderQuant(savedEncoderQuant);
         setDecoderQuant(savedDecoderQuant);
         setPreprocessor(savedPreprocessor);
-        setTranscriptions(savedTranscriptions);
+        setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
         setTemperature(savedTemperature);
@@ -1373,7 +1373,7 @@ export default function App() {
       // Auto-copy transcription to clipboard if enabled
       if (autoCopyToClipboard && res.utterance_text) {
         try {
-          const textToCopy = transcriptDisplayMode !== 'dictation' && dictationRegexRules.length > 0
+          const textToCopy = transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0
             ? applyDictationRegex(res.utterance_text)
             : res.utterance_text;
           await navigator.clipboard.writeText(textToCopy);
@@ -1992,13 +1992,13 @@ export default function App() {
               <label>
                 <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
                 Auto-copy transcribed text to clipboard
-                <InfoTooltip text="Automatically copies text to clipboard after transcription. Copies raw text when in Dictation display mode, otherwise copies the regex-cleaned transcript (if dictation rules are loaded)." />
+                <InfoTooltip text="Automatically copies text to clipboard after transcription. Copies the dictation-cleaned transcript when display mode is set to Dictation (and rules are loaded), otherwise copies raw text." />
               </label>
             </div>
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
-                Show advanced info
+                Display more details
                 <InfoTooltip text="Displays system memory/heap usage, per-transcription performance metrics (RTF, timings), and detailed audio metadata." />
               </label>
             </div>
