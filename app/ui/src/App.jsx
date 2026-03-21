@@ -4,6 +4,7 @@ import './App.css';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
+const devMode = import.meta.env.VITE_DEV_MODE === 'true';
 const dictationEnabled = import.meta.env.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
 // Lazy-loaded on first use to avoid top-level await issues
 let _dictationLib = null;
@@ -1709,6 +1710,16 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Dev mode banner */}
+      {devMode && (
+        <div style={{
+          background: '#fecaca', color: '#991b1b', padding: '0.5rem 1rem',
+          textAlign: 'center', fontSize: '0.9rem', borderBottom: '2px solid #ef4444',
+          fontWeight: 'bold',
+        }}>
+          ⚠️ Development version — this instance is under active development. Expect bugs, instability, and frequent changes.
+        </div>
+      )}
       {/* Warning banner for devices with heap < 3 GB, showing detected RAM and threshold */}
       {showLowRamBanner && (
         <div style={{
