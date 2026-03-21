@@ -26,6 +26,9 @@ try {
   console.log('ℹ️ HTTPS setup failed, running on HTTP:', err.message);
 }
 
+// Read version from parent package.json so App.jsx stays in sync automatically
+const parentPkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
+
 export default defineConfig({
   plugins: [
     react(),
@@ -85,5 +88,6 @@ export default defineConfig({
   },
   define: {
     global: 'globalThis',
+    __APP_VERSION__: JSON.stringify(parentPkg.version),
   },
 }); 
