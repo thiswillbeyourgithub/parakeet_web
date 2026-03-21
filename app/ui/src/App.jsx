@@ -208,7 +208,6 @@ export default function App() {
   // Tracks which history item has its kebab menu open (by transcription id)
   const [openKebabId, setOpenKebabId] = useState(null);
   // Tracks which history item is showing its confidence score overlay
-  const [showConfidenceId, setShowConfidenceId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -1374,7 +1373,7 @@ export default function App() {
       // Auto-copy transcription to clipboard if enabled
       if (autoCopyToClipboard && res.utterance_text) {
         try {
-          const textToCopy = transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0
+          const textToCopy = transcriptDisplayMode !== 'dictation' && dictationRegexRules.length > 0
             ? applyDictationRegex(res.utterance_text)
             : res.utterance_text;
           await navigator.clipboard.writeText(textToCopy);
@@ -1970,7 +1969,7 @@ export default function App() {
               >
                 <option value="raw">Raw</option>
                 <option value="confidence">Confidence</option>
-                {dictationRegexRules.length > 0 && <option value="dictation">Dictation ({dictationRegexRules.length} rules)</option>}
+                {dictationRegexRules.length > 0 && <option value="dictation">Dictation ({dictationRegexRules.length} rules) — experimental</option>}
               </select>
             </div>
 
@@ -1985,7 +1984,7 @@ export default function App() {
               <label>
                 <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
                 Auto-copy transcribed text to clipboard
-                <InfoTooltip text="Automatically copies the transcribed text to your clipboard after transcription completes." />
+                <InfoTooltip text="Automatically copies text to clipboard after transcription. Copies raw text when in Dictation display mode, otherwise copies the regex-cleaned transcript (if dictation rules are loaded)." />
               </label>
             </div>
             <div className="setting-row">
@@ -1998,8 +1997,8 @@ export default function App() {
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
-                Verbose Log
-                <InfoTooltip text="Enables detailed logging in browser console. Useful for debugging or performance analysis." />
+                Maximum devtools debug log verbosity
+                <InfoTooltip text="Enables the most detailed logging level in the browser devtools console. Useful for debugging or performance analysis." />
               </label>
             </div>
 
@@ -2427,7 +2426,7 @@ export default function App() {
               <button
                 onClick={() => { setTranscriptDisplayMode('confidence'); setShowConfidenceHeatmap(true); }}
                 className={`display-mode-button${transcriptDisplayMode === 'confidence' ? ' active' : ''}`}
-                title="Show confidence heatmap"
+                title="Color each word by its confidence score"
               >
                 Confidence
               </button>
@@ -2435,9 +2434,9 @@ export default function App() {
                 <button
                   onClick={() => setTranscriptDisplayMode('dictation')}
                   className={`display-mode-button${transcriptDisplayMode === 'dictation' ? ' active' : ''}`}
-                  title={`Dictation mode — ${dictationRegexRules.length} regex rules applied`}
+                  title={`Dictation mode (experimental) — ${dictationRegexRules.length} regex rules applied`}
                 >
-                  Dictation
+                  Dictation (exp.)
                 </button>
               )}
             </div>
@@ -2494,7 +2493,7 @@ export default function App() {
                       )}
                     </div>
                     {/* Confidence score overlay shown when toggled via kebab menu */}
-                    {showConfidenceId === trans.id && avgConf !== null && (
+                    {transcriptDisplayMode === 'confidence' && avgConf !== null && (
                       <div className="confidence-overlay">
                         Avg: {(avgConf * 100).toFixed(1)}% &nbsp;|&nbsp; Min: {(minConf * 100).toFixed(1)}%
                       </div>
@@ -2521,11 +2520,6 @@ export default function App() {
                               setOpenKebabId(null);
                             }}>
                               ✨ Copy dictation
-                            </button>
-                          )}
-                          {avgConf !== null && (
-                            <button onClick={() => { setShowConfidenceId(showConfidenceId === trans.id ? null : trans.id); setOpenKebabId(null); }}>
-                              📊 {showConfidenceId === trans.id ? 'Hide' : 'Show'} confidence
                             </button>
                           )}
                           <button className="kebab-delete" onClick={() => deleteTranscription(trans.id)}>
