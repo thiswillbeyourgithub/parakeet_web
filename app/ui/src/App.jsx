@@ -1638,15 +1638,23 @@ export default function App() {
     return result;
   }
 
+  // Build dictation cache lazily via useEffect to avoid setState during render
+  useEffect(() => {
+    if (transcriptDisplayMode !== 'dictation' || !dictationRegexRules.length) return;
+    const missing = transcriptions.filter(t => t.text && !dictationCache[t.id]);
+    if (missing.length === 0) return;
+    const newEntries = {};
+    for (const t of missing) {
+      newEntries[t.id] = applyDictationRegex(t.text);
+    }
+    setDictationCache(prev => ({ ...prev, ...newEntries }));
+  }, [transcriptDisplayMode, dictationRegexRules, transcriptions, dictationCache]);
+
   // Get the display text for a transcription based on current display mode
   function getDisplayText(trans) {
     if (transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0) {
-      // Use cache if available
-      if (dictationCache[trans.id]) return dictationCache[trans.id];
-      const cleaned = applyDictationRegex(trans.text);
-      // Cache the result
-      setDictationCache(prev => ({ ...prev, [trans.id]: cleaned }));
-      return cleaned;
+      // Return cached result, or compute synchronously without setting state
+      return dictationCache[trans.id] || applyDictationRegex(trans.text);
     }
     return trans.text;
   }
