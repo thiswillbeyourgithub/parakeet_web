@@ -966,21 +966,47 @@ export default function App() {
 
     // Wire physical buttons to recording actions
     manager.addButtonEventListener((_device, bitMask) => {
-      // RECORD pressed → toggle start / pause / resume
+      console.log('[Dictation] Button event received, bitMask:', bitMask);
+
+      let handled = false;
+
+      // RECORD pressed → start recording (only when not recording)
       if (bitMask & ButtonEvent.RECORD) {
+        handled = true;
         if (!isRecordingRef.current) {
           startRecordingCountdown();
-        } else if (!isPausedRef.current) {
-          pauseRecording();
         } else {
-          resumeRecording();
+          console.log('[Dictation] RECORD pressed while already recording – ignored (use PLAY to pause/resume)');
         }
       }
-      // STOP pressed → stop the current recording
+
+      // PLAY pressed → pause / resume (only while recording)
+      if (bitMask & ButtonEvent.PLAY) {
+        handled = true;
+        if (isRecordingRef.current) {
+          if (!isPausedRef.current) {
+            pauseRecording();
+          } else {
+            resumeRecording();
+          }
+        } else {
+          console.log('[Dictation] PLAY pressed while not recording – ignored');
+        }
+      }
+
+      // STOP pressed → stop if recording, otherwise start
       if (bitMask & ButtonEvent.STOP) {
+        handled = true;
         if (isRecordingRef.current) {
           stopRecording();
+        } else {
+          console.log('[Dictation] STOP pressed while not recording – starting recording instead');
+          startRecordingCountdown();
         }
+      }
+
+      if (!handled) {
+        console.log('[Dictation] Unhandled button event, bitMask:', bitMask);
       }
     });
 
