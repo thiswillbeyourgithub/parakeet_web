@@ -1635,6 +1635,15 @@ export default function App() {
         // Skip invalid regex at runtime
       }
     }
+    // Strip whitespace from each line and capitalize the first letter
+    result = result
+      .split('\n')
+      .map(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return trimmed;
+        return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+      })
+      .join('\n');
     return result;
   }
 
