@@ -22,6 +22,7 @@ echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-(not set)}"
 echo "[entrypoint] FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-(not set)}"
 echo "[entrypoint] HF_TOKEN=$([ -n "$HF_TOKEN" ] && echo '****(set)' || echo '(not set)')"
+echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] =============================="
 
 # Wire up fallback model files via symlink if they exist.
@@ -47,9 +48,15 @@ fi
 # Download dictation regex rules from Murmure (framagit.org/interhop/murmure)
 # These CSV files define speech-to-text post-processing rules for French dictation.
 # Uses the GitLab API to discover all CSV files dynamically so new rules are picked up automatically.
+#
+# DICTATION_REGEX_SOURCE overrides the default Murmure URL.
+# - If it starts with '/' or './', it is treated as a local folder containing CSV files.
+# - Otherwise it is treated as a GitLab-compatible base URL (with /api/v4/... and /-/raw/main/regex patterns).
 REGEX_DIR="/app/ui/public/dictation-regex"
-MURMURE_API="https://framagit.org/api/v4/projects/interhop%2Fmurmure/repository/tree?path=regex&per_page=100"
-MURMURE_RAW="https://framagit.org/interhop/murmure/-/raw/main/regex"
+DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure"
+REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_MURMURE_URL}"
+
+echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, using default Murmure)}"
 
 # pick whichever HTTP client is available
 _fetch() {
@@ -59,30 +66,53 @@ _fetch() {
 }
 
 if [ ! -d "$REGEX_DIR" ] || [ -z "$(ls -A "$REGEX_DIR" 2>/dev/null)" ]; then
-  echo "[entrypoint] Downloading dictation regex rules from Murmure..."
   mkdir -p "$REGEX_DIR"
 
-  # List CSV files via GitLab API (JSON array of {name, type, ...})
-  _tmplist=$(mktemp)
-  if _fetch "$_tmplist" "$MURMURE_API"; then
-    # Extract .csv filenames with lightweight sed (no jq in Alpine by default)
-    CSV_FILES=$(sed 's/},{/}\n{/g' "$_tmplist" | grep '"name"' | sed 's/.*"name":"\([^"]*\.csv\)".*/\1/' | grep '\.csv$')
-  fi
-  rm -f "$_tmplist"
+  # Check if the source is a local folder path
+  case "$REGEX_SOURCE" in
+    /*|./*)
+      echo "[entrypoint] Using local regex folder: $REGEX_SOURCE"
+      if [ -d "$REGEX_SOURCE" ]; then
+        cp "$REGEX_SOURCE"/*.csv "$REGEX_DIR/" 2>/dev/null || true
+      else
+        echo "[entrypoint] WARNING: Local regex folder not found: $REGEX_SOURCE"
+      fi
+      ;;
+    *)
+      # URL mode: derive API and raw URLs from the base repo URL
+      # Convert e.g. https://framagit.org/interhop/murmure to API/raw URLs
+      # Extract host and project path
+      REPO_HOST=$(echo "$REGEX_SOURCE" | sed 's|^\(https\?://[^/]*\)/.*|\1|')
+      REPO_PATH=$(echo "$REGEX_SOURCE" | sed 's|https\?://[^/]*/||')
+      ENCODED_PATH=$(echo "$REPO_PATH" | sed 's|/|%2F|g')
+      MURMURE_API="${REPO_HOST}/api/v4/projects/${ENCODED_PATH}/repository/tree?path=regex&per_page=100"
+      MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex"
 
-  # Fallback: if API call failed or returned nothing, try known files
-  if [ -z "$CSV_FILES" ]; then
-    echo "[entrypoint] API listing failed, falling back to known file list"
-    CSV_FILES="ponctuation.csv constante.csv controle.csv medicament.csv vocabulaire_medical.csv"
-  fi
+      echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
 
-  for f in $CSV_FILES; do
-    if _fetch "$REGEX_DIR/$f" "$MURMURE_RAW/$f"; then
-      echo "[entrypoint] Downloaded $f"
-    else
-      echo "[entrypoint] WARNING: Failed to download $f"
-    fi
-  done
+      # List CSV files via GitLab API (JSON array of {name, type, ...})
+      _tmplist=$(mktemp)
+      if _fetch "$_tmplist" "$MURMURE_API"; then
+        # Extract .csv filenames with lightweight sed (no jq in Alpine by default)
+        CSV_FILES=$(sed 's/},{/}\n{/g' "$_tmplist" | grep '"name"' | sed 's/.*"name":"\([^"]*\.csv\)".*/\1/' | grep '\.csv$')
+      fi
+      rm -f "$_tmplist"
+
+      # Fallback: if API call failed or returned nothing, try known files
+      if [ -z "$CSV_FILES" ]; then
+        echo "[entrypoint] API listing failed, falling back to known file list"
+        CSV_FILES="ponctuation.csv constante.csv controle.csv medicament.csv vocabulaire_medical.csv"
+      fi
+
+      for f in $CSV_FILES; do
+        if _fetch "$REGEX_DIR/$f" "$MURMURE_RAW/$f"; then
+          echo "[entrypoint] Downloaded $f"
+        else
+          echo "[entrypoint] WARNING: Failed to download $f"
+        fi
+      done
+      ;;
+  esac
 
   # Write a manifest so the frontend knows which files are available
   ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
