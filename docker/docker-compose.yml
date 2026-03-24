@@ -30,6 +30,10 @@ services:
       # Local model fallback: no manual volume mount needed when using
       # FALLBACK_MODEL_REPO build arg — the entrypoint symlinks automatically.
 
+      # Custom dictation regex rules: uncomment and set the host path to a folder
+      # containing your own CSV regex files (overrides the default Murmure download).
+      # - /path/to/my/regex-csvs:/custom-regex:ro
+
       # Named volumes for node_modules to avoid platform conflicts
       - root-node-modules:/app/node_modules
       - react-modules:/app/ui/node_modules
@@ -52,6 +56,8 @@ services:
       # Local model fallback: auto-enabled when FALLBACK_MODEL_REPO is set.
       # Can also be forced on/off explicitly.
       - VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-${FALLBACK_MODEL_REPO:+true}}
+      # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
+      - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
 
 volumes:
   root-node-modules:
