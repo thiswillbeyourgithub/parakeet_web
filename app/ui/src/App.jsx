@@ -1568,10 +1568,12 @@ export default function App() {
               const fields = parseCSVLine(line);
               if (fields.length >= 2 && fields[0]) {
                 try {
+                  // Strip Python-style inline flags (e.g. (?i)) since JS uses RegExp flags instead
+                  const cleanedRegex = fields[0].replace(/\(\?[gimsuy]+\)/g, '');
                   // Validate regex
-                  new RegExp(fields[0], 'gi');
+                  new RegExp(cleanedRegex, 'gi');
                   rules.push({
-                    regex: fields[0],
+                    regex: cleanedRegex,
                     replacement: fields[1]
                       .replace(/\\n/g, '\n') // support \n in replacements
                       .replace(/^"(.*)"$/, '$1'), // strip outer quotes
