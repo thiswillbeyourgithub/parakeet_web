@@ -9,6 +9,7 @@ docker/.env
 *.pem
 docs/
 scripts/
+**/package-lock.json
 
 .git_original_during_wip
 .aider*
