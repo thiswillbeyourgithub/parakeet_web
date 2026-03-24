@@ -200,8 +200,8 @@ export default function App() {
   const [audioPreviewUrl, setAudioPreviewUrl] = useState(null);
   const [isProcessingPreview, setIsProcessingPreview] = useState(false);
   const [hasBeenTranscribed, setHasBeenTranscribed] = useState(false);
-  const [noiseSuppression, setNoiseSuppression] = useState(true);
-  const [echoCancellation, setEchoCancellation] = useState(true);
+  const [noiseSuppression, setNoiseSuppression] = useState(false);
+  const [echoCancellation, setEchoCancellation] = useState(false);
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState(null);
@@ -279,8 +279,8 @@ export default function App() {
           loadSetting('frameStride', 1),
           loadSetting('temperature', 0.5),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
-          loadSetting('noiseSuppression', true),
-          loadSetting('echoCancellation', true),
+          loadSetting('noiseSuppression', false),
+          loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', true),
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
