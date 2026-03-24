@@ -22,3 +22,5 @@ deploy.sh
 
 # Downloaded dictation regex rules (fetched at runtime)
 app/ui/public/dictation-regex/
+
+framagit_murmure
