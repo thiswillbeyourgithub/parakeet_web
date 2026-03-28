@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useTransition } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
 import './App.css';
+import { useI18n, LanguageSwitcher } from './i18n.jsx';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -25,7 +26,7 @@ function InfoTooltip({ text }) {
         type="button"
         className="info-help-button"
         onClick={() => setIsOpen(!isOpen)}
-        aria-label="Help"
+        aria-label="?"
       >
         ?
       </button>
@@ -147,6 +148,7 @@ function truncateFilename(filename, maxLength = 40) {
 }
 
 export default function App() {
+  const { t } = useI18n();
   const repoId = import.meta.env.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
   // Whether the instance can serve model weights locally (under /models/) as
   // a fallback when HuggingFace is blocked or unreachable.
@@ -161,7 +163,7 @@ export default function App() {
   const [encoderQuant, setEncoderQuant] = useState('fp32');
   const [decoderQuant, setDecoderQuant] = useState('fp32');
   const [preprocessor, setPreprocessor] = useState('nemo128');
-  const [status, setStatus] = useState('Idle');
+  const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState('');
   const [progressText, setProgressText] = useState('');
   const [progressPct, setProgressPct] = useState(null);
@@ -397,8 +399,8 @@ export default function App() {
         case ' ':
         case 'enter':
           // Before model is loaded: Space/Enter trigger model loading
-          if (!status.startsWith('Model ready ✔') && (key === ' ' || key === 'enter')) {
-            if (status.toLowerCase().includes('fail') || status === 'Idle') {
+          if (!status === 'modelReady' && (key === ' ' || key === 'enter')) {
+            if ((status === 'failed' || status === 'transcriptionFailed') || status === 'idle') {
               e.preventDefault();
               loadModel();
             }
@@ -406,7 +408,7 @@ export default function App() {
           }
           // After model is loaded: R/Space start recording
           e.preventDefault();
-          if (status.startsWith('Model ready ✔') && !isTranscribing && !pendingAudioFile) {
+          if (status === 'modelReady' && !isTranscribing && !pendingAudioFile) {
             startRecordingCountdown();
           }
           break;
@@ -414,7 +416,7 @@ export default function App() {
         case 'f':
           // Send a file
           e.preventDefault();
-          if (fileInputRef.current && status.startsWith('Model ready ✔') && !isTranscribing && !isRecording && !pendingAudioFile && !isProcessingPreview) {
+          if (fileInputRef.current && status === 'modelReady' && !isTranscribing && !isRecording && !pendingAudioFile && !isProcessingPreview) {
             fileInputRef.current.click();
           }
           break;
@@ -422,7 +424,7 @@ export default function App() {
         case 't':
           // Start transcribing
           e.preventDefault();
-          if (status.startsWith('Model ready ✔') && !isTranscribing && pendingAudioFile && audioPreviewUrl && !isProcessingPreview && !hasBeenTranscribed) {
+          if (status === 'modelReady' && !isTranscribing && pendingAudioFile && audioPreviewUrl && !isProcessingPreview && !hasBeenTranscribed) {
             startTranscription();
           }
           break;
@@ -573,7 +575,7 @@ export default function App() {
     }
 
     setShowFallbackPrompt(false);
-    setStatus('Loading model…');
+    setStatus('loadingModel');
     // Collapse the info panel once model loading begins
     setShowInfo(false);
     setProgress('');
@@ -603,8 +605,8 @@ export default function App() {
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
       // Show compiling sessions stage
-      setStatus('Creating sessions…');
-      setProgressText('Compiling model…');
+      setStatus('creatingSessions');
+      setProgressText(t('compilingModel'));
       setProgressPct(null);
 
       // 2. Create the model instance with all file URLs
@@ -621,19 +623,19 @@ export default function App() {
       });
 
       console.timeEnd('LoadModel');
-      setStatus('Model ready ✔');
+      setStatus('modelReady');
       setProgressText('');
       setProgressPct(null);
     } catch (e) {
       console.error(e);
       // If HuggingFace is blocked and local fallback is available, prompt the user
       if (e instanceof HubDownloadError && localFallbackEnabled && !useLocalFallback) {
-        setStatus('HuggingFace appears unreachable');
+        setStatus('hfUnreachable');
         setProgressText('');
         setProgressPct(null);
         setShowFallbackPrompt(true);
       } else {
-        setStatus(`Failed: ${e.message}`);
+        setStatus('failed');
         setProgress('');
       }
     }
@@ -670,13 +672,13 @@ export default function App() {
     // Brief delay to let the mic hardware warm up before recording.
     // Previously a 2s countdown, reduced now that the underlying bug is fixed.
     setRecordingCountdown(1);
-    setStatus('Starting recording...');
+    setStatus('startingRecording');
 
     await new Promise(resolve => setTimeout(resolve, 250));
     await startRecordingActual(stream);
 
     setRecordingCountdown(0);
-    setStatus('Recording starts now!');
+    setStatus('recordingStartsNow');
 
     await new Promise(resolve => setTimeout(resolve, 100)); // Brief visual feedback at 0
     setRecordingCountdown(null);
@@ -774,7 +776,7 @@ export default function App() {
       setAudioContext(audioCtx);
       setMediaRecorder(stream); // reuse state slot to hold the stream for cleanup
       setIsRecording(true);
-      setStatus('Recording... (click Stop to transcribe)');
+      setStatus('recordingClickStop');
       console.log('[Record] Recording started (AudioWorklet PCM capture)');
 
     } catch (err) {
@@ -788,7 +790,7 @@ export default function App() {
     // Clear countdown if active
     if (recordingCountdown !== null) {
       setRecordingCountdown(null);
-      setStatus('Model ready ✔');
+      setStatus('modelReady');
       return;
     }
 
@@ -864,7 +866,7 @@ export default function App() {
     setPendingAudioFile(file);
     const previewUrl = URL.createObjectURL(wavBlob);
     setAudioPreviewUrl(previewUrl);
-    setStatus('Model ready ✔');
+    setStatus('modelReady');
 
     setHasBeenTranscribed(false);
 
@@ -888,7 +890,7 @@ export default function App() {
       await audioContext.suspend();
       setIsPaused(true);
       setAudioLevel(0);
-      setStatus('Recording paused ⏸');
+      setStatus('recordingPaused');
       console.log('[Record] Paused');
     } catch (err) {
       console.error('[Record] Failed to pause:', err);
@@ -933,7 +935,7 @@ export default function App() {
       audioContext._stopLevelMonitor = () => { monitoring = false; };
 
       setIsPaused(false);
-      setStatus('Recording... (click Stop to transcribe)');
+      setStatus('recordingClickStop');
       console.log('[Record] Resumed');
     } catch (err) {
       console.error('[Record] Failed to resume:', err);
@@ -1143,11 +1145,11 @@ export default function App() {
   }
 
   async function processAudioFile(file) {
-    if (!modelRef.current) return alert('Load model first');
+    if (!modelRef.current) return alert(t('loadModelFirst'));
     if (!file) return;
 
     setIsTranscribing(true);
-    setStatus(`Transcribing "${file.name}"…`);
+    setStatus(`${t('transcribingFile')} "${file.name}"…`);
 
     try {
       console.log(`[Transcribe] Starting transcription for file: "${file.name}"`);
@@ -1185,8 +1187,8 @@ export default function App() {
       
       // Yield to UI before heavy resampling operation
       await new Promise(resolve => setTimeout(resolve, 0));
-      setStatus(`Processing "${file.name}" - Resampling audio...`);
-      setProgressText('⏳ Resampling to 16kHz...');
+      setStatus(`${t('processingResampling')} "${file.name}"`);
+      setProgressText(t('resamplingTo16k'));
       
       const offlineCtx = new OfflineAudioContext(
         1,  // mono
@@ -1297,7 +1299,7 @@ export default function App() {
               setText(partialText + ' [transcribing...]');
               setProgressPct(chunkProgress);
               setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${(chunkElapsed/1000).toFixed(1)}s • Est. ${estimatedRemaining}s remaining`);
-              setStatus(`Transcribing "${file.name}" - ${chunkProgress}% complete (chunk ${chunkNum}/${totalChunks})`);
+              setStatus(`${t('transcribingFile')} "${file.name}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
               
               if (chunkNum === 1) {
                 setLatestMetrics(chunkRes.metrics);
@@ -1368,7 +1370,7 @@ export default function App() {
       newestTranscriptionIdRef.current = newTranscription.id;
       setTranscriptions(prev => [newTranscription, ...prev]);
       setText(res.utterance_text); // Show latest transcription
-      setStatus('Model ready ✔'); // Ready for next file
+      setStatus('modelReady'); // Ready for next file
 
       // Auto-copy transcription to clipboard if enabled
       if (autoCopyToClipboard && res.utterance_text) {
@@ -1397,7 +1399,7 @@ export default function App() {
         errorObject: error
       });
       
-      setStatus('Transcription failed');
+      setStatus('transcriptionFailed');
       
       // Handle cases where error.message might be undefined
       let errorMsg = 'Unknown error';
@@ -1432,18 +1434,18 @@ export default function App() {
     
     // Process the audio to show what the model will hear (16kHz mono)
     setIsProcessingPreview(true);
-    setStatus('Processing audio preview...');
+    setStatus('processingPreview');
     
     try {
       const resampledBlob = await resampleToPreview(file);
       const previewUrl = URL.createObjectURL(resampledBlob);
       setAudioPreviewUrl(previewUrl);
-      setStatus('Model ready ✔');
+      setStatus('modelReady');
     } catch (err) {
       console.error('[Preview] Failed to process audio:', err);
       // Fallback to original file if processing fails
       setAudioPreviewUrl(URL.createObjectURL(file));
-      setStatus('Model ready ✔ (preview processing failed)');
+      setStatus('modelReady');
     } finally {
       setIsProcessingPreview(false);
     }
@@ -1485,8 +1487,8 @@ export default function App() {
 
   async function resetAllData() {
     const confirmed = window.confirm(
-      '⚠️ This will permanently delete ALL saved settings and transcription history.\n\n' +
-      'Are you sure you want to continue?'
+      t('resetConfirmTitle') + '\n\n' +
+      t('resetConfirmQuestion')
     );
     
     if (!confirmed) return;
@@ -1503,7 +1505,7 @@ export default function App() {
       window.location.reload();
     } catch (err) {
       console.error('[App] Failed to reset all data:', err);
-      alert('Failed to reset data. Please check the console for details.');
+      alert(t('resetFailed'));
     }
   }
 
@@ -1516,7 +1518,7 @@ export default function App() {
       setTimeout(() => setCopySuccess(false), 2000); // Reset after 2 seconds
     } catch (err) {
       console.error('[Copy] Failed to copy text:', err);
-      alert('Failed to copy to clipboard');
+      alert(t('failedCopyClipboard'));
     }
   }
 
@@ -1529,7 +1531,7 @@ export default function App() {
       setTimeout(() => setCopiedHistoryId(null), 2000); // Reset after 2 seconds
     } catch (err) {
       console.error('[Copy] Failed to copy text:', err);
-      alert('Failed to copy to clipboard');
+      alert(t('failedCopyClipboard'));
     }
   }
 
@@ -1761,7 +1763,7 @@ export default function App() {
           textAlign: 'center', fontSize: '0.9rem', borderBottom: '2px solid #ef4444',
           fontWeight: 'bold',
         }}>
-          ⚠️ Development version — this instance is under active development. Expect bugs, instability, and frequent changes.
+          {t('devModeBanner')}
         </div>
       )}
       {/* Warning banner for devices with heap < 3 GB, showing detected RAM and threshold */}
@@ -1771,26 +1773,27 @@ export default function App() {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           fontSize: '0.9rem', borderBottom: '1px solid #f59e0b',
         }}>
-          <span>⚠️ Your device may have limited memory{lowRamInfo ? ` (detected: ${lowRamInfo.detectedGB} GB ${lowRamInfo.source}, threshold: ${RAM_THRESHOLD_GB} GB)` : ''}. The speech recognition model (~100–200 MB) might fail to load.</span>
-          <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#92400e', marginLeft: '0.5rem' }} aria-label="Dismiss">×</button>
+          <span>{t('lowRamWarning')}{lowRamInfo ? ` (detected: ${lowRamInfo.detectedGB} GB ${lowRamInfo.source}, threshold: ${RAM_THRESHOLD_GB} GB)` : ''}{t('lowRamModelMayFail')}</span>
+          <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#92400e', marginLeft: '0.5rem' }} aria-label={t('dismiss')}>×</button>
         </div>
       )}
       <div className="app-header">
         <h2>ParakeetWeb v{VERSION}</h2>
-        <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: '#666' }}>Status: {status}</p>
-        <button 
+        <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: '#666' }}>{t('status')}: {t(status) || status}</p>
+        <LanguageSwitcher />
+        <button
           className="info-toggle"
           onClick={() => setShowInfo(!showInfo)}
-          aria-label="Toggle info"
-          title={showInfo ? "Hide info" : "Show info"}
+          aria-label={t('toggleInfo')}
+          title={showInfo ? t('hideInfo') : t('showInfo')}
         >
           ℹ️
         </button>
         <button 
           className="settings-toggle"
           onClick={() => setShowSettings(!showSettings)}
-          aria-label="Toggle settings"
-          title={showSettings ? "Hide settings" : "Show settings"}
+          aria-label={t('toggleSettings')}
+          title={showSettings ? t('hideSettings') : t('showSettings')}
         >
           ⚙️
         </button>
@@ -1799,35 +1802,33 @@ export default function App() {
       {showInfo && (
         <div className="info-section">
           <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem' }}>
-            Dictation for any language, without installing anything!
+            {t('tagline')}
           </p>
-          <h3>What is this?</h3>
+          <h3>{t('whatIsThis')}</h3>
           <p>
-            <strong>ParakeetWeb</strong> is a browser-based speech-to-text application that runs entirely in your browser using WebAssembly and WebGPU. 
-            Your audio never leaves your device - all processing happens locally on your computer.
+            {t('infoDescription1')}
           </p>
           <p>
-            It uses NVIDIA's Parakeet TDT model for high-quality transcription with word-level timestamps and confidence scores. 
-            You can transcribe audio files or record directly from your microphone.
+            {t('infoDescription2')}
           </p>
           <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '1rem', marginBottom: 0 }}>
-            <strong>Source code:</strong>{' '}
+            <strong>{t('sourceCode')}:</strong>{' '}
             <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>github.com/thiswillbeyourgithub/parakeet_web</a>
           </p>
           <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-            <strong>Feedback:</strong> If you have any complaint or feedback, you can reach out at{' '}
+            <strong>{t('feedback')}:</strong> {t('feedbackText')}{' '}
             <a href="https://olicorne.org" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>olicorne.org</a>{' '}
-            or directly by{' '}
-            <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>opening an issue</a>{' '}
-            on the GitHub repository.
+            {t('orDirectlyBy')}{' '}
+            <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>{t('openingAnIssue')}</a>{' '}
+            {t('onTheGitHubRepo')}
           </p>
           <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-            <strong>Install:</strong> You can install ParakeetWeb as a PWA (Progressive Web App) from your browser for quick, app-like access.
+            <strong>{t('install')}:</strong> {t('installText')}
           </p>
           <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-            <strong>Privacy:</strong> This app uses privacy-respecting analytics provided by a self-hosted{' '}
+            <strong>{t('privacy')}:</strong> {t('privacyText')}{' '}
             <a href="https://umami.is" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>umami.is</a>{' '}
-            instance. No personal data is collected, and no cookies are used for tracking.
+            {t('privacyText2')}
           </p>
         </div>
       )}
@@ -1837,68 +1838,68 @@ export default function App() {
         {/* Backdrop overlay — click to close sidebar */}
         <div className="settings-sidebar-overlay" onClick={() => setShowSettings(false)} />
         <div className="settings-sidebar">
-        <button className="settings-sidebar-close" onClick={() => setShowSettings(false)} aria-label="Close settings">×</button>
+        <button className="settings-sidebar-close" onClick={() => setShowSettings(false)} aria-label={t('closeSettings')}>×</button>
         <div className="settings-section">
         <p>
-          <strong>Model:</strong> {repoId} <span style={{fontSize:'0.9em', color: '#666'}}>(nemo128)</span>
+          <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: '#666'}}>(nemo128)</span>
         </p>
 
           <div className="settings-content">
             <div className="setting-row">
               <span className="setting-label">
-                Backend:
-                <InfoTooltip text="WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers." />
+                {t('backend')}:
+                <InfoTooltip text={t('tooltipBackend')} />
               </span>
               <div className="setting-options">
-                <label className={status.startsWith('Model ready ✔') ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => setBackend(e.target.value)} disabled={status.startsWith('Model ready ✔')} />
-                  WASM (CPU)
+                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
+                  {t('wasmCpu')}
                 </label>
-                <label className={status.startsWith('Model ready ✔') ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status.startsWith('Model ready ✔')} />
-                  WebGPU
+                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
+                  {t('webgpu')}
                 </label>
               </div>
             </div>
 
             <div className="setting-row">
               <span className="setting-label">
-                Encoder Quantization:
-                <InfoTooltip text="int8 uses 8-bit integers for faster processing with slightly reduced quality. fp32 uses 32-bit floats for highest quality but slower." />
+                {t('encoderQuantization')}:
+                <InfoTooltip text={t('tooltipQuantization')} />
               </span>
               <div className="setting-options">
-                <label className={status.startsWith('Model ready ✔') || backend.startsWith('webgpu') ? 'disabled-option' : ''}>
-                  <input type="radio" name="encoderQuant" value="int8" checked={encoderQuant === 'int8'} onChange={e => setEncoderQuant(e.target.value)} disabled={status.startsWith('Model ready ✔') || backend.startsWith('webgpu')} />
-                  int8 (faster)
+                <label className={status === 'modelReady' || backend.startsWith('webgpu') ? 'disabled-option' : ''}>
+                  <input type="radio" name="encoderQuant" value="int8" checked={encoderQuant === 'int8'} onChange={e => setEncoderQuant(e.target.value)} disabled={status === 'modelReady' || backend.startsWith('webgpu')} />
+                  {t('int8Faster')}
                 </label>
-                <label className={status.startsWith('Model ready ✔') ? 'disabled-option' : ''}>
-                  <input type="radio" name="encoderQuant" value="fp32" checked={encoderQuant === 'fp32'} onChange={e => setEncoderQuant(e.target.value)} disabled={status.startsWith('Model ready ✔')} />
-                  fp32 (higher quality)
+                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                  <input type="radio" name="encoderQuant" value="fp32" checked={encoderQuant === 'fp32'} onChange={e => setEncoderQuant(e.target.value)} disabled={status === 'modelReady'} />
+                  {t('fp32HigherQuality')}
                 </label>
               </div>
             </div>
 
             <div className="setting-row">
               <span className="setting-label">
-                Decoder Quantization:
-                <InfoTooltip text="int8 uses 8-bit integers for faster processing with slightly reduced quality. fp32 uses 32-bit floats for highest quality but slower." />
+                {t('decoderQuantization')}:
+                <InfoTooltip text={t('tooltipQuantization')} />
               </span>
               <div className="setting-options">
-                <label className={status.startsWith('Model ready ✔') || backend.startsWith('webgpu') ? 'disabled-option' : ''}>
-                  <input type="radio" name="decoderQuant" value="int8" checked={decoderQuant === 'int8'} onChange={e => setDecoderQuant(e.target.value)} disabled={status.startsWith('Model ready ✔') || backend.startsWith('webgpu')} />
-                  int8 (faster)
+                <label className={status === 'modelReady' || backend.startsWith('webgpu') ? 'disabled-option' : ''}>
+                  <input type="radio" name="decoderQuant" value="int8" checked={decoderQuant === 'int8'} onChange={e => setDecoderQuant(e.target.value)} disabled={status === 'modelReady' || backend.startsWith('webgpu')} />
+                  {t('int8Faster')}
                 </label>
-                <label className={status.startsWith('Model ready ✔') ? 'disabled-option' : ''}>
-                  <input type="radio" name="decoderQuant" value="fp32" checked={decoderQuant === 'fp32'} onChange={e => setDecoderQuant(e.target.value)} disabled={status.startsWith('Model ready ✔')} />
-                  fp32 (higher quality)
+                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                  <input type="radio" name="decoderQuant" value="fp32" checked={decoderQuant === 'fp32'} onChange={e => setDecoderQuant(e.target.value)} disabled={status === 'modelReady'} />
+                  {t('fp32HigherQuality')}
                 </label>
               </div>
             </div>
 
             <div className="setting-row">
               <span className="setting-label">
-                Frame Stride: {frameStride}
-                <InfoTooltip text="Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed." />
+                {t('frameStride')}: {frameStride}
+                <InfoTooltip text={t('tooltipFrameStride')} />
               </span>
               <input 
                 type="range" 
@@ -1913,8 +1914,8 @@ export default function App() {
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (
               <div className="setting-row">
                 <span className="setting-label">
-                  CPU Threads: {cpuThreads}
-                  <InfoTooltip text="Number of CPU threads to use for processing. More threads = faster, but limited by your CPU cores. Recommended: leave 1-2 cores free for the browser." />
+                  {t('cpuThreads')}: {cpuThreads}
+                  <InfoTooltip text={t('tooltipCpuThreads')} />
                 </span>
                 <input 
                   type="range" 
@@ -1922,16 +1923,16 @@ export default function App() {
                   max={maxCores} 
                   value={cpuThreads} 
                   onChange={e=>setCpuThreads(Number(e.target.value))} 
-                  disabled={status.startsWith('Model ready ✔')}
-                  style={{flexBasis: '100%', marginTop: '0.25rem', opacity: status.startsWith('Model ready ✔') ? 0.5 : 1}} 
+                  disabled={status === 'modelReady'}
+                  style={{flexBasis: '100%', marginTop: '0.25rem', opacity: status === 'modelReady' ? 0.5 : 1}} 
                 />
               </div>
             )}
 
             <div className="setting-row">
               <span className="setting-label">
-                Temperature: {temperature.toFixed(1)}
-                <InfoTooltip text="Decoder softmax temperature. Lower values (0.0-1.0) produce more confident/greedy output. Higher values (1.2-2.0) allow more diversity. Default: 0.0" />
+                {t('temperature')}: {temperature.toFixed(1)}
+                <InfoTooltip text={t('tooltipTemperature')} />
               </span>
               <input
                 type="range"
@@ -1947,13 +1948,13 @@ export default function App() {
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
-                Chunk long audio
-                <InfoTooltip text="Split audio longer than the chunk duration into overlapping segments before transcribing. Disable to send the full audio to the model in one pass (may use more memory but avoids chunk boundary issues)." />
+                {t('chunkLongAudio')}
+                <InfoTooltip text={t('tooltipChunking')} />
               </label>
               {enableChunking && (
                 <div style={{ marginTop: '0.25rem', width: '100%' }}>
                   <span className="setting-label">
-                    Chunk duration: {chunkDuration}s
+                    {t('chunkDuration')}: {chunkDuration}s
                   </span>
                   <input
                     type="range"
@@ -1971,59 +1972,59 @@ export default function App() {
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
-                Show Certainty Heatmap
-                <InfoTooltip text="Highlights words with color-coded backgrounds based on transcription confidence. Red = low confidence, yellow = medium, green = high." />
+                {t('showCertaintyHeatmap')}
+                <InfoTooltip text={t('tooltipHeatmap')} />
               </label>
             </div>
 
             <div className="setting-row">
               <span className="setting-label">
-                Default transcript display:
-                <InfoTooltip text="Choose how transcriptions are displayed by default. Raw = unmodified text. Confidence = word-level confidence heatmap. Dictation = text cleaned with regex rules (punctuation, medical vocab, etc.)." />
+                {t('defaultTranscriptDisplay')}:
+                <InfoTooltip text={t('tooltipDisplayMode')} />
               </span>
               <select
                 value={transcriptDisplayMode}
                 onChange={e => setTranscriptDisplayMode(e.target.value)}
                 style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
               >
-                <option value="raw">Raw</option>
-                <option value="confidence">Confidence</option>
-                {dictationRegexRules.length > 0 && <option value="dictation">Dictation ({dictationRegexRules.length} rules) — experimental</option>}
+                <option value="raw">{t('raw')}</option>
+                <option value="confidence">{t('confidence')}</option>
+                {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
               </select>
             </div>
 
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={autoTranscribe} onChange={e => setAutoTranscribe(e.target.checked)} />
-                Auto-transcribe after recording
-                <InfoTooltip text="Automatically starts transcription when a recording is stopped. Disable to review the audio before transcribing." />
+                {t('autoTranscribeAfterRecording')}
+                <InfoTooltip text={t('tooltipAutoTranscribe')} />
               </label>
             </div>
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
-                Auto-copy transcribed text to clipboard
-                <InfoTooltip text="Automatically copies text to clipboard after transcription. Copies the dictation-cleaned transcript when display mode is set to Dictation (and rules are loaded), otherwise copies raw text." />
+                {t('autoCopyToClipboard')}
+                <InfoTooltip text={t('tooltipAutoCopy')} />
               </label>
             </div>
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
-                Display more details
-                <InfoTooltip text="Displays system memory/heap usage, per-transcription performance metrics (RTF, timings), and detailed audio metadata." />
+                {t('displayMoreDetails')}
+                <InfoTooltip text={t('tooltipAdvancedInfo')} />
               </label>
             </div>
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
-                Maximum devtools debug log verbosity
-                <InfoTooltip text="Enables the most detailed logging level in the browser devtools console. Useful for debugging or performance analysis." />
+                {t('maxDebugVerbosity')}
+                <InfoTooltip text={t('tooltipVerboseLog')} />
               </label>
             </div>
 
             <div className="setting-row">
               <span className="setting-label">
-                Audio Processing:
+                {t('audioProcessing')}:
               </span>
               <div style={{ display: 'flex', flexDirection: 'row', gap: '1rem', flexWrap: 'wrap' }}>
                 <label>
@@ -2033,8 +2034,8 @@ export default function App() {
                     onChange={e => setNoiseSuppression(e.target.checked)} 
                     disabled={isRecording} 
                   />
-                  Noise Suppression
-                  <InfoTooltip text="Reduces background noise for clearer voice. Disable for music or when maximum audio fidelity is needed." />
+                  {t('noiseSuppression')}
+                  <InfoTooltip text={t('tooltipNoiseSuppression')} />
                 </label>
                 <label>
                   <input 
@@ -2043,8 +2044,8 @@ export default function App() {
                     onChange={e => setEchoCancellation(e.target.checked)} 
                     disabled={isRecording} 
                   />
-                  Echo Cancellation
-                  <InfoTooltip text="Removes echo and feedback. Disable for music recording or if you experience audio quality issues." />
+                  {t('echoCancellation')}
+                  <InfoTooltip text={t('tooltipEchoCancellation')} />
                 </label>
                 <label>
                   <input 
@@ -2053,8 +2054,8 @@ export default function App() {
                     onChange={e => setAutoGainControl(e.target.checked)} 
                     disabled={isRecording} 
                   />
-                  Auto Gain Control
-                  <InfoTooltip text="Automatically adjusts volume levels. Disable for music or when you want consistent volume." />
+                  {t('autoGainControl')}
+                  <InfoTooltip text={t('tooltipAutoGainControl')} />
                 </label>
               </div>
             </div>
@@ -2070,12 +2071,12 @@ export default function App() {
                 className="primary"
               >
                 {dictationDevice
-                  ? `🎙 Connected: ${dictationDevice}`
-                  : '🎙 Connect Dictation Device'}
+                  ? `${t('connectedDevice')}: ${dictationDevice}`
+                  : t('connectDictationDevice')}
               </button>
               {dictationDevice && (
                 <p style={{ fontSize: '0.8rem', color: '#16a34a', margin: '0.25rem 0 0' }}>
-                  RECORD = start/pause/resume · STOP = stop recording
+                  {t('dictationDeviceHint')}
                 </p>
               )}
             </div>
@@ -2087,7 +2088,7 @@ export default function App() {
             style={{ marginTop: '1rem', width: '100%' }}
             className="primary"
           >
-            Clear Transcription History
+            {t('clearTranscriptionHistory')}
           </button>
           
           <button 
@@ -2100,7 +2101,7 @@ export default function App() {
             }}
             className="primary"
           >
-            ⚠️ Reset All Settings and Data
+            {t('resetAllSettingsAndData')}
           </button>
 
           <button
@@ -2108,7 +2109,7 @@ export default function App() {
             style={{ marginTop: '0.5rem', width: '100%' }}
             className="primary"
           >
-            {showShortcuts ? 'Hide' : 'Show'} Keyboard Shortcuts
+            {showShortcuts ? t('hideKeyboardShortcuts') : t('showKeyboardShortcuts')}
           </button>
 
           {showShortcuts && (
@@ -2121,16 +2122,16 @@ export default function App() {
               fontSize: '0.9rem',
               lineHeight: '1.8'
             }}>
-              <strong>Keyboard Shortcuts</strong>
+              <strong>{t('keyboardShortcuts')}</strong>
               <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.4rem' }}>
                 <tbody>
                   {[
-                    ['S', 'Toggle settings panel'],
-                    ['R / S / Space', 'Stop recording (while recording)'],
-                    ['R / Space', 'Start recording'],
-                    ['F', 'Select audio file'],
-                    ['T', 'Start transcription'],
-                    ['L', 'Load model'],
+                    ['S', t('shortcutToggleSettings')],
+                    ['R / S / Space', t('shortcutStopRecording')],
+                    ['R / Space', t('shortcutStartRecording')],
+                    ['F', t('shortcutSelectFile')],
+                    ['T', t('shortcutTranscribe')],
+                    ['L', t('shortcutLoadModel')],
                   ].map(([key, desc]) => (
                     <tr key={key}>
                       <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', fontWeight: 'bold', fontFamily: 'monospace' }}>{key}</td>
@@ -2140,7 +2141,7 @@ export default function App() {
                 </tbody>
               </table>
               <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#888' }}>
-                Shortcuts are disabled while typing in input fields.
+                {t('shortcutsDisabledInInputs')}
               </p>
             </div>
           )}
@@ -2159,27 +2160,27 @@ export default function App() {
           borderRadius: '4px',
           border: '1px solid #e5e7eb'
         }}>
-          <strong>💾 System:</strong>{' '}
-          {memoryInfo.deviceRAM && <span>RAM: {memoryInfo.deviceRAM}</span>}
+          <strong>{t('system')}:</strong>{' '}
+          {memoryInfo.deviceRAM && <span>{t('ram')}: {memoryInfo.deviceRAM}</span>}
           {memoryInfo.heapUsed && (
             <>
               {memoryInfo.deviceRAM && ' | '}
-              <span>Heap: {memoryInfo.heapUsed} ({memoryInfo.heapPercent}%)</span>
+              <span>{t('heap')}: {memoryInfo.heapUsed} ({memoryInfo.heapPercent}%)</span>
               {parseFloat(memoryInfo.heapPercent) > 80 && (
-                <span style={{ color: '#dc2626', marginLeft: '0.5rem' }}>⚠️ High</span>
+                <span style={{ color: '#dc2626', marginLeft: '0.5rem' }}>{t('high')}</span>
               )}
             </>
           )}
           {memoryInfo.cpuCores && (
             <>
               {(memoryInfo.deviceRAM || memoryInfo.heapUsed) && ' | '}
-              <span>CPU: {memoryInfo.cpuCores}</span>
+              <span>{t('cpu')}: {memoryInfo.cpuCores}</span>
             </>
           )}
           {memoryInfo.fps && (
             <>
               {' | '}
-              <span>FPS: {memoryInfo.fps}</span>
+              <span>{t('fps')}: {memoryInfo.fps}</span>
               {memoryInfo.fpsWarning && (
                 <span style={{ color: '#dc2626', marginLeft: '0.25rem' }}>{memoryInfo.fpsWarning}</span>
               )}
@@ -2189,7 +2190,7 @@ export default function App() {
             <>
               <br />
               <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
-                Storage: {memoryInfo.storage}
+                {t('storage')}: {memoryInfo.storage}
               </span>
             </>
           )}
@@ -2197,19 +2198,19 @@ export default function App() {
       )}
 
       {/* Load Model button: visible on initial load or after failure, hidden once model is loading/ready */}
-      {(status === 'Idle' || status.toLowerCase().includes('fail')) && (
+      {(status === 'idle' || (status === 'failed' || status === 'transcriptionFailed')) && (
         <button
           onClick={loadModel}
           className="primary"
           style={{ marginBottom: '1rem', width: '100%' }}
           data-umami-event="load_model_button"
         >
-          Load Model
+          {t('loadModel')}
         </button>
       )}
 
       {/* Controls, transcribe button, and transcription history: hidden until model loading has been initiated */}
-      {status !== 'Idle' && !status.toLowerCase().includes('fail') && (<>
+      {status !== 'idle' && !(status === 'failed' || status === 'transcriptionFailed') && (<>
       {typeof SharedArrayBuffer === 'undefined' && backend === 'wasm' && (
         <div style={{ 
           marginBottom: '1rem', 
@@ -2219,9 +2220,7 @@ export default function App() {
           borderRadius: '4px',
           fontSize: '0.9em'
         }}>
-          ⚠️ <strong>Performance Note:</strong> SharedArrayBuffer is not available. 
-          WASM will run single-threaded. For better performance, serve over HTTPS 
-          with proper headers or use WebGPU.
+          {t('sharedArrayBufferWarning')}
         </div>
       )}
 
@@ -2231,7 +2230,7 @@ export default function App() {
           type="file" 
           accept="audio/*" 
           onChange={transcribeFile} 
-          disabled={!status.startsWith('Model ready ✔') || isTranscribing || isRecording || isProcessingPreview}
+          disabled={!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview}
           style={{ display: 'none' }}
           id="audio-file-input"
         />
@@ -2239,13 +2238,13 @@ export default function App() {
           htmlFor="audio-file-input"
           className="file-upload-button"
           style={{
-            opacity: (!status.startsWith('Model ready ✔') || isTranscribing || isRecording || isProcessingPreview) ? 0.5 : 1,
-            pointerEvents: (!status.startsWith('Model ready ✔') || isTranscribing || isRecording || isProcessingPreview) ? 'none' : 'auto',
+            opacity: (!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview) ? 0.5 : 1,
+            pointerEvents: (!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview) ? 'none' : 'auto',
             flex: 1
           }}
           data-umami-event="upload_file_button"
         >
-          📁 Send mp3
+          {t('sendMp3')}
         </label>
         {/* When recording, show Stop + Pause/Resume side by side; otherwise single Record button */}
         {isRecording ? (
@@ -2256,7 +2255,7 @@ export default function App() {
               style={{ background: '#ef4444', flex: 1 }}
               data-umami-event="stop_record_button"
             >
-              ⏹ Stop
+              {t('stop')}
             </button>
             <button
               onClick={isPaused ? resumeRecording : pauseRecording}
@@ -2264,13 +2263,13 @@ export default function App() {
               style={{ background: isPaused ? '#10b981' : '#f59e0b', flex: 1 }}
               data-umami-event="pause_record_button"
             >
-              {isPaused ? '▶ Resume' : '⏸ Pause'}
+              {isPaused ? t('resume') : t('pause')}
             </button>
           </>
         ) : (
           <button
             onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-            disabled={(!status.startsWith('Model ready ✔') && recordingCountdown === null) || isTranscribing}
+            disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing}
             className="primary record-button"
             style={{
               background: recordingCountdown !== null ? '#ef4444' : '#10b981',
@@ -2278,7 +2277,7 @@ export default function App() {
             }}
             data-umami-event="record_button"
           >
-            {recordingCountdown !== null ? `⏱ Get Ready (${recordingCountdown})` : '🎤 Record Audio'}
+            {recordingCountdown !== null ? `${t('getReady')} (${recordingCountdown})` : t('recordAudio')}
           </button>
         )}
       </div>
@@ -2295,7 +2294,7 @@ export default function App() {
           color: '#92400e',
           textAlign: 'center'
         }}>
-          ⏱ Get ready to speak in {recordingCountdown}...
+          {t('getReadyToSpeak')} {recordingCountdown}...
         </div>
       )}
       
@@ -2309,7 +2308,7 @@ export default function App() {
           fontSize: '0.9em',
           color: '#991b1b'
         }}>
-          {isPaused ? '⏸ Recording paused. Click "Resume" to continue or "Stop" to finish.' : '🔴 Recording in progress... Click "Stop" when done, or "Pause" to take a break (P key).'}
+          {isPaused ? t('recordingPausedMsg') : t('recordingInProgress')}
           <div style={{ marginTop: '0.5rem' }}>
             <div style={{ 
               width: '100%', 
@@ -2326,9 +2325,9 @@ export default function App() {
               }} />
             </div>
             <p style={{ fontSize: '0.8em', color: '#666', marginTop: '0.25rem', marginBottom: 0 }}>
-              {audioLevel < 10 && '🔇 Too quiet - speak louder'}
-              {audioLevel >= 10 && audioLevel < 30 && '🔉 Speak a bit louder'}
-              {audioLevel >= 30 && '🔊 Good level'}
+              {audioLevel < 10 && t('tooQuiet')}
+              {audioLevel >= 10 && audioLevel < 30 && t('speakLouder')}
+              {audioLevel >= 30 && t('goodLevel')}
             </p>
           </div>
         </div>
@@ -2340,12 +2339,12 @@ export default function App() {
           <div className="audio-preview-header">
             <strong>📎 {pendingAudioFile.name}</strong>
             <span style={{ fontSize: '0.8rem', color: '#6b7280', marginLeft: '0.5rem' }}>
-              (16kHz mono - what the model hears)
+              {t('whatModelHears')}
             </span>
           </div>
           {isProcessingPreview ? (
             <div style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>
-              ⏳ Processing audio preview...
+              {t('processingAudioPreview')}
             </div>
           ) : audioPreviewUrl ? (
             <div className="audio-player-wrapper">
@@ -2357,8 +2356,8 @@ export default function App() {
               <button
                 onClick={clearPendingAudio}
                 className="clear-audio-button"
-                title="Clear audio file"
-                aria-label="Clear audio file"
+                title={t('clearAudioFile')}
+                aria-label={t('clearAudioFile')}
               >
                 ✕
               </button>
@@ -2372,12 +2371,12 @@ export default function App() {
       {(isTranscribing || (pendingAudioFile && !autoTranscribe && !hasBeenTranscribed)) && (
         <button
           onClick={startTranscription}
-          disabled={!status.startsWith('Model ready ✔') || isTranscribing || !pendingAudioFile || !audioPreviewUrl || isProcessingPreview || hasBeenTranscribed}
+          disabled={!status === 'modelReady' || isTranscribing || !pendingAudioFile || !audioPreviewUrl || isProcessingPreview || hasBeenTranscribed}
           className="primary transcribe-button"
           style={{ marginTop: pendingAudioFile ? '0' : '1rem', marginBottom: '1rem' }}
           data-umami-event="transcribe_button"
         >
-          {isTranscribing ? 'Transcribing...' : '🎯 Transcribe'}
+          {isTranscribing ? t('transcribing') : t('transcribe')}
         </button>
       )}
 
@@ -2393,7 +2392,7 @@ export default function App() {
         <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
           <p>⚠ {fallbackWarning}</p>
           <button onClick={() => setFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
-            Dismiss
+            {t('dismiss')}
           </button>
         </div>
       )}
@@ -2403,18 +2402,18 @@ export default function App() {
       {showFallbackPrompt && (
         <div className="fallback-prompt">
           <p>
-            Could not reach HuggingFace to download model weights.
+            {t('couldNotReachHF')}
             {localFallbackEnabled
-              ? ' This instance has a local copy of the weights — would you like to use it instead?'
-              : ' Local fallback is not enabled on this instance.'}
+              ? ` ${t('localCopyAvailable')}`
+              : ` ${t('localFallbackNotEnabled')}`}
           </p>
           {localFallbackEnabled && (
             <div className="fallback-actions">
               <button onClick={() => loadModel({ useLocalFallback: true })}>
-                Download from this server
+                {t('downloadFromServer')}
               </button>
               <button onClick={() => setShowFallbackPrompt(false)}>
-                Cancel
+                {t('cancel')}
               </button>
             </div>
           )}
@@ -2424,8 +2423,8 @@ export default function App() {
       {/* Latest transcription performance info (advanced) */}
       {showAdvancedInfo && latestMetrics && (
         <div className="performance">
-          <strong>RTF:</strong> {latestMetrics.rtf?.toFixed(2)}x &nbsp;|&nbsp; Total: {(latestMetrics.total_ms / 1000).toFixed(2)} s<br/>
-          Preprocess {latestMetrics.preprocess_ms} ms · Encode {(latestMetrics.encode_ms / 1000).toFixed(2)} s · Decode {(latestMetrics.decode_ms / 1000).toFixed(2)} s · Tokenize {latestMetrics.tokenize_ms} ms
+          <strong>{t('rtf')}:</strong> {latestMetrics.rtf?.toFixed(2)}x &nbsp;|&nbsp; {t('total')}: {(latestMetrics.total_ms / 1000).toFixed(2)} s<br/>
+          {t('preprocess')} {latestMetrics.preprocess_ms} ms · {t('encode')} {(latestMetrics.encode_ms / 1000).toFixed(2)} s · {t('decode')} {(latestMetrics.decode_ms / 1000).toFixed(2)} s · {t('tokenize')} {latestMetrics.tokenize_ms} ms
         </div>
       )}
 
@@ -2433,29 +2432,29 @@ export default function App() {
       {transcriptions.length > 0 && (
         <div className="history">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1rem 0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <h3 style={{ margin: 0 }}>Transcriptions</h3>
+            <h3 style={{ margin: 0 }}>{t('transcriptions')}</h3>
             <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
               <button
                 onClick={() => setTranscriptDisplayMode('raw')}
                 className={`display-mode-button${transcriptDisplayMode === 'raw' ? ' active' : ''}`}
                 title="Raw transcription"
               >
-                Raw
+                {t('raw')}
               </button>
               <button
                 onClick={() => { setTranscriptDisplayMode('confidence'); setShowConfidenceHeatmap(true); }}
                 className={`display-mode-button${transcriptDisplayMode === 'confidence' ? ' active' : ''}`}
-                title="Color each word by its confidence score"
+                title={t('confidence')}
               >
-                Confidence
+                {t('confidence')}
               </button>
               {dictationRegexRules.length > 0 && (
                 <button
                   onClick={() => setTranscriptDisplayMode('dictation')}
                   className={`display-mode-button${transcriptDisplayMode === 'dictation' ? ' active' : ''}`}
-                  title={`Dictation mode (experimental) — ${dictationRegexRules.length} regex rules applied`}
+                  title={`${t('dictationRules')} (${dictationRegexRules.length} ${t('dictationRulesExperimental')})`}
                 >
-                  Dictation (exp.)
+                  {t('dictationExp')}
                 </button>
               )}
             </div>
@@ -2521,8 +2520,8 @@ export default function App() {
                     <div className="kebab-menu-wrapper">
                       <button
                         className="kebab-button"
-                        title="More actions"
-                        aria-label="More actions"
+                        title={t('moreActions')}
+                        aria-label={t('moreActions')}
                         onClick={(e) => { e.stopPropagation(); setOpenKebabId(openKebabId === trans.id ? null : trans.id); }}
                       >
                         ⋮
@@ -2530,7 +2529,7 @@ export default function App() {
                       {openKebabId === trans.id && (
                         <div className="kebab-dropdown">
                           <button onClick={() => { copyHistoryItem(trans); setOpenKebabId(null); }}>
-                            {copiedHistoryId === trans.id ? '✓ Copied' : '📋 Copy text'}
+                            {copiedHistoryId === trans.id ? t('copied') : t('copyText')}
                           </button>
                           {dictationRegexRules.length > 0 && (
                             <button onClick={async () => {
@@ -2538,11 +2537,11 @@ export default function App() {
                               try { await navigator.clipboard.writeText(cleaned); setCopiedHistoryId(trans.id); setTimeout(() => setCopiedHistoryId(null), 2000); } catch (e) { console.error('[Copy] Failed:', e); }
                               setOpenKebabId(null);
                             }}>
-                              ✨ Copy dictation
+                              {t('copyDictation')}
                             </button>
                           )}
                           <button className="kebab-delete" onClick={() => deleteTranscription(trans.id)}>
-                            🗑️ Delete
+                            {t('delete')}
                           </button>
                         </div>
                       )}

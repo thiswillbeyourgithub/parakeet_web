@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
+import { I18nProvider } from './i18n.jsx';
 
 // Inject analytics script if environment variables are set
 const analyticsUrl = import.meta.env.VITE_ANALYTICS_URL;
@@ -18,4 +19,4 @@ if (analyticsUrl && analyticsWebsiteId) {
 // Note: Eruda mobile debugger is now loaded in index.html for earlier initialization
 
 const root = createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(<I18nProvider><App /></I18nProvider>);
