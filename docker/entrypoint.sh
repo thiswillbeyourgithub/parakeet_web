@@ -53,7 +53,7 @@ fi
 # - If it starts with '/' or './', it is treated as a local folder containing CSV files.
 # - Otherwise it is treated as a GitLab-compatible base URL (with /api/v4/... and /-/raw/main/regex patterns).
 REGEX_DIR="/app/ui/public/dictation-regex"
-DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure"
+DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure-regex"
 REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_MURMURE_URL}"
 
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, using default Murmure)}"

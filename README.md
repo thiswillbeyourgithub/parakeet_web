@@ -28,7 +28,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 
 Parakeet Web includes an **experimental dictation mode** that post-processes transcriptions using regex rules to clean up spoken punctuation, medical vocabulary, and unit abbreviations. This is especially useful for French medical dictation. It 
 
-The regex rules are sourced from the [Murmure repository](https://framagit.org/interhop/murmure) by the non profit [interhop.org](https://interhop.org/) for the [Murmure](https://github.com/Kieirra/murmure) software, which I also use when I can. All CSV files in that folder are automatically downloaded — when new rule files are added upstream, they are picked up on the next container restart.
+The regex rules are sourced from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) by the non profit [interhop.org](https://interhop.org/) for the [Murmure](https://github.com/Kieirra/murmure) software, which I also use when I can. All CSV files in that folder are automatically downloaded — when new rule files are added upstream, they are picked up on the next container restart.
 
 So far medical categories are in french and include categories like:
 - **ponctuation** — spoken punctuation to symbols ("virgule" → `,`, "retour à la ligne" → newline, "ouvrez les guillemets" → `"`, etc.)
