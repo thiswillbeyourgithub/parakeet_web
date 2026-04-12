@@ -2,6 +2,8 @@
 
 > ⚠️ **EXPERIMENTAL WIP** – This is a heavily modified fork, purely vibe-coded. Expect bugs, breaking changes, and rough edges.
 
+**Try it now: [pw.olicorne.org](https://pw.olicorne.org/)** — no installation required.
+
 Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX format by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)) via WebGPU/WASM.
 
 ![](./image.png)
@@ -21,10 +23,6 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 - 🧪 Experimental and unstable
 - 📝 Licensed under AGPLv3
 - 🎨 Vibe-coded with [aider.chat](https://github.com/Aider-AI/aider/) and [Claude Code](https://claude.com/claude-code)
-
-## Live Demo
-
-A running instance is available at **https://pw.olicorne.org/** (no installation required).
 
 ## Dictation Mode
 
