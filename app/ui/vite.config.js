@@ -74,13 +74,29 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
-    ...(process.env.VITE_ALLOWED_HOST && { 
-      allowedHosts: process.env.VITE_ALLOWED_HOST.split(',').map(h => h.trim()) 
+    ...(process.env.VITE_ALLOWED_HOST && {
+      allowedHosts: process.env.VITE_ALLOWED_HOST.split(',').map(h => h.trim())
     }),
     // Enable file watching with polling when VITE_USE_POLLING is set to 'true'
     // This is useful for Docker environments where native file system events don't work reliably
     watch: {
       usePolling: process.env.VITE_USE_POLLING === 'true',
+    },
+    // Proxy signaling API to the Express signaling server (remote mic feature)
+    proxy: {
+      '/api/signal': {
+        target: `http://localhost:${process.env.SIGNALING_PORT || 3001}`,
+        rewrite: (p) => p.replace(/^\/api\/signal/, '/api'),
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        'remote-mic': path.resolve(__dirname, 'remote-mic.html'),
+      },
     },
   },
   optimizeDeps: {
