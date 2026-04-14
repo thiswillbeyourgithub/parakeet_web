@@ -98,6 +98,15 @@ else
   echo "[entrypoint] Dictation regex rules already present in $REGEX_DIR"
 fi
 
+# Install signaling server dependencies and start it in the background
+if [ -f /signaling/package.json ]; then
+  echo "[entrypoint] Installing signaling server dependencies..."
+  cd /signaling && npm install --production 2>&1 | tail -1
+  echo "[entrypoint] Starting signaling server on port ${SIGNALING_PORT:-3001}..."
+  PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
+  cd /app
+fi
+
 # Run npm install (picks up any new deps) then start the Vite dev server.
 # The CMD from Dockerfile/docker-compose is passed as arguments to this script.
 exec sh -c "$* && cd ui && npm install && npm run dev -- --host 0.0.0.0"

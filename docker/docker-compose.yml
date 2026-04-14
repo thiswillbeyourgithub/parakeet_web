@@ -27,6 +27,8 @@ services:
       - ../app:/app:ro
       - ../app/package-lock.json:/app/package-lock.json:rw
       - ../app/ui:/app/ui:rw
+      # Signaling server for remote microphone feature
+      - ../signaling:/signaling:ro
       # Local model fallback: no manual volume mount needed when using
       # FALLBACK_MODEL_REPO build arg — the entrypoint symlinks automatically.
 
@@ -58,6 +60,14 @@ services:
       - VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-${FALLBACK_MODEL_REPO:+true}}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
+      # Remote microphone signaling server (shares coturn with WebSend)
+      - STUN_SERVER=${STUN_SERVER:-}
+      - TURN_SERVER=${TURN_SERVER:-}
+      - TURN_SECRET=${TURN_SECRET:-}
+      - TURN_CREDENTIAL_TTL=${TURN_CREDENTIAL_TTL:-3600}
+      - TURNS_PORT=${TURNS_PORT:-}
+      - SIGNALING_PORT=${SIGNALING_PORT:-3001}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
 
 volumes:
   root-node-modules:
