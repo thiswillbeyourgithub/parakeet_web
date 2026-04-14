@@ -1,7 +1,12 @@
-import React, { useState, useRef, useEffect, useTransition } from 'react';
+import React, { useState, useRef, useEffect, useTransition, useCallback } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
+import { RemoteMicRTC } from './lib/remote-webrtc.js';
+import {
+    generateKeyPair, exportPublicKey, importPublicKey,
+    deriveSharedKey, decrypt
+} from './lib/remote-crypto.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -207,6 +212,30 @@ export default function App() {
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState(null);
+
+  // Remote microphone state
+  const [isRemoteMic, setIsRemoteMic] = useState(false);
+  const [remoteMicModal, setRemoteMicModal] = useState(false);
+  const [remoteMicStatus, setRemoteMicStatus] = useState(''); // connecting|waiting|connected|stopped|error
+  const [remoteMicLevel, setRemoteMicLevel] = useState(0);
+  const [remoteMicElapsed, setRemoteMicElapsed] = useState(0);
+  const [remoteMicError, setRemoteMicError] = useState('');
+  const remoteMicRtcRef = useRef(null);
+  const remoteMicKeyRef = useRef(null);
+  const remoteMicSampleRateRef = useRef(16000);
+  const remoteMicTimerRef = useRef(null);
+  const remoteMicQrRef = useRef(null); // DOM ref for QR code container
+
+  // Load QR code library when remote mic modal opens
+  useEffect(() => {
+    if (remoteMicModal && !window.QRCode) {
+      const script = document.createElement('script');
+      script.src = '/js/qrcode.min.js';
+      script.onload = () => console.log('[RemoteMic] QR code library loaded');
+      document.head.appendChild(script);
+    }
+  }, [remoteMicModal]);
+
   // Tracks which history item has its kebab menu open (by transcription id)
   const [openKebabId, setOpenKebabId] = useState(null);
   // Tracks which history item is showing its confidence score overlay
@@ -940,6 +969,220 @@ export default function App() {
     } catch (err) {
       console.error('[Record] Failed to resume:', err);
     }
+  }
+
+  // ============ Remote Microphone (Phone as Mic) ============
+
+  async function startRemoteMic() {
+    if (isRecording || isRemoteMic) return;
+
+    setRemoteMicModal(true);
+    setRemoteMicStatus('connecting');
+    setRemoteMicError('');
+    setRemoteMicLevel(0);
+    setRemoteMicElapsed(0);
+    pcmChunksRef.current = [];
+    remoteMicSampleRateRef.current = 16000;
+
+    try {
+      const rtc = new RemoteMicRTC('/api/signal');
+      remoteMicRtcRef.current = rtc;
+
+      await rtc.init();
+      const { roomId, secret } = await rtc.createRoom();
+
+      // Generate ECDH key pair for E2E encryption
+      const keyPair = await generateKeyPair();
+      const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);
+
+      rtc.onDisconnected = () => {
+        console.log('[RemoteMic] Disconnected');
+        if (isRemoteMic || remoteMicRtcRef.current) {
+          stopRemoteMic();
+        }
+      };
+
+      // Handle incoming messages (JSON control + binary audio)
+      rtc.onMessage = async (data) => {
+        if (typeof data === 'string') {
+          try {
+            const msg = JSON.parse(data);
+            if (msg.type === 'sender-public-key') {
+              // Derive shared key from phone's public key
+              const theirKey = await importPublicKey(msg.key);
+              remoteMicKeyRef.current = await deriveSharedKey(keyPair.privateKey, theirKey);
+              console.log('[RemoteMic] Shared key derived, ready to receive audio');
+              setRemoteMicStatus('connected');
+              setIsRemoteMic(true);
+
+              // Start elapsed timer
+              const startTime = Date.now();
+              remoteMicTimerRef.current = setInterval(() => {
+                setRemoteMicElapsed(Math.floor((Date.now() - startTime) / 1000));
+              }, 1000);
+            } else if (msg.type === 'audio-config') {
+              remoteMicSampleRateRef.current = msg.sampleRate;
+              console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
+            } else if (msg.type === 'audio-end') {
+              console.log('[RemoteMic] Phone stopped recording');
+              stopRemoteMic();
+            }
+          } catch (e) {
+            console.error('[RemoteMic] Error parsing message:', e);
+          }
+        } else {
+          // Binary data: encrypted audio chunk
+          if (!remoteMicKeyRef.current) return;
+          try {
+            const decrypted = await decrypt(data, remoteMicKeyRef.current);
+            const float32 = new Float32Array(decrypted);
+            pcmChunksRef.current.push(float32);
+
+            // Compute audio level from decrypted PCM
+            let sum = 0;
+            for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
+            const rms = Math.sqrt(sum / float32.length);
+            setRemoteMicLevel(Math.min(100, rms * 250));
+          } catch (e) {
+            console.warn('[RemoteMic] Decrypt error:', e.message);
+          }
+        }
+      };
+
+      await rtc.createOfferAndStore();
+
+      // Build QR code URL
+      const baseUrl = window.location.origin;
+      const qrUrl = `${baseUrl}/remote-mic.html#${roomId}:${secret}`;
+
+      setRemoteMicStatus('waiting');
+
+      // Render QR code after a tick so the DOM ref is available
+      setTimeout(() => {
+        if (remoteMicQrRef.current && window.QRCode) {
+          remoteMicQrRef.current.innerHTML = '';
+          new window.QRCode(remoteMicQrRef.current, {
+            text: qrUrl,
+            width: 220,
+            height: 220,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: window.QRCode.CorrectLevel.M,
+          });
+        }
+      }, 100);
+
+      // Send our public key once the data channel opens, then wait for answer
+      const originalOnConnected = rtc.onConnected;
+      rtc.onConnected = () => {
+        if (originalOnConnected) originalOnConnected();
+        rtc.sendMessage({ type: 'public-key', key: ourKeyBase64 });
+      };
+
+      // Long-poll for the phone's answer (blocks until phone joins)
+      await rtc.waitForAnswer();
+
+    } catch (e) {
+      console.error('[RemoteMic] Error:', e);
+      setRemoteMicStatus('error');
+      setRemoteMicError(e.message || 'Connection failed');
+    }
+  }
+
+  async function stopRemoteMic() {
+    // Clean up timer
+    if (remoteMicTimerRef.current) {
+      clearInterval(remoteMicTimerRef.current);
+      remoteMicTimerRef.current = null;
+    }
+
+    // Clean up RTC
+    if (remoteMicRtcRef.current) {
+      try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
+      remoteMicRtcRef.current.close();
+      remoteMicRtcRef.current = null;
+    }
+    remoteMicKeyRef.current = null;
+
+    setIsRemoteMic(false);
+    setRemoteMicModal(false);
+    setRemoteMicLevel(0);
+
+    // Process accumulated audio (same pipeline as stopRecording)
+    const chunks = pcmChunksRef.current;
+    pcmChunksRef.current = [];
+    const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
+
+    if (totalSamples === 0) {
+      console.log('[RemoteMic] No audio received');
+      return;
+    }
+
+    const rawPcm = new Float32Array(totalSamples);
+    let offset = 0;
+    for (const chunk of chunks) {
+      rawPcm.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const sourceSampleRate = remoteMicSampleRateRef.current;
+    console.log(`[RemoteMic] Captured ${totalSamples} samples at ${sourceSampleRate}Hz (${(totalSamples / sourceSampleRate).toFixed(2)}s)`);
+
+    // Resample to 16kHz if needed
+    const targetSampleRate = 16000;
+    let pcm16k;
+    if (sourceSampleRate === targetSampleRate) {
+      pcm16k = rawPcm;
+    } else {
+      const offlineCtx = new OfflineAudioContext(
+        1,
+        Math.ceil((totalSamples / sourceSampleRate) * targetSampleRate),
+        targetSampleRate
+      );
+      const buf = offlineCtx.createBuffer(1, totalSamples, sourceSampleRate);
+      buf.getChannelData(0).set(rawPcm);
+      const src = offlineCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(offlineCtx.destination);
+      src.start();
+      const resampled = await offlineCtx.startRendering();
+      pcm16k = resampled.getChannelData(0);
+    }
+    console.log(`[RemoteMic] Final: ${pcm16k.length} samples at 16kHz (${(pcm16k.length / 16000).toFixed(2)}s)`);
+
+    // Build WAV and feed to existing pipeline
+    const wavBlob = createWavBlob(pcm16k, targetSampleRate);
+    const file = new File([wavBlob], `remote-mic-${Date.now()}.wav`, { type: 'audio/wav' });
+
+    setPendingAudioFile(file);
+    const previewUrl = URL.createObjectURL(wavBlob);
+    setAudioPreviewUrl(previewUrl);
+    setStatus('modelReady');
+    setHasBeenTranscribed(false);
+
+    // Auto-transcribe if enabled
+    if (autoTranscribeRef.current && modelRef.current) {
+      console.log('[RemoteMic] Auto-transcribing...');
+      processAudioFile(file).then(() => {
+        setHasBeenTranscribed(true);
+      });
+    }
+  }
+
+  function cancelRemoteMic() {
+    if (remoteMicTimerRef.current) {
+      clearInterval(remoteMicTimerRef.current);
+      remoteMicTimerRef.current = null;
+    }
+    if (remoteMicRtcRef.current) {
+      remoteMicRtcRef.current.close();
+      remoteMicRtcRef.current = null;
+    }
+    remoteMicKeyRef.current = null;
+    setIsRemoteMic(false);
+    setRemoteMicModal(false);
+    setRemoteMicLevel(0);
+    pcmChunksRef.current = [];
   }
 
   // --- Dictation device (SpeechMike) integration ---
@@ -2266,19 +2509,38 @@ export default function App() {
               {isPaused ? t('resume') : t('pause')}
             </button>
           </>
-        ) : (
+        ) : isRemoteMic ? (
           <button
-            onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-            disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing}
+            onClick={stopRemoteMic}
             className="primary record-button"
-            style={{
-              background: recordingCountdown !== null ? '#ef4444' : '#10b981',
-              flex: 1
-            }}
-            data-umami-event="record_button"
+            style={{ background: '#ef4444', flex: 1 }}
           >
-            {recordingCountdown !== null ? `${t('getReady')} (${recordingCountdown})` : t('recordAudio')}
+            {t('remoteMicStop') || 'Stop Remote Mic'}
           </button>
+        ) : (
+          <>
+            <button
+              onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
+              disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing || isRemoteMic}
+              className="primary record-button"
+              style={{
+                background: recordingCountdown !== null ? '#ef4444' : '#10b981',
+                flex: 1
+              }}
+              data-umami-event="record_button"
+            >
+              {recordingCountdown !== null ? `${t('getReady')} (${recordingCountdown})` : t('recordAudio')}
+            </button>
+            <button
+              onClick={startRemoteMic}
+              disabled={isTranscribing || isRecording || isRemoteMic}
+              className="primary record-button"
+              style={{ background: '#8b5cf6', flex: 1 }}
+              title={t('remoteMicTooltip') || 'Use your phone as a microphone'}
+            >
+              {t('remoteMic') || 'Phone Mic'}
+            </button>
+          </>
         )}
       </div>
       
@@ -2554,6 +2816,102 @@ export default function App() {
         </div>
       )}
       </>)}
+
+      {/* Remote Microphone Modal */}
+      {remoteMicModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+        }} onClick={e => { if (e.target === e.currentTarget && remoteMicStatus !== 'connected') cancelRemoteMic(); }}>
+          <div style={{
+            background: '#1e1e3a', borderRadius: '16px', padding: '2rem',
+            maxWidth: '380px', width: '90%', textAlign: 'center', color: '#e0e0e0',
+          }}>
+            <h3 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>
+              {t('remoteMicTitle') || 'Remote Microphone'}
+            </h3>
+
+            {remoteMicStatus === 'connecting' && (
+              <p style={{ color: '#60a5fa' }}>{t('remoteMicConnecting') || 'Setting up...'}</p>
+            )}
+
+            {remoteMicStatus === 'waiting' && (
+              <>
+                <p style={{ color: '#9ca3af', marginBottom: '1rem' }}>
+                  {t('remoteMicScanQr') || 'Scan this QR code with your phone'}
+                </p>
+                <div ref={remoteMicQrRef} style={{
+                  display: 'inline-block', padding: '12px',
+                  background: 'white', borderRadius: '8px', marginBottom: '1rem',
+                }} />
+                <p style={{ color: '#6b7280', fontSize: '0.8rem' }}>
+                  {t('remoteMicWaiting') || 'Waiting for phone to connect...'}
+                </p>
+              </>
+            )}
+
+            {remoteMicStatus === 'connected' && (
+              <>
+                <div style={{
+                  width: '80px', height: '80px', borderRadius: '50%',
+                  background: `radial-gradient(circle, rgba(239,68,68,${0.3 + remoteMicLevel / 150}) 0%, rgba(239,68,68,0.1) 70%)`,
+                  border: '3px solid #ef4444', margin: '0.5rem auto 1rem',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <div style={{
+                    width: `${20 + remoteMicLevel * 0.4}px`, height: `${20 + remoteMicLevel * 0.4}px`,
+                    borderRadius: '50%', background: '#ef4444',
+                    transition: 'width 0.1s, height 0.1s',
+                  }} />
+                </div>
+                <p style={{ color: '#ef4444', fontWeight: 'bold' }}>
+                  {t('remoteMicRecording') || 'Recording'} {Math.floor(remoteMicElapsed / 60)}:{(remoteMicElapsed % 60).toString().padStart(2, '0')}
+                </p>
+                <div style={{
+                  margin: '0.75rem auto', width: '80%', height: '6px',
+                  background: '#2a2a4a', borderRadius: '3px', overflow: 'hidden',
+                }}>
+                  <div style={{
+                    width: `${remoteMicLevel}%`, height: '100%',
+                    background: remoteMicLevel < 20 ? '#f59e0b' : '#10b981',
+                    transition: 'width 0.1s',
+                  }} />
+                </div>
+                <button onClick={stopRemoteMic} style={{
+                  background: '#ef4444', color: 'white', border: 'none',
+                  borderRadius: '8px', padding: '0.75rem 2rem', fontSize: '1rem',
+                  fontWeight: 'bold', cursor: 'pointer', marginTop: '1rem',
+                }}>
+                  {t('remoteMicStop') || 'Stop & Transcribe'}
+                </button>
+              </>
+            )}
+
+            {remoteMicStatus === 'error' && (
+              <>
+                <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{remoteMicError}</p>
+                <button onClick={cancelRemoteMic} style={{
+                  background: '#3b82f6', color: 'white', border: 'none',
+                  borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
+                }}>
+                  {t('close') || 'Close'}
+                </button>
+              </>
+            )}
+
+            {remoteMicStatus !== 'connected' && remoteMicStatus !== 'error' && (
+              <button onClick={cancelRemoteMic} style={{
+                background: 'transparent', color: '#9ca3af', border: '1px solid #4b5563',
+                borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
+                marginTop: '1rem',
+              }}>
+                {t('cancel') || 'Cancel'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 } 
