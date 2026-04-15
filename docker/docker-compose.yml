@@ -69,6 +69,73 @@ services:
       - SIGNALING_PORT=${SIGNALING_PORT:-3001}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
 
+  # ── coturn TURN relay server (optional) ─────────────────────────────
+  # If you already run a coturn instance (e.g. for WebSend or Nextcloud Talk),
+  # you can skip this service and point STUN_SERVER / TURN_SERVER / TURN_SECRET
+  # to your existing server instead.
+  #
+  # To use this bundled coturn, uncomment the block below and set
+  # TURN_SERVER, TURN_SECRET and TURN_EXTERNAL_IP in your .env file.
+  # Without a TURN server the remote mic feature still works when direct
+  # peer-to-peer WebRTC succeeds (same LAN), but will fail through
+  # symmetric NAT or restrictive firewalls.
+  # ─────────────────────────────────────────────────────────────────────
+  # coturn:
+  #   image: coturn/coturn:latest
+  #   container_name: coturn
+  #   ports:
+  #     # Change 3478 if it conflicts with another coturn instance
+  #     - "3478:3478/udp"
+  #     - "3478:3478/tcp"
+  #     - "49152-49161:49152-49161/udp"
+  #   # To enable TURNS (TURN-over-TLS), remove --no-tls and add:
+  #   #   --tls-listening-port=${TURNS_PORT:-8443}
+  #   #   --cert=/etc/coturn/certs/cert.pem
+  #   #   --pkey=/etc/coturn/certs/key.pem
+  #   # Then mount the certificate files via a volume:
+  #   #   volumes:
+  #   #     - /path/to/certs:/etc/coturn/certs:ro
+  #   # And expose the TURNS port:
+  #   #     - "${TURNS_PORT:-8443}:${TURNS_PORT:-8443}/tcp"
+  #   #
+  #   # Docker NAT: --external-ip format is PUBLIC_IP/INTERNAL_IP.
+  #   # 0.0.0.0 as internal means "all container interfaces" (correct for Docker).
+  #   # NOTE: TURN_EXTERNAL_IP must be an IP address, NOT a hostname — coturn
+  #   # does not resolve DNS for --external-ip.
+  #   command: >
+  #     -n
+  #     --log-file=stdout
+  #     --use-auth-secret
+  #     --static-auth-secret=${TURN_SECRET}
+  #     --fingerprint
+  #     --no-multicast-peers
+  #     --no-cli
+  #     --no-dtls
+  #     --no-tls
+  #     --realm=parakeetweb
+  #     --min-port=49152
+  #     --max-port=49161
+  #     --listening-port=3478
+  #     --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+  #     --check-origin-consistency
+  #     --cpus=1
+  #   cap_drop:
+  #     - ALL
+  #   cap_add:
+  #     - NET_BIND_SERVICE
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp:size=10M,mode=1777
+  #   privileged: false
+  #   # coturn image runs as root by default; the other hardening measures mitigate this.
+  #   user: "0:0"
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 128M
+  #         cpus: '0.5'
+
 volumes:
   root-node-modules:
   react-modules:
