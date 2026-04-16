@@ -186,6 +186,12 @@ function RemoteMicSender() {
                         } else if (msg.type === 'stop') {
                             // Computer requested full stop
                             stopAndDisconnect();
+                        } else if (msg.type === 'pause') {
+                            // Computer requested pause
+                            pauseRecording();
+                        } else if (msg.type === 'resume') {
+                            // Computer requested resume
+                            resumeRecording();
                         }
                     } catch (e) {
                         console.error('[RemoteMic] Error handling message:', e);
@@ -319,6 +325,7 @@ function RemoteMicSender() {
         releaseWakeLock();
         setAudioLevel(0);
         setStatus(STATUS.PAUSED);
+        if (rtcRef.current) rtcRef.current.sendMessage({ type: 'paused' });
     }, [releaseWakeLock]);
 
     // Resume from pause
@@ -345,6 +352,7 @@ function RemoteMicSender() {
         }, 1000);
         await acquireWakeLock();
         setStatus(STATUS.RECORDING);
+        if (rtcRef.current) rtcRef.current.sendMessage({ type: 'resumed' });
     }, [elapsed, acquireWakeLock]);
 
     // Full disconnect — close RTC, show goodbye screen

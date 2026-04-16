@@ -221,6 +221,7 @@ export default function App() {
   const [remoteMicLevel, setRemoteMicLevel] = useState(0);
   const [remoteMicElapsed, setRemoteMicElapsed] = useState(0);
   const [remoteMicError, setRemoteMicError] = useState('');
+  const [remoteMicPaused, setRemoteMicPaused] = useState(false);
   const remoteMicRtcRef = useRef(null);
   const remoteMicKeyRef = useRef(null);
   const remoteMicSampleRateRef = useRef(16000);
@@ -1037,6 +1038,8 @@ export default function App() {
               remoteMicKeyRef.current = await deriveSharedKey(keyPair.privateKey, theirKey);
               console.log('[RemoteMic] Shared key derived, ready to receive audio');
               setRemoteMicStatus('connected');
+              setRemoteMicModal(false); // close setup modal; use main UI from here
+              setRemoteMicPaused(false);
               setIsRemoteMic(true);
 
               // Start elapsed timer
@@ -1057,6 +1060,10 @@ export default function App() {
               console.log('[RemoteMic] Phone stopped recording, processing batch...');
               // Process accumulated audio but keep RTC alive for next recording
               processRemoteMicBatch();
+            } else if (msg.type === 'paused') {
+              setRemoteMicPaused(true);
+            } else if (msg.type === 'resumed') {
+              setRemoteMicPaused(false);
             }
           } catch (e) {
             console.error('[RemoteMic] Error parsing message:', e);
@@ -1116,6 +1123,7 @@ export default function App() {
     }
     setRemoteMicLevel(0);
     setRemoteMicElapsed(0);
+    setRemoteMicPaused(false);
 
     const chunks = pcmChunksRef.current;
     pcmChunksRef.current = [];
@@ -1192,6 +1200,21 @@ export default function App() {
     setIsRemoteMic(false);
     setRemoteMicModal(false);
     setRemoteMicLevel(0);
+    setRemoteMicPaused(false);
+  }
+
+  function pauseRemoteMic() {
+    if (remoteMicRtcRef.current) {
+      remoteMicRtcRef.current.sendMessage({ type: 'pause' });
+    }
+    setRemoteMicPaused(true);
+  }
+
+  function resumeRemoteMic() {
+    if (remoteMicRtcRef.current) {
+      remoteMicRtcRef.current.sendMessage({ type: 'resume' });
+    }
+    setRemoteMicPaused(false);
   }
 
   function cancelRemoteMic() {
@@ -2515,7 +2538,7 @@ export default function App() {
         >
           {t('sendMp3')}
         </label>
-        {/* When recording, show Stop + Pause/Resume side by side; otherwise single Record button */}
+        {/* When recording (local or remote), show Stop + Pause/Resume side by side; otherwise single Record button */}
         {isRecording ? (
           <>
             <button
@@ -2536,13 +2559,22 @@ export default function App() {
             </button>
           </>
         ) : isRemoteMic ? (
-          <button
-            onClick={stopRemoteMic}
-            className="primary record-button"
-            style={{ background: '#ef4444', flex: 1 }}
-          >
-            {t('remoteMicStop') || 'Stop Remote Mic'}
-          </button>
+          <>
+            <button
+              onClick={stopRemoteMic}
+              className="primary record-button"
+              style={{ background: '#ef4444', flex: 1 }}
+            >
+              {t('stop') || 'Stop'}
+            </button>
+            <button
+              onClick={remoteMicPaused ? resumeRemoteMic : pauseRemoteMic}
+              className="primary record-button"
+              style={{ background: remoteMicPaused ? '#10b981' : '#f59e0b', flex: 1 }}
+            >
+              {remoteMicPaused ? t('resume') : t('pause')}
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -2586,40 +2618,52 @@ export default function App() {
         </div>
       )}
       
-      {isRecording && (
-        <div style={{ 
-          marginTop: '0.5rem', 
-          padding: '0.5rem', 
-          backgroundColor: '#fef2f2', 
-          border: '1px solid #fecaca',
-          borderRadius: '4px',
-          fontSize: '0.9em',
-          color: '#991b1b'
-        }}>
-          {isPaused ? t('recordingPausedMsg') : t('recordingInProgress')}
-          <div style={{ marginTop: '0.5rem' }}>
-            <div style={{ 
-              width: '100%', 
-              height: '20px', 
-              background: '#e0e0e0',
-              borderRadius: '4px',
-              overflow: 'hidden'
-            }}>
+      {(isRecording || isRemoteMic) && (() => {
+        const level = isRemoteMic ? remoteMicLevel : audioLevel;
+        const paused = isRemoteMic ? remoteMicPaused : isPaused;
+        const elapsed = isRemoteMic ? remoteMicElapsed : null;
+        return (
+          <div style={{
+            marginTop: '0.5rem',
+            padding: '0.5rem',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '4px',
+            fontSize: '0.9em',
+            color: '#991b1b'
+          }}>
+            <span>
+              {paused ? t('recordingPausedMsg') : (isRemoteMic ? (t('remoteMicRecording') || 'Phone recording') : t('recordingInProgress'))}
+              {isRemoteMic && elapsed !== null && (
+                <span style={{ marginLeft: '0.5rem', fontVariantNumeric: 'tabular-nums' }}>
+                  {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, '0')}
+                </span>
+              )}
+            </span>
+            <div style={{ marginTop: '0.5rem' }}>
               <div style={{
-                width: `${Math.min(100, audioLevel)}%`,
-                height: '100%',
-                background: audioLevel > 30 ? '#10b981' : '#fbbf24',
-                transition: 'width 0.1s'
-              }} />
+                width: '100%',
+                height: '20px',
+                background: '#e0e0e0',
+                borderRadius: '4px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  width: `${Math.min(100, level)}%`,
+                  height: '100%',
+                  background: level > 30 ? '#10b981' : '#fbbf24',
+                  transition: 'width 0.1s'
+                }} />
+              </div>
+              <p style={{ fontSize: '0.8em', color: '#666', marginTop: '0.25rem', marginBottom: 0 }}>
+                {level < 10 && t('tooQuiet')}
+                {level >= 10 && level < 30 && t('speakLouder')}
+                {level >= 30 && t('goodLevel')}
+              </p>
             </div>
-            <p style={{ fontSize: '0.8em', color: '#666', marginTop: '0.25rem', marginBottom: 0 }}>
-              {audioLevel < 10 && t('tooQuiet')}
-              {audioLevel >= 10 && audioLevel < 30 && t('speakLouder')}
-              {audioLevel >= 30 && t('goodLevel')}
-            </p>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Audio preview player */}
       {pendingAudioFile && (
@@ -2877,43 +2921,6 @@ export default function App() {
               </>
             )}
 
-            {remoteMicStatus === 'connected' && (
-              <>
-                <div style={{
-                  width: '80px', height: '80px', borderRadius: '50%',
-                  background: `radial-gradient(circle, rgba(239,68,68,${0.3 + remoteMicLevel / 150}) 0%, rgba(239,68,68,0.1) 70%)`,
-                  border: '3px solid #ef4444', margin: '0.5rem auto 1rem',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <div style={{
-                    width: `${20 + remoteMicLevel * 0.4}px`, height: `${20 + remoteMicLevel * 0.4}px`,
-                    borderRadius: '50%', background: '#ef4444',
-                    transition: 'width 0.1s, height 0.1s',
-                  }} />
-                </div>
-                <p style={{ color: '#ef4444', fontWeight: 'bold' }}>
-                  {t('remoteMicRecording') || 'Recording'} {Math.floor(remoteMicElapsed / 60)}:{(remoteMicElapsed % 60).toString().padStart(2, '0')}
-                </p>
-                <div style={{
-                  margin: '0.75rem auto', width: '80%', height: '6px',
-                  background: '#2a2a4a', borderRadius: '3px', overflow: 'hidden',
-                }}>
-                  <div style={{
-                    width: `${remoteMicLevel}%`, height: '100%',
-                    background: remoteMicLevel < 20 ? '#f59e0b' : '#10b981',
-                    transition: 'width 0.1s',
-                  }} />
-                </div>
-                <button onClick={stopRemoteMic} style={{
-                  background: '#ef4444', color: 'white', border: 'none',
-                  borderRadius: '8px', padding: '0.75rem 2rem', fontSize: '1rem',
-                  fontWeight: 'bold', cursor: 'pointer', marginTop: '1rem',
-                }}>
-                  {t('remoteMicStop') || 'Stop & Transcribe'}
-                </button>
-              </>
-            )}
-
             {remoteMicStatus === 'error' && (
               <>
                 <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{remoteMicError}</p>
@@ -2926,7 +2933,7 @@ export default function App() {
               </>
             )}
 
-            {remoteMicStatus !== 'connected' && remoteMicStatus !== 'error' && (
+            {remoteMicStatus !== 'error' && (
               <button onClick={cancelRemoteMic} style={{
                 background: 'transparent', color: '#9ca3af', border: '1px solid #4b5563',
                 borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
