@@ -51,6 +51,12 @@ RUN npm install && \
     cd ui && \
     npm install
 
+# Install signaling server dependencies into a fixed, image-owned location.
+# /signaling is bind-mounted read-only at runtime, so node_modules cannot live
+# there. We install into /signaling-deps and the entrypoint sets NODE_PATH.
+COPY --chown=node:node signaling/package*.json /signaling-deps/
+RUN cd /signaling-deps && npm install --production
+
 # Copy the entrypoint script that sets up model symlinks before starting Vite
 COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 

@@ -98,13 +98,12 @@ else
   echo "[entrypoint] Dictation regex rules already present in $REGEX_DIR"
 fi
 
-# Install signaling server dependencies and start it in the background
-if [ -f /signaling/package.json ]; then
-  echo "[entrypoint] Installing signaling server dependencies..."
-  cd /signaling && npm install --production
+# Start the signaling server in the background.
+# Dependencies were installed at build time into /signaling-deps; NODE_PATH
+# tells Node where to find them since /signaling is read-only at runtime.
+if [ -f /signaling/server.js ]; then
   echo "[entrypoint] Starting signaling server on port ${SIGNALING_PORT:-3001}..."
-  PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
-  cd /app
+  NODE_PATH=/signaling-deps/node_modules PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
 fi
 
 # Run npm install (picks up any new deps) then start the Vite dev server.
