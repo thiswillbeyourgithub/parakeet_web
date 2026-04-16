@@ -112,7 +112,10 @@ export class RemoteMicRTC {
                     this._disconnectTimer = null;
                 }
                 this._stopPolling();
-                if (this.onConnected) this.onConnected();
+                // Note: onConnected is fired from data channel onopen (for offerer)
+                // to ensure the channel is ready before sending. For non-data-channel
+                // connections (future), fire here as fallback.
+                if (!this.isOfferer && this.onConnected) this.onConnected();
             } else if (state === 'failed') {
                 this._stopPolling();
                 if (this.onDisconnected) this.onDisconnected();
@@ -138,6 +141,10 @@ export class RemoteMicRTC {
 
         this.dataChannel.onopen = () => {
             console.log('[RemoteMicRTC] Data channel open');
+            // Fire onConnected here — this is the reliable moment when we can
+            // actually send messages (onconnectionstatechange may fire slightly
+            // before the data channel is ready, causing sendMessage to drop the msg).
+            if (this.isOfferer && this.onConnected) this.onConnected();
         };
 
         this.dataChannel.onclose = () => {

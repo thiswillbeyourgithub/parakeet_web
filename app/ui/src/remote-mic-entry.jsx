@@ -24,11 +24,29 @@ const STATUS = {
     ERROR: 'error',
 };
 
+// Global log buffer so we can capture logs before React renders
+const _logBuffer = [];
+function _intercept(level, origFn) {
+    return (...args) => {
+        origFn.apply(console, args);
+        const line = `[${level}] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`;
+        _logBuffer.push(line);
+        // Notify any mounted listener
+        if (typeof _logBuffer._notify === 'function') _logBuffer._notify(line);
+    };
+}
+console.log   = _intercept('LOG',   console.log.bind(console));
+console.warn  = _intercept('WARN',  console.warn.bind(console));
+console.error = _intercept('ERR',   console.error.bind(console));
+
 function RemoteMicSender() {
     const [status, setStatus] = useState(STATUS.INIT);
     const [errorMsg, setErrorMsg] = useState('');
     const [audioLevel, setAudioLevel] = useState(0);
     const [elapsed, setElapsed] = useState(0);
+    const [logs, setLogs] = useState([..._logBuffer]);
+    const [logsOpen, setLogsOpen] = useState(false);
+    const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
     const sharedKeyRef = useRef(null);
@@ -51,6 +69,21 @@ function RemoteMicSender() {
     useEffect(() => {
         return cleanup;
     }, [cleanup]);
+
+    // Subscribe to log buffer updates
+    useEffect(() => {
+        _logBuffer._notify = (line) => {
+            setLogs(prev => [...prev, line]);
+        };
+        return () => { _logBuffer._notify = null; };
+    }, []);
+
+    // Auto-scroll logs
+    useEffect(() => {
+        if (logsOpen && logsEndRef.current) {
+            logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [logs, logsOpen]);
 
     const start = useCallback(async () => {
         try {
@@ -319,6 +352,39 @@ function RemoteMicSender() {
                     </button>
                 </div>
             )}
+            {/* Debug log dropdown */}
+            <div style={{ marginTop: '2rem', textAlign: 'left' }}>
+                <button
+                    onClick={() => setLogsOpen(o => !o)}
+                    style={{
+                        background: 'transparent', border: '1px solid #3a3a5a',
+                        color: '#9ca3af', borderRadius: '6px',
+                        padding: '0.4rem 0.8rem', fontSize: '0.8rem', cursor: 'pointer',
+                        width: '100%', textAlign: 'left',
+                    }}
+                >
+                    {logsOpen ? '▲' : '▼'} Debug logs ({logs.length})
+                </button>
+                {logsOpen && (
+                    <div style={{
+                        marginTop: '0.5rem', background: '#0d0d1a',
+                        border: '1px solid #2a2a4a', borderRadius: '6px',
+                        padding: '0.5rem', maxHeight: '200px', overflowY: 'auto',
+                        fontFamily: 'monospace', fontSize: '0.7rem', lineHeight: '1.4',
+                    }}>
+                        {logs.length === 0 && <span style={{ color: '#4b5563' }}>No logs yet.</span>}
+                        {logs.map((line, i) => (
+                            <div key={i} style={{
+                                color: line.startsWith('[ERR]') ? '#f87171'
+                                     : line.startsWith('[WARN]') ? '#fbbf24'
+                                     : '#86efac',
+                                wordBreak: 'break-all',
+                            }}>{line}</div>
+                        ))}
+                        <div ref={logsEndRef} />
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
