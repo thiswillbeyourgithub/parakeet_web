@@ -1047,9 +1047,16 @@ export default function App() {
             } else if (msg.type === 'audio-config') {
               remoteMicSampleRateRef.current = msg.sampleRate;
               console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
+              // Restart elapsed timer for new recording session
+              if (remoteMicTimerRef.current) clearInterval(remoteMicTimerRef.current);
+              const startTime = Date.now();
+              remoteMicTimerRef.current = setInterval(() => {
+                setRemoteMicElapsed(Math.floor((Date.now() - startTime) / 1000));
+              }, 1000);
             } else if (msg.type === 'audio-end') {
-              console.log('[RemoteMic] Phone stopped recording');
-              stopRemoteMic();
+              console.log('[RemoteMic] Phone stopped recording, processing batch...');
+              // Process accumulated audio but keep RTC alive for next recording
+              processRemoteMicBatch();
             }
           } catch (e) {
             console.error('[RemoteMic] Error parsing message:', e);
@@ -1099,32 +1106,23 @@ export default function App() {
     }
   }
 
-  async function stopRemoteMic() {
-    // Clean up timer
+  // Process the current batch of remote mic audio and reset for next recording.
+  // Keeps the RTC connection alive.
+  async function processRemoteMicBatch() {
+    // Stop elapsed timer and reset level
     if (remoteMicTimerRef.current) {
       clearInterval(remoteMicTimerRef.current);
       remoteMicTimerRef.current = null;
     }
-
-    // Clean up RTC
-    if (remoteMicRtcRef.current) {
-      try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
-      remoteMicRtcRef.current.close();
-      remoteMicRtcRef.current = null;
-    }
-    remoteMicKeyRef.current = null;
-
-    setIsRemoteMic(false);
-    setRemoteMicModal(false);
     setRemoteMicLevel(0);
+    setRemoteMicElapsed(0);
 
-    // Process accumulated audio (same pipeline as stopRecording)
     const chunks = pcmChunksRef.current;
     pcmChunksRef.current = [];
     const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
 
     if (totalSamples === 0) {
-      console.log('[RemoteMic] No audio received');
+      console.log('[RemoteMic] No audio received in this batch');
       return;
     }
 
@@ -1177,6 +1175,23 @@ export default function App() {
         setHasBeenTranscribed(true);
       });
     }
+  }
+
+  async function stopRemoteMic() {
+    // Process any remaining audio before tearing down
+    await processRemoteMicBatch();
+
+    // Clean up RTC
+    if (remoteMicRtcRef.current) {
+      try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
+      remoteMicRtcRef.current.close();
+      remoteMicRtcRef.current = null;
+    }
+    remoteMicKeyRef.current = null;
+
+    setIsRemoteMic(false);
+    setRemoteMicModal(false);
+    setRemoteMicLevel(0);
   }
 
   function cancelRemoteMic() {

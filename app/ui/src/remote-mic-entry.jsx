@@ -5,6 +5,9 @@
  * Opens from QR code URL, captures microphone audio, encrypts it with
  * ECDH + AES-GCM, and streams PCM chunks over a WebRTC data channel
  * to the computer running ParakeetWeb.
+ *
+ * Supports multiple recordings in a row (Stop → Start New), Pause/Resume,
+ * and keeps the screen awake via the Wake Lock API while recording.
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -20,7 +23,9 @@ const STATUS = {
     CONNECTING: 'connecting',
     WAITING_KEY: 'waiting_key',
     RECORDING: 'recording',
-    STOPPED: 'stopped',
+    PAUSED: 'paused',    // audio paused, RTC still open
+    READY: 'ready',      // connected, not recording — between recordings
+    STOPPED: 'stopped',  // RTC closed
     ERROR: 'error',
 };
 
@@ -54,21 +59,67 @@ function RemoteMicSender() {
     const audioCtxRef = useRef(null);
     const workletRef = useRef(null);
     const timerRef = useRef(null);
+    const timerStartRef = useRef(null);
     const levelAnimRef = useRef(null);
     const analyserRef = useRef(null);
+    const wakeLockRef = useRef(null);
 
-    const cleanup = useCallback(() => {
-        if (timerRef.current) clearInterval(timerRef.current);
-        if (levelAnimRef.current) cancelAnimationFrame(levelAnimRef.current);
+    // --- Wake lock helpers ---
+    const acquireWakeLock = useCallback(async () => {
+        if (!('wakeLock' in navigator)) return;
+        try {
+            wakeLockRef.current = await navigator.wakeLock.request('screen');
+            console.log('[RemoteMic] Wake lock acquired');
+            wakeLockRef.current.addEventListener('release', () => {
+                console.log('[RemoteMic] Wake lock released');
+            });
+        } catch (e) {
+            console.warn('[RemoteMic] Wake lock failed:', e.message);
+        }
+    }, []);
+
+    const releaseWakeLock = useCallback(() => {
+        if (wakeLockRef.current) {
+            wakeLockRef.current.release().catch(() => {});
+            wakeLockRef.current = null;
+        }
+    }, []);
+
+    // Re-acquire wake lock if page becomes visible again (e.g. tab switch)
+    useEffect(() => {
+        const onVisibilityChange = async () => {
+            if (document.visibilityState === 'visible' && !wakeLockRef.current) {
+                const s = status; // capture via closure — will be stale but good enough
+                if (s === STATUS.RECORDING) {
+                    await acquireWakeLock();
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    }, [status, acquireWakeLock]);
+
+    // --- Audio-only cleanup (keeps RTC alive) ---
+    const cleanupAudio = useCallback(() => {
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        if (levelAnimRef.current) { cancelAnimationFrame(levelAnimRef.current); levelAnimRef.current = null; }
         if (workletRef.current) { workletRef.current.disconnect(); workletRef.current = null; }
         if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
         if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+        analyserRef.current = null;
+        releaseWakeLock();
+    }, [releaseWakeLock]);
+
+    // --- Full cleanup (audio + RTC) ---
+    const cleanupAll = useCallback(() => {
+        cleanupAudio();
         if (rtcRef.current) { rtcRef.current.close(); rtcRef.current = null; }
-    }, []);
+        sharedKeyRef.current = null;
+    }, [cleanupAudio]);
 
     useEffect(() => {
-        return cleanup;
-    }, [cleanup]);
+        return cleanupAll;
+    }, [cleanupAll]);
 
     // Subscribe to log buffer updates
     useEffect(() => {
@@ -110,8 +161,8 @@ function RemoteMicSender() {
             await rtc.init();
 
             rtc.onDisconnected = () => {
+                cleanupAll();
                 setStatus(STATUS.STOPPED);
-                cleanup();
             };
 
             // Handle incoming messages (JSON control messages)
@@ -130,11 +181,11 @@ function RemoteMicSender() {
                             const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);
                             rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64 });
 
-                            // Start mic capture
+                            // Start mic capture for first recording
                             await startMicCapture();
                         } else if (msg.type === 'stop') {
-                            // Computer requested stop
-                            stopRecording();
+                            // Computer requested full stop
+                            stopAndDisconnect();
                         }
                     } catch (e) {
                         console.error('[RemoteMic] Error handling message:', e);
@@ -150,7 +201,7 @@ function RemoteMicSender() {
             setStatus(STATUS.ERROR);
             setErrorMsg(e.message || 'Connection failed');
         }
-    }, [cleanup]);
+    }, [cleanupAll]);
 
     const startMicCapture = useCallback(async () => {
         try {
@@ -179,8 +230,8 @@ function RemoteMicSender() {
             const actualRate = audioCtx.sampleRate;
             console.log(`[RemoteMic] AudioContext sample rate: ${actualRate}`);
 
-            // Tell computer what sample rate we're actually using
-            if (actualRate !== 16000) {
+            // Always tell computer the sample rate (also serves as "new recording started" signal)
+            if (rtcRef.current) {
                 rtcRef.current.sendMessage({ type: 'audio-config', sampleRate: actualRate });
             }
 
@@ -226,12 +277,16 @@ function RemoteMicSender() {
             worklet.connect(audioCtx.destination);
 
             setStatus(STATUS.RECORDING);
+            setElapsed(0);
 
             // Start elapsed timer
-            const startTime = Date.now();
+            timerStartRef.current = Date.now();
             timerRef.current = setInterval(() => {
-                setElapsed(Math.floor((Date.now() - startTime) / 1000));
+                setElapsed(Math.floor((Date.now() - timerStartRef.current) / 1000));
             }, 1000);
+
+            // Prevent screen from sleeping
+            await acquireWakeLock();
 
         } catch (e) {
             console.error('[RemoteMic] Mic capture error:', e);
@@ -242,15 +297,65 @@ function RemoteMicSender() {
                 setErrorMsg('Failed to capture microphone: ' + e.message);
             }
         }
-    }, []);
+    }, [acquireWakeLock]);
 
+    // Stop current recording but keep RTC alive for next recording
     const stopRecording = useCallback(() => {
         if (rtcRef.current) {
             rtcRef.current.sendMessage({ type: 'audio-end' });
         }
+        cleanupAudio();
+        setAudioLevel(0);
+        setStatus(STATUS.READY);
+    }, [cleanupAudio]);
+
+    // Pause: suspend AudioContext (no data sent, timer paused)
+    const pauseRecording = useCallback(() => {
+        if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+            audioCtxRef.current.suspend().catch(() => {});
+        }
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        if (levelAnimRef.current) { cancelAnimationFrame(levelAnimRef.current); levelAnimRef.current = null; }
+        releaseWakeLock();
+        setAudioLevel(0);
+        setStatus(STATUS.PAUSED);
+    }, [releaseWakeLock]);
+
+    // Resume from pause
+    const resumeRecording = useCallback(async () => {
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+            await audioCtxRef.current.resume().catch(() => {});
+        }
+        // Restart level animation
+        const levelData = new Float32Array(analyserRef.current ? analyserRef.current.fftSize : 2048);
+        const updateLevel = () => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getFloatTimeDomainData(levelData);
+            let sum = 0;
+            for (let i = 0; i < levelData.length; i++) sum += levelData[i] * levelData[i];
+            const rms = Math.sqrt(sum / levelData.length);
+            setAudioLevel(Math.min(100, rms * 250));
+            levelAnimRef.current = requestAnimationFrame(updateLevel);
+        };
+        levelAnimRef.current = requestAnimationFrame(updateLevel);
+        // Resume timer (adjust startRef so elapsed continues from where it left off)
+        timerStartRef.current = Date.now() - elapsed * 1000;
+        timerRef.current = setInterval(() => {
+            setElapsed(Math.floor((Date.now() - timerStartRef.current) / 1000));
+        }, 1000);
+        await acquireWakeLock();
+        setStatus(STATUS.RECORDING);
+    }, [elapsed, acquireWakeLock]);
+
+    // Full disconnect — close RTC, show goodbye screen
+    const stopAndDisconnect = useCallback(() => {
+        if (rtcRef.current) {
+            try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) {}
+        }
+        cleanupAll();
+        setAudioLevel(0);
         setStatus(STATUS.STOPPED);
-        cleanup();
-    }, [cleanup]);
+    }, [cleanupAll]);
 
     // Auto-start on mount
     useEffect(() => {
@@ -287,27 +392,36 @@ function RemoteMicSender() {
                 </div>
             )}
 
-            {status === STATUS.RECORDING && (
+            {(status === STATUS.RECORDING || status === STATUS.PAUSED) && (
                 <div>
                     <div style={{
                         width: '120px', height: '120px', borderRadius: '50%',
-                        background: `radial-gradient(circle, rgba(239,68,68,${0.3 + audioLevel / 150}) 0%, rgba(239,68,68,0.1) 70%)`,
-                        border: '3px solid #ef4444',
+                        background: status === STATUS.PAUSED
+                            ? 'radial-gradient(circle, rgba(251,191,36,0.3) 0%, rgba(251,191,36,0.1) 70%)'
+                            : `radial-gradient(circle, rgba(239,68,68,${0.3 + audioLevel / 150}) 0%, rgba(239,68,68,0.1) 70%)`,
+                        border: `3px solid ${status === STATUS.PAUSED ? '#fbbf24' : '#ef4444'}`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         margin: '1rem auto',
                         transition: 'background 0.1s',
                     }}>
-                        <div style={{
-                            width: `${30 + audioLevel * 0.5}px`,
-                            height: `${30 + audioLevel * 0.5}px`,
-                            borderRadius: '50%',
-                            background: '#ef4444',
-                            transition: 'width 0.1s, height 0.1s',
-                        }} />
+                        {status === STATUS.PAUSED ? (
+                            <span style={{ fontSize: '2rem' }}>⏸</span>
+                        ) : (
+                            <div style={{
+                                width: `${30 + audioLevel * 0.5}px`,
+                                height: `${30 + audioLevel * 0.5}px`,
+                                borderRadius: '50%',
+                                background: '#ef4444',
+                                transition: 'width 0.1s, height 0.1s',
+                            }} />
+                        )}
                     </div>
 
-                    <p style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '1.2rem' }}>
-                        Recording {formatTime(elapsed)}
+                    <p style={{
+                        color: status === STATUS.PAUSED ? '#fbbf24' : '#ef4444',
+                        fontWeight: 'bold', fontSize: '1.2rem',
+                    }}>
+                        {status === STATUS.PAUSED ? 'Paused' : 'Recording'} {formatTime(elapsed)}
                     </p>
 
                     {/* Level bar */}
@@ -322,21 +436,57 @@ function RemoteMicSender() {
                         }} />
                     </div>
 
-                    <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-                        {audioLevel < 5 ? 'No audio detected' :
-                         audioLevel < 20 ? 'Speak louder' : 'Audio level good'}
-                    </p>
+                    {status === STATUS.RECORDING && (
+                        <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                            {audioLevel < 5 ? 'No audio detected' :
+                             audioLevel < 20 ? 'Speak louder' : 'Audio level good'}
+                        </p>
+                    )}
 
-                    <button onClick={stopRecording} style={styles.stopButton}>
-                        Stop Recording
-                    </button>
+                    {/* Pause / Resume / Stop / Disconnect */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
+                        {status === STATUS.RECORDING ? (
+                            <button onClick={pauseRecording} style={styles.pauseButton}>
+                                ⏸ Pause
+                            </button>
+                        ) : (
+                            <button onClick={resumeRecording} style={styles.resumeButton}>
+                                ▶ Resume
+                            </button>
+                        )}
+                        <button onClick={stopRecording} style={styles.stopButton}>
+                            ⏹ Stop &amp; Send
+                        </button>
+                        <button onClick={stopAndDisconnect} style={styles.disconnectButton}>
+                            Disconnect
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {status === STATUS.READY && (
+                <div>
+                    <p style={{ color: '#10b981', fontSize: '1.1rem', marginBottom: '0.5rem' }}>
+                        Recording sent to computer.
+                    </p>
+                    <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                        Start another recording or disconnect.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
+                        <button onClick={startMicCapture} style={styles.newRecordingButton}>
+                            ● Start New Recording
+                        </button>
+                        <button onClick={stopAndDisconnect} style={styles.disconnectButton}>
+                            Disconnect
+                        </button>
+                    </div>
                 </div>
             )}
 
             {status === STATUS.STOPPED && (
                 <div>
                     <p style={{ color: '#10b981', fontSize: '1.1rem', marginBottom: '1rem' }}>
-                        Recording sent to computer.
+                        Session ended.
                     </p>
                     <p style={{ color: '#9ca3af', fontSize: '0.9rem' }}>
                         You can close this page.
@@ -347,11 +497,12 @@ function RemoteMicSender() {
             {status === STATUS.ERROR && (
                 <div>
                     <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{errorMsg}</p>
-                    <button onClick={() => { cleanup(); setStatus(STATUS.INIT); start(); }} style={styles.retryButton}>
+                    <button onClick={() => { cleanupAll(); setStatus(STATUS.INIT); start(); }} style={styles.retryButton}>
                         Retry
                     </button>
                 </div>
             )}
+
             {/* Debug log dropdown */}
             <div style={{ marginTop: '2rem', textAlign: 'left' }}>
                 <button
@@ -398,8 +549,28 @@ const styles = {
     },
     stopButton: {
         background: '#ef4444', color: 'white', border: 'none',
+        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1.05rem',
+        fontWeight: 'bold', cursor: 'pointer', width: '80%',
+    },
+    pauseButton: {
+        background: '#f59e0b', color: 'white', border: 'none',
+        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1.05rem',
+        fontWeight: 'bold', cursor: 'pointer', width: '80%',
+    },
+    resumeButton: {
+        background: '#10b981', color: 'white', border: 'none',
+        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1.05rem',
+        fontWeight: 'bold', cursor: 'pointer', width: '80%',
+    },
+    newRecordingButton: {
+        background: '#ef4444', color: 'white', border: 'none',
         borderRadius: '12px', padding: '1rem 2.5rem', fontSize: '1.1rem',
         fontWeight: 'bold', cursor: 'pointer', width: '80%',
+    },
+    disconnectButton: {
+        background: 'transparent', color: '#6b7280', border: '1px solid #3a3a5a',
+        borderRadius: '8px', padding: '0.6rem 1.5rem', fontSize: '0.9rem',
+        cursor: 'pointer', width: '60%',
     },
     retryButton: {
         background: '#3b82f6', color: 'white', border: 'none',
