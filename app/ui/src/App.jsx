@@ -217,6 +217,7 @@ export default function App() {
   const [isRemoteMic, setIsRemoteMic] = useState(false);
   const [remoteMicModal, setRemoteMicModal] = useState(false);
   const [remoteMicStatus, setRemoteMicStatus] = useState(''); // connecting|waiting|connected|stopped|error
+  const [remoteMicQrUrl, setRemoteMicQrUrl] = useState('');
   const [remoteMicLevel, setRemoteMicLevel] = useState(0);
   const [remoteMicElapsed, setRemoteMicElapsed] = useState(0);
   const [remoteMicError, setRemoteMicError] = useState('');
@@ -237,6 +238,24 @@ export default function App() {
       document.head.appendChild(script);
     });
   }
+
+  // Render QR code when both the URL is set and the DOM ref is available (status===waiting)
+  useEffect(() => {
+    if (!remoteMicQrUrl || remoteMicStatus !== 'waiting') return;
+    loadQRCode.current.then(() => {
+      if (remoteMicQrRef.current && window.QRCode) {
+        remoteMicQrRef.current.innerHTML = '';
+        new window.QRCode(remoteMicQrRef.current, {
+          text: remoteMicQrUrl,
+          width: 220,
+          height: 220,
+          colorDark: '#000000',
+          colorLight: '#ffffff',
+          correctLevel: window.QRCode.CorrectLevel.M,
+        });
+      }
+    });
+  }, [remoteMicQrUrl, remoteMicStatus]);
 
   // Tracks which history item has its kebab menu open (by transcription id)
   const [openKebabId, setOpenKebabId] = useState(null);
@@ -1058,21 +1077,7 @@ export default function App() {
       const qrUrl = `${baseUrl}/remote-mic.html#${roomId}:${secret}`;
 
       setRemoteMicStatus('waiting');
-
-      // Render QR code once the library is loaded and the DOM ref is available
-      loadQRCode.current.then(() => {
-        if (remoteMicQrRef.current && window.QRCode) {
-          remoteMicQrRef.current.innerHTML = '';
-          new window.QRCode(remoteMicQrRef.current, {
-            text: qrUrl,
-            width: 220,
-            height: 220,
-            colorDark: '#000000',
-            colorLight: '#ffffff',
-            correctLevel: window.QRCode.CorrectLevel.M,
-          });
-        }
-      });
+      setRemoteMicQrUrl(qrUrl);
 
       // Send our public key once the data channel opens, then wait for answer
       const originalOnConnected = rtc.onConnected;
@@ -1184,6 +1189,7 @@ export default function App() {
     setIsRemoteMic(false);
     setRemoteMicModal(false);
     setRemoteMicLevel(0);
+    setRemoteMicQrUrl('');
     pcmChunksRef.current = [];
   }
 
