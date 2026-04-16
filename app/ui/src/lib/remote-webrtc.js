@@ -44,7 +44,20 @@ export class RemoteMicRTC {
     }
 
     async _fetch(path, opts = {}) {
-        return fetch(`${this.signalingBaseUrl}${path}`, opts);
+        const response = await fetch(`${this.signalingBaseUrl}${path}`, opts);
+        // Monkey-patch .json() to log the raw body on parse failure
+        const originalJson = response.json.bind(response);
+        let bodyText = null;
+        response.json = async () => {
+            if (bodyText === null) bodyText = await response.clone().text();
+            try {
+                return JSON.parse(bodyText);
+            } catch (e) {
+                console.error(`[RemoteMicRTC] Failed to parse JSON from ${path} (HTTP ${response.status}). Raw body:`, bodyText);
+                throw e;
+            }
+        };
+        return response;
     }
 
     /**
