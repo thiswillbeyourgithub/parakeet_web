@@ -245,13 +245,16 @@ export default function App() {
     loadQRCode.current.then(() => {
       if (remoteMicQrRef.current && window.QRCode) {
         remoteMicQrRef.current.innerHTML = '';
-        new window.QRCode(remoteMicQrRef.current, {
-          text: remoteMicQrUrl,
+        const canvas = document.createElement('canvas');
+        window.QRCode.toCanvas(canvas, remoteMicQrUrl, {
           width: 220,
-          height: 220,
-          colorDark: '#000000',
-          colorLight: '#ffffff',
-          correctLevel: window.QRCode?.CorrectLevel?.M ?? 1,
+          margin: 2,
+          errorCorrectionLevel: 'M',
+        }).then(() => {
+          if (remoteMicQrRef.current) {
+            remoteMicQrRef.current.innerHTML = '';
+            remoteMicQrRef.current.appendChild(canvas);
+          }
         });
       }
     });
