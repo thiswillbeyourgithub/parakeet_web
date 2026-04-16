@@ -101,7 +101,7 @@ fi
 # Install signaling server dependencies and start it in the background
 if [ -f /signaling/package.json ]; then
   echo "[entrypoint] Installing signaling server dependencies..."
-  cd /signaling && npm install --production 2>&1 | tail -1
+  cd /signaling && npm install --production
   echo "[entrypoint] Starting signaling server on port ${SIGNALING_PORT:-3001}..."
   PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
   cd /app

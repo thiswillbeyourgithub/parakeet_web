@@ -29,6 +29,7 @@ services:
       - ../app/ui:/app/ui:rw
       # Signaling server for remote microphone feature
       - ../signaling:/signaling:ro
+      - signaling-node-modules:/signaling/node_modules
       # Local model fallback: no manual volume mount needed when using
       # FALLBACK_MODEL_REPO build arg — the entrypoint symlinks automatically.
 
@@ -139,3 +140,4 @@ services:
 volumes:
   root-node-modules:
   react-modules:
+  signaling-node-modules:
