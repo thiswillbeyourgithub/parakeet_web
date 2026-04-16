@@ -234,7 +234,7 @@ export default function App() {
       if (window.QRCode) { resolve(); return; }
       const script = document.createElement('script');
       script.src = '/js/qrcode.min.js';
-      script.onload = () => { console.log('[RemoteMic] QR code library loaded'); resolve(); };
+      script.onload = () => { console.log('[RemoteMic] QR code library loaded'); setTimeout(resolve, 0); };
       document.head.appendChild(script);
     });
   }
@@ -251,7 +251,7 @@ export default function App() {
           height: 220,
           colorDark: '#000000',
           colorLight: '#ffffff',
-          correctLevel: window.QRCode.CorrectLevel.M,
+          correctLevel: window.QRCode?.CorrectLevel?.M ?? 1,
         });
       }
     });
