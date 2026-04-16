@@ -71,7 +71,7 @@ VITE_LOCAL_MODEL_FALLBACK=true
 
 The downloaded files are git-ignored. When `VITE_LOCAL_MODEL_FALLBACK=true` is set, the app will check for the local model files on startup and refuse to load if they are missing.
 
-## Remote Microphone (Phone as Mic)
+## Remote Microphone (Phone as Mic) (Beta)
 
 No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
 
