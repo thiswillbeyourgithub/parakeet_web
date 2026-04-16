@@ -226,15 +226,17 @@ export default function App() {
   const remoteMicTimerRef = useRef(null);
   const remoteMicQrRef = useRef(null); // DOM ref for QR code container
 
-  // Load QR code library when remote mic modal opens
-  useEffect(() => {
-    if (remoteMicModal && !window.QRCode) {
+  // Load QR code library when remote mic modal opens; returns a promise that resolves when ready
+  const loadQRCode = useRef(null);
+  if (!loadQRCode.current) {
+    loadQRCode.current = new Promise((resolve) => {
+      if (window.QRCode) { resolve(); return; }
       const script = document.createElement('script');
       script.src = '/js/qrcode.min.js';
-      script.onload = () => console.log('[RemoteMic] QR code library loaded');
+      script.onload = () => { console.log('[RemoteMic] QR code library loaded'); resolve(); };
       document.head.appendChild(script);
-    }
-  }, [remoteMicModal]);
+    });
+  }
 
   // Tracks which history item has its kebab menu open (by transcription id)
   const [openKebabId, setOpenKebabId] = useState(null);
@@ -1057,8 +1059,8 @@ export default function App() {
 
       setRemoteMicStatus('waiting');
 
-      // Render QR code after a tick so the DOM ref is available
-      setTimeout(() => {
+      // Render QR code once the library is loaded and the DOM ref is available
+      loadQRCode.current.then(() => {
         if (remoteMicQrRef.current && window.QRCode) {
           remoteMicQrRef.current.innerHTML = '';
           new window.QRCode(remoteMicQrRef.current, {
@@ -1070,7 +1072,7 @@ export default function App() {
             correctLevel: window.QRCode.CorrectLevel.M,
           });
         }
-      }, 100);
+      });
 
       // Send our public key once the data channel opens, then wait for answer
       const originalOnConnected = rtc.onConnected;
