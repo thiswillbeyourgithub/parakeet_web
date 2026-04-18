@@ -3,6 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      target: development
       args:
         # Set to a HuggingFace repo ID (e.g. istupakov/parakeet-tdt-0.6b-v3-onnx)
         # to bake model weights into the image.  The build will fail if the
@@ -23,7 +24,8 @@ services:
       - /tmp
       - /home/node/.npm:uid=1000,gid=1000
     volumes:
-      # Mount the entire project for library access, with as little write access as possible
+      # Bind-mount source for hot-reload during development.
+      # These shadow the baked-in source — the image runs without them too.
       - ../app:/app:ro
       - ../app/package-lock.json:/app/package-lock.json:rw
       - ../app/ui:/app/ui:rw

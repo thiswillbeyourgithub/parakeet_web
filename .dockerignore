@@ -1,0 +1,5 @@
+**/node_modules
+app/ui/dist
+.git
+**/.DS_Store
+*.log

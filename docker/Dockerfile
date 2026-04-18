@@ -29,8 +29,9 @@ RUN if [ -n "$FALLBACK_MODEL_REPO" ]; then \
       mkdir -p /fallback_models; \
     fi
 
-# ---------- Stage 2: final image ----------------------------------------
-FROM node:20-alpine
+# ---------- Stage 2: development image ----------------------------------
+# Source code is baked in; docker-compose bind-mounts override it for hot-reload.
+FROM node:20-alpine AS development
 
 # Copy downloaded model files (empty dir if FALLBACK_MODEL_REPO was not set)
 COPY --from=model-downloader /fallback_models /fallback_models
@@ -41,12 +42,9 @@ USER node
 # Set working directory
 WORKDIR /app
 
-# Copy package files for dependency installation
-# These will be overridden by volume mounts in docker-compose for development
+# Install dependencies first (layer-cached unless package*.json changes)
 COPY --chown=node:node app/package*.json ./
 COPY --chown=node:node app/ui/package*.json ./ui/
-
-# Install dependencies
 RUN npm install && \
     cd ui && \
     npm install
@@ -57,6 +55,12 @@ RUN npm install && \
 COPY --chown=node:node signaling/package*.json /signaling-deps/
 RUN cd /signaling-deps && npm install --production
 
+# Bake the full source into the image so it runs without any bind mounts.
+# docker-compose.yml still bind-mounts ../app and ../signaling for hot-reload,
+# which simply shadows these layers — no functional difference.
+COPY --chown=node:node app/ ./
+COPY --chown=node:node signaling/ /signaling/
+
 # Copy the entrypoint script that sets up model symlinks before starting Vite
 COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 
@@ -65,3 +69,60 @@ EXPOSE 5173
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["npm", "install"]
+
+# ---------- Stage 3: production builder ---------------------------------
+FROM node:20-alpine AS prod-builder
+
+COPY --from=model-downloader /fallback_models /fallback_models
+
+USER node
+WORKDIR /app
+
+COPY --chown=node:node app/package*.json ./
+COPY --chown=node:node app/ui/package*.json ./ui/
+RUN npm install && cd ui && npm install
+
+COPY --chown=node:node app/ ./
+
+# Wire up baked-in fallback models into public/ so they get included in the build
+RUN if [ -d /fallback_models ] && [ "$(ls -A /fallback_models 2>/dev/null)" ]; then \
+      for org_dir in /fallback_models/*/; do \
+        org=$(basename "$org_dir"); \
+        mkdir -p "ui/public/models/${org}"; \
+        for repo_dir in "$org_dir"*/; do \
+          repo=$(basename "$repo_dir"); \
+          target="ui/public/models/${org}/${repo}"; \
+          [ ! -e "$target" ] && ln -s "$repo_dir" "$target"; \
+        done; \
+      done; \
+    fi
+
+RUN cd ui && npm run build
+
+# ---------- Stage 4: production image -----------------------------------
+# Minimal image: built static files + vite preview (handles COOP/COEP + proxy).
+FROM node:20-alpine AS production
+
+COPY --from=model-downloader /fallback_models /fallback_models
+
+USER node
+WORKDIR /app
+
+# Copy the built UI and the vite/node toolchain needed for `vite preview`
+COPY --from=prod-builder --chown=node:node /app/ui/dist ./ui/dist
+COPY --from=prod-builder --chown=node:node /app/ui/vite.config.js ./ui/vite.config.js
+COPY --from=prod-builder --chown=node:node /app/ui/package*.json ./ui/
+COPY --from=prod-builder --chown=node:node /app/ui/node_modules ./ui/node_modules
+COPY --from=prod-builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=prod-builder --chown=node:node /app/package*.json ./
+
+# Signaling server
+COPY --chown=node:node signaling/package*.json /signaling-deps/
+RUN cd /signaling-deps && npm install --production
+COPY --chown=node:node signaling/ /signaling/
+
+COPY --chown=node:node docker/entrypoint.prod.sh /entrypoint.sh
+
+EXPOSE 5173
+
+ENTRYPOINT ["/entrypoint.sh"]
