@@ -1022,9 +1022,20 @@ export default function App() {
 
       rtc.onDisconnected = () => {
         console.log('[RemoteMic] Disconnected');
-        if (isRemoteMic || remoteMicRtcRef.current) {
-          stopRemoteMic();
+        // Clean up audio/timer state but keep modal open with a "disconnected" status
+        // so the user can click Regenerate QR instead of having to restart manually.
+        if (remoteMicTimerRef.current) {
+          clearInterval(remoteMicTimerRef.current);
+          remoteMicTimerRef.current = null;
         }
+        remoteMicRtcRef.current = null;
+        remoteMicKeyRef.current = null;
+        pcmChunksRef.current = [];
+        setIsRemoteMic(false);
+        setRemoteMicLevel(0);
+        setRemoteMicPaused(false);
+        setRemoteMicStatus('disconnected');
+        setRemoteMicModal(true);
       };
 
       // Handle incoming messages (JSON control + binary audio)
@@ -1215,6 +1226,25 @@ export default function App() {
       remoteMicRtcRef.current.sendMessage({ type: 'resume' });
     }
     setRemoteMicPaused(false);
+  }
+
+  function regenerateRemoteMicQr() {
+    // Tear down leftover state and start fresh — produces a new roomId/secret/QR.
+    if (remoteMicTimerRef.current) {
+      clearInterval(remoteMicTimerRef.current);
+      remoteMicTimerRef.current = null;
+    }
+    if (remoteMicRtcRef.current) {
+      try { remoteMicRtcRef.current.close(); } catch (_) {}
+      remoteMicRtcRef.current = null;
+    }
+    remoteMicKeyRef.current = null;
+    pcmChunksRef.current = [];
+    setRemoteMicQrUrl('');
+    setRemoteMicLevel(0);
+    setRemoteMicPaused(false);
+    setIsRemoteMic(false);
+    startRemoteMic();
   }
 
   function cancelRemoteMic() {
@@ -2921,6 +2951,21 @@ export default function App() {
               </>
             )}
 
+            {remoteMicStatus === 'disconnected' && (
+              <>
+                <p style={{ color: '#f59e0b', marginBottom: '1rem' }}>
+                  {t('remoteMicDisconnected')}
+                </p>
+                <button onClick={regenerateRemoteMicQr} style={{
+                  background: '#3b82f6', color: 'white', border: 'none',
+                  borderRadius: '8px', padding: '0.6rem 1.5rem', cursor: 'pointer',
+                  fontWeight: 'bold', marginBottom: '0.5rem',
+                }}>
+                  {t('remoteMicRegenerateQr')}
+                </button>
+              </>
+            )}
+
             {remoteMicStatus === 'error' && (
               <>
                 <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{remoteMicError}</p>
@@ -2933,7 +2978,7 @@ export default function App() {
               </>
             )}
 
-            {remoteMicStatus !== 'error' && (
+            {remoteMicStatus !== 'error' && remoteMicStatus !== 'disconnected' && (
               <button onClick={cancelRemoteMic} style={{
                 background: 'transparent', color: '#9ca3af', border: '1px solid #4b5563',
                 borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
