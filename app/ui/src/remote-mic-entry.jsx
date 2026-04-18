@@ -17,6 +17,7 @@ import {
     generateKeyPair, exportPublicKey, importPublicKey,
     deriveSharedKey, encrypt
 } from './lib/remote-crypto.js';
+import { I18nProvider, useI18n } from './i18n.jsx';
 
 const STATUS = {
     INIT: 'init',
@@ -45,12 +46,14 @@ console.warn  = _intercept('WARN',  console.warn.bind(console));
 console.error = _intercept('ERR',   console.error.bind(console));
 
 function RemoteMicSender() {
+    const { t, lang, setLang } = useI18n();
     const [status, setStatus] = useState(STATUS.INIT);
     const [errorMsg, setErrorMsg] = useState('');
     const [audioLevel, setAudioLevel] = useState(0);
     const [elapsed, setElapsed] = useState(0);
     const [logs, setLogs] = useState([..._logBuffer]);
     const [logsOpen, setLogsOpen] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
     const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
@@ -142,13 +145,13 @@ function RemoteMicSender() {
             const hash = window.location.hash.substring(1);
             if (!hash || !hash.includes(':')) {
                 setStatus(STATUS.ERROR);
-                setErrorMsg('Invalid link. Please scan the QR code again.');
+                setErrorMsg(t('mobileInvalidLink'));
                 return;
             }
             const [roomId, secret] = hash.split(':', 2);
             if (!roomId || !secret) {
                 setStatus(STATUS.ERROR);
-                setErrorMsg('Invalid link. Missing room ID or secret.');
+                setErrorMsg(t('mobileInvalidLinkMissing'));
                 return;
             }
 
@@ -205,9 +208,9 @@ function RemoteMicSender() {
         } catch (e) {
             console.error('[RemoteMic] Connection error:', e);
             setStatus(STATUS.ERROR);
-            setErrorMsg(e.message || 'Connection failed');
+            setErrorMsg(e.message || t('mobileConnectionError'));
         }
-    }, [cleanupAll]);
+    }, [cleanupAll, t]);
 
     const startMicCapture = useCallback(async () => {
         try {
@@ -298,12 +301,12 @@ function RemoteMicSender() {
             console.error('[RemoteMic] Mic capture error:', e);
             setStatus(STATUS.ERROR);
             if (e.name === 'NotAllowedError') {
-                setErrorMsg('Microphone access denied. Please grant permission and try again.');
+                setErrorMsg(t('mobileMicDenied'));
             } else {
-                setErrorMsg('Failed to capture microphone: ' + e.message);
+                setErrorMsg(t('mobileMicFailed') + e.message);
             }
         }
-    }, [acquireWakeLock]);
+    }, [acquireWakeLock, t]);
 
     // Stop current recording but keep RTC alive for next recording
     const stopRecording = useCallback(() => {
@@ -376,27 +379,92 @@ function RemoteMicSender() {
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
 
+    const audioHint = audioLevel < 5 ? t('mobileNoAudio')
+        : audioLevel < 20 ? t('mobileSpeakLouder')
+        : t('mobileGoodLevel');
+
     return (
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', position: 'relative' }}>
+
+            {/* Top-right menu button — always visible */}
+            <button
+                onClick={() => setMenuOpen(true)}
+                aria-label={t('mobileOpenMenu')}
+                style={styles.menuButton}
+            >
+                {t('mobileOpenMenu')}
+            </button>
+
+            {/* Sidebar overlay */}
+            {menuOpen && (
+                <div
+                    onClick={() => setMenuOpen(false)}
+                    style={styles.sidebarOverlay}
+                />
+            )}
+
+            {/* Sidebar drawer */}
+            <div style={{
+                ...styles.sidebar,
+                transform: menuOpen ? 'translateX(0)' : 'translateX(100%)',
+            }}>
+                <button onClick={() => setMenuOpen(false)} style={styles.sidebarCloseBtn}>
+                    {t('mobileCloseMenu')}
+                </button>
+
+                {/* Language section */}
+                <div style={styles.sidebarSection}>
+                    <p style={styles.sidebarHeading}>{t('mobileLanguageHeading')}</p>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                            onClick={() => setLang('en')}
+                            style={{ ...styles.langBtn, ...(lang === 'en' ? styles.langBtnActive : {}) }}
+                        >
+                            English
+                        </button>
+                        <button
+                            onClick={() => setLang('fr')}
+                            style={{ ...styles.langBtn, ...(lang === 'fr' ? styles.langBtnActive : {}) }}
+                        >
+                            Français
+                        </button>
+                    </div>
+                </div>
+
+                {/* About section */}
+                <div style={styles.sidebarSection}>
+                    <p style={styles.sidebarHeading}>{t('mobileAboutHeading')}</p>
+                    <p style={styles.sidebarText}>{t('mobileAboutBlurb')}</p>
+                    <a
+                        href="https://github.com/thiswillbeyourgithub/parakeet_web/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={styles.sidebarLink}
+                    >
+                        {t('mobileOpenSource')}
+                    </a>
+                </div>
+            </div>
+
             <h2 style={{ marginBottom: '1rem', fontSize: '1.3rem' }}>
-                ParakeetWeb Remote Mic
+                {t('mobileTitle')}
             </h2>
 
             {status === STATUS.INIT && (
-                <p style={{ color: '#9ca3af' }}>Initializing...</p>
+                <p style={{ color: '#9ca3af' }}>{t('mobileInitializing')}</p>
             )}
 
             {status === STATUS.CONNECTING && (
                 <div>
                     <div style={styles.spinner} />
-                    <p style={{ marginTop: '1rem', color: '#60a5fa' }}>Connecting to computer...</p>
+                    <p style={{ marginTop: '1rem', color: '#60a5fa' }}>{t('mobileConnecting')}</p>
                 </div>
             )}
 
             {status === STATUS.WAITING_KEY && (
                 <div>
                     <div style={styles.spinner} />
-                    <p style={{ marginTop: '1rem', color: '#60a5fa' }}>Establishing encryption...</p>
+                    <p style={{ marginTop: '1rem', color: '#60a5fa' }}>{t('mobileEstablishingEncryption')}</p>
                 </div>
             )}
 
@@ -429,7 +497,7 @@ function RemoteMicSender() {
                         color: status === STATUS.PAUSED ? '#fbbf24' : '#ef4444',
                         fontWeight: 'bold', fontSize: '1.2rem',
                     }}>
-                        {status === STATUS.PAUSED ? 'Paused' : 'Recording'} {formatTime(elapsed)}
+                        {status === STATUS.PAUSED ? t('mobilePaused') : t('mobileRecording')} {formatTime(elapsed)}
                     </p>
 
                     {/* Level bar */}
@@ -446,8 +514,7 @@ function RemoteMicSender() {
 
                     {status === STATUS.RECORDING && (
                         <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-                            {audioLevel < 5 ? 'No audio detected' :
-                             audioLevel < 20 ? 'Speak louder' : 'Audio level good'}
+                            {audioHint}
                         </p>
                     )}
 
@@ -455,18 +522,18 @@ function RemoteMicSender() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
                         {status === STATUS.RECORDING ? (
                             <button onClick={pauseRecording} style={styles.pauseButton}>
-                                ⏸ Pause
+                                {t('mobilePauseBtn')}
                             </button>
                         ) : (
                             <button onClick={resumeRecording} style={styles.resumeButton}>
-                                ▶ Resume
+                                {t('mobileResumeBtn')}
                             </button>
                         )}
                         <button onClick={stopRecording} style={styles.stopButton}>
-                            ⏹ Stop &amp; Send
+                            {t('mobileStopBtn')}
                         </button>
                         <button onClick={stopAndDisconnect} style={styles.disconnectButton}>
-                            Disconnect
+                            {t('mobileDisconnectBtn')}
                         </button>
                     </div>
                 </div>
@@ -475,17 +542,17 @@ function RemoteMicSender() {
             {status === STATUS.READY && (
                 <div>
                     <p style={{ color: '#10b981', fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-                        Recording sent to computer.
+                        {t('mobileRecordingSent')}
                     </p>
                     <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-                        Start another recording or disconnect.
+                        {t('mobileStartAnother')}
                     </p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
                         <button onClick={startMicCapture} style={styles.newRecordingButton}>
-                            ● Start New Recording
+                            {t('mobileStartNewBtn')}
                         </button>
                         <button onClick={stopAndDisconnect} style={styles.disconnectButton}>
-                            Disconnect
+                            {t('mobileDisconnectBtn')}
                         </button>
                     </div>
                 </div>
@@ -494,10 +561,10 @@ function RemoteMicSender() {
             {status === STATUS.STOPPED && (
                 <div>
                     <p style={{ color: '#10b981', fontSize: '1.1rem', marginBottom: '1rem' }}>
-                        Session ended.
+                        {t('mobileSessionEnded')}
                     </p>
                     <p style={{ color: '#9ca3af', fontSize: '0.9rem' }}>
-                        You can close this page.
+                        {t('mobileSessionEndedHint')}
                     </p>
                 </div>
             )}
@@ -505,9 +572,9 @@ function RemoteMicSender() {
             {status === STATUS.ERROR && (
                 <div>
                     <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{errorMsg}</p>
-                    <button onClick={() => { cleanupAll(); setStatus(STATUS.INIT); start(); }} style={styles.retryButton}>
-                        Retry
-                    </button>
+                    <p style={{ color: '#9ca3af', fontSize: '0.9rem' }}>
+                        {t('mobileRescanHint')}
+                    </p>
                 </div>
             )}
 
@@ -522,7 +589,7 @@ function RemoteMicSender() {
                         width: '100%', textAlign: 'left',
                     }}
                 >
-                    {logsOpen ? '▲' : '▼'} Debug logs ({logs.length})
+                    {logsOpen ? '▲' : '▼'} {t('mobileDebugLogs')} ({logs.length})
                 </button>
                 {logsOpen && (
                     <div style={{
@@ -549,6 +616,53 @@ function RemoteMicSender() {
 }
 
 const styles = {
+    menuButton: {
+        position: 'fixed', top: '1rem', right: '1rem',
+        background: 'rgba(30,30,58,0.85)', color: '#e0e0e0',
+        border: '1px solid #3a3a5a', borderRadius: '8px',
+        padding: '0.5rem 0.75rem', fontSize: '1.4rem',
+        cursor: 'pointer', zIndex: 200, lineHeight: 1,
+    },
+    sidebarOverlay: {
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.45)', zIndex: 300,
+    },
+    sidebar: {
+        position: 'fixed', top: 0, right: 0, bottom: 0,
+        width: '280px', background: '#1e1e3a',
+        borderLeft: '1px solid #3a3a5a',
+        zIndex: 301, padding: '1.5rem 1rem',
+        display: 'flex', flexDirection: 'column', gap: '0',
+        transition: 'transform 0.25s ease',
+        overflowY: 'auto',
+    },
+    sidebarCloseBtn: {
+        alignSelf: 'flex-end', background: 'transparent',
+        color: '#9ca3af', border: '1px solid #3a3a5a',
+        borderRadius: '6px', padding: '0.3rem 0.7rem',
+        fontSize: '0.85rem', cursor: 'pointer', marginBottom: '1.5rem',
+    },
+    sidebarSection: {
+        borderTop: '1px solid #2a2a4a', paddingTop: '1rem', marginBottom: '1rem',
+    },
+    sidebarHeading: {
+        color: '#9ca3af', fontSize: '0.75rem', textTransform: 'uppercase',
+        letterSpacing: '0.05em', marginBottom: '0.6rem', marginTop: 0,
+    },
+    sidebarText: {
+        color: '#d1d5db', fontSize: '0.85rem', lineHeight: '1.5', marginBottom: '0.75rem',
+    },
+    sidebarLink: {
+        color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none',
+    },
+    langBtn: {
+        background: 'transparent', color: '#9ca3af',
+        border: '1px solid #3a3a5a', borderRadius: '6px',
+        padding: '0.4rem 0.9rem', fontSize: '0.9rem', cursor: 'pointer',
+    },
+    langBtnActive: {
+        background: '#3b82f6', color: 'white', borderColor: '#3b82f6',
+    },
     spinner: {
         width: '40px', height: '40px', margin: '1rem auto',
         border: '4px solid #2a2a4a', borderTopColor: '#60a5fa',
@@ -580,11 +694,6 @@ const styles = {
         borderRadius: '8px', padding: '0.6rem 1.5rem', fontSize: '0.9rem',
         cursor: 'pointer', width: '60%',
     },
-    retryButton: {
-        background: '#3b82f6', color: 'white', border: 'none',
-        borderRadius: '8px', padding: '0.75rem 2rem', fontSize: '1rem',
-        cursor: 'pointer',
-    },
 };
 
 // Inject keyframe animation for spinner
@@ -593,4 +702,8 @@ styleSheet.textContent = '@keyframes spin { to { transform: rotate(360deg); } }'
 document.head.appendChild(styleSheet);
 
 const root = createRoot(document.getElementById('root'));
-root.render(<RemoteMicSender />);
+root.render(
+    <I18nProvider>
+        <RemoteMicSender />
+    </I18nProvider>
+);
