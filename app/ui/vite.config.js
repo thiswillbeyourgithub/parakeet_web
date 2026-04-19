@@ -91,21 +91,6 @@ export default defineConfig({
       },
     },
   },
-  preview: {
-    port: 5173,
-    host: '0.0.0.0',
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-    proxy: {
-      '/api/signal': {
-        target: `http://localhost:${process.env.SIGNALING_PORT || 3001}`,
-        rewrite: (p) => p.replace(/^\/api\/signal/, '/api'),
-        changeOrigin: true,
-      },
-    },
-  },
   build: {
     rollupOptions: {
       input: {
