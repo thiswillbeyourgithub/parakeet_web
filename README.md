@@ -61,6 +61,17 @@ This feature is very early and will improve rapidly.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
 
+## Remote Microphone (Phone as Mic) — Beta
+
+No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
+
+1. Click the **Phone Mic** button in the app
+2. A QR code appears — scan it with your phone
+3. Grant microphone permission on the phone
+4. Speak — encrypted audio streams to the computer in real time
+5. Click **Stop** on either device — the audio is transcribed normally
+
+
 ## Local Model Fallback
 
 If HuggingFace is blocked or unreachable in your environment, you can serve model weights directly from the container:
@@ -78,16 +89,6 @@ VITE_LOCAL_MODEL_FALLBACK=true
 ```
 
 The downloaded files are git-ignored. When `VITE_LOCAL_MODEL_FALLBACK=true` is set, the app will check for the local model files on startup and refuse to load if they are missing.
-
-## Remote Microphone (Phone as Mic) — Beta
-
-No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
-
-1. Click the **Phone Mic** button in the app
-2. A QR code appears — scan it with your phone
-3. Grant microphone permission on the phone
-4. Speak — encrypted audio streams to the computer in real time
-5. Click **Stop** on either device — the audio is transcribed normally
 
 ### Requirements
 
