@@ -273,8 +273,8 @@ export default function App() {
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
   // Auto-copy: when enabled, transcription text is automatically copied to clipboard
   const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(true);
-  // Info panel is shown by default; collapses once model loading begins
-  const [showInfo, setShowInfo] = useState(true);
+  // About modal visibility
+  const [showAbout, setShowAbout] = useState(false);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
   // Auto-transcribe: when enabled, transcription starts automatically after recording stops
@@ -2114,7 +2114,7 @@ export default function App() {
   return (
     <div className="app">
       {devMode && (
-        <Banner tone="danger" icon="⚠️" style={{ fontWeight: 'bold', textAlign: 'center', marginBottom: '1rem' }}>
+        <Banner tone="danger" style={{ fontWeight: 'bold', textAlign: 'center', marginBottom: '1rem' }}>
           {t('devModeBanner')}
         </Banner>
       )}
@@ -2129,38 +2129,31 @@ export default function App() {
         <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: 'var(--text-subtle)' }}>{t('status')}: {t(status) || status}</p>
         <LanguageSwitcher />
         <button
-          className="info-toggle"
-          onClick={() => setShowInfo(!showInfo)}
-          aria-label={t('toggleInfo')}
-          title={showInfo ? t('hideInfo') : t('showInfo')}
-        >
-          ℹ️
-        </button>
-        <button 
           className="settings-toggle"
           onClick={() => setShowSettings(!showSettings)}
           aria-label={t('toggleSettings')}
           title={showSettings ? t('hideSettings') : t('showSettings')}
         >
-          ⚙️
+          ☰
         </button>
       </div>
 
-      {showInfo && (
-        <div className="info-section">
-          <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem' }}>
-            {t('tagline')}
+      {/* About modal */}
+      {showAbout && (
+        <Modal onClose={() => setShowAbout(false)}>
+          <h3 style={{ marginTop: 0 }}>{t('aboutTitle')}</h3>
+          <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem', color: 'var(--accent)' }}>
+            🔒 {t('tagline')}
           </p>
-          <h3>{t('whatIsThis')}</h3>
-          <p>
-            {t('infoDescription1')}
+          <p style={{ textAlign: 'center', fontSize: '0.95rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
+            {t('privacyEmphasis')}
           </p>
-          <p>
-            {t('infoDescription2')}
-          </p>
+          <h4 style={{ marginBottom: '0.5rem' }}>{t('whatIsThis')}</h4>
+          <p>{t('infoDescription1')}</p>
+          <p>{t('infoDescription2')}</p>
           <p style={{ fontSize: '0.85rem', marginTop: '1rem', marginBottom: 0 }}>
             <strong>{t('sourceCode')}:</strong>{' '}
-            <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer">github.com/thiswillbeyourgithub/parakeet_web</a>
+            <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer">ParakeetWeb</a>
           </p>
           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('feedback')}:</strong> {t('feedbackText')}{' '}
@@ -2177,7 +2170,7 @@ export default function App() {
             <a href="https://umami.is" target="_blank" rel="noopener noreferrer">umami.is</a>{' '}
             {t('privacyText2')}
           </p>
-        </div>
+        </Modal>
       )}
 
       {showSettings && (
@@ -2492,6 +2485,13 @@ export default function App() {
               </p>
             </div>
           )}
+          <button
+            onClick={() => { setShowSettings(false); setShowAbout(true); }}
+            style={{ marginTop: '1rem', width: '100%' }}
+            className="primary"
+          >
+            {t('about')}
+          </button>
         </div>
         </div>
         </>
@@ -2546,14 +2546,22 @@ export default function App() {
 
       {/* Load Model button: visible on initial load or after failure, hidden once model is loading/ready */}
       {(status === 'idle' || (status === 'failed' || status === 'transcriptionFailed')) && (
-        <button
-          onClick={loadModel}
-          className="primary"
-          style={{ marginBottom: '1rem', width: '100%' }}
-          data-umami-event="load_model_button"
-        >
-          {t('loadModel')}
-        </button>
+        <>
+          <p style={{ fontSize: '1.05rem', fontWeight: 'bold', textAlign: 'center', margin: '0 0 0.75rem', color: 'var(--accent)' }}>
+            🔒 {t('tagline')}
+          </p>
+          <p style={{ fontSize: '0.85rem', textAlign: 'center', margin: '0 0 1rem', color: 'var(--text-muted)' }}>
+            {t('privacyEmphasis')}
+          </p>
+          <button
+            onClick={loadModel}
+            className="primary"
+            style={{ marginBottom: '1rem', width: '100%' }}
+            data-umami-event="load_model_button"
+          >
+            {t('loadModel')}
+          </button>
+        </>
       )}
 
       {/* Controls, transcribe button, and transcription history: hidden until model loading has been initiated */}
@@ -3028,6 +3036,16 @@ export default function App() {
           )}
         </Modal>
       )}
+
+      {/* About button at the very bottom of the page */}
+      <div style={{ textAlign: 'center', marginTop: '2rem', paddingBottom: '1rem' }}>
+        <button
+          onClick={() => setShowAbout(true)}
+          style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }}
+        >
+          {t('about')}
+        </button>
+      </div>
     </div>
   );
-} 
+}

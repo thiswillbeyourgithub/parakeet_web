@@ -126,8 +126,7 @@ body {
   font-size: 1.25rem;
 }
 
-/* ─── Icon toggle buttons (info, settings) ───────────────────────────────── */
-.info-toggle,
+/* ─── Settings toggle button ─────────────────────────────────────────────── */
 .settings-toggle {
   width: 40px;
   height: 40px;
@@ -140,21 +139,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  transition: background 0.2s, border-color 0.2s;
   padding: 0;
 }
 
-.info-toggle:hover,
 .settings-toggle:hover {
   background: var(--bg-subtle);
   border-color: var(--border-strong);
 }
 
-.settings-toggle:hover {
-  transform: rotate(90deg);
-}
-
-.info-toggle:active,
 .settings-toggle:active {
   background: var(--border);
 }

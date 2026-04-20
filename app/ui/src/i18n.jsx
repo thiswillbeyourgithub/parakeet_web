@@ -114,7 +114,10 @@ const translations = {
     tooltipEchoCancellation: 'Removes echo and feedback. Disable for music recording or if you experience audio quality issues.',
     tooltipAutoGainControl: 'Automatically adjusts volume levels. Disable for music or when you want consistent volume.',
 
-    // Info section
+    // About / info section
+    about: 'About',
+    aboutTitle: 'About ParakeetWeb',
+    privacyEmphasis: '100% private & local — your audio never leaves your device, no server, no cloud.',
     tagline: 'Dictation for any language, without installing anything!',
     whatIsThis: 'What is this?',
     infoDescription1: 'ParakeetWeb is a browser-based speech-to-text application that runs entirely in your browser using WebAssembly and WebGPU. Your audio never leaves your device - all processing happens locally on your computer.',
@@ -359,7 +362,10 @@ const translations = {
     tooltipEchoCancellation: "Supprime l'\u00e9cho et le retour audio. D\u00e9sactivez pour l'enregistrement musical ou en cas de probl\u00e8mes de qualit\u00e9.",
     tooltipAutoGainControl: "Ajuste automatiquement les niveaux de volume. D\u00e9sactivez pour la musique ou quand vous voulez un volume constant.",
 
-    // Info section
+    // About / info section
+    about: '\u00c0 propos',
+    aboutTitle: '\u00c0 propos de ParakeetWeb',
+    privacyEmphasis: '100\u00a0% priv\u00e9 et local \u2014 votre audio ne quitte jamais votre appareil, ni serveur, ni cloud.',
     tagline: "Dict\u00e9e pour toute langue, sans rien installer\u00a0!",
     whatIsThis: "Qu'est-ce que c'est\u00a0?",
     infoDescription1: "ParakeetWeb est une application de reconnaissance vocale qui fonctionne enti\u00e8rement dans votre navigateur gr\u00e2ce \u00e0 WebAssembly et WebGPU. Votre audio ne quitte jamais votre appareil - tout le traitement se fait localement.",
