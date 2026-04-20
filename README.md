@@ -12,7 +12,7 @@
 - [Quick Start](#quick-start)
 - [Dictation Mode](#dictation-mode)
 - [Local Model Fallback](#local-model-fallback)
-- [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic--beta)
+- [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
 
@@ -67,7 +67,7 @@ This feature is very early and will improve rapidly.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
 
-## Remote Microphone (Phone as Mic) — Beta
+## Remote Microphone (Phone as Mic)
 
 No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
 
