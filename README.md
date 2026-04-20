@@ -9,7 +9,6 @@
 ## Table of Contents
 
 - [What It Does](#what-it-does)
-- [Status](#status)
 - [Quick Start](#quick-start)
 - [Dictation Mode](#dictation-mode)
 - [Local Model Fallback](#local-model-fallback)
@@ -32,11 +31,6 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 - Model quantization options (fp32/int8)
 - Installable as a PWA (Progressive Web App) for app-like experience
 
-## Status
-
-- 🚧 Work in progress
-- 🧪 Experimental and unstable
-- 📝 Licensed under AGPLv3
 
 ## Quick Start
 
