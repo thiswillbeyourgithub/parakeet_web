@@ -54,6 +54,8 @@ function RemoteMicSender() {
     const [logs, setLogs] = useState([..._logBuffer]);
     const [logsOpen, setLogsOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
+    const [hasRecorded, setHasRecorded] = useState(false);
+    const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
     const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
@@ -184,10 +186,13 @@ function RemoteMicSender() {
                             const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);
                             rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64 });
 
-                            // Start mic capture for first recording
-                            await startMicCapture();
+                            // Phone is connected — let the user tap Start Recording when ready
+                            setStatus(STATUS.READY);
+                        } else if (msg.type === 'stop-recording') {
+                            // Computer requested end of current recording (keep connection alive)
+                            stopRecording();
                         } else if (msg.type === 'stop') {
-                            // Computer requested full stop
+                            // Computer requested full disconnect
                             stopAndDisconnect();
                         } else if (msg.type === 'pause') {
                             // Computer requested pause
@@ -286,6 +291,7 @@ function RemoteMicSender() {
             worklet.connect(audioCtx.destination);
 
             setStatus(STATUS.RECORDING);
+            setHasRecorded(true);
             setElapsed(0);
 
             // Start elapsed timer
@@ -446,9 +452,68 @@ function RemoteMicSender() {
                 </div>
             </div>
 
-            <h2 style={{ marginBottom: '1rem', fontSize: '1.3rem' }}>
+            <h2 style={{ marginBottom: '0.5rem', fontSize: '1.3rem' }}>
                 {t('mobileTitle')}
             </h2>
+
+            {/* Disconnect button — always visible when connected, at top to avoid accidental tap */}
+            {(status === STATUS.RECORDING || status === STATUS.PAUSED || status === STATUS.READY) && (
+                <div style={{ marginBottom: '1rem' }}>
+                    <button
+                        onClick={() => setShowDisconnectConfirm(true)}
+                        style={{
+                            background: 'transparent', border: '1px solid #6b7280',
+                            color: '#9ca3af', borderRadius: '6px',
+                            padding: '0.35rem 0.9rem', fontSize: '0.85rem', cursor: 'pointer',
+                        }}
+                    >
+                        {t('mobileDisconnectBtn')}
+                    </button>
+                </div>
+            )}
+
+            {/* Disconnect confirmation modal */}
+            {showDisconnectConfirm && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(0,0,0,0.7)', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+                }}>
+                    <div style={{
+                        background: '#1e1e3a', borderRadius: '16px', padding: '1.5rem',
+                        maxWidth: '320px', width: '90%', textAlign: 'center', color: '#e0e0e0',
+                    }}>
+                        <h3 style={{ marginBottom: '0.75rem', fontSize: '1.1rem' }}>
+                            {t('mobileConfirmDisconnectTitle')}
+                        </h3>
+                        <p style={{ color: '#9ca3af', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+                            {t('mobileConfirmDisconnectBody')}
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+                            <button
+                                onClick={() => { setShowDisconnectConfirm(false); stopAndDisconnect(); }}
+                                style={{
+                                    background: '#ef4444', color: 'white', border: 'none',
+                                    borderRadius: '8px', padding: '0.5rem 1.2rem',
+                                    cursor: 'pointer', fontWeight: 'bold',
+                                }}
+                            >
+                                {t('mobileConfirmDisconnectYes')}
+                            </button>
+                            <button
+                                onClick={() => setShowDisconnectConfirm(false)}
+                                style={{
+                                    background: 'transparent', color: '#9ca3af',
+                                    border: '1px solid #4b5563', borderRadius: '8px',
+                                    padding: '0.5rem 1.2rem', cursor: 'pointer',
+                                }}
+                            >
+                                {t('mobileConfirmDisconnectNo')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {status === STATUS.INIT && (
                 <p style={{ color: '#9ca3af' }}>{t('mobileInitializing')}</p>
@@ -532,9 +597,6 @@ function RemoteMicSender() {
                         <button onClick={stopRecording} style={styles.stopButton}>
                             {t('mobileStopBtn')}
                         </button>
-                        <button onClick={stopAndDisconnect} style={styles.disconnectButton}>
-                            {t('mobileDisconnectBtn')}
-                        </button>
                     </div>
                 </div>
             )}
@@ -542,17 +604,16 @@ function RemoteMicSender() {
             {status === STATUS.READY && (
                 <div>
                     <p style={{ color: '#10b981', fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-                        {t('mobileRecordingSent')}
+                        {hasRecorded ? t('mobileRecordingSent') : t('mobileConnectedReady')}
                     </p>
-                    <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-                        {t('mobileStartAnother')}
-                    </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
+                    {hasRecorded && (
+                        <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                            {t('mobileStartAnother')}
+                        </p>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center', marginTop: hasRecorded ? 0 : '1.5rem' }}>
                         <button onClick={startMicCapture} style={styles.newRecordingButton}>
                             {t('mobileStartNewBtn')}
-                        </button>
-                        <button onClick={stopAndDisconnect} style={styles.disconnectButton}>
-                            {t('mobileDisconnectBtn')}
                         </button>
                     </div>
                 </div>
