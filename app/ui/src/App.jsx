@@ -1904,28 +1904,36 @@ export default function App() {
             if (!res.ok) continue;
             const csvText = await res.text();
             const lines = csvText.trim().split('\n');
-            // Skip header row (regex,remplacement,exemple)
+            // Parse header to find column indices
+            const header = parseCSVLine(lines[0].trim()).map(h => h.trim().toLowerCase());
+            const regexIdx = header.indexOf('regex');
+            const replacementIdx = header.indexOf('remplacement') !== -1 ? header.indexOf('remplacement') : header.indexOf('replacement');
+            if (regexIdx === -1 || replacementIdx === -1) {
+              console.warn(`[Dictation] ${file}: could not find 'regex' and 'remplacement' columns in header: ${lines[0]}`);
+              continue;
+            }
             for (let i = 1; i < lines.length; i++) {
               const line = lines[i].trim();
               if (!line || line === ',,') continue;
               // Parse CSV: handle quoted fields
               const fields = parseCSVLine(line);
-              if (fields.length >= 2 && fields[0]) {
-                try {
-                  // Strip Python-style inline flags (e.g. (?i)) since JS uses RegExp flags instead
-                  const cleanedRegex = fields[0].replace(/\(\?[gimsuy]+\)/g, '');
-                  // Validate regex
-                  new RegExp(cleanedRegex, 'gi');
-                  rules.push({
-                    regex: cleanedRegex,
-                    replacement: fields[1]
-                      .replace(/\\n/g, '\n') // support \n in replacements
-                      .replace(/^"(.*)"$/, '$1'), // strip outer quotes
-                    source: file.replace('.csv', '')
-                  });
-                } catch (e) {
-                  console.warn(`[Dictation] Invalid regex in ${file} line ${i + 1}: regex="${fields[0]}" replacement="${fields[1] ?? ''}" error=${e.message}`);
-                }
+              const rawRegex = fields[regexIdx] ?? '';
+              const rawReplacement = fields[replacementIdx] ?? '';
+              if (!rawRegex) continue;
+              try {
+                // Strip Python-style inline flags (e.g. (?i)) since JS uses RegExp flags instead
+                const cleanedRegex = rawRegex.replace(/\(\?[gimsuy]+\)/g, '');
+                // Validate regex
+                new RegExp(cleanedRegex, 'gi');
+                rules.push({
+                  regex: cleanedRegex,
+                  replacement: rawReplacement
+                    .replace(/\\n/g, '\n') // support \n in replacements
+                    .replace(/^"(.*)"$/, '$1'), // strip outer quotes
+                  source: file.replace('.csv', '')
+                });
+              } catch (e) {
+                console.warn(`[Dictation] Invalid regex in ${file} line ${i + 1}: regex="${rawRegex}" replacement="${rawReplacement}" error=${e.message}`);
               }
             }
           } catch (e) {
