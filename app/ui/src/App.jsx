@@ -222,6 +222,7 @@ export default function App() {
   const [remoteMicElapsed, setRemoteMicElapsed] = useState(0);
   const [remoteMicError, setRemoteMicError] = useState('');
   const [remoteMicPaused, setRemoteMicPaused] = useState(false);
+  const [remoteMicRecording, setRemoteMicRecording] = useState(false);
   const remoteMicRtcRef = useRef(null);
   const remoteMicKeyRef = useRef(null);
   const remoteMicSampleRateRef = useRef(16000);
@@ -1032,6 +1033,7 @@ export default function App() {
         remoteMicKeyRef.current = null;
         pcmChunksRef.current = [];
         setIsRemoteMic(false);
+        setRemoteMicRecording(false);
         setRemoteMicLevel(0);
         setRemoteMicPaused(false);
         setRemoteMicStatus('disconnected');
@@ -1061,6 +1063,7 @@ export default function App() {
             } else if (msg.type === 'audio-config') {
               remoteMicSampleRateRef.current = msg.sampleRate;
               console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
+              setRemoteMicRecording(true);
               // Restart elapsed timer for new recording session
               if (remoteMicTimerRef.current) clearInterval(remoteMicTimerRef.current);
               const startTime = Date.now();
@@ -1069,6 +1072,7 @@ export default function App() {
               }, 1000);
             } else if (msg.type === 'audio-end') {
               console.log('[RemoteMic] Phone stopped recording, processing batch...');
+              setRemoteMicRecording(false);
               // Process accumulated audio but keep RTC alive for next recording
               processRemoteMicBatch();
             } else if (msg.type === 'paused') {
@@ -1197,18 +1201,30 @@ export default function App() {
   }
 
   async function stopRemoteMic() {
-    // Process any remaining audio before tearing down
+    // Stop current recording but keep phone session alive
     await processRemoteMicBatch();
+    if (remoteMicRtcRef.current) {
+      try { remoteMicRtcRef.current.sendMessage({ type: 'stop-recording' }); } catch (_) {}
+    }
+    setRemoteMicRecording(false);
+    setRemoteMicPaused(false);
+  }
 
-    // Clean up RTC
+  async function disconnectRemoteMic() {
+    // Full teardown — close RTC, phone goes to STOPPED
+    await processRemoteMicBatch();
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
       remoteMicRtcRef.current.close();
       remoteMicRtcRef.current = null;
     }
     remoteMicKeyRef.current = null;
-
+    if (remoteMicTimerRef.current) {
+      clearInterval(remoteMicTimerRef.current);
+      remoteMicTimerRef.current = null;
+    }
     setIsRemoteMic(false);
+    setRemoteMicRecording(false);
     setRemoteMicModal(false);
     setRemoteMicLevel(0);
     setRemoteMicPaused(false);
@@ -1243,6 +1259,7 @@ export default function App() {
     setRemoteMicQrUrl('');
     setRemoteMicLevel(0);
     setRemoteMicPaused(false);
+    setRemoteMicRecording(false);
     setIsRemoteMic(false);
     startRemoteMic();
   }
@@ -1258,6 +1275,7 @@ export default function App() {
     }
     remoteMicKeyRef.current = null;
     setIsRemoteMic(false);
+    setRemoteMicRecording(false);
     setRemoteMicModal(false);
     setRemoteMicLevel(0);
     setRemoteMicQrUrl('');
@@ -2590,19 +2608,44 @@ export default function App() {
           </>
         ) : isRemoteMic ? (
           <>
+            {remoteMicRecording && (
+              <>
+                <button
+                  onClick={stopRemoteMic}
+                  className="primary record-button"
+                  style={{ background: '#ef4444', flex: 1 }}
+                >
+                  {t('stop') || 'Stop'}
+                </button>
+                <button
+                  onClick={remoteMicPaused ? resumeRemoteMic : pauseRemoteMic}
+                  className="primary record-button"
+                  style={{ background: remoteMicPaused ? '#10b981' : '#f59e0b', flex: 1 }}
+                >
+                  {remoteMicPaused ? t('resume') : t('pause')}
+                </button>
+              </>
+            )}
+            {!remoteMicRecording && (
+              <button
+                onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
+                disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing}
+                className="primary record-button"
+                style={{
+                  background: recordingCountdown !== null ? '#ef4444' : '#10b981',
+                  flex: 1
+                }}
+                data-umami-event="record_button"
+              >
+                {recordingCountdown !== null ? `${t('getReady')} (${recordingCountdown})` : t('recordAudio')}
+              </button>
+            )}
             <button
-              onClick={stopRemoteMic}
+              onClick={disconnectRemoteMic}
               className="primary record-button"
-              style={{ background: '#ef4444', flex: 1 }}
+              style={{ background: '#6b7280', flex: remoteMicRecording ? 1 : 1 }}
             >
-              {t('stop') || 'Stop'}
-            </button>
-            <button
-              onClick={remoteMicPaused ? resumeRemoteMic : pauseRemoteMic}
-              className="primary record-button"
-              style={{ background: remoteMicPaused ? '#10b981' : '#f59e0b', flex: 1 }}
-            >
-              {remoteMicPaused ? t('resume') : t('pause')}
+              {t('remoteMicDisconnectPhone') || 'Disconnect Phone'}
             </button>
           </>
         ) : (
@@ -2648,7 +2691,22 @@ export default function App() {
         </div>
       )}
       
-      {(isRecording || isRemoteMic) && (() => {
+      {isRemoteMic && !remoteMicRecording && (
+        <div style={{
+          marginTop: '0.5rem',
+          padding: '0.5rem',
+          backgroundColor: '#f0fdf4',
+          border: '1px solid #bbf7d0',
+          borderRadius: '4px',
+          fontSize: '0.9em',
+          color: '#166534',
+          textAlign: 'center',
+        }}>
+          {t('remoteMicConnectedIdle') || 'Phone connected \u2014 waiting for recording'}
+        </div>
+      )}
+
+      {(isRecording || (isRemoteMic && remoteMicRecording)) && (() => {
         const level = isRemoteMic ? remoteMicLevel : audioLevel;
         const paused = isRemoteMic ? remoteMicPaused : isPaused;
         const elapsed = isRemoteMic ? remoteMicElapsed : null;
@@ -2959,9 +3017,16 @@ export default function App() {
                 <button onClick={regenerateRemoteMicQr} style={{
                   background: '#3b82f6', color: 'white', border: 'none',
                   borderRadius: '8px', padding: '0.6rem 1.5rem', cursor: 'pointer',
-                  fontWeight: 'bold', marginBottom: '0.5rem',
+                  fontWeight: 'bold', marginBottom: '0.75rem', display: 'block', width: '100%',
                 }}>
                   {t('remoteMicRegenerateQr')}
+                </button>
+                <button onClick={cancelRemoteMic} style={{
+                  background: 'transparent', color: '#9ca3af', border: '1px solid #4b5563',
+                  borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
+                  display: 'block', width: '100%',
+                }}>
+                  {t('close') || 'Close'}
                 </button>
               </>
             )}
