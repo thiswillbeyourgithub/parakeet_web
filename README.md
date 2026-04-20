@@ -1,8 +1,23 @@
 # Parakeet Web
 
-> ⚠️ **EXPERIMENTAL WIP** – This was made with care but with AI. Expect bugs, breaking changes, and rough edges.
+> ⚠️ **EXPERIMENTAL WIP** – Made with care but with AI. Expect bugs, breaking changes, and rough edges.
 
 **Try it now: [pw.olicorne.org](https://pw.olicorne.org/)** — no installation required.
+
+---
+
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Status](#status)
+- [Quick Start](#quick-start)
+- [Dictation Mode](#dictation-mode)
+- [Local Model Fallback](#local-model-fallback)
+- [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic--beta)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+
+---
 
 Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX format by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)) via WebGPU/WASM.
 
@@ -23,23 +38,6 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 - 🧪 Experimental and unstable
 - 📝 Licensed under AGPLv3
 
-## Dictation Mode
-
-Parakeet Web includes an **experimental dictation mode** that post-processes transcriptions using regex rules to clean up spoken punctuation, medical vocabulary, and unit abbreviations. This is especially useful for French medical dictation. It 
-
-The regex rules are sourced from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) by the non profit [interhop.org](https://interhop.org/) for the [Murmure](https://github.com/Kieirra/murmure) software, which I also use when I can. A single combined CSV file containing all rules is automatically downloaded on container startup.
-
-The rules are in French and cover categories like punctuation, unit abbreviations, clinical exam templates, medication name corrections, and medical vocabulary corrections.
-
-This feature is very early and will improve rapidly.
-
-### How it works
-
-- **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on first startup.
-- **Local development**: Run `./scripts/download-dictation-regex.sh` to fetch the rules into `app/ui/public/dictation-regex/`.
-- **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
-- **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
-
 ## Quick Start
 
 ```bash
@@ -51,6 +49,23 @@ sudo docker compose -f docker/docker-compose.yml up
 ```
 
 3. Then visit `http://localhost:5173`
+
+## Dictation Mode
+
+Parakeet Web includes an **experimental dictation mode** that post-processes transcriptions using regex rules to clean up spoken punctuation, medical vocabulary, and unit abbreviations. This is especially useful for French medical dictation.
+
+The regex rules are sourced from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) by the non-profit [interhop.org](https://interhop.org/), originally created for the [Murmure](https://github.com/Kieirra/murmure) software. A single combined CSV file is automatically downloaded on container startup.
+
+The rules are in French and cover categories like punctuation, unit abbreviations, clinical exam templates, medication name corrections, and medical vocabulary corrections.
+
+This feature is very early and will improve rapidly.
+
+### How it works
+
+- **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on first startup.
+- **Local development**: Run `./scripts/download-dictation-regex.sh` to fetch the rules into `app/ui/public/dictation-regex/`.
+- **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
+- **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
 
 ## Local Model Fallback
 
@@ -70,7 +85,7 @@ VITE_LOCAL_MODEL_FALLBACK=true
 
 The downloaded files are git-ignored. When `VITE_LOCAL_MODEL_FALLBACK=true` is set, the app will check for the local model files on startup and refuse to load if they are missing.
 
-## Remote Microphone (Phone as Mic) (Beta)
+## Remote Microphone (Phone as Mic) — Beta
 
 No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
 
