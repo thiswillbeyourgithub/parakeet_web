@@ -64,39 +64,39 @@ _fetch() {
   else echo "[entrypoint] WARNING: neither wget nor curl found"; return 1; fi
 }
 
-if [ ! -d "$REGEX_DIR" ] || [ -z "$(ls -A "$REGEX_DIR" 2>/dev/null)" ]; then
-  mkdir -p "$REGEX_DIR"
+mkdir -p "$REGEX_DIR"
 
-  # Check if the source is a local folder path
-  case "$REGEX_SOURCE" in
-    /*|./*)
-      echo "[entrypoint] Using local regex folder: $REGEX_SOURCE"
-      if [ -d "$REGEX_SOURCE" ]; then
-        cp "$REGEX_SOURCE"/*.csv "$REGEX_DIR/" 2>/dev/null || true
-      else
-        echo "[entrypoint] WARNING: Local regex folder not found: $REGEX_SOURCE"
-      fi
-      ;;
-    *)
-      # Download the single combined regex CSV from the repo
-      MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads"
+# Always refresh CSV files so a new DICTATION_REGEX_SOURCE is picked up on restart.
+# Remove stale CSVs from any previous run before copying/downloading fresh ones.
+rm -f "$REGEX_DIR"/*.csv "$REGEX_DIR/manifest.txt" 2>/dev/null || true
 
-      echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
+# Check if the source is a local folder path
+case "$REGEX_SOURCE" in
+  /*|./*)
+    echo "[entrypoint] Using local regex folder: $REGEX_SOURCE"
+    if [ -d "$REGEX_SOURCE" ]; then
+      cp "$REGEX_SOURCE"/*.csv "$REGEX_DIR/" 2>/dev/null || true
+    else
+      echo "[entrypoint] WARNING: Local regex folder not found: $REGEX_SOURCE"
+    fi
+    ;;
+  *)
+    # Download the single combined regex CSV from the repo
+    MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads"
 
-      if _fetch "$REGEX_DIR/regex.csv" "$MURMURE_RAW"; then
-        echo "[entrypoint] Downloaded regex.csv"
-      else
-        echo "[entrypoint] WARNING: Failed to download regex.csv"
-      fi
-      ;;
-  esac
+    echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
 
-  # Write a manifest so the frontend knows which files are available
-  ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
-  echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
-else
-  echo "[entrypoint] Dictation regex rules already present in $REGEX_DIR"
-fi
+    if _fetch "$REGEX_DIR/regex.csv" "$MURMURE_RAW"; then
+      echo "[entrypoint] Downloaded regex.csv"
+    else
+      echo "[entrypoint] WARNING: Failed to download regex.csv"
+    fi
+    ;;
+esac
+
+# Write a manifest so the frontend knows which files are available
+ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
+echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
 
 # Start the signaling server in the background.
 # Dependencies were installed at build time into /signaling-deps; NODE_PATH
