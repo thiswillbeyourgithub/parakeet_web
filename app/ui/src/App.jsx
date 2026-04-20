@@ -1949,6 +1949,7 @@ export default function App() {
     const fields = [];
     let current = '';
     let inQuotes = false;
+    let bracketDepth = 0;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') {
@@ -1958,7 +1959,13 @@ export default function App() {
         } else {
           inQuotes = !inQuotes;
         }
-      } else if (ch === ',' && !inQuotes) {
+      } else if (!inQuotes && ch === '[') {
+        bracketDepth++;
+        current += ch;
+      } else if (!inQuotes && ch === ']') {
+        bracketDepth = Math.max(0, bracketDepth - 1);
+        current += ch;
+      } else if (ch === ',' && !inQuotes && bracketDepth === 0) {
         fields.push(current);
         current = '';
       } else {
