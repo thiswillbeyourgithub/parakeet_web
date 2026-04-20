@@ -1924,7 +1924,7 @@ export default function App() {
                     source: file.replace('.csv', '')
                   });
                 } catch (e) {
-                  console.warn(`[Dictation] Invalid regex in ${file} line ${i + 1}: ${fields[0]}`, e.message);
+                  console.warn(`[Dictation] Invalid regex in ${file} line ${i + 1}: regex="${fields[0]}" replacement="${fields[1] ?? ''}" error=${e.message}`);
                 }
               }
             }
