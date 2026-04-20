@@ -8,7 +8,7 @@
 
 ## Table of Contents
 
-- [What It Does](#what-it-does)
+- [Features](#features)
 - [Quick Start](#quick-start)
 - [Dictation Mode](#dictation-mode)
 - [Local Model Fallback](#local-model-fallback)
@@ -22,14 +22,20 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 
 ![](./image.png)
 
-## What It Does
+## Features
 
-- Runs speech-to-text entirely in your browser (nothing sent to servers)
-- Supports WebGPU (fast) and WASM (compatible) backends
-- Word-level timestamps and confidence scores
-- File upload or microphone recording
-- Model quantization options (fp32/int8)
-- Installable as a PWA (Progressive Web App) for app-like experience
+| Feature | Details |
+|---|---|
+| 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
+| ⚡ **WebGPU Accelerated** | Fast GPU inference with automatic WASM fallback for compatibility |
+| 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
+| 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
+| 🕐 **Word Timestamps** | Per-word timestamps and confidence score heatmap |
+| 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
+| 📦 **Quantization** | Choose between fp32 (accurate) and int8 (faster/smaller) model variants |
+| 📲 **PWA** | Installable as a Progressive Web App for an app-like experience |
+| 🐳 **Docker Ready** | One-command self-hosted deployment |
+
 
 
 ## Quick Start
