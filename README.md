@@ -1,6 +1,6 @@
 # Parakeet Web
 
-> ⚠️ **EXPERIMENTAL WIP** – This is a heavily modified fork, purely vibe-coded. Expect bugs, breaking changes, and rough edges.
+> ⚠️ **EXPERIMENTAL WIP** – This was made with care but with AI. Expect bugs, breaking changes, and rough edges.
 
 **Try it now: [pw.olicorne.org](https://pw.olicorne.org/)** — no installation required.
 
@@ -22,7 +22,6 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 - 🚧 Work in progress
 - 🧪 Experimental and unstable
 - 📝 Licensed under AGPLv3
-- 🎨 Vibe-coded with [aider.chat](https://github.com/Aider-AI/aider/) and [Claude Code](https://claude.com/claude-code)
 
 ## Dictation Mode
 
