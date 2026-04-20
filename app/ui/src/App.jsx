@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect, useTransition, useCallback } from '
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
+import Banner from './components/Banner.jsx';
+import Modal from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
@@ -2096,30 +2098,20 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Dev mode banner */}
       {devMode && (
-        <div style={{
-          background: '#fecaca', color: '#991b1b', padding: '0.5rem 1rem',
-          textAlign: 'center', fontSize: '0.9rem', borderBottom: '2px solid #ef4444',
-          fontWeight: 'bold',
-        }}>
+        <Banner tone="danger" icon="⚠️" style={{ fontWeight: 'bold', textAlign: 'center', marginBottom: '1rem' }}>
           {t('devModeBanner')}
-        </div>
+        </Banner>
       )}
-      {/* Warning banner for devices with heap < 3 GB, showing detected RAM and threshold */}
       {showLowRamBanner && (
-        <div style={{
-          background: '#fef3c7', color: '#92400e', padding: '0.5rem 1rem',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          fontSize: '0.9rem', borderBottom: '1px solid #f59e0b',
-        }}>
+        <Banner tone="warning">
           <span>{t('lowRamWarning')}{lowRamInfo ? ` (detected: ${lowRamInfo.detectedGB} GB ${lowRamInfo.source}, threshold: ${RAM_THRESHOLD_GB} GB)` : ''}{t('lowRamModelMayFail')}</span>
-          <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: '#92400e', marginLeft: '0.5rem' }} aria-label={t('dismiss')}>×</button>
-        </div>
+          <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: 'auto', color: 'inherit' }} aria-label={t('dismiss')}>×</button>
+        </Banner>
       )}
       <div className="app-header">
         <h2>ParakeetWeb v{VERSION}</h2>
-        <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: '#666' }}>{t('status')}: {t(status) || status}</p>
+        <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: 'var(--text-subtle)' }}>{t('status')}: {t(status) || status}</p>
         <LanguageSwitcher />
         <button
           className="info-toggle"
@@ -2151,23 +2143,23 @@ export default function App() {
           <p>
             {t('infoDescription2')}
           </p>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '1rem', marginBottom: 0 }}>
+          <p style={{ fontSize: '0.85rem', marginTop: '1rem', marginBottom: 0 }}>
             <strong>{t('sourceCode')}:</strong>{' '}
-            <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>github.com/thiswillbeyourgithub/parakeet_web</a>
+            <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer">github.com/thiswillbeyourgithub/parakeet_web</a>
           </p>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('feedback')}:</strong> {t('feedbackText')}{' '}
-            <a href="https://olicorne.org" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>olicorne.org</a>{' '}
+            <a href="https://olicorne.org" target="_blank" rel="noopener noreferrer">olicorne.org</a>{' '}
             {t('orDirectlyBy')}{' '}
-            <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>{t('openingAnIssue')}</a>{' '}
+            <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer">{t('openingAnIssue')}</a>{' '}
             {t('onTheGitHubRepo')}
           </p>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('install')}:</strong> {t('installText')}
           </p>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('privacy')}:</strong> {t('privacyText')}{' '}
-            <a href="https://umami.is" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>umami.is</a>{' '}
+            <a href="https://umami.is" target="_blank" rel="noopener noreferrer">umami.is</a>{' '}
             {t('privacyText2')}
           </p>
         </div>
@@ -2181,7 +2173,7 @@ export default function App() {
         <button className="settings-sidebar-close" onClick={() => setShowSettings(false)} aria-label={t('closeSettings')}>×</button>
         <div className="settings-section">
         <p>
-          <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: '#666'}}>(nemo128)</span>
+          <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: 'var(--text-subtle)'}}>(nemo128)</span>
         </p>
 
           <div className="settings-content">
@@ -2491,14 +2483,14 @@ export default function App() {
       )}
 
       {showAdvancedInfo && memoryInfo && Object.keys(memoryInfo).length > 0 && (
-        <div style={{ 
-          fontSize: '0.85rem', 
-          color: '#666', 
+        <div style={{
+          fontSize: '0.85rem',
+          color: 'var(--text-subtle)',
           marginBottom: '1rem',
           padding: '0.75rem',
-          background: '#f9fafb',
-          borderRadius: '4px',
-          border: '1px solid #e5e7eb'
+          background: 'var(--bg-subtle)',
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--border)'
         }}>
           <strong>{t('system')}:</strong>{' '}
           {memoryInfo.deviceRAM && <span>{t('ram')}: {memoryInfo.deviceRAM}</span>}
@@ -2507,7 +2499,7 @@ export default function App() {
               {memoryInfo.deviceRAM && ' | '}
               <span>{t('heap')}: {memoryInfo.heapUsed} ({memoryInfo.heapPercent}%)</span>
               {parseFloat(memoryInfo.heapPercent) > 80 && (
-                <span style={{ color: '#dc2626', marginLeft: '0.5rem' }}>{t('high')}</span>
+                <span style={{ color: 'var(--danger)', marginLeft: '0.5rem' }}>{t('high')}</span>
               )}
             </>
           )}
@@ -2522,14 +2514,14 @@ export default function App() {
               {' | '}
               <span>{t('fps')}: {memoryInfo.fps}</span>
               {memoryInfo.fpsWarning && (
-                <span style={{ color: '#dc2626', marginLeft: '0.25rem' }}>{memoryInfo.fpsWarning}</span>
+                <span style={{ color: 'var(--danger)', marginLeft: '0.25rem' }}>{memoryInfo.fpsWarning}</span>
               )}
             </>
           )}
           {memoryInfo.storage && (
             <>
               <br />
-              <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-subtle)' }}>
                 {t('storage')}: {memoryInfo.storage}
               </span>
             </>
@@ -2552,16 +2544,7 @@ export default function App() {
       {/* Controls, transcribe button, and transcription history: hidden until model loading has been initiated */}
       {status !== 'idle' && !(status === 'failed' || status === 'transcriptionFailed') && (<>
       {typeof SharedArrayBuffer === 'undefined' && backend === 'wasm' && (
-        <div style={{ 
-          marginBottom: '1rem', 
-          padding: '0.5rem', 
-          backgroundColor: '#fff3cd', 
-          border: '1px solid #ffeaa7',
-          borderRadius: '4px',
-          fontSize: '0.9em'
-        }}>
-          {t('sharedArrayBufferWarning')}
-        </div>
+        <Banner tone="warning">{t('sharedArrayBufferWarning')}</Banner>
       )}
 
       <div className="controls">
@@ -2592,7 +2575,7 @@ export default function App() {
             <button
               onClick={stopRecording}
               className="primary record-button"
-              style={{ background: '#ef4444', flex: 1 }}
+              style={{ background: 'var(--danger)', flex: 1 }}
               data-umami-event="stop_record_button"
             >
               {t('stop')}
@@ -2600,7 +2583,7 @@ export default function App() {
             <button
               onClick={isPaused ? resumeRecording : pauseRecording}
               className="primary record-button"
-              style={{ background: isPaused ? '#10b981' : '#f59e0b', flex: 1 }}
+              style={{ background: isPaused ? 'var(--success)' : 'var(--warning)', flex: 1 }}
               data-umami-event="pause_record_button"
             >
               {isPaused ? t('resume') : t('pause')}
@@ -2613,14 +2596,14 @@ export default function App() {
                 <button
                   onClick={stopRemoteMic}
                   className="primary record-button"
-                  style={{ background: '#ef4444', flex: 1 }}
+                  style={{ background: 'var(--danger)', flex: 1 }}
                 >
                   {t('stop') || 'Stop'}
                 </button>
                 <button
                   onClick={remoteMicPaused ? resumeRemoteMic : pauseRemoteMic}
                   className="primary record-button"
-                  style={{ background: remoteMicPaused ? '#10b981' : '#f59e0b', flex: 1 }}
+                  style={{ background: remoteMicPaused ? 'var(--success)' : 'var(--warning)', flex: 1 }}
                 >
                   {remoteMicPaused ? t('resume') : t('pause')}
                 </button>
@@ -2632,7 +2615,7 @@ export default function App() {
                 disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing}
                 className="primary record-button"
                 style={{
-                  background: recordingCountdown !== null ? '#ef4444' : '#10b981',
+                  background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
                   flex: 1
                 }}
                 data-umami-event="record_button"
@@ -2643,7 +2626,7 @@ export default function App() {
             <button
               onClick={disconnectRemoteMic}
               className="primary record-button"
-              style={{ background: '#6b7280', flex: remoteMicRecording ? 1 : 1 }}
+              style={{ background: 'var(--text-subtle)', flex: remoteMicRecording ? 1 : 1 }}
             >
               {t('remoteMicDisconnectPhone') || 'Disconnect Phone'}
             </button>
@@ -2655,7 +2638,7 @@ export default function App() {
               disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing || isRemoteMic}
               className="primary record-button"
               style={{
-                background: recordingCountdown !== null ? '#ef4444' : '#10b981',
+                background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
                 flex: 1
               }}
               data-umami-event="record_button"
@@ -2676,34 +2659,15 @@ export default function App() {
       </div>
       
       {recordingCountdown !== null && (
-        <div style={{ 
-          marginTop: '0.5rem', 
-          padding: '1rem', 
-          backgroundColor: '#fffbeb', 
-          border: '2px solid #fbbf24',
-          borderRadius: '8px',
-          fontSize: '1.2em',
-          fontWeight: 'bold',
-          color: '#92400e',
-          textAlign: 'center'
-        }}>
+        <Banner tone="warning" style={{ marginTop: '0.5rem', fontSize: '1.1em', fontWeight: 'bold', justifyContent: 'center' }}>
           {t('getReadyToSpeak')} {recordingCountdown}...
-        </div>
+        </Banner>
       )}
-      
+
       {isRemoteMic && !remoteMicRecording && (
-        <div style={{
-          marginTop: '0.5rem',
-          padding: '0.5rem',
-          backgroundColor: '#f0fdf4',
-          border: '1px solid #bbf7d0',
-          borderRadius: '4px',
-          fontSize: '0.9em',
-          color: '#166534',
-          textAlign: 'center',
-        }}>
+        <Banner tone="success" style={{ marginTop: '0.5rem', justifyContent: 'center' }}>
           {t('remoteMicConnectedIdle') || 'Phone connected \u2014 waiting for recording'}
-        </div>
+        </Banner>
       )}
 
       {(isRecording || (isRemoteMic && remoteMicRecording)) && (() => {
@@ -2714,11 +2678,11 @@ export default function App() {
           <div style={{
             marginTop: '0.5rem',
             padding: '0.5rem',
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fecaca',
-            borderRadius: '4px',
+            background: 'var(--danger-soft-bg)',
+            border: '1px solid var(--danger)',
+            borderRadius: 'var(--radius-sm)',
             fontSize: '0.9em',
-            color: '#991b1b'
+            color: 'var(--danger)'
           }}>
             <span>
               {paused ? t('recordingPausedMsg') : (isRemoteMic ? (t('remoteMicRecording') || 'Phone recording') : t('recordingInProgress'))}
@@ -2732,18 +2696,18 @@ export default function App() {
               <div style={{
                 width: '100%',
                 height: '20px',
-                background: '#e0e0e0',
-                borderRadius: '4px',
+                background: 'var(--border)',
+                borderRadius: 'var(--radius-sm)',
                 overflow: 'hidden'
               }}>
                 <div style={{
                   width: `${Math.min(100, level)}%`,
                   height: '100%',
-                  background: level > 30 ? '#10b981' : '#fbbf24',
+                  background: level > 30 ? 'var(--success)' : 'var(--warning)',
                   transition: 'width 0.1s'
                 }} />
               </div>
-              <p style={{ fontSize: '0.8em', color: '#666', marginTop: '0.25rem', marginBottom: 0 }}>
+              <p style={{ fontSize: '0.8em', color: 'var(--text-subtle)', marginTop: '0.25rem', marginBottom: 0 }}>
                 {level < 10 && t('tooQuiet')}
                 {level >= 10 && level < 30 && t('speakLouder')}
                 {level >= 30 && t('goodLevel')}
@@ -2758,12 +2722,12 @@ export default function App() {
         <div className="audio-preview-container">
           <div className="audio-preview-header">
             <strong>📎 {pendingAudioFile.name}</strong>
-            <span style={{ fontSize: '0.8rem', color: '#6b7280', marginLeft: '0.5rem' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
               {t('whatModelHears')}
             </span>
           </div>
           {isProcessingPreview ? (
-            <div style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>
+            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-subtle)' }}>
               {t('processingAudioPreview')}
             </div>
           ) : audioPreviewUrl ? (
@@ -2851,7 +2815,7 @@ export default function App() {
       {/* Transcriptions */}
       {transcriptions.length > 0 && (
         <div className="history">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1rem 0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1rem 0.5rem', flexWrap: 'wrap', gap: '0.5rem', borderBottom: '1px solid var(--border)' }}>
             <h3 style={{ margin: 0 }}>{t('transcriptions')}</h3>
             <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
               <button
@@ -2891,7 +2855,7 @@ export default function App() {
                   <div className="history-meta">
                     <strong>{truncateFilename(trans.filename)}</strong>
                     {showAdvancedInfo && (
-                      <span style={{ fontSize: '0.85em', color: '#6b7280', marginLeft: '0.5rem' }}>
+                      <span style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
                         {trans.duration.toFixed(1)}s | {trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
                         {avgConf !== null && minConf !== null && ` | Avg: ${(avgConf * 100).toFixed(1)}% | Min: ${(minConf * 100).toFixed(1)}%`}
                       </span>
@@ -2977,83 +2941,77 @@ export default function App() {
 
       {/* Remote Microphone Modal */}
       {remoteMicModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.7)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-        }} onClick={e => { if (e.target === e.currentTarget && remoteMicStatus !== 'connected') cancelRemoteMic(); }}>
-          <div style={{
-            background: '#1e1e3a', borderRadius: '16px', padding: '2rem',
-            maxWidth: '380px', width: '90%', textAlign: 'center', color: '#e0e0e0',
-          }}>
-            <h3 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>
-              {t('remoteMicTitle') || 'Remote Microphone'}
-            </h3>
+        <Modal onClose={remoteMicStatus !== 'connected' ? cancelRemoteMic : undefined} className="modal-panel--remote-mic">
+          <h3 style={{ marginBottom: '1rem', fontSize: '1.2rem', textAlign: 'center' }}>
+            {t('remoteMicTitle') || 'Remote Microphone'}
+          </h3>
 
-            {remoteMicStatus === 'connecting' && (
-              <p style={{ color: '#60a5fa' }}>{t('remoteMicConnecting') || 'Setting up...'}</p>
-            )}
+          {remoteMicStatus === 'connecting' && (
+            <p style={{ color: 'var(--accent)', textAlign: 'center' }}>{t('remoteMicConnecting') || 'Setting up...'}</p>
+          )}
 
-            {remoteMicStatus === 'waiting' && (
-              <>
-                <p style={{ color: '#9ca3af', marginBottom: '1rem' }}>
-                  {t('remoteMicScanQr') || 'Scan this QR code with your phone'}
-                </p>
-                <div ref={remoteMicQrRef} style={{
-                  display: 'inline-block', padding: '12px',
-                  background: 'white', borderRadius: '8px', marginBottom: '1rem',
-                }} />
-                <p style={{ color: '#6b7280', fontSize: '0.8rem' }}>
-                  {t('remoteMicWaiting') || 'Waiting for phone to connect...'}
-                </p>
-              </>
-            )}
+          {remoteMicStatus === 'waiting' && (
+            <>
+              <p style={{ color: 'var(--text-subtle)', marginBottom: '1rem', textAlign: 'center' }}>
+                {t('remoteMicScanQr') || 'Scan this QR code with your phone'}
+              </p>
+              <div ref={remoteMicQrRef} style={{
+                display: 'block', padding: '12px',
+                background: 'white', borderRadius: 'var(--radius-md)',
+                margin: '0 auto 1rem', width: 'fit-content',
+              }} />
+              <p style={{ color: 'var(--text-subtle)', fontSize: '0.8rem', textAlign: 'center' }}>
+                {t('remoteMicWaiting') || 'Waiting for phone to connect...'}
+              </p>
+            </>
+          )}
 
-            {remoteMicStatus === 'disconnected' && (
-              <>
-                <p style={{ color: '#f59e0b', marginBottom: '1rem' }}>
-                  {t('remoteMicDisconnected')}
-                </p>
-                <button onClick={regenerateRemoteMicQr} style={{
-                  background: '#3b82f6', color: 'white', border: 'none',
-                  borderRadius: '8px', padding: '0.6rem 1.5rem', cursor: 'pointer',
-                  fontWeight: 'bold', marginBottom: '0.75rem', display: 'block', width: '100%',
-                }}>
-                  {t('remoteMicRegenerateQr')}
-                </button>
-                <button onClick={cancelRemoteMic} style={{
-                  background: 'transparent', color: '#9ca3af', border: '1px solid #4b5563',
-                  borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
-                  display: 'block', width: '100%',
-                }}>
-                  {t('close') || 'Close'}
-                </button>
-              </>
-            )}
-
-            {remoteMicStatus === 'error' && (
-              <>
-                <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{remoteMicError}</p>
-                <button onClick={cancelRemoteMic} style={{
-                  background: '#3b82f6', color: 'white', border: 'none',
-                  borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
-                }}>
-                  {t('close') || 'Close'}
-                </button>
-              </>
-            )}
-
-            {remoteMicStatus !== 'error' && remoteMicStatus !== 'disconnected' && (
+          {remoteMicStatus === 'disconnected' && (
+            <>
+              <p style={{ color: 'var(--warning)', marginBottom: '1rem', textAlign: 'center' }}>
+                {t('remoteMicDisconnected')}
+              </p>
+              <button onClick={regenerateRemoteMicQr} style={{
+                background: 'var(--accent)', color: 'white', border: 'none',
+                borderRadius: 'var(--radius-md)', padding: '0.6rem 1.5rem', cursor: 'pointer',
+                fontWeight: 'bold', marginBottom: '0.75rem', display: 'block', width: '100%',
+              }}>
+                {t('remoteMicRegenerateQr')}
+              </button>
               <button onClick={cancelRemoteMic} style={{
-                background: 'transparent', color: '#9ca3af', border: '1px solid #4b5563',
-                borderRadius: '8px', padding: '0.5rem 1.5rem', cursor: 'pointer',
-                marginTop: '1rem',
+                background: 'transparent', color: 'var(--text-subtle)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)', padding: '0.5rem 1.5rem', cursor: 'pointer',
+                display: 'block', width: '100%',
+              }}>
+                {t('close') || 'Close'}
+              </button>
+            </>
+          )}
+
+          {remoteMicStatus === 'error' && (
+            <>
+              <p style={{ color: 'var(--danger)', marginBottom: '1rem', textAlign: 'center' }}>{remoteMicError}</p>
+              <button onClick={cancelRemoteMic} style={{
+                background: 'var(--accent)', color: 'white', border: 'none',
+                borderRadius: 'var(--radius-md)', padding: '0.5rem 1.5rem', cursor: 'pointer',
+                display: 'block', margin: '0 auto',
+              }}>
+                {t('close') || 'Close'}
+              </button>
+            </>
+          )}
+
+          {remoteMicStatus !== 'error' && remoteMicStatus !== 'disconnected' && (
+            <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+              <button onClick={cancelRemoteMic} style={{
+                background: 'transparent', color: 'var(--text-subtle)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)', padding: '0.5rem 1.5rem', cursor: 'pointer',
               }}>
                 {t('cancel') || 'Cancel'}
               </button>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </Modal>
       )}
     </div>
   );
