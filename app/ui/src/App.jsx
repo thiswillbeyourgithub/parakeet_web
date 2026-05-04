@@ -410,14 +410,16 @@ export default function App() {
       if (result.ok) {
         console.log('[App] Local fallback check passed:', result.message);
       } else {
-        const msg = `Local model fallback is enabled but model files are missing. `
-          + `Download them first:\n\n`
-          + `  hf download ${repoId} --local-dir ./fallback_models/${repoId.replace('/', '__')}\n\n`
-          + `Then uncomment the volume bind in docker-compose.yml and restart.`;
-        console.error('[App] FATAL:', msg);
+        const msg = `Local model fallback is enabled but model files are missing at /fallback_models/${repoId}/. `
+          + `Either:\n`
+          + `  - drop the model files into ./fallback_models/${repoId}/ on the host, or\n`
+          + `  - set FALLBACK_AUTO_DOWNLOAD=1 in your .env and restart the container.\n\n`
+          + `See docker-compose.yml for the bind-mount configuration.`;
+        console.error('[App]', msg);
         setFallbackWarning(msg);
-        throw new Error(msg);
       }
+    }).catch((e) => {
+      console.error('[App] Local fallback check failed:', e);
     });
   }, [localFallbackEnabled, repoId]);
 
