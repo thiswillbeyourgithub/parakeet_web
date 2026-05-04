@@ -21,9 +21,59 @@ echo "[entrypoint] VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT
 echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-(not set)}"
 echo "[entrypoint] FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-(not set)}"
+echo "[entrypoint] FALLBACK_AUTO_DOWNLOAD=${FALLBACK_AUTO_DOWNLOAD:-0}"
 echo "[entrypoint] HF_TOKEN=$([ -n "$HF_TOKEN" ] && echo '****(set)' || echo '(not set)')"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] =============================="
+
+# ---------- Fallback model: ensure weights exist on the bind mount ---------
+# The host bind-mounts /fallback_models. If FALLBACK_MODEL_REPO is set we
+# verify vocab.txt is present under /fallback_models/<repo>/. If not:
+#   - FALLBACK_AUTO_DOWNLOAD=1 : install uv into /tmp (tmpfs) and download
+#     the model via huggingface-cli, confined to the bind mount.
+#   - otherwise               : crash so the operator notices the gap.
+# uv/uvx are only fetched when auto-download is on, to keep supply-chain
+# surface zero on normal runs.
+if [ -z "${FALLBACK_MODEL_REPO}" ]; then
+  echo "[entrypoint] FALLBACK_MODEL_REPO not set — skipping fallback model setup."
+else
+  MODEL_DIR="/fallback_models/${FALLBACK_MODEL_REPO}"
+  if [ -f "${MODEL_DIR}/vocab.txt" ]; then
+    echo "[entrypoint] Fallback model present at ${MODEL_DIR}"
+  elif [ "${FALLBACK_AUTO_DOWNLOAD:-0}" = "1" ]; then
+    echo "[entrypoint] Fallback model missing at ${MODEL_DIR} — auto-downloading."
+    mkdir -p "${MODEL_DIR}"
+    # Confine uv to writable tmpfs so a read-only root FS is fine.
+    export UV_INSTALL_DIR=/tmp/uv-bin
+    export UV_CACHE_DIR=/tmp/uv-cache
+    export UV_PYTHON_INSTALL_DIR=/tmp/uv-python
+    export PATH="${UV_INSTALL_DIR}:${PATH}"
+    if ! command -v uv >/dev/null 2>&1; then
+      echo "[entrypoint] Installing uv into ${UV_INSTALL_DIR}..."
+      mkdir -p "${UV_INSTALL_DIR}"
+      if command -v wget >/dev/null 2>&1; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
+      elif command -v curl >/dev/null 2>&1; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+      else
+        echo "[entrypoint] ERROR: neither wget nor curl available to fetch uv"
+        exit 1
+      fi
+    fi
+    echo "[entrypoint] Downloading ${FALLBACK_MODEL_REPO} from HuggingFace..."
+    uvx --from huggingface_hub huggingface-cli download \
+      "${FALLBACK_MODEL_REPO}" --local-dir "${MODEL_DIR}"
+    if [ ! -f "${MODEL_DIR}/vocab.txt" ]; then
+      echo "[entrypoint] ERROR: download completed but vocab.txt is still missing in ${MODEL_DIR}"
+      exit 1
+    fi
+    echo "[entrypoint] Fallback model downloaded to ${MODEL_DIR}"
+  else
+    echo "[entrypoint] ERROR: fallback model missing at ${MODEL_DIR} and FALLBACK_AUTO_DOWNLOAD!=1."
+    echo "[entrypoint] Either populate the bind-mounted folder manually or set FALLBACK_AUTO_DOWNLOAD=1."
+    exit 1
+  fi
+fi
 
 # Wire up fallback model files via symlink if they exist.
 if [ -d /fallback_models ] && [ "$(ls -A /fallback_models 2>/dev/null)" ]; then
