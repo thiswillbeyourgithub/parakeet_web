@@ -5,6 +5,7 @@ import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
+import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
     deriveSharedKey, decrypt
@@ -582,6 +583,14 @@ export default function App() {
       }
     };
   }, []);
+
+  // Keepalive while recording or transcribing: prevents background-tab JS
+  // throttling (silent audio trick) and keeps the screen on (wake lock).
+  useEffect(() => {
+    if (!isRecording && !isTranscribing && !isRemoteMic) return;
+    acquireKeepalive();
+    return () => releaseKeepalive();
+  }, [isRecording, isTranscribing, isRemoteMic]);
 
   // Auto-adjust quant presets when backend changes and save all settings to IndexedDB
   useEffect(() => {
