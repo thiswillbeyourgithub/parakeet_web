@@ -35,6 +35,13 @@
 		file_server
 	}
 
+	# Runtime VITE_* config (entrypoint writes /run/config/config.js).
+	# /srv is read-only at runtime, so config.js is served from a tmpfs path.
+	handle /config.js {
+		root * /run/config
+		file_server
+	}
+
 	# SPA + remote-mic.html (Vite emits both as separate entry points).
 	handle {
 		root * /srv

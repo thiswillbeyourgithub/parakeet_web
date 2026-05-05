@@ -1,20 +1,17 @@
 #!/bin/sh
-# Entrypoint for the parakeet-web container.
+# Entrypoint for the parakeetweb production container.
 #
-# If a fallback model was baked into the image (under /fallback_models/),
-# this script creates a symlink so Vite serves the files at /models/<repoId>.
-# Because docker-compose mounts the host's app/ui over the image's /app/ui,
-# any files placed there during `docker build` would be hidden.  The symlink
-# bridges the gap: the actual weights live outside the mounted volume, but
-# Vite still finds them in public/models/.
+# - Verifies / optionally downloads the fallback model into /fallback_models.
+# - Populates /var/regex with the dictation regex CSV(s).
+# - Generates /run/config/config.js so the static bundle picks up runtime
+#   VITE_* envs without needing a rebuild.
+# - Starts the signaling Node sidecar in the background, then execs Caddy in
+#   the foreground.
 
 set -e
 
-# Print detected environment variables so operators can verify configuration
-# at a glance in the container logs.
 echo "[entrypoint] === Environment variables ==="
-echo "[entrypoint] VITE_ALLOWED_HOST=${VITE_ALLOWED_HOST:-(not set)}"
-echo "[entrypoint] VITE_USE_POLLING=${VITE_USE_POLLING:-(not set)}"
+echo "[entrypoint] VITE_DEV_MODE=${VITE_DEV_MODE:-(not set)}"
 echo "[entrypoint] VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL:-(not set)}"
 echo "[entrypoint] VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID:-(not set)}"
 echo "[entrypoint] VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-(not set)}"
@@ -24,6 +21,7 @@ echo "[entrypoint] FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-(not set)}"
 echo "[entrypoint] FALLBACK_AUTO_DOWNLOAD=${FALLBACK_AUTO_DOWNLOAD:-0}"
 echo "[entrypoint] HF_TOKEN=$([ -n "$HF_TOKEN" ] && echo '****(set)' || echo '(not set)')"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
+echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] =============================="
 
 # ---------- Fallback model: ensure weights exist on the bind mount ---------
@@ -32,8 +30,6 @@ echo "[entrypoint] =============================="
 #   - FALLBACK_AUTO_DOWNLOAD=1 : install uv into /tmp (tmpfs) and download
 #     the model via huggingface-cli, confined to the bind mount.
 #   - otherwise               : crash so the operator notices the gap.
-# uv/uvx are only fetched when auto-download is on, to keep supply-chain
-# surface zero on normal runs.
 if [ -z "${FALLBACK_MODEL_REPO}" ]; then
   echo "[entrypoint] FALLBACK_MODEL_REPO not set — skipping fallback model setup."
 else
@@ -43,7 +39,6 @@ else
   elif [ "${FALLBACK_AUTO_DOWNLOAD:-0}" = "1" ]; then
     echo "[entrypoint] Fallback model missing at ${MODEL_DIR} — auto-downloading."
     mkdir -p "${MODEL_DIR}"
-    # Confine uv to writable tmpfs so a read-only root FS is fine.
     export UV_INSTALL_DIR=/tmp/uv-bin
     export UV_CACHE_DIR=/tmp/uv-cache
     export UV_PYTHON_INSTALL_DIR=/tmp/uv-python
@@ -74,40 +69,18 @@ else
     exit 1
   fi
 fi
+# Caddy serves /fallback_models directly via handle_path /models/* — no
+# in-container symlinks required.
 
-# Wire up fallback model files via symlink if they exist.
-if [ -d /fallback_models ] && [ "$(ls -A /fallback_models 2>/dev/null)" ]; then
-  echo "[entrypoint] Fallback model detected in /fallback_models — creating symlinks..."
-
-  # Walk the org/repo structure inside /fallback_models and mirror it
-  # into Vite's public/models/ directory.
-  for org_dir in /fallback_models/*/; do
-    org=$(basename "$org_dir")
-    mkdir -p "/app/ui/public/models/${org}"
-    for repo_dir in "$org_dir"*/; do
-      repo=$(basename "$repo_dir")
-      target="/app/ui/public/models/${org}/${repo}"
-      if [ ! -e "$target" ]; then
-        ln -s "$repo_dir" "$target"
-        echo "[entrypoint] Linked $target -> $repo_dir"
-      fi
-    done
-  done
-fi
-
-# Download dictation regex rules from Murmure (framagit.org/interhop/murmure-regex)
-# A single CSV file defines all speech-to-text post-processing rules for French dictation.
-#
+# ---------- Dictation regex rules ------------------------------------------
 # DICTATION_REGEX_SOURCE overrides the default Murmure URL.
-# - If it starts with '/' or './', it is treated as a local folder containing CSV files.
-# - Otherwise it is treated as a GitLab repo base URL (the raw CSV is fetched from /-/raw/main/regex.csv).
-REGEX_DIR="/app/ui/public/dictation-regex"
+# - If it starts with '/' or './', it's a local folder of CSV files.
+# - Otherwise it's a GitLab repo base URL; the raw CSV is fetched from
+#   /-/raw/main/regex.csv.
+REGEX_DIR="/var/regex"
 DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure-regex"
 REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_MURMURE_URL}"
 
-echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, using default Murmure)}"
-
-# pick whichever HTTP client is available
 _fetch() {
   if command -v wget >/dev/null 2>&1; then wget -q -O "$1" "$2"
   elif command -v curl >/dev/null 2>&1; then curl -sfL -o "$1" "$2"
@@ -115,12 +88,8 @@ _fetch() {
 }
 
 mkdir -p "$REGEX_DIR"
-
-# Always refresh CSV files so a new DICTATION_REGEX_SOURCE is picked up on restart.
-# Remove stale CSVs from any previous run before copying/downloading fresh ones.
 rm -f "$REGEX_DIR"/*.csv "$REGEX_DIR/manifest.txt" 2>/dev/null || true
 
-# Check if the source is a local folder path
 case "$REGEX_SOURCE" in
   /*|./*)
     echo "[entrypoint] Using local regex folder: $REGEX_SOURCE"
@@ -131,11 +100,8 @@ case "$REGEX_SOURCE" in
     fi
     ;;
   *)
-    # Download the single combined regex CSV from the repo
     MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads"
-
     echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
-
     if _fetch "$REGEX_DIR/regex.csv" "$MURMURE_RAW"; then
       echo "[entrypoint] Downloaded regex.csv"
     else
@@ -144,18 +110,30 @@ case "$REGEX_SOURCE" in
     ;;
 esac
 
-# Write a manifest so the frontend knows which files are available
 ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
 echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
 
-# Start the signaling server in the background.
-# Dependencies were installed at build time into /signaling-deps; NODE_PATH
-# tells Node where to find them since /signaling is read-only at runtime.
+# ---------- Runtime VITE_* config injection --------------------------------
+# /srv is read-only at runtime, so config.js lives on a tmpfs at /run/config
+# and Caddy serves it via the matching `handle /config.js` route.
+mkdir -p /run/config
+cat > /run/config/config.js <<EOF
+window.__CONFIG__ = {
+  VITE_DEV_MODE: "${VITE_DEV_MODE:-false}",
+  VITE_DICTATION_DEVICE_SUPPORT: "${VITE_DICTATION_DEVICE_SUPPORT:-true}",
+  VITE_MODEL_REPO: "${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}",
+  VITE_LOCAL_MODEL_FALLBACK: "${VITE_LOCAL_MODEL_FALLBACK:-}",
+  VITE_ANALYTICS_URL: "${VITE_ANALYTICS_URL:-}",
+  VITE_ANALYTICS_WEBSITE_ID: "${VITE_ANALYTICS_WEBSITE_ID:-}",
+};
+EOF
+echo "[entrypoint] Wrote runtime config to /run/config/config.js"
+
+# ---------- Start signaling sidecar (background) ---------------------------
 if [ -f /signaling/server.js ]; then
   echo "[entrypoint] Starting signaling server on port ${SIGNALING_PORT:-3001}..."
-  NODE_PATH=/signaling-deps/node_modules PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
+  PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
 fi
 
-# Run npm install (picks up any new deps) then start the Vite dev server.
-# The CMD from Dockerfile/docker-compose is passed as arguments to this script.
-exec sh -c "$* && cd ui && npm install && npm run dev -- --host 0.0.0.0"
+# ---------- Caddy in foreground --------------------------------------------
+exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
