@@ -47,16 +47,12 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
     throw new Error('ONNX Runtime Web loaded but env is not available. This might be a bundling issue.');
   }
   
-  // Set up WASM paths first (needed for all backends).
-  // Auto-detect version from ORT environment to avoid hardcoding a specific
-  // onnxruntime-web release — keeps CDN URLs in sync after upgrades.
+  // Serve WASM artifacts from same-origin (vendored under app/ui/public/ort/).
+  // Avoids trusting a public CDN at runtime — a jsDelivr/npm compromise would
+  // otherwise silently swap the ML engine for every visitor. Files are baked
+  // into the build, so the version always matches the vendored JS loader.
   if (!ort.env.wasm.wasmPaths) {
-    const fallbackVer = '1.24.1';
-    const ver = ort.env.versions?.common || fallbackVer;
-    if (!ort.env.versions?.common) {
-      console.warn('Parakeet.js: Could not auto-detect onnxruntime-web version. Using fallback version; set ort.env.wasm.wasmPaths manually for best results.');
-    }
-    ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/`;
+    ort.env.wasm.wasmPaths = '/ort/';
   }
 
   // Configure WASM for better performance

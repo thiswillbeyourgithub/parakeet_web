@@ -17,10 +17,26 @@ Used (bundled) files only:
 
 Other files from the upstream tarball are kept as-is for traceability but are
 not referenced by any alias and therefore never reach the production bundle.
-WASM artifacts are loaded at runtime from a CDN (see `app/src/backend.js`,
-which sets `ort.env.wasm.wasmPaths` based on `ort.env.versions.web`).
+
+## Runtime WASM artifacts
+
+The WASM binaries that ORT loads at runtime are mirrored into
+`app/ui/public/ort/` so Caddy/Vite serve them from same-origin — no public
+CDN trust. `app/src/backend.js` sets `ort.env.wasm.wasmPaths = '/ort/'`.
+
+Mirrored files (kept in sync with this vendor folder):
+- `ort-wasm-simd-threaded.{wasm,mjs}`
+- `ort-wasm-simd-threaded.jsep.{wasm,mjs}` (WebGPU EP)
+- `ort-wasm-simd-threaded.asyncify.{wasm,mjs}`
+- `ort-wasm-simd-threaded.jspi.{wasm,mjs}`
 
 To refresh: download the new tarball, verify its SHA, replace the contents of
-this directory, and update this file.
+this directory, update this file, then re-mirror:
+
+```sh
+cp app/ui/vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.{wasm,mjs} \
+   app/ui/vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.{jsep,asyncify,jspi}.{wasm,mjs} \
+   app/ui/public/ort/
+```
 
 (Migration prepared with help from Claude Code.)
