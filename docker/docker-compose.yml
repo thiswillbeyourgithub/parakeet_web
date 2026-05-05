@@ -4,9 +4,11 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        # Set to true to run `npm audit --audit-level=high` at build time and
-        # fail the build on high-severity vulnerabilities.
-        RUN_NPM_AUDIT: ${RUN_NPM_AUDIT:-false}
+        # Run `npm audit --audit-level=high` at build time; fails the build on
+        # any high-severity vulnerability. Set RUN_NPM_AUDIT=false in .env to
+        # opt out (e.g. when a known CVE is triaged but not yet patched
+        # upstream).
+        RUN_NPM_AUDIT: ${RUN_NPM_AUDIT:-true}
     restart: unless-stopped
     container_name: parakeetweb
     security_opt:
