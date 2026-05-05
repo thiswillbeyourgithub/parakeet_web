@@ -20,13 +20,14 @@ const dictationEnabled = CONFIG.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
 let _dictationLib = null;
 async function getDictationLib() {
   if (!_dictationLib && dictationEnabled) {
-    // The vendored dictation_support is a UMD bundle that registers itself on
-    // `self.DictationSupport` as a side-effect — it has no ES named exports.
-    // Import for the side-effect, then read the namespace off the global.
-    await import('dictation_support');
-    _dictationLib = self.DictationSupport;
+    // The vendored dictation_support is a UMD bundle. Vite/Rollup treats it as
+    // CJS and routes the factory result through the module's default export, so
+    // the `self.DictationSupport=...` branch is never bundled. Read from the
+    // import namespace's default (with a self-global fallback just in case).
+    const mod = await import('dictation_support');
+    _dictationLib = mod?.default ?? mod?.DictationSupport ?? self.DictationSupport;
     if (!_dictationLib || !_dictationLib.DictationDeviceManager) {
-      throw new Error('dictation_support failed to register on self.DictationSupport');
+      throw new Error('dictation_support failed to expose DictationDeviceManager');
     }
   }
   return _dictationLib;
