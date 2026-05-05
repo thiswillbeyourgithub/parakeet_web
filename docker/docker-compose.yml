@@ -29,7 +29,7 @@ services:
       # across image rebuilds. The entrypoint checks for
       # /fallback_models/<FALLBACK_MODEL_REPO>/vocab.txt and either:
       #   - lets Caddy serve it under /models/, or
-      #   - downloads it via uv+huggingface-cli if FALLBACK_AUTO_DOWNLOAD=1, or
+      #   - downloads it via uv+hf CLI if FALLBACK_AUTO_DOWNLOAD=1, or
       #   - crashes the container so the operator notices.
       # Mount must be :rw so the auto-download path can write into it.
       # The folder will be created on the host on first run.

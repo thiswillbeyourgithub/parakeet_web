@@ -28,7 +28,7 @@ echo "[entrypoint] =============================="
 # The host bind-mounts /fallback_models. If FALLBACK_MODEL_REPO is set we
 # verify vocab.txt is present under /fallback_models/<repo>/. If not:
 #   - FALLBACK_AUTO_DOWNLOAD=1 : install uv into /tmp (tmpfs) and download
-#     the model via huggingface-cli, confined to the bind mount.
+#     the model via the `hf` CLI, confined to the bind mount.
 #   - otherwise               : crash so the operator notices the gap.
 if [ -z "${FALLBACK_MODEL_REPO}" ]; then
   echo "[entrypoint] FALLBACK_MODEL_REPO not set — skipping fallback model setup."
@@ -61,7 +61,7 @@ else
       fi
     fi
     echo "[entrypoint] Downloading ${FALLBACK_MODEL_REPO} from HuggingFace..."
-    uvx --from huggingface_hub huggingface-cli download \
+    uvx --from huggingface_hub hf download \
       "${FALLBACK_MODEL_REPO}" --local-dir "${MODEL_DIR}"
     if [ ! -f "${MODEL_DIR}/vocab.txt" ]; then
       echo "[entrypoint] ERROR: download completed but vocab.txt is still missing in ${MODEL_DIR}"
