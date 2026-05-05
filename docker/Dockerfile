@@ -4,13 +4,15 @@
 FROM node:20-alpine AS builder
 WORKDIR /build
 
-# Top-level app package (provides parakeet.js core via vite alias to ../src/)
-COPY app/package.json app/package-lock.json ./app/
-RUN cd app && npm ci
+# Top-level app package (provides parakeet.js core via vite alias to ../src/).
+# Using npm install (not npm ci) because onnxruntime-web is vendored and the
+# committed lockfile drifts from package.json.
+COPY app/package.json app/package-lock.json* ./app/
+RUN cd app && npm install --no-audit --no-fund
 
 # UI app
-COPY app/ui/package.json app/ui/package-lock.json ./app/ui/
-RUN cd app/ui && npm ci
+COPY app/ui/package.json app/ui/package-lock.json* ./app/ui/
+RUN cd app/ui && npm install --no-audit --no-fund
 
 # Signaling server (no lockfile committed; use npm install)
 COPY signaling/package.json ./signaling/
