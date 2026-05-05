@@ -645,8 +645,6 @@ export default function App() {
 
     setShowFallbackPrompt(false);
     setStatus('loadingModel');
-    // Collapse the info panel once model loading begins
-    setShowInfo(false);
     setProgress('');
     setProgressText('');
     setProgressPct(0);
