@@ -9,28 +9,24 @@ services:
         RUN_NPM_AUDIT: ${RUN_NPM_AUDIT:-false}
     restart: unless-stopped
     container_name: parakeetweb
-    user: node
-    working_dir: /app
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Read-only root filesystem for security; writable paths are explicit below
+    # Read-only root filesystem; writable paths are explicit below.
     read_only: true
     tmpfs:
       - /tmp
-      - /home/node/.npm:uid=1000,gid=1000
+      - /var/regex
+      - /run/config
+      # Caddy default config/data dirs (it tries to create these on start).
+      - /config/caddy
+      - /data/caddy
     volumes:
-      # Mount the entire project for library access, with as little write access as possible
-      - ../app:/app:ro
-      - ../app/package-lock.json:/app/package-lock.json:rw
-      - ../app/ui:/app/ui:rw
-      # Signaling server for remote microphone feature
-      - ../signaling:/signaling:ro
       # Local model fallback: bind-mount a host folder so the model is kept
       # across image rebuilds. The entrypoint checks for
       # /fallback_models/<FALLBACK_MODEL_REPO>/vocab.txt and either:
-      #   - serves it (symlinks into Vite's public/models/), or
+      #   - lets Caddy serve it under /models/, or
       #   - downloads it via uv+huggingface-cli if FALLBACK_AUTO_DOWNLOAD=1, or
       #   - crashes the container so the operator notices.
       # Mount must be :rw so the auto-download path can write into it.
@@ -40,25 +36,19 @@ services:
       # Custom dictation regex rules: uncomment and set the host path to a folder
       # containing your own CSV regex files (overrides the default Murmure download).
       # - /path/to/my/regex-csvs:/custom-regex:ro
-
-      # Named volumes for node_modules to avoid platform conflicts
-      - root-node-modules:/app/node_modules
-      - react-modules:/app/ui/node_modules
     # Resource limits to mitigate denial-of-service risk
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 512M
+          cpus: "1.0"
+          memory: 256M
     ports:
       - "127.0.0.1:5173:5173"
     environment:
-      - NODE_ENV=development
-      - VITE_DEV_MODE=${VITE_DEV_MODE}
-      - VITE_ALLOWED_HOST=${VITE_ALLOWED_HOST}
-      - VITE_USE_POLLING=${VITE_USE_POLLING:-true}
+      - VITE_DEV_MODE=${VITE_DEV_MODE:-false}
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
+      - VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-true}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
       # Local model fallback: auto-enabled when FALLBACK_MODEL_REPO is set.
       # Can also be forced on/off explicitly.
@@ -149,7 +139,3 @@ services:
   #       limits:
   #         memory: 128M
   #         cpus: '0.5'
-
-volumes:
-  root-node-modules:
-  react-modules:
