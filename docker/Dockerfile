@@ -12,9 +12,9 @@ RUN cd app && npm ci
 COPY app/ui/package.json app/ui/package-lock.json ./app/ui/
 RUN cd app/ui && npm ci
 
-# Signaling server
-COPY signaling/package.json signaling/package-lock.json ./signaling/
-RUN cd signaling && npm ci --omit=dev
+# Signaling server (no lockfile committed; use npm install)
+COPY signaling/package.json ./signaling/
+RUN cd signaling && npm install --omit=dev
 
 # Optionally fail the build on high-severity npm vulnerabilities.
 ARG RUN_NPM_AUDIT=false
