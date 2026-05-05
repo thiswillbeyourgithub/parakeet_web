@@ -16,7 +16,9 @@ services:
     # Read-only root filesystem; writable paths are explicit below.
     read_only: true
     tmpfs:
-      - /tmp
+      # /tmp needs exec because FALLBACK_AUTO_DOWNLOAD installs uv/uvx under
+      # /tmp/uv-bin and runs them. Docker's default tmpfs options include noexec.
+      - /tmp:exec,mode=1777
       - /var/regex
       - /run/config
       # Caddy default config/data dirs (it tries to create these on start).
