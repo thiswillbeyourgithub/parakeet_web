@@ -37,7 +37,11 @@ RUN cd app/ui && npm run build
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
 FROM caddy:2-alpine
 
-RUN apk add --no-cache nodejs
+RUN apk add --no-cache nodejs libcap && \
+    # Strip file caps from caddy: the official image sets cap_net_bind_service
+    # so it can bind low ports, but combined with no-new-privileges this makes
+    # exec fail. We bind 5173 (unprivileged), so no caps are needed.
+    setcap -r /usr/sbin/caddy 2>/dev/null || setcap -r /usr/bin/caddy 2>/dev/null || true
 
 # Built static assets
 COPY --from=builder /build/app/ui/dist /srv
