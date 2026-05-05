@@ -25,7 +25,9 @@
         if (navigator.userAgent.match(/Android/i) || navigator.userAgent.match(/iPhone|iPad|iPod/i)) {
           console.log('[Debug] Mobile device detected - loading eruda debugger');
           var script = document.createElement('script');
-          script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+          // Vendored from cdn.jsdelivr.net/npm/eruda@3/eruda.min.js, served locally with SRI.
+          script.src = '/js/eruda.min.js';
+          script.integrity = 'sha384-F7xQBvh3l6dG/mMD6QPIeVmXtzWT4Ce3ZDu8ysPuzMWMx9bFOIMGnRPUhLuQipss';
           script.onload = function() {
             window.eruda.init();
             console.log('[Debug] Eruda mobile debugger initialized');
