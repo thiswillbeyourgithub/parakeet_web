@@ -298,8 +298,9 @@ app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), validateRoomSe
     res.json({ success: true });
 });
 
-// Get SDP answer (long-polling)
-app.get('/api/rooms/:id/answer', validateRoomSecret, async (req, res) => {
+// Get SDP answer (long-polling). Rate-limited so a peer holding a valid room
+// secret cannot pin many concurrent 30s polls and exhaust file descriptors.
+app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), validateRoomSecret, async (req, res) => {
     if (req.room.answer) return res.json(req.room.answer);
 
     if (req.query.wait === 'true') {
@@ -329,7 +330,7 @@ app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoo
     res.json({ success: true });
 });
 
-app.get('/api/rooms/:id/ice/offer', validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('roomLookup'), validateRoomSecret, (req, res) => {
     res.json({ candidates: req.room.iceCandidatesOffer });
 });
 
@@ -340,7 +341,7 @@ app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRo
     res.json({ success: true });
 });
 
-app.get('/api/rooms/:id/ice/answer', validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/ice/answer', rateLimitMiddleware('roomLookup'), validateRoomSecret, (req, res) => {
     res.json({ candidates: req.room.iceCandidatesAnswer });
 });
 
