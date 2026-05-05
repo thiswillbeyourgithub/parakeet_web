@@ -1,0 +1,44 @@
+# Caddyfile for parakeetweb production image.
+# Serves the built Vite bundle from /srv and proxies signaling traffic to the
+# in-container Node sidecar started by entrypoint.sh.
+
+{
+	# Caddy admin API isn't needed for this single-process container.
+	admin off
+	persist_config off
+}
+
+:5173 {
+	encode zstd gzip
+
+	# WebRTC / Vite parity: required headers for SharedArrayBuffer & ONNX wasm.
+	header {
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "require-corp"
+	}
+
+	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
+	handle_path /api/signal/* {
+		rewrite * /api{uri}
+		reverse_proxy localhost:3001
+	}
+
+	# Local model fallback files (bind-mounted from host).
+	handle_path /models/* {
+		root * /fallback_models
+		file_server
+	}
+
+	# Dictation regex CSVs (entrypoint populates /var/regex from URL or local folder).
+	handle_path /dictation-regex/* {
+		root * /var/regex
+		file_server
+	}
+
+	# SPA + remote-mic.html (Vite emits both as separate entry points).
+	handle {
+		root * /srv
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}
