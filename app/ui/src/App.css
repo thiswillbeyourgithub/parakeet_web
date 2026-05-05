@@ -1,23 +1,24 @@
 /* ─── Design tokens ───────────────────────────────────────────────────────── */
 :root {
-  /* Light theme */
-  --bg-page:          #f6f7fb;
+  /* Light theme — refreshed with red accent to match WebSend identity */
+  --bg-page:          #f5f6fb;
   --bg-card:          #ffffff;
   --bg-card-elevated: #ffffff;
-  --bg-subtle:        #f9fafb;
+  --bg-subtle:        #f3f4f9;
 
   --border:           #e5e7eb;
   --border-strong:    #d1d5db;
 
-  --text:             #111827;
-  --text-muted:       #374151;
+  --text:             #1a1f36;
+  --text-muted:       #3b4256;
   --text-subtle:      #6b7280;
 
-  --accent:           #3b82f6;
-  --accent-hover:     #2563eb;
-  --accent-soft-bg:   #eff6ff;
-  --accent-soft-text: #1e40af;
-  --accent-soft-border: #bfdbfe;
+  --accent:           #e63956;
+  --accent-hover:     #d62a48;
+  --accent-soft-bg:   #fff1f4;
+  --accent-soft-text: #b81f3a;
+  --accent-soft-border: #ffd1d9;
+  --accent-glow:      rgba(230, 57, 86, 0.25);
 
   --success:          #10b981;
   --success-soft-bg:  #ecfdf5;
@@ -32,41 +33,44 @@
   --danger-hover:     #dc2626;
   --danger-soft-bg:   #fef2f2;
 
-  --info-soft-bg:     #f0f9ff;
-  --info-soft-border: #bae6fd;
-  --info-soft-text:   #0369a1;
+  --info-soft-bg:     #eef2ff;
+  --info-soft-border: #c7d2fe;
+  --info-soft-text:   #3730a3;
 
-  --radius-sm:        6px;
-  --radius-md:        8px;
-  --radius-lg:        12px;
-  --radius-xl:        16px;
+  --radius-sm:        8px;
+  --radius-md:        12px;
+  --radius-lg:        16px;
+  --radius-xl:        22px;
   --radius-full:      9999px;
 
   --shadow-sm:        0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
-  --shadow-md:        0 4px 14px rgba(0,0,0,.08);
+  --shadow-md:        0 8px 24px rgba(0,0,0,.08);
+  --shadow-glow:      0 0 0 1px var(--accent-glow), 0 8px 28px var(--accent-glow);
 
   --font:             -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg-page:          #1a1a2e;
-    --bg-card:          #1e1e3a;
-    --bg-card-elevated: #252545;
-    --bg-subtle:        #252540;
+    /* WebSend-inspired deep-navy palette with red accent */
+    --bg-page:          #0d1124;
+    --bg-card:          #161b34;
+    --bg-card-elevated: #1d2342;
+    --bg-subtle:        #1a1f3a;
 
-    --border:           #3a3a5a;
-    --border-strong:    #4a4a6a;
+    --border:           #2a3057;
+    --border-strong:    #3a4170;
 
-    --text:             #e0e0e0;
-    --text-muted:       #d1d5db;
-    --text-subtle:      #9ca3af;
+    --text:             #ecedf5;
+    --text-muted:       #c4c8de;
+    --text-subtle:      #8d93b3;
 
-    --accent:           #60a5fa;
-    --accent-hover:     #93c5fd;
-    --accent-soft-bg:   rgba(96,165,250,.12);
-    --accent-soft-text: #93c5fd;
-    --accent-soft-border: rgba(96,165,250,.3);
+    --accent:           #e63956;
+    --accent-hover:     #ff4d6d;
+    --accent-soft-bg:   rgba(230,57,86,.10);
+    --accent-soft-text: #ff8597;
+    --accent-soft-border: rgba(230,57,86,.35);
+    --accent-glow:      rgba(230, 57, 86, 0.35);
 
     --success:          #10b981;
     --success-soft-bg:  rgba(16,185,129,.1);
@@ -79,14 +83,15 @@
 
     --danger:           #ef4444;
     --danger-hover:     #f87171;
-    --danger-soft-bg:   rgba(239,68,68,.1);
+    --danger-soft-bg:   rgba(239,68,68,.12);
 
-    --info-soft-bg:     rgba(96,165,250,.1);
-    --info-soft-border: rgba(96,165,250,.25);
-    --info-soft-text:   #93c5fd;
+    --info-soft-bg:     rgba(99,102,241,.10);
+    --info-soft-border: rgba(99,102,241,.30);
+    --info-soft-text:   #a5b4fc;
 
-    --shadow-sm:        0 1px 3px rgba(0,0,0,.3);
-    --shadow-md:        0 4px 20px rgba(0,0,0,.4);
+    --shadow-sm:        0 1px 3px rgba(0,0,0,.5);
+    --shadow-md:        0 10px 30px rgba(0,0,0,.5);
+    --shadow-glow:      0 0 0 1px var(--accent-glow), 0 10px 36px var(--accent-glow);
   }
 }
 
