@@ -1,0 +1,8 @@
+{
+  "name": "dictation_support",
+  "version": "1.0.5-vendored",
+  "description": "Vendored copy of GoogleChromeLabs/dictation_support (Apache-2.0). See ./LICENSE.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "Apache-2.0"
+}

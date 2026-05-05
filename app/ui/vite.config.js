@@ -64,6 +64,8 @@ export default defineConfig({
       // relative to app/src/, which has no node_modules. Pin the resolution
       // back into app/ui/node_modules.
       { find: /^onnxruntime-web$/, replacement: path.resolve(__dirname, 'node_modules/onnxruntime-web') },
+      // Vendored dictation_support (Apache-2.0). UMD bundle in app/ui/vendor/dictation_support/.
+      { find: /^dictation_support$/, replacement: path.resolve(__dirname, 'vendor/dictation_support/dist/index.js') },
       ...preactAliases,
     ],
   },
