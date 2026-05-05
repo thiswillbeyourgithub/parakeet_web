@@ -38,6 +38,10 @@ else
     echo "[entrypoint] Fallback model present at ${MODEL_DIR}"
   elif [ "${FALLBACK_AUTO_DOWNLOAD:-0}" = "1" ]; then
     echo "[entrypoint] Fallback model missing at ${MODEL_DIR} — auto-downloading."
+    echo "[entrypoint] WARNING: hf-xet needs more than 256M of RAM to download the model."
+    echo "[entrypoint] If the next step ends with 'Killed', comment out the"
+    echo "[entrypoint] 'memory: 256M' line in docker/docker-compose.yml for this first run,"
+    echo "[entrypoint] then restore it once /fallback_models/<repo>/vocab.txt exists."
     mkdir -p "${MODEL_DIR}"
     export UV_INSTALL_DIR=/tmp/uv-bin
     export UV_CACHE_DIR=/tmp/uv-cache

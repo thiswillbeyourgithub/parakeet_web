@@ -38,7 +38,12 @@ services:
       # Custom dictation regex rules: uncomment and set the host path to a folder
       # containing your own CSV regex files (overrides the default Murmure download).
       # - /path/to/my/regex-csvs:/custom-regex:ro
-    # Resource limits to mitigate denial-of-service risk
+    # Resource limits to mitigate denial-of-service risk.
+    # IMPORTANT: when FALLBACK_AUTO_DOWNLOAD=1 and the model is not yet on the
+    # bind mount, comment out the `memory:` line below for the first run.
+    # `hf download` (with hf-xet) buffers chunks well beyond 256M and the
+    # kernel OOM-killer will SIGKILL it (you'll see "Killed" in the logs).
+    # Once /fallback_models/<repo>/vocab.txt exists, restore the limit.
     deploy:
       resources:
         limits:
