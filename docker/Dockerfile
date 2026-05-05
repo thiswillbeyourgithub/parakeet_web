@@ -41,17 +41,24 @@ RUN apk add --no-cache nodejs libcap && \
     # Strip file caps from caddy: the official image sets cap_net_bind_service
     # so it can bind low ports, but combined with no-new-privileges this makes
     # exec fail. We bind 5173 (unprivileged), so no caps are needed.
-    setcap -r /usr/sbin/caddy 2>/dev/null || setcap -r /usr/bin/caddy 2>/dev/null || true
+    setcap -r /usr/sbin/caddy 2>/dev/null || setcap -r /usr/bin/caddy 2>/dev/null || true && \
+    # Create a non-root user for the runtime processes. UID 1000 matches the
+    # default host user on most Linux distros, which keeps bind-mount perms
+    # simple (e.g. ./fallback_models is writable by the same UID without an
+    # extra chown). docker-compose.yml pins user: "1000:1000".
+    addgroup -g 1000 -S parakeet && \
+    adduser -u 1000 -S -G parakeet parakeet
 
 # Built static assets
-COPY --from=builder /build/app/ui/dist /srv
+COPY --from=builder --chown=parakeet:parakeet /build/app/ui/dist /srv
 
 # Signaling server source + its production node_modules
-COPY --from=builder /build/signaling /signaling
+COPY --from=builder --chown=parakeet:parakeet /build/signaling /signaling
 
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+USER parakeet
 EXPOSE 5173
 ENTRYPOINT ["/entrypoint.sh"]

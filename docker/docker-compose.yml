@@ -11,6 +11,12 @@ services:
         RUN_NPM_AUDIT: ${RUN_NPM_AUDIT:-true}
     restart: unless-stopped
     container_name: parakeetweb
+    # Run as non-root (UID 1000, created in the Dockerfile). Combined with
+    # cap_drop:ALL, no-new-privileges, and the read-only rootfs, this keeps
+    # the blast radius of any RCE minimal. UID 1000 also matches the default
+    # host user on most Linux distros so bind-mounted ./fallback_models is
+    # writable without extra chown when FALLBACK_AUTO_DOWNLOAD=1.
+    user: "1000:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:

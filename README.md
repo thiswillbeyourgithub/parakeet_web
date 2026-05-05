@@ -98,6 +98,10 @@ configured in `docker/docker-compose.yml`) and the downloaded files are
 git-ignored. Caddy serves them under `/models/<repo>/` at runtime. Setting
 `FALLBACK_MODEL_REPO` automatically enables `VITE_LOCAL_MODEL_FALLBACK`.
 
+The container runs as UID 1000. If your host user has a different UID, you
+may need to `chown -R 1000:1000 ./fallback_models` once before enabling
+`FALLBACK_AUTO_DOWNLOAD=1` so the entrypoint can write into the bind mount.
+
 ### Requirements
 
 - **Local network only**: works out of the box with no extra config (STUN-only / direct P2P).
