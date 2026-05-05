@@ -12,5 +12,9 @@
   },
   "devDependencies": {
     "vite": "^4.5.0"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5",
+    "rollup": "^4.22.4"
   }
 }
