@@ -1,5 +1,6 @@
 node_modules
 dist
+!app/ui/vendor/**/dist/
 .env
 docker/.env
 .env.local
