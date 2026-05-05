@@ -1,41 +1,51 @@
-FROM node:20-alpine
+# syntax=docker/dockerfile:1.6
 
-# Run as non-root user
-USER node
+# ── Stage 1: build the static UI bundle and install signaling deps ──────────
+FROM node:20-alpine AS builder
+WORKDIR /build
 
-# Set working directory
-WORKDIR /app
+# Top-level app package (provides parakeet.js core via vite alias to ../src/)
+COPY app/package.json app/package-lock.json ./app/
+RUN cd app && npm ci
 
-# Copy package files for dependency installation
-# These will be overridden by volume mounts in docker-compose for development
-COPY --chown=node:node app/package*.json ./
-COPY --chown=node:node app/ui/package*.json ./ui/
+# UI app
+COPY app/ui/package.json app/ui/package-lock.json ./app/ui/
+RUN cd app/ui && npm ci
 
-# Install dependencies
-RUN npm install && \
-    cd ui && \
-    npm install
+# Signaling server
+COPY signaling/package.json signaling/package-lock.json ./signaling/
+RUN cd signaling && npm ci --omit=dev
 
 # Optionally fail the build on high-severity npm vulnerabilities.
 ARG RUN_NPM_AUDIT=false
 RUN if [ "$RUN_NPM_AUDIT" = "true" ]; then \
       set -e; \
-      npm audit --audit-level=high && \
-      cd ui && npm audit --audit-level=high; \
+      cd app && npm audit --audit-level=high && \
+      cd ../ui && npm audit --audit-level=high && \
+      cd ../../signaling && npm audit --audit-level=high; \
     fi
 
-# Install signaling server dependencies into a fixed, image-owned location.
-# /signaling is bind-mounted read-only at runtime, so node_modules cannot live
-# there. We install into /signaling-deps and the entrypoint sets NODE_PATH.
-COPY --chown=node:node signaling/package*.json /signaling-deps/
-RUN cd /signaling-deps && npm install --production && \
-    if [ "$RUN_NPM_AUDIT" = "true" ]; then npm audit --audit-level=high; fi
+# Now copy sources and build
+COPY app/src ./app/src
+COPY app/ui ./app/ui
+COPY signaling ./signaling
 
-# Copy the entrypoint script that sets up model symlinks before starting Vite
-COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
+RUN cd app/ui && npm run build
 
-# Expose Vite dev server port
+# ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
+FROM caddy:2-alpine
+
+RUN apk add --no-cache nodejs
+
+# Built static assets
+COPY --from=builder /build/app/ui/dist /srv
+
+# Signaling server source + its production node_modules
+COPY --from=builder /build/signaling /signaling
+
+COPY docker/Caddyfile /etc/caddy/Caddyfile
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 5173
-
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["npm", "install"]
