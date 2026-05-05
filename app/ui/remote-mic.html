@@ -21,9 +21,22 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Eruda: mobile dev console (tap the floating button to open). Vendored from cdn.jsdelivr.net/npm/eruda@3/eruda.min.js, served locally with SRI. -->
-    <script src="/js/eruda.min.js" integrity="sha384-F7xQBvh3l6dG/mMD6QPIeVmXtzWT4Ce3ZDu8ysPuzMWMx9bFOIMGnRPUhLuQipss"></script>
-    <script>eruda.init();</script>
+    <!-- Eruda mobile devtools: only loaded when ?debug=1 is in the URL.
+         Note: room info is in the hash (#roomId:secret), so use a query
+         param: /remote-mic.html?debug=1#ROOM:SECRET. Vendored from
+         cdn.jsdelivr.net/npm/eruda@3/eruda.min.js, served locally with SRI. -->
+    <script>
+      (function() {
+        try {
+          if (new URL(location.href).searchParams.get('debug') !== '1') return;
+        } catch (_) { return; }
+        var script = document.createElement('script');
+        script.src = '/js/eruda.min.js';
+        script.integrity = 'sha384-F7xQBvh3l6dG/mMD6QPIeVmXtzWT4Ce3ZDu8ysPuzMWMx9bFOIMGnRPUhLuQipss';
+        script.onload = function() { window.eruda.init(); };
+        document.head.appendChild(script);
+      })();
+    </script>
     <script src="/config.js"></script>
     <script type="module" src="/src/remote-mic-entry.jsx"></script>
   </body>

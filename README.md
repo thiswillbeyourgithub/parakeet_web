@@ -118,6 +118,21 @@ See `docker/env.example` for all configuration options.
 
 Built with [Claude Code](https://claude.com/claude-code).
 
+## Mobile debugging
+
+Append `?debug=1` to any URL to load the in-page [eruda](https://github.com/liriliri/eruda)
+devtools — useful for inspecting console logs and network requests on a phone
+where you cannot open desktop devtools. Eruda is vendored locally (served
+from same-origin with SRI), so nothing is fetched from a CDN at runtime.
+
+Examples:
+
+- Main app: `https://your-host/?debug=1`
+- Remote-mic page: `https://your-host/remote-mic.html?debug=1#ROOMID:SECRET`
+  (the room info is in the hash fragment, so `?debug=1` goes before the `#`)
+
+Without `?debug=1`, no devtools surface is shipped to the user.
+
 ## License
 
 AGPLv3 – See LICENSE file
