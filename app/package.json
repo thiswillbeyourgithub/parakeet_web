@@ -15,7 +15,7 @@
     "transcription"
   ],
   "dependencies": {
-    "onnxruntime-web": "1.24.1"
+    "onnxruntime-web": "1.25.1"
   },
   "author": "Olivier Cornelis",
   "license": "AGPL-3.0",
