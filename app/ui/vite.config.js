@@ -59,6 +59,11 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: 'parakeet.js', replacement: path.resolve(__dirname, '../src/index.js') },
+      // parakeet.js is sourced from ../src/index.js, which is outside app/ui.
+      // Imports inside it (notably onnxruntime-web) would otherwise resolve
+      // relative to app/src/, which has no node_modules. Pin the resolution
+      // back into app/ui/node_modules.
+      { find: /^onnxruntime-web$/, replacement: path.resolve(__dirname, 'node_modules/onnxruntime-web') },
       ...preactAliases,
     ],
   },
