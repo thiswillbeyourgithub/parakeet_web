@@ -17,6 +17,9 @@
   "dependencies": {
     "onnxruntime-web": "1.25.1"
   },
+  "overrides": {
+    "protobufjs": "^7.5.5"
+  },
   "author": "Olivier Cornelis",
   "license": "AGPL-3.0",
   "homepage": "https://github.com/thiswillbeyourgithub/parakeet_web/",
