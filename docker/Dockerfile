@@ -23,7 +23,7 @@ ARG RUN_NPM_AUDIT=false
 RUN if [ "$RUN_NPM_AUDIT" = "true" ]; then \
       set -e; \
       cd app && npm audit --audit-level=high && \
-      cd ../ui && npm audit --audit-level=high && \
+      cd ui && npm audit --audit-level=high && \
       cd ../../signaling && npm audit --audit-level=high; \
     fi
 
