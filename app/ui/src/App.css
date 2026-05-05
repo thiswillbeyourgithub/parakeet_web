@@ -106,6 +106,17 @@ body {
   color: var(--text);
   background: var(--bg-page);
   margin: 0;
+  min-height: 100vh;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(230,57,86,0.12), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 90% 110%, rgba(99,102,241,0.10), transparent 60%),
+      var(--bg-page);
+    background-attachment: fixed;
+  }
 }
 
 /* ─── App shell ───────────────────────────────────────────────────────────── */
@@ -113,9 +124,10 @@ body {
   max-width: 760px;
   margin: 2rem auto;
   background: var(--bg-card);
-  border-radius: var(--radius-lg);
-  padding: 1.5rem 2rem;
+  border-radius: var(--radius-xl);
+  padding: 1.75rem 2rem;
   box-shadow: var(--shadow-md);
+  border: 1px solid var(--border);
 }
 
 .app-header {
@@ -128,7 +140,10 @@ body {
 
 .app-header h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--accent);
 }
 
 /* ─── Settings toggle button ─────────────────────────────────────────────── */
@@ -226,10 +241,12 @@ body {
   width: min(400px, 85vw);
   background: var(--bg-card);
   border-left: 1px solid var(--border);
+  border-top-left-radius: var(--radius-xl);
+  border-bottom-left-radius: var(--radius-xl);
   z-index: 1001;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 1.75rem 1.5rem;
   animation: slideInRight 0.3s ease-out;
 }
 
@@ -284,9 +301,11 @@ body {
 }
 
 .setting-label {
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
   white-space: nowrap;
 }
 
@@ -330,39 +349,40 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── Record / file-upload buttons ──────────────────────────────────────── */
 .record-button {
-  padding: 0.75rem 1rem !important;
+  padding: 0.95rem 1.25rem !important;
   font-size: 1.1rem !important;
   font-weight: 600;
   min-width: 0;
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.2s, box-shadow 0.2s;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-glow);
+  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
 }
 
 .record-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  filter: brightness(1.05);
 }
 
 .file-upload-button {
   display: inline-block;
-  padding: 0.75rem 1.5rem;
+  padding: 0.95rem 1.5rem;
   background: var(--accent);
   color: #ffffff;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   font-size: 1.1rem;
   font-weight: 600;
   text-align: center;
-  transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
-  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
+  transition: background 0.2s, transform 0.2s, box-shadow 0.2s, filter 0.2s;
+  box-shadow: var(--shadow-glow);
   min-width: 0;
 }
 
 .file-upload-button:hover {
   background: var(--accent-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+  filter: brightness(1.05);
 }
 
 /* ─── Status / progress ──────────────────────────────────────────────────── */
@@ -764,16 +784,17 @@ label .info-help-text {
 /* ─── Transcribe button ──────────────────────────────────────────────────── */
 .transcribe-button {
   width: 100%;
-  padding: 0.75rem 1.5rem !important;
-  font-size: 1.1rem !important;
+  padding: 1rem 1.5rem !important;
+  font-size: 1.15rem !important;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
-  transition: transform 0.2s, box-shadow 0.2s;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-glow);
+  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
 }
 
 .transcribe-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+  filter: brightness(1.05);
 }
 
 .transcribe-button:disabled {
@@ -881,8 +902,13 @@ label .info-help-text {
 .btn--primary {
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 4px 14px var(--accent-glow);
 }
-.btn--primary:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px var(--accent-glow);
+}
 
 .btn--danger {
   background: var(--danger);
