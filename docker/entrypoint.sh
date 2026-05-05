@@ -42,6 +42,11 @@ else
     export UV_INSTALL_DIR=/tmp/uv-bin
     export UV_CACHE_DIR=/tmp/uv-cache
     export UV_PYTHON_INSTALL_DIR=/tmp/uv-python
+    # uv writes a "receipt" under $XDG_CONFIG_HOME/uv (defaults to /config/uv,
+    # which is on the read-only root fs). Redirect it to the /tmp tmpfs.
+    export XDG_CONFIG_HOME=/tmp/uv-config
+    export XDG_DATA_HOME=/tmp/uv-data
+    mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
     export PATH="${UV_INSTALL_DIR}:${PATH}"
     if ! command -v uv >/dev/null 2>&1; then
       echo "[entrypoint] Installing uv into ${UV_INSTALL_DIR}..."
