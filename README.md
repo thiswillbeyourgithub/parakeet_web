@@ -73,8 +73,9 @@ No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-t
 1. Click the **Phone Mic** button in the app
 2. A QR code appears — scan it with your phone
 3. Grant microphone permission on the phone
-4. Speak — encrypted audio streams to the computer in real time
-5. Click **Stop** on either device — the audio is transcribed normally
+4. **Verify the short code** that appears on both screens matches — read it aloud or compare visually. If the codes differ, click **Codes differ – abort** on either device. This step defends against a malicious signaling server that could otherwise swap encryption keys to MITM the supposedly end-to-end channel.
+5. Speak — encrypted audio streams to the computer in real time
+6. Click **Stop** on either device — the audio is transcribed normally
 
 
 ## Local Model Fallback

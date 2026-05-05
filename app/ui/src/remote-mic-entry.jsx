@@ -15,8 +15,10 @@ import { createRoot } from 'react-dom/client';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSharedKey, encrypt
+    deriveSharedKey, encrypt,
+    getPairFingerprint, computeFingerprintLength
 } from './lib/remote-crypto.js';
+import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 
 const STATUS = {
@@ -56,6 +58,8 @@ function RemoteMicSender() {
     const [menuOpen, setMenuOpen] = useState(false);
     const [hasRecorded, setHasRecorded] = useState(false);
     const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+    const [fingerprint, setFingerprint] = useState('');
+    const verifyResolveRef = useRef(null); // (boolean) => void
     const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
@@ -180,14 +184,51 @@ function RemoteMicSender() {
                             setStatus(STATUS.WAITING_KEY);
                             const keyPair = await generateKeyPair();
                             const theirKey = await importPublicKey(msg.key);
-                            sharedKeyRef.current = await deriveSharedKey(keyPair.privateKey, theirKey);
+                            const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
 
                             // Send our public key back
                             const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);
                             rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64 });
 
+                            // Compute the same short fingerprint as the
+                            // receiver (receiver-pub first, sender-pub second)
+                            // and ask the user to confirm both screens match.
+                            // Defends against a malicious signaling server
+                            // that swapped keys to MITM the data channel.
+                            let hexLen = 6;
+                            try {
+                                const statsResp = await fetch('/api/signal/stats');
+                                if (statsResp.ok) {
+                                    const { activeRooms } = await statsResp.json();
+                                    hexLen = computeFingerprintLength(activeRooms || 0);
+                                }
+                            } catch (_) { /* fall back */ }
+                            const fp = await getPairFingerprint(theirKey, keyPair.publicKey, hexLen);
+                            setFingerprint(fp);
+                            const confirmed = await new Promise((resolve) => {
+                                verifyResolveRef.current = resolve;
+                            });
+                            setFingerprint('');
+                            verifyResolveRef.current = null;
+
+                            if (!confirmed) {
+                                console.warn('[RemoteMic] User denied fingerprint match — aborting');
+                                rtc.sendMessage({ type: 'verify-deny' });
+                                setErrorMsg(t('verifyAborted'));
+                                setStatus(STATUS.ERROR);
+                                rtc.close();
+                                return;
+                            }
+                            sharedKeyRef.current = sharedKey;
+
                             // Phone is connected — let the user tap Start Recording when ready
                             setStatus(STATUS.READY);
+                        } else if (msg.type === 'verify-deny') {
+                            // Receiver denied the fingerprint match — abort
+                            if (verifyResolveRef.current) verifyResolveRef.current(false);
+                            setErrorMsg(t('verifyAborted'));
+                            setStatus(STATUS.ERROR);
+                            rtc.close();
                         } else if (msg.type === 'stop-recording') {
                             // Computer requested end of current recording (keep connection alive)
                             stopRecording();
@@ -391,6 +432,17 @@ function RemoteMicSender() {
 
     return (
         <div style={{ textAlign: 'center', position: 'relative' }}>
+
+            {fingerprint && verifyResolveRef.current && (
+                <VerificationModal
+                    fingerprint={fingerprint}
+                    prompt={t('verifyPrompt')}
+                    confirmLabel={t('verifyConfirm')}
+                    denyLabel={t('verifyDeny')}
+                    onConfirm={() => verifyResolveRef.current && verifyResolveRef.current(true)}
+                    onDeny={() => verifyResolveRef.current && verifyResolveRef.current(false)}
+                />
+            )}
 
             {/* Top-right menu button — always visible */}
             <button

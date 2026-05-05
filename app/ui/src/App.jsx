@@ -8,8 +8,10 @@ import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSharedKey, decrypt
+    deriveSharedKey, decrypt,
+    getPairFingerprint, computeFingerprintLength
 } from './lib/remote-crypto.js';
+import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
@@ -240,6 +242,11 @@ export default function App() {
   const remoteMicSampleRateRef = useRef(16000);
   const remoteMicTimerRef = useRef(null);
   const remoteMicQrRef = useRef(null); // DOM ref for QR code container
+  // Fingerprint compare modal: shown after both ECDH public keys are exchanged
+  // and before any encrypted audio is processed. Mitigates a malicious
+  // signaling server that could swap keys to MITM the data channel.
+  const [remoteMicFingerprint, setRemoteMicFingerprint] = useState('');
+  const remoteMicVerifyResolveRef = useRef(null); // (boolean) => void
 
   // Load QR code library when remote mic modal opens; returns a promise that resolves when ready
   const loadQRCode = useRef(null);
@@ -1068,8 +1075,42 @@ export default function App() {
             if (msg.type === 'sender-public-key') {
               // Derive shared key from phone's public key
               const theirKey = await importPublicKey(msg.key);
-              remoteMicKeyRef.current = await deriveSharedKey(keyPair.privateKey, theirKey);
-              console.log('[RemoteMic] Shared key derived, ready to receive audio');
+              const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
+              console.log('[RemoteMic] Shared key derived, asking user to verify fingerprint');
+
+              // Compute a short adaptive fingerprint over both pubkeys (in a
+              // fixed order: receiver-pub then sender-pub). The phone runs the
+              // same computation; matching codes prove no signaling-server
+              // MITM. Length scales with active room count.
+              let hexLen = 6;
+              try {
+                const statsResp = await fetch('/api/signal/stats');
+                if (statsResp.ok) {
+                  const { activeRooms } = await statsResp.json();
+                  hexLen = computeFingerprintLength(activeRooms || 0);
+                }
+              } catch (_) { /* fall back to default */ }
+              const fp = await getPairFingerprint(keyPair.publicKey, theirKey, hexLen);
+              setRemoteMicFingerprint(fp);
+
+              // Block here until the user clicks Confirm or Deny in the modal.
+              const confirmed = await new Promise((resolve) => {
+                remoteMicVerifyResolveRef.current = resolve;
+              });
+              setRemoteMicFingerprint('');
+              remoteMicVerifyResolveRef.current = null;
+
+              if (!confirmed) {
+                console.warn('[RemoteMic] User denied fingerprint match — aborting');
+                rtc.sendMessage({ type: 'verify-deny' });
+                setRemoteMicError(t('verifyAborted'));
+                setRemoteMicStatus('error');
+                rtc.close();
+                return;
+              }
+              rtc.sendMessage({ type: 'verify-ok' });
+
+              remoteMicKeyRef.current = sharedKey;
               setRemoteMicStatus('connected');
               setRemoteMicModal(false); // close setup modal; use main UI from here
               setRemoteMicPaused(false);
@@ -1080,6 +1121,15 @@ export default function App() {
               remoteMicTimerRef.current = setInterval(() => {
                 setRemoteMicElapsed(Math.floor((Date.now() - startTime) / 1000));
               }, 1000);
+            } else if (msg.type === 'verify-deny') {
+              // Phone denied the fingerprint match — abort our side too
+              if (remoteMicVerifyResolveRef.current) {
+                remoteMicVerifyResolveRef.current(false);
+              } else {
+                setRemoteMicError(t('verifyAborted'));
+                setRemoteMicStatus('error');
+                rtc.close();
+              }
             } else if (msg.type === 'audio-config') {
               remoteMicSampleRateRef.current = msg.sampleRate;
               console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
@@ -2979,6 +3029,18 @@ export default function App() {
         </div>
       )}
       </>)}
+
+      {/* Fingerprint compare modal: blocks until the user confirms or denies. */}
+      {remoteMicFingerprint && remoteMicVerifyResolveRef.current && (
+        <VerificationModal
+          fingerprint={remoteMicFingerprint}
+          prompt={t('verifyPrompt')}
+          confirmLabel={t('verifyConfirm')}
+          denyLabel={t('verifyDeny')}
+          onConfirm={() => remoteMicVerifyResolveRef.current && remoteMicVerifyResolveRef.current(true)}
+          onDeny={() => remoteMicVerifyResolveRef.current && remoteMicVerifyResolveRef.current(false)}
+        />
+      )}
 
       {/* Remote Microphone Modal */}
       {remoteMicModal && (
