@@ -20,7 +20,14 @@ const dictationEnabled = CONFIG.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
 let _dictationLib = null;
 async function getDictationLib() {
   if (!_dictationLib && dictationEnabled) {
-    _dictationLib = await import('dictation_support');
+    // The vendored dictation_support is a UMD bundle that registers itself on
+    // `self.DictationSupport` as a side-effect — it has no ES named exports.
+    // Import for the side-effect, then read the namespace off the global.
+    await import('dictation_support');
+    _dictationLib = self.DictationSupport;
+    if (!_dictationLib || !_dictationLib.DictationDeviceManager) {
+      throw new Error('dictation_support failed to register on self.DictationSupport');
+    }
   }
   return _dictationLib;
 }
