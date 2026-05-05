@@ -2,10 +2,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import { I18nProvider } from './i18n.jsx';
+import { CONFIG } from './config.js';
 
 // Inject analytics script if environment variables are set
-const analyticsUrl = import.meta.env.VITE_ANALYTICS_URL;
-const analyticsWebsiteId = import.meta.env.VITE_ANALYTICS_WEBSITE_ID;
+const analyticsUrl = CONFIG.VITE_ANALYTICS_URL;
+const analyticsWebsiteId = CONFIG.VITE_ANALYTICS_WEBSITE_ID;
 
 if (analyticsUrl && analyticsWebsiteId) {
   const script = document.createElement('script');

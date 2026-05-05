@@ -10,11 +10,12 @@ import {
     generateKeyPair, exportPublicKey, importPublicKey,
     deriveSharedKey, decrypt
 } from './lib/remote-crypto.js';
+import { CONFIG } from './config.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
-const devMode = import.meta.env.VITE_DEV_MODE === 'true';
-const dictationEnabled = import.meta.env.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
+const devMode = CONFIG.VITE_DEV_MODE === 'true';
+const dictationEnabled = CONFIG.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
 // Lazy-loaded on first use to avoid top-level await issues
 let _dictationLib = null;
 async function getDictationLib() {
@@ -157,10 +158,10 @@ function truncateFilename(filename, maxLength = 40) {
 
 export default function App() {
   const { t } = useI18n();
-  const repoId = import.meta.env.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
+  const repoId = CONFIG.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
   // Whether the instance can serve model weights locally (under /models/) as
   // a fallback when HuggingFace is blocked or unreachable.
-  const localFallbackEnabled = import.meta.env.VITE_LOCAL_MODEL_FALLBACK === 'true';
+  const localFallbackEnabled = CONFIG.VITE_LOCAL_MODEL_FALLBACK === 'true';
   // Tracks whether we should show the "HF blocked, try local?" prompt
   const [showFallbackPrompt, setShowFallbackPrompt] = useState(false);
   // Warning message when local fallback is enabled but model files are missing
