@@ -292,13 +292,37 @@ body {
   border: none;
 }
 
+/* Drawer model header (the <p> right under the close button) */
+.settings-section > p:first-of-type {
+  margin: 0.25rem 0 1.5rem;
+  padding: 0.85rem 1rem;
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft-border);
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.settings-section > p:first-of-type strong {
+  color: var(--accent-soft-text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
 .setting-row {
-  margin-bottom: 0.75rem;
+  margin: 0;
+  padding: 0.85rem 0;
   display: flex;
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
 }
+
+.setting-row:last-child { border-bottom: none; }
 
 .setting-label {
   font-size: 0.75rem;
@@ -330,6 +354,40 @@ body {
 
 .settings-content {
   margin-top: 1rem;
+}
+
+/* Drawer footer action buttons — restyle .primary inside the drawer
+   as full-width list-row items (à la WebSend's About / Production-mode rows),
+   overriding the global .primary look without changing JSX. Higher
+   specificity (.settings-section > button.primary) beats button.primary
+   without !important, so inline styles (e.g. the red Reset button)
+   still win where intended. */
+.settings-section > button.primary,
+.settings-section > .setting-row > button.primary {
+  width: 100%;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  margin-top: 0.5rem;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.95rem;
+  font-weight: 500;
+  box-shadow: none;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.settings-section > button.primary:hover:not(:disabled),
+.settings-section > .setting-row > button.primary:hover:not(:disabled) {
+  background: var(--accent-soft-bg);
+  border-color: var(--accent-soft-border);
+  color: var(--accent-soft-text);
+}
+
+.settings-section > button.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ─── Generic primary button (legacy — used in a few places) ─────────────── */
