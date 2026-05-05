@@ -102,6 +102,13 @@ The container runs as UID 1000. If your host user has a different UID, you
 may need to `chown -R 1000:1000 ./fallback_models` once before enabling
 `FALLBACK_AUTO_DOWNLOAD=1` so the entrypoint can write into the bind mount.
 
+When `FALLBACK_AUTO_DOWNLOAD=1`, the container's `/tmp` mount needs the
+`exec` flag (already set by default in `docker-compose.yml`) so the `uv`
+installer can run from `/tmp/uv-bin`. Once the model is downloaded to
+`./fallback_models`, you can drop the `exec` flag (replace
+`/tmp:exec,mode=1777` with `/tmp:mode=1777`) to shrink the runtime attack
+surface — an executable writable tmpfs is a classic post-RCE staging spot.
+
 ### Requirements
 
 - **Local network only**: works out of the box with no extra config (STUN-only / direct P2P).

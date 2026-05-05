@@ -42,6 +42,10 @@ else
     echo "[entrypoint] If the next step ends with 'Killed', comment out the"
     echo "[entrypoint] 'memory: 256M' line in docker/docker-compose.yml for this first run,"
     echo "[entrypoint] then restore it once /fallback_models/<repo>/vocab.txt exists."
+    echo "[entrypoint] WARNING: this path requires /tmp to be mounted with the 'exec' flag"
+    echo "[entrypoint] in docker/docker-compose.yml (it already is by default). Once the"
+    echo "[entrypoint] model is on disk, you can drop 'exec' from the /tmp tmpfs to shrink"
+    echo "[entrypoint] the runtime attack surface."
     mkdir -p "${MODEL_DIR}"
     export UV_INSTALL_DIR=/tmp/uv-bin
     export UV_CACHE_DIR=/tmp/uv-cache

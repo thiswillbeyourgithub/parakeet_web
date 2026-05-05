@@ -24,8 +24,12 @@ services:
     # Read-only root filesystem; writable paths are explicit below.
     read_only: true
     tmpfs:
-      # /tmp needs exec because FALLBACK_AUTO_DOWNLOAD installs uv/uvx under
-      # /tmp/uv-bin and runs them. Docker's default tmpfs options include noexec.
+      # /tmp needs `exec` ONLY when FALLBACK_AUTO_DOWNLOAD=1 (the entrypoint
+      # installs uv/uvx under /tmp/uv-bin and runs them). If you are NOT using
+      # auto-download, replace this with `/tmp:mode=1777` (drop the `exec`
+      # flag) — an executable writable tmpfs is the canonical post-RCE staging
+      # spot, so removing exec shrinks the attack surface. Once your model is
+      # on disk in ./fallback_models you can also flip back to `mode=1777`.
       - /tmp:exec,mode=1777
       - /var/regex
       - /run/config
