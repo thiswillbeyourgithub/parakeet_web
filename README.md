@@ -62,8 +62,7 @@ This feature is very early and will improve rapidly.
 
 ### How it works
 
-- **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on first startup.
-- **Local development**: Run `./scripts/download-dictation-regex.sh` to fetch the rules into `app/ui/public/dictation-regex/`.
+- **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on every container start.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
 
@@ -83,18 +82,21 @@ No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-t
 If HuggingFace is blocked or unreachable in your environment, you can serve model weights directly from the container:
 
 ```bash
-# 1. Install the HuggingFace CLI and download the model files locally
-pip install huggingface-hub
-hf download istupakov/parakeet-tdt-0.6b-v3-onnx --local-dir ./fallback_models/istupakov__parakeet-tdt-0.6b-v3-onnx
+# 1. In docker/.env, set the model repo to serve from disk:
+FALLBACK_MODEL_REPO=istupakov/parakeet-tdt-0.6b-v3-onnx
 
-# 2. In docker/docker-compose.yml, uncomment the volume bind:
-#   - ./fallback_models/istupakov__parakeet-tdt-0.6b-v3-onnx:/app/ui/public/models/istupakov/parakeet-tdt-0.6b-v3-onnx:ro
+# 2. Either pre-populate the model on the host:
+hf download istupakov/parakeet-tdt-0.6b-v3-onnx \
+    --local-dir ./fallback_models/istupakov/parakeet-tdt-0.6b-v3-onnx
 
-# 3. In docker/.env, enable the fallback:
-VITE_LOCAL_MODEL_FALLBACK=true
+#    …or let the entrypoint download it on first start:
+FALLBACK_AUTO_DOWNLOAD=1
 ```
 
-The downloaded files are git-ignored. When `VITE_LOCAL_MODEL_FALLBACK=true` is set, the app will check for the local model files on startup and refuse to load if they are missing.
+The `./fallback_models` folder is bind-mounted at `/fallback_models` (already
+configured in `docker/docker-compose.yml`) and the downloaded files are
+git-ignored. Caddy serves them under `/models/<repo>/` at runtime. Setting
+`FALLBACK_MODEL_REPO` automatically enables `VITE_LOCAL_MODEL_FALLBACK`.
 
 ### Requirements
 
