@@ -40,15 +40,25 @@ async function listRepoFiles(repoId, revision = 'main') {
   const url = `https://huggingface.co/api/models/${repoId}?revision=${revision}`;
   try {
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to list repo files: ${resp.status}`);
-    const json = await resp.json();
-    const files = json.siblings?.map(s => s.rfilename) || [];
-    repoFileCache.set(cacheKey, files);
-    return files;
+    if (resp.ok) {
+      const json = await resp.json();
+      const files = json.siblings?.map(s => s.rfilename) || [];
+      repoFileCache.set(cacheKey, files);
+      return files;
+    }
+    // 4xx (e.g. 404 wrong repo, 401 gated): empty listing is the right
+    // answer; the caller's per-file fetch will surface the real error.
+    if (resp.status >= 400 && resp.status < 500) {
+      console.warn(`[Hub] listRepoFiles ${repoId}@${revision} returned ${resp.status}`);
+      repoFileCache.set(cacheKey, []);
+      return [];
+    }
+    // 5xx is transient — don't poison the cache so a later call can retry.
+    console.warn(`[Hub] listRepoFiles ${repoId}@${revision} server error ${resp.status} – retry possible`);
+    return [];
   } catch (err) {
-    console.warn('[Hub] Could not fetch repo file list – falling back to optimistic fetch', err);
-    // Return empty list so caller behaves like old code (may attempt fetch and catch 404)
-    repoFileCache.set(cacheKey, []);
+    // Network/CORS error: also transient — leave the cache unset.
+    console.warn('[Hub] listRepoFiles network error – falling back to optimistic fetch:', err.message || err);
     return [];
   }
 }
