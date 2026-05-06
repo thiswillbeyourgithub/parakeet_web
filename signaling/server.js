@@ -77,7 +77,16 @@ app.use('/api', (req, res, next) => {
  */
 function validateOrigin(req, res, next) {
     const origin = req.headers.origin;
-    if (!origin) return next();
+    // Origin-less requests (curl, server-to-server, SSRF pivots) bypass any
+    // browser-side allowlist and would otherwise leak /api/config (which
+    // contains fresh TURN credentials) and /api/stats. Require an Origin
+    // header on every /api route. Browser fetches always send Origin for
+    // cross-origin and same-origin POST/OPTIONS; same-origin GETs from the
+    // app are proxied by Vite/Caddy which preserve the Origin header.
+    if (!origin) {
+        console.warn(`Blocked request with no Origin header: ${req.method} ${req.originalUrl}`);
+        return res.status(403).json({ error: 'Forbidden', message: 'Origin header required' });
+    }
     if (ALLOWED_ORIGINS.includes(origin)) return next();
 
     console.warn(`Blocked request from unauthorized origin: ${origin} (allowed: ${ALLOWED_ORIGINS.join(', ')})`);
