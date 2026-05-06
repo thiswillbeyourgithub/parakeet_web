@@ -80,40 +80,34 @@ No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-t
 
 ## Local Model Fallback
 
-If HuggingFace is blocked or unreachable in your environment, you can serve model weights directly from the container:
+If HuggingFace is blocked or unreachable in your environment, you can serve
+model weights directly from the container. Pre-populate the host folder
+once, then point the container at it:
 
 ```bash
-# 1. In docker/.env, set the model repo to serve from disk:
-FALLBACK_MODEL_REPO=istupakov/parakeet-tdt-0.6b-v3-onnx
-
-# 2. Either pre-populate the model on the host:
+# 1. Pre-populate the host folder with the ONNX files:
 hf download istupakov/parakeet-tdt-0.6b-v3-onnx \
     --local-dir ./fallback_models/istupakov/parakeet-tdt-0.6b-v3-onnx
 
-#    …or let the entrypoint download it on first start:
-FALLBACK_AUTO_DOWNLOAD=1
+# 2. In docker/.env, set:
+FALLBACK_MODEL_REPO=istupakov/parakeet-tdt-0.6b-v3-onnx
 ```
 
-The `./fallback_models` folder is bind-mounted at `/fallback_models` (already
-configured in `docker/docker-compose.yml`) and the downloaded files are
-git-ignored. Caddy serves them under `/models/<repo>/` at runtime. Setting
-`FALLBACK_MODEL_REPO` automatically enables `VITE_LOCAL_MODEL_FALLBACK`.
+The `./fallback_models` folder is bind-mounted read-only at
+`/fallback_models` (configured in `docker/docker-compose.yml`) and the files
+are git-ignored. Caddy serves them under `/models/<repo>/` at runtime.
+Setting `FALLBACK_MODEL_REPO` automatically enables
+`VITE_LOCAL_MODEL_FALLBACK`. The container crashes at startup if the
+expected files are missing, so misconfigurations are caught early.
 
 To troubleshoot the local-fallback path itself, set
 `VITE_FORCE_LOCAL_MODEL_FALLBACK=true` — the UI will skip HuggingFace
 entirely and load weights from `/models/` on first try. Implies
 `VITE_LOCAL_MODEL_FALLBACK=true`.
 
-The container runs as UID 1000. If your host user has a different UID, you
-may need to `chown -R 1000:1000 ./fallback_models` once before enabling
-`FALLBACK_AUTO_DOWNLOAD=1` so the entrypoint can write into the bind mount.
-
-When `FALLBACK_AUTO_DOWNLOAD=1`, the container's `/tmp` mount needs the
-`exec` flag (already set by default in `docker-compose.yml`) so the `uv`
-installer can run from `/tmp/uv-bin`. Once the model is downloaded to
-`./fallback_models`, you can drop the `exec` flag (replace
-`/tmp:exec,mode=1777` with `/tmp:mode=1777`) to shrink the runtime attack
-surface — an executable writable tmpfs is a classic post-RCE staging spot.
+The container runs as UID 1000. If your host user has a different UID and
+the files end up unreadable to UID 1000, run
+`chmod -R a+rX ./fallback_models` (or `chown -R 1000:1000 ./fallback_models`).
 
 ### Requirements
 
