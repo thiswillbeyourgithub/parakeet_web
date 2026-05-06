@@ -23,6 +23,7 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
+import { createLevelMonitor } from './lib/audio.js';
 
 const STATUS = {
     INIT: 'init',
@@ -73,8 +74,10 @@ function RemoteMicSender() {
     const workletRef = useRef(null);
     const timerRef = useRef(null);
     const timerStartRef = useRef(null);
-    const levelAnimRef = useRef(null);
-    const analyserRef = useRef(null);
+    const levelMonitorRef = useRef(null);
+    // sourceRef is kept across pause/resume so resume can re-attach a
+    // fresh level monitor to the same MediaStreamSource.
+    const sourceRef = useRef(null);
     const keepaliveHeldRef = useRef(false);
 
     // --- Wake lock + background-throttling helpers (shared with main app) ---
@@ -93,11 +96,11 @@ function RemoteMicSender() {
     // --- Audio-only cleanup (keeps RTC alive) ---
     const cleanupAudio = useCallback(() => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-        if (levelAnimRef.current) { cancelAnimationFrame(levelAnimRef.current); levelAnimRef.current = null; }
+        if (levelMonitorRef.current) { levelMonitorRef.current.stop(); levelMonitorRef.current = null; }
         if (workletRef.current) { workletRef.current.disconnect(); workletRef.current = null; }
         if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
         if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-        analyserRef.current = null;
+        sourceRef.current = null;
         releaseWakeLock();
     }, [releaseWakeLock]);
 
@@ -290,24 +293,9 @@ function RemoteMicSender() {
             }
 
             const source = audioCtx.createMediaStreamSource(stream);
+            sourceRef.current = source;
 
-            // Audio level monitoring
-            const analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 2048;
-            source.connect(analyser);
-            analyserRef.current = analyser;
-
-            const levelData = new Float32Array(analyser.fftSize);
-            const updateLevel = () => {
-                if (!analyserRef.current) return;
-                analyserRef.current.getFloatTimeDomainData(levelData);
-                let sum = 0;
-                for (let i = 0; i < levelData.length; i++) sum += levelData[i] * levelData[i];
-                const rms = Math.sqrt(sum / levelData.length);
-                setAudioLevel(Math.min(100, rms * 250));
-                levelAnimRef.current = requestAnimationFrame(updateLevel);
-            };
-            levelAnimRef.current = requestAnimationFrame(updateLevel);
+            levelMonitorRef.current = createLevelMonitor(audioCtx, source, setAudioLevel);
 
             // PCM capture via AudioWorklet (same worklet as main app)
             await audioCtx.audioWorklet.addModule('/pcm-recorder-worklet.js');
@@ -377,7 +365,7 @@ function RemoteMicSender() {
             audioCtxRef.current.suspend().catch(() => {});
         }
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-        if (levelAnimRef.current) { cancelAnimationFrame(levelAnimRef.current); levelAnimRef.current = null; }
+        if (levelMonitorRef.current) { levelMonitorRef.current.stop(); levelMonitorRef.current = null; }
         releaseWakeLock();
         setAudioLevel(0);
         setStatus(STATUS.PAUSED);
@@ -389,18 +377,10 @@ function RemoteMicSender() {
         if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
             await audioCtxRef.current.resume().catch(() => {});
         }
-        // Restart level animation
-        const levelData = new Float32Array(analyserRef.current ? analyserRef.current.fftSize : 2048);
-        const updateLevel = () => {
-            if (!analyserRef.current) return;
-            analyserRef.current.getFloatTimeDomainData(levelData);
-            let sum = 0;
-            for (let i = 0; i < levelData.length; i++) sum += levelData[i] * levelData[i];
-            const rms = Math.sqrt(sum / levelData.length);
-            setAudioLevel(Math.min(100, rms * 250));
-            levelAnimRef.current = requestAnimationFrame(updateLevel);
-        };
-        levelAnimRef.current = requestAnimationFrame(updateLevel);
+        // Re-attach level monitor to the same source created in startMicCapture.
+        if (audioCtxRef.current && sourceRef.current) {
+            levelMonitorRef.current = createLevelMonitor(audioCtxRef.current, sourceRef.current, setAudioLevel);
+        }
         // Resume timer (adjust startRef so elapsed continues from where it left off)
         timerStartRef.current = Date.now() - elapsed * 1000;
         timerRef.current = setInterval(() => {
