@@ -185,7 +185,13 @@ export class RemoteMicRTC {
      * @returns {boolean}
      */
     sendMessage(message) {
-        if (!this.dataChannel || this.dataChannel.readyState !== 'open') return false;
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            // Callers usually ignore the bool return; log so a dropped control
+            // message (e.g. verify-deny lost because the peer already closed)
+            // shows up in the debug console instead of disappearing silently.
+            console.warn('[RemoteMicRTC] sendMessage dropped — data channel not open:', message?.type);
+            return false;
+        }
         this.dataChannel.send(JSON.stringify(message));
         return true;
     }
@@ -196,7 +202,10 @@ export class RemoteMicRTC {
      * @returns {Promise<boolean>}
      */
     async sendBinary(data) {
-        if (!this.dataChannel || this.dataChannel.readyState !== 'open') return false;
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            console.warn('[RemoteMicRTC] sendBinary dropped — data channel not open');
+            return false;
+        }
         // Wait if buffer is backing up (>1MB)
         while (this.dataChannel.bufferedAmount > 1024 * 1024) {
             await new Promise(resolve => setTimeout(resolve, 10));

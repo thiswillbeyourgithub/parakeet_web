@@ -2081,7 +2081,11 @@ export default function App() {
       newEntries[t.id] = applyDictationRegex(t.text);
     }
     setDictationCache(prev => ({ ...prev, ...newEntries }));
-  }, [transcriptDisplayMode, dictationRegexRules, transcriptions, dictationCache]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dictationCache
+    // is read but intentionally excluded: the effect mutates it via the
+    // functional updater above, and including it would re-trigger the
+    // effect on every cache write (a no-op since `missing` is then empty).
+  }, [transcriptDisplayMode, dictationRegexRules, transcriptions]);
 
   // Get the display text for a transcription based on current display mode
   function getDisplayText(trans) {
@@ -2136,6 +2140,10 @@ export default function App() {
   // is unavailable. Stores detected RAM info for display in the banner text.
   const RAM_THRESHOLD_GB = 3;
   const RAM_THRESHOLD_BYTES = RAM_THRESHOLD_GB * 1024 * 1024 * 1024;
+  // Detection result computed once during the initial useState callback —
+  // stashed on a ref instead of useState because we cannot call another
+  // setter during a useState initializer.
+  const _lowRamDetectedRef = useRef(null);
   const [lowRamInfo, setLowRamInfo] = useState(null); // { detectedGB, source }
   const [showLowRamBanner, setShowLowRamBanner] = useState(() => {
     if (typeof window !== 'undefined' && sessionStorage.getItem('parakeetweb_lowram_dismissed')) return false;
@@ -2143,29 +2151,28 @@ export default function App() {
     const heapLimit = performance?.memory?.jsHeapSizeLimit;
     if (heapLimit !== undefined) {
       const detectedGB = (heapLimit / 1024 / 1024 / 1024).toFixed(1);
-      // Cannot call setLowRamInfo during useState init — stored on ref below
-      window.__parakeet_lowram = { detectedGB, source: 'heap limit' };
+      _lowRamDetectedRef.current = { detectedGB, source: 'heap limit' };
       return heapLimit < RAM_THRESHOLD_BYTES;
     }
     // Chrome/Edge expose device RAM in GB
     const mem = navigator.deviceMemory;
     if (mem !== undefined) {
-      window.__parakeet_lowram = { detectedGB: String(mem), source: 'device memory' };
+      _lowRamDetectedRef.current = { detectedGB: String(mem), source: 'device memory' };
       return mem < RAM_THRESHOLD_GB;
     }
     // Fallback: assume mobile devices are memory-constrained
     if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      window.__parakeet_lowram = { detectedGB: '?', source: 'mobile device' };
+      _lowRamDetectedRef.current = { detectedGB: '?', source: 'mobile device' };
       return true;
     }
     return false;
   });
 
-  // Populate lowRamInfo from the window scratch space set during useState init
+  // Promote the ref-stashed detection result into state once mounted.
   useEffect(() => {
-    if (window.__parakeet_lowram) {
-      setLowRamInfo(window.__parakeet_lowram);
-      delete window.__parakeet_lowram;
+    if (_lowRamDetectedRef.current) {
+      setLowRamInfo(_lowRamDetectedRef.current);
+      _lowRamDetectedRef.current = null;
     }
   }, []);
 
