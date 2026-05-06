@@ -160,11 +160,13 @@ export function reconstructSDP(essentials) {
 
     const typeMap = { h: 'host', s: 'srflx', r: 'relay' };
     const protoMap = { u: 'udp', t: 'tcp' };
+    // Standard ICE candidate priorities per RFC 5245 / WebRTC defaults.
+    const CANDIDATE_PRIORITY = { host: 2130706431, srflx: 1694498815, relay: 16777215 };
 
     for (const c of essentials.c) {
         const type = typeMap[c.t] || 'host';
         const proto = protoMap[c.p] || 'udp';
-        const priority = type === 'host' ? 2130706431 : type === 'srflx' ? 1694498815 : 16777215;
+        const priority = CANDIDATE_PRIORITY[type] ?? CANDIDATE_PRIORITY.host;
         sdp.push(`a=candidate:1 1 ${proto} ${priority} ${c.i} ${c.o} typ ${type}`);
     }
 
