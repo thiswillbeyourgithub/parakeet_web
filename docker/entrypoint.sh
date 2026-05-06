@@ -58,16 +58,44 @@ else
     mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
     export PATH="${UV_INSTALL_DIR}:${PATH}"
     if ! command -v uv >/dev/null 2>&1; then
-      echo "[entrypoint] Installing uv into ${UV_INSTALL_DIR}..."
+      # Pin the uv installer to a specific version and verify its SHA-256
+      # before piping it into a shell. The previous code fetched the
+      # latest install.sh straight from astral.sh and ran it unverified,
+      # so a CDN compromise or MITM (or even a benign upstream rewrite)
+      # could ship arbitrary code into the container.
+      #
+      # TODO: when bumping UV_VERSION, recompute UV_INSTALL_SHA256 with:
+      #   curl -fsSL https://astral.sh/uv/${UV_VERSION}/install.sh \
+      #     | sha256sum
+      UV_VERSION="${UV_VERSION:-0.5.11}"
+      UV_INSTALL_SHA256="${UV_INSTALL_SHA256:-TODO_SHA256_FOR_${UV_VERSION}}"
+      UV_INSTALL_URL="https://astral.sh/uv/${UV_VERSION}/install.sh"
+      INSTALL_SCRIPT="/tmp/uv-install.sh"
+      echo "[entrypoint] Installing uv ${UV_VERSION} into ${UV_INSTALL_DIR}..."
       mkdir -p "${UV_INSTALL_DIR}"
       if command -v wget >/dev/null 2>&1; then
-        wget -qO- https://astral.sh/uv/install.sh | sh
+        wget -qO "${INSTALL_SCRIPT}" "${UV_INSTALL_URL}"
       elif command -v curl >/dev/null 2>&1; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+        curl -fsSL -o "${INSTALL_SCRIPT}" "${UV_INSTALL_URL}"
       else
         echo "[entrypoint] ERROR: neither wget nor curl available to fetch uv"
         exit 1
       fi
+      ACTUAL_SHA256="$(sha256sum "${INSTALL_SCRIPT}" | awk '{print $1}')"
+      if [ "${UV_INSTALL_SHA256}" = "TODO_SHA256_FOR_${UV_VERSION}" ]; then
+        echo "[entrypoint] ERROR: UV_INSTALL_SHA256 is unset. Set it to:"
+        echo "[entrypoint]   ${ACTUAL_SHA256}"
+        echo "[entrypoint] (after verifying the script content) and rebuild."
+        exit 1
+      fi
+      if [ "${ACTUAL_SHA256}" != "${UV_INSTALL_SHA256}" ]; then
+        echo "[entrypoint] ERROR: uv installer SHA-256 mismatch."
+        echo "[entrypoint]   expected: ${UV_INSTALL_SHA256}"
+        echo "[entrypoint]   actual:   ${ACTUAL_SHA256}"
+        exit 1
+      fi
+      sh "${INSTALL_SCRIPT}"
+      rm -f "${INSTALL_SCRIPT}"
     fi
     echo "[entrypoint] Downloading ${FALLBACK_MODEL_REPO} from HuggingFace..."
     uvx --from huggingface_hub hf download \
