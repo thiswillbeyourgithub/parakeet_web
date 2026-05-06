@@ -146,7 +146,7 @@ export default function App() {
   const [fallbackWarning, setFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
   const [memoryInfo, setMemoryInfo] = useState(null);
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [encoderQuant, setEncoderQuant] = useState('fp32');
   const [decoderQuant, setDecoderQuant] = useState('fp32');
   const [preprocessor, setPreprocessor] = useState('nemo128');
