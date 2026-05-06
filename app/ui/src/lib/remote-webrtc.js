@@ -388,16 +388,27 @@ export class RemoteMicRTC {
     _waitForICE() {
         return new Promise((resolve) => {
             if (this.pc.iceGatheringState === 'complete') { resolve(); return; }
+            // Guard against double-resolution: if ICE later restarts the same pc
+            // (rare but possible) the handler would otherwise fire again and
+            // we'd silently no-op. Self-removing the listener and clearing the
+            // timeout makes the lifecycle explicit.
+            let settled = false;
+            const pc = this.pc;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                pc.removeEventListener('icegatheringstatechange', onChange);
+                resolve();
+            };
+            const onChange = () => {
+                if (pc.iceGatheringState === 'complete') finish();
+            };
             const timeout = setTimeout(() => {
                 console.warn('[RemoteMicRTC] ICE gathering timeout, proceeding');
-                resolve();
+                finish();
             }, 5000);
-            this.pc.onicegatheringstatechange = () => {
-                if (this.pc.iceGatheringState === 'complete') {
-                    clearTimeout(timeout);
-                    resolve();
-                }
-            };
+            pc.addEventListener('icegatheringstatechange', onChange);
         });
     }
 
