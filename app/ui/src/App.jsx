@@ -430,14 +430,15 @@ export default function App() {
   // on the server so the admin gets early feedback about misconfiguration.
   useEffect(() => {
     if (!localFallbackEnabled) return;
-    checkLocalModelFiles('/models', repoId).then((result) => {
+    checkLocalModelFiles('/models').then((result) => {
       if (result.ok) {
         console.log('[App] Local fallback check passed:', result.message);
       } else {
-        const msg = `Local model fallback is enabled but model files are missing at /fallback_models/${repoId}/. `
-          + `Pre-populate the host folder, e.g.:\n`
-          + `  hf download ${repoId} --local-dir ./fallback_models/${repoId}\n\n`
-          + `See docker-compose.yml for the bind-mount configuration.`;
+        const msg = `Local model fallback is enabled but model files are not reachable at /models/. `
+          + `Bind-mount a folder containing the ONNX files (e.g. produced by\n`
+          + `  hf download ${repoId} --local-dir /some/host/path)\n`
+          + `into the container and set LOCAL_MODEL_PATH to that in-container path. `
+          + `See docker-compose.yml.`;
         console.error('[App]', msg);
         setFallbackWarning(msg);
       }
