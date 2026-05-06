@@ -17,6 +17,7 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbClear } from '../../src/idb.js';
+import { formatTime } from './lib/format.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -2710,7 +2711,7 @@ export default function App() {
               {paused ? t('recordingPausedMsg') : (isRemoteMic ? (t('remoteMicRecording') || 'Phone recording') : t('recordingInProgress'))}
               {isRemoteMic && elapsed !== null && (
                 <span style={{ marginLeft: '0.5rem', fontVariantNumeric: 'tabular-nums' }}>
-                  {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, '0')}
+                  {formatTime(elapsed)}
                 </span>
               )}
             </span>

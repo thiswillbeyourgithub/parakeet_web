@@ -24,6 +24,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { createLevelMonitor } from './lib/audio.js';
+import { formatTime } from './lib/format.js';
 
 const STATUS = {
     INIT: 'init',
@@ -429,12 +430,6 @@ function RemoteMicSender() {
     useEffect(() => {
         start();
     }, [start]);
-
-    const formatTime = (s) => {
-        const m = Math.floor(s / 60);
-        const sec = s % 60;
-        return `${m}:${sec.toString().padStart(2, '0')}`;
-    };
 
     const audioHint = audioLevel < 5 ? t('mobileNoAudio')
         : audioLevel < 20 ? t('mobileSpeakLouder')
