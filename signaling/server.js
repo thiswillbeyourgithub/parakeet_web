@@ -56,7 +56,9 @@ app.set('trust proxy', 'loopback');
 // Parse JSON bodies
 app.use(express.json({ limit: '50kb' }));
 
-// CORS middleware — needed because Vite proxy forwards requests
+// CORS middleware — needed because Vite proxy forwards requests.
+// The Origin header is non-secret (the browser sets it), so a plain
+// String#includes() match is fine — no timing-safe comparison needed.
 app.use('/api', (req, res, next) => {
     const origin = req.headers.origin;
     if (origin && ALLOWED_ORIGINS.includes(origin)) {
