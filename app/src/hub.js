@@ -98,6 +98,51 @@ async function saveFileToDb(key, blob) {
  * @param {Function} [options.progress] Progress callback
  * @returns {Promise<string>} URL to cached file (blob URL)
  */
+/**
+ * Stream a fetch response body into a Blob, reporting progress, then
+ * persist it to IndexedDB and return a blob URL. Shared between the
+ * HuggingFace and local-fallback download paths so the streaming /
+ * caching loop lives in one place.
+ *
+ * @param {Response} response - Already-issued fetch Response (response.ok must be true)
+ * @param {string} cacheKey - IndexedDB key
+ * @param {string} filename - Friendly name for logs and progress events
+ * @param {Function|undefined} progress - Optional progress callback
+ * @param {string} logTag - Log prefix, e.g. '[Hub]' or '[Hub:local]'
+ * @returns {Promise<string>} Blob URL
+ */
+async function _streamAndCache(response, cacheKey, filename, progress, logTag) {
+  const contentLength = response.headers.get('content-length');
+  const total = contentLength ? parseInt(contentLength) : 0;
+  let loaded = 0;
+
+  const reader = response.body.getReader();
+  const chunks = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    if (progress && total > 0) {
+      progress({ loaded, total, file: filename });
+    }
+  }
+
+  const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
+
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      await saveFileToDb(cacheKey, blob);
+      console.log(`${logTag} Cached ${filename} in IndexedDB`);
+    } catch (e) {
+      console.warn(`${logTag} Failed to cache in IndexedDB:`, e);
+    }
+  }
+
+  return URL.createObjectURL(blob);
+}
+
 export async function getModelFile(repoId, filename, options = {}) {
   const { revision = 'main', subfolder = '', progress } = options;
   
@@ -137,40 +182,7 @@ export async function getModelFile(repoId, filename, options = {}) {
     throw new HubDownloadError(filename, fetchErr);
   }
   
-  // Stream with progress
-  const contentLength = response.headers.get('content-length');
-  const total = contentLength ? parseInt(contentLength) : 0;
-  let loaded = 0;
-  
-  const reader = response.body.getReader();
-  const chunks = [];
-  
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    
-    chunks.push(value);
-    loaded += value.length;
-    
-    if (progress && total > 0) {
-      progress({ loaded, total, file: filename });
-    }
-  }
-  
-  // Reconstruct blob
-  const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
-  
-  // Cache the blob in IndexedDB
-  if (typeof indexedDB !== 'undefined') {
-    try {
-      await saveFileToDb(cacheKey, blob);
-       console.log(`[Hub] Cached ${filename} in IndexedDB`);
-    } catch (e) {
-      console.warn('[Hub] Failed to cache in IndexedDB:', e);
-    }
-  }
-  
-  return URL.createObjectURL(blob);
+  return _streamAndCache(response, cacheKey, filename, progress, '[Hub]');
 }
 
 /**
@@ -223,35 +235,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
     throw new Error(`Local fallback failed for ${filename}: ${response.status} ${response.statusText}`);
   }
 
-  // Stream with progress (same logic as getModelFile)
-  const contentLength = response.headers.get('content-length');
-  const total = contentLength ? parseInt(contentLength) : 0;
-  let loaded = 0;
-  const reader = response.body.getReader();
-  const chunks = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    if (progress && total > 0) {
-      progress({ loaded, total, file: filename });
-    }
-  }
-
-  const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
-
-  if (typeof indexedDB !== 'undefined') {
-    try {
-      await saveFileToDb(cacheKey, blob);
-      console.log(`[Hub:local] Cached ${filename} in IndexedDB`);
-    } catch (e) {
-      console.warn('[Hub:local] Failed to cache in IndexedDB:', e);
-    }
-  }
-
-  return URL.createObjectURL(blob);
+  return _streamAndCache(response, cacheKey, filename, progress, '[Hub:local]');
 }
 
 /**
