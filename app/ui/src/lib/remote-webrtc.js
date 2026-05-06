@@ -26,6 +26,10 @@ export class RemoteMicRTC {
         this.onDisconnected = null;
         this.onMessage = null;       // (data: string|ArrayBuffer) => void
         this.onStateChange = null;
+        // Fired when a send is dropped or fails — lets the UI surface the
+        // problem instead of treating "connected but silently losing data" as success.
+        // (stage: 'message'|'binary', reason: string) => void
+        this.onSendError = null;
 
         // ICE state
         this.pendingIceCandidates = [];
@@ -190,10 +194,17 @@ export class RemoteMicRTC {
             // message (e.g. verify-deny lost because the peer already closed)
             // shows up in the debug console instead of disappearing silently.
             console.warn('[RemoteMicRTC] sendMessage dropped — data channel not open:', message?.type);
+            if (this.onSendError) this.onSendError('message', 'data channel not open');
             return false;
         }
-        this.dataChannel.send(JSON.stringify(message));
-        return true;
+        try {
+            this.dataChannel.send(JSON.stringify(message));
+            return true;
+        } catch (e) {
+            console.warn('[RemoteMicRTC] sendMessage threw:', e.message);
+            if (this.onSendError) this.onSendError('message', e.message);
+            return false;
+        }
     }
 
     /**
@@ -204,14 +215,21 @@ export class RemoteMicRTC {
     async sendBinary(data) {
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             console.warn('[RemoteMicRTC] sendBinary dropped — data channel not open');
+            if (this.onSendError) this.onSendError('binary', 'data channel not open');
             return false;
         }
         // Wait if buffer is backing up (>1MB)
         while (this.dataChannel.bufferedAmount > 1024 * 1024) {
             await new Promise(resolve => setTimeout(resolve, 10));
         }
-        this.dataChannel.send(data);
-        return true;
+        try {
+            this.dataChannel.send(data);
+            return true;
+        } catch (e) {
+            console.warn('[RemoteMicRTC] sendBinary threw:', e.message);
+            if (this.onSendError) this.onSendError('binary', e.message);
+            return false;
+        }
     }
 
     // ============ Signaling ============

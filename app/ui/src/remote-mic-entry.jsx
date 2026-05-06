@@ -60,6 +60,7 @@ function RemoteMicSender() {
     const [logsOpen, setLogsOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [hasRecorded, setHasRecorded] = useState(false);
+    const [sendErrorCount, setSendErrorCount] = useState(0);
     const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
     const [fingerprint, setFingerprint] = useState('');
     const verifyResolveRef = useRef(null); // (boolean) => void
@@ -153,6 +154,13 @@ function RemoteMicSender() {
             rtc.onDisconnected = () => {
                 cleanupAll();
                 setStatus(STATUS.STOPPED);
+            };
+
+            // Surface dropped/failed sends so the user sees data loss instead
+            // of "connected" while audio quietly disappears.
+            rtc.onSendError = (stage, reason) => {
+                setSendErrorCount((n) => n + 1);
+                console.warn(`[RemoteMic] send-error stage=${stage} reason=${reason}`);
             };
 
             // Handle incoming messages (JSON control messages)
@@ -298,6 +306,7 @@ function RemoteMicSender() {
                     await rtcRef.current.sendBinary(encrypted);
                 } catch (err) {
                     console.warn('[RemoteMic] Encrypt/send error:', err.message);
+                    setSendErrorCount((n) => n + 1);
                 }
             };
 
@@ -606,6 +615,12 @@ function RemoteMicSender() {
                     {status === STATUS.RECORDING && (
                         <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
                             {audioHint}
+                        </p>
+                    )}
+
+                    {sendErrorCount > 0 && (
+                        <p style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                            ⚠ {sendErrorCount} dropped chunk{sendErrorCount === 1 ? '' : 's'}
                         </p>
                     )}
 
