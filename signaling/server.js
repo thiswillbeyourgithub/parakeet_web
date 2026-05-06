@@ -164,11 +164,13 @@ setInterval(cleanupRateLimiters, 2 * 60 * 1000);
 // ============ Room Helpers ============
 
 function generateRoomId() {
+    // 32-char alphabet: pull a random byte, mask to 5 bits (0..31). Each byte
+    // maps cleanly to one alphabet index — no modulo bias from 256 % 32.
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     const randomBytes = crypto.randomBytes(6);
     let id = '';
     for (let i = 0; i < 6; i++) {
-        id += chars[randomBytes[i] % chars.length];
+        id += chars[randomBytes[i] & 0x1f];
     }
     return id;
 }
