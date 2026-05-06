@@ -44,7 +44,7 @@ RUN apk add --no-cache nodejs libcap && \
     setcap -r /usr/sbin/caddy 2>/dev/null || setcap -r /usr/bin/caddy 2>/dev/null || true && \
     # Create a non-root user for the runtime processes. UID 1000 matches the
     # default host user on most Linux distros, which keeps bind-mount perms
-    # simple (e.g. ./fallback_models is writable by the same UID without an
+    # simple (e.g. ./fallback_models is readable by the same UID without an
     # extra chown). docker-compose.yml pins user: "1000:1000".
     addgroup -g 1000 -S parakeet && \
     adduser -u 1000 -S -G parakeet parakeet
