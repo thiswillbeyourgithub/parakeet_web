@@ -54,16 +54,25 @@ const logBuffer = {
     },
     snapshot() { return this.lines.slice(); },
 };
-function _intercept(level, origFn) {
-    return (...args) => {
+// Install console.log/warn/error wrappers that mirror into logBuffer.
+// Returns a function that restores the originals — called from the
+// component's unmount cleanup so we don't leak a global patch.
+function installConsoleCapture() {
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    const intercept = (level, origFn) => (...args) => {
         origFn.apply(console, args);
         const line = `[${level}] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`;
         logBuffer.push(line);
     };
+    console.log   = intercept('LOG',   orig.log.bind(console));
+    console.warn  = intercept('WARN',  orig.warn.bind(console));
+    console.error = intercept('ERR',   orig.error.bind(console));
+    return () => {
+        console.log = orig.log;
+        console.warn = orig.warn;
+        console.error = orig.error;
+    };
 }
-console.log   = _intercept('LOG',   console.log.bind(console));
-console.warn  = _intercept('WARN',  console.warn.bind(console));
-console.error = _intercept('ERR',   console.error.bind(console));
 
 function RemoteMicSender() {
     const { t, lang, setLang } = useI18n();
@@ -129,11 +138,13 @@ function RemoteMicSender() {
         return cleanupAll;
     }, [cleanupAll]);
 
-    // Subscribe to log buffer updates
+    // Install console capture and subscribe to log buffer updates.
     useEffect(() => {
-        return logBuffer.subscribe((line) => {
+        const restoreConsole = installConsoleCapture();
+        const unsubscribe = logBuffer.subscribe((line) => {
             setLogs(prev => [...prev, line]);
         });
+        return () => { unsubscribe(); restoreConsole(); };
     }, []);
 
     // Auto-scroll logs
