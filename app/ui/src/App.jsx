@@ -267,7 +267,6 @@ export default function App() {
     if (!remoteMicQrUrl || remoteMicStatus !== 'waiting') return;
     loadQRCode.current.then(() => {
       if (remoteMicQrRef.current && window.QRCode) {
-        remoteMicQrRef.current.innerHTML = '';
         const canvas = document.createElement('canvas');
         window.QRCode.toCanvas(canvas, remoteMicQrUrl, {
           width: 220,
@@ -275,6 +274,7 @@ export default function App() {
           errorCorrectionLevel: 'M',
         }).then(() => {
           if (remoteMicQrRef.current) {
+            // Clear previous QR (if any) and swap in the new canvas atomically.
             remoteMicQrRef.current.innerHTML = '';
             remoteMicQrRef.current.appendChild(canvas);
           }
