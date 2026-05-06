@@ -36,15 +36,29 @@ const STATUS = {
     ERROR: 'error',
 };
 
-// Global log buffer so we can capture logs before React renders
-const _logBuffer = [];
+// Global log buffer so we can capture logs before React renders.
+// Previously the buffer was an Array with a `_notify` property hung off
+// it; that was fragile (Array methods don't preserve own props, two
+// concurrent mounts overwrote each other's listener) so it's now a
+// plain object with a Set of listeners.
+const logBuffer = {
+    lines: [],
+    listeners: new Set(),
+    push(line) {
+        this.lines.push(line);
+        for (const fn of this.listeners) fn(line);
+    },
+    subscribe(fn) {
+        this.listeners.add(fn);
+        return () => this.listeners.delete(fn);
+    },
+    snapshot() { return this.lines.slice(); },
+};
 function _intercept(level, origFn) {
     return (...args) => {
         origFn.apply(console, args);
         const line = `[${level}] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`;
-        _logBuffer.push(line);
-        // Notify any mounted listener
-        if (typeof _logBuffer._notify === 'function') _logBuffer._notify(line);
+        logBuffer.push(line);
     };
 }
 console.log   = _intercept('LOG',   console.log.bind(console));
@@ -57,7 +71,7 @@ function RemoteMicSender() {
     const [errorMsg, setErrorMsg] = useState('');
     const [audioLevel, setAudioLevel] = useState(0);
     const [elapsed, setElapsed] = useState(0);
-    const [logs, setLogs] = useState([..._logBuffer]);
+    const [logs, setLogs] = useState(() => logBuffer.snapshot());
     const [logsOpen, setLogsOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [hasRecorded, setHasRecorded] = useState(false);
@@ -117,10 +131,9 @@ function RemoteMicSender() {
 
     // Subscribe to log buffer updates
     useEffect(() => {
-        _logBuffer._notify = (line) => {
+        return logBuffer.subscribe((line) => {
             setLogs(prev => [...prev, line]);
-        };
-        return () => { _logBuffer._notify = null; };
+        });
     }, []);
 
     // Auto-scroll logs
