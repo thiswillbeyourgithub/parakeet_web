@@ -220,7 +220,7 @@ export default function App() {
   const [recordingCountdown, setRecordingCountdown] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null); // legacy name kept for stopRecording guard
   const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
-  const clearPcmChunks = () => { clearPcmChunks(); };
+  const clearPcmChunks = () => { pcmChunksRef.current = []; };
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioChunks, setAudioChunks] = useState([]);
   const [audioLevel, setAudioLevel] = useState(0);
