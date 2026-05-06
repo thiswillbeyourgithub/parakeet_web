@@ -5,7 +5,7 @@ import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
-import { resamplePcmTo16k } from './lib/audio.js';
+import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
@@ -857,31 +857,10 @@ export default function App() {
 
       workletNodeRef.current = workletNode;
 
-      // Audio level monitoring via an AnalyserNode on the same graph
-      const analyser = audioCtx.createAnalyser();
-      sourceNode.connect(analyser);
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.8;
-      const dataArray = new Uint8Array(analyser.fftSize);
-
-      // `recording` flag is closed over; flipped to false in stopRecording
-      let recording = true;
-      const updateLevel = () => {
-        analyser.getByteTimeDomainData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const normalized = (dataArray[i] - 128) / 128;
-          sum += normalized * normalized;
-        }
-        const rms = Math.sqrt(sum / dataArray.length);
-        const level = Math.min(100, rms * 250);
-        setAudioLevel(level);
-        if (recording) requestAnimationFrame(updateLevel);
-      };
-      updateLevel();
-
-      // Stash a stop-helper on the audioCtx so stopRecording can flip the flag
-      audioCtx._stopLevelMonitor = () => { recording = false; };
+      // Audio level monitoring via an AnalyserNode on the same graph.
+      // Stash the stop-helper on the audioCtx so stopRecording can end it.
+      const monitor = createLevelMonitor(audioCtx, sourceNode, setAudioLevel);
+      audioCtx._stopLevelMonitor = monitor.stop;
 
       setAudioContext(audioCtx);
       setMediaRecorder(stream); // reuse state slot to hold the stream for cleanup
@@ -1002,35 +981,14 @@ export default function App() {
     try {
       await audioContext.resume();
 
-      // Restart level-monitor animation loop with a fresh `recording` flag
-      const analyser = audioContext.createAnalyser();
-      // Re-use the existing source node — it is still connected to the worklet.
-      // We need a new analyser because the old one's animation loop has stopped.
-      // The source → worklet connection is still intact; just tap the source again.
-      // mediaRecorder state slot holds the MediaStream
+      // Restart the level-monitor; the previous animation loop was stopped
+      // when pauseRecording() was called.
       const stream = mediaRecorder;
       if (stream) {
         const src = audioContext.createMediaStreamSource(stream);
-        src.connect(analyser);
+        const monitor = createLevelMonitor(audioContext, src, setAudioLevel);
+        audioContext._stopLevelMonitor = monitor.stop;
       }
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.8;
-      const dataArray = new Uint8Array(analyser.fftSize);
-      let monitoring = true;
-      const updateLevel = () => {
-        analyser.getByteTimeDomainData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const normalized = (dataArray[i] - 128) / 128;
-          sum += normalized * normalized;
-        }
-        const rms = Math.sqrt(sum / dataArray.length);
-        const level = Math.min(100, rms * 250);
-        setAudioLevel(level);
-        if (monitoring) requestAnimationFrame(updateLevel);
-      };
-      updateLevel();
-      audioContext._stopLevelMonitor = () => { monitoring = false; };
 
       setIsPaused(false);
       setStatus('recordingClickStop');
