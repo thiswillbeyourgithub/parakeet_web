@@ -131,17 +131,32 @@ echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
 # /srv is read-only at runtime, so config.js lives on a tmpfs at /run/config
 # and Caddy serves it via the matching `handle /config.js` route.
 mkdir -p /run/config
-cat > /run/config/config.js <<EOF
-window.__CONFIG__ = {
-  VITE_DEV_MODE: "${VITE_DEV_MODE:-false}",
-  VITE_DICTATION_DEVICE_SUPPORT: "${VITE_DICTATION_DEVICE_SUPPORT:-true}",
-  VITE_MODEL_REPO: "${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}",
-  VITE_LOCAL_MODEL_FALLBACK: "${VITE_LOCAL_MODEL_FALLBACK:-}",
-  VITE_FORCE_LOCAL_MODEL_FALLBACK: "${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}",
-  VITE_ANALYTICS_URL: "${VITE_ANALYTICS_URL:-}",
-  VITE_ANALYTICS_WEBSITE_ID: "${VITE_ANALYTICS_WEBSITE_ID:-}",
-};
-EOF
+# Build config.js by JSON-encoding each value via node. The previous
+# double-quoted heredoc let any value containing a quote, backslash, or
+# $(...) break out of the JS string literal — an operator setting e.g.
+# VITE_MODEL_REPO='";alert(1)//' would inject JS into every served page.
+# node is already in the image (signaling sidecar), so this is free.
+VITE_DEV_MODE="${VITE_DEV_MODE:-false}" \
+VITE_DICTATION_DEVICE_SUPPORT="${VITE_DICTATION_DEVICE_SUPPORT:-true}" \
+VITE_MODEL_REPO="${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}" \
+VITE_LOCAL_MODEL_FALLBACK="${VITE_LOCAL_MODEL_FALLBACK:-}" \
+VITE_FORCE_LOCAL_MODEL_FALLBACK="${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}" \
+VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
+VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
+node -e '
+  const keys = [
+    "VITE_DEV_MODE",
+    "VITE_DICTATION_DEVICE_SUPPORT",
+    "VITE_MODEL_REPO",
+    "VITE_LOCAL_MODEL_FALLBACK",
+    "VITE_FORCE_LOCAL_MODEL_FALLBACK",
+    "VITE_ANALYTICS_URL",
+    "VITE_ANALYTICS_WEBSITE_ID",
+  ];
+  const obj = {};
+  for (const k of keys) obj[k] = process.env[k] ?? "";
+  process.stdout.write("window.__CONFIG__ = " + JSON.stringify(obj, null, 2) + ";\n");
+' > /run/config/config.js
 echo "[entrypoint] Wrote runtime config to /run/config/config.js"
 
 # ---------- Start signaling sidecar (background) ---------------------------
