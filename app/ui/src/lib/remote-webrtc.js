@@ -88,15 +88,33 @@ export class RemoteMicRTC {
             iceTransportPolicy: this.iceTransportPolicy
         });
 
-        // Trickle ICE candidates to signaling server
+        // Trickle ICE candidates to signaling server, with a small retry on
+        // transient network errors. Losing a single candidate to a flaky link
+        // can be the difference between a working and a stalled connection.
         this.pc.onicecandidate = (event) => {
             if (event.candidate && this.roomId) {
                 const endpoint = this.isOfferer ? 'offer' : 'answer';
-                this._fetch(`/rooms/${this.roomId}/ice/${endpoint}`, {
-                    method: 'POST',
-                    headers: this._getAuthHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify(event.candidate.toJSON())
-                }).catch(e => console.warn('[RemoteMicRTC] Failed to send ICE candidate:', e.message));
+                const payload = JSON.stringify(event.candidate.toJSON());
+                const attempt = async (tries) => {
+                    try {
+                        const resp = await this._fetch(`/rooms/${this.roomId}/ice/${endpoint}`, {
+                            method: 'POST',
+                            headers: this._getAuthHeaders({ 'Content-Type': 'application/json' }),
+                            body: payload,
+                        });
+                        // Don't retry on 4xx (auth/validation errors are not transient).
+                        if (!resp.ok && resp.status >= 500 && tries < 3) {
+                            setTimeout(() => attempt(tries + 1), 200 * Math.pow(2, tries));
+                        }
+                    } catch (e) {
+                        if (tries < 3) {
+                            setTimeout(() => attempt(tries + 1), 200 * Math.pow(2, tries));
+                        } else {
+                            console.warn('[RemoteMicRTC] Failed to send ICE candidate after retries:', e.message);
+                        }
+                    }
+                };
+                attempt(0);
             }
         };
 

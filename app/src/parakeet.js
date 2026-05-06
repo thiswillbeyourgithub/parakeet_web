@@ -5,10 +5,8 @@ import { JsPreprocessor } from './mel.js';
 
 /**
  * Lightweight Parakeet model wrapper designed for browser usage.
- * Currently supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in '
- * transformerjs' style) exported by parakeet TDT.
- *
- * NOTE: This is an *early* scaffold – the `transcribe` method is TODO.
+ * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
+ * transformerjs style) exported by parakeet TDT.
  */
 export class ParakeetModel {
   constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s, verbose = false }) {
