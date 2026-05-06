@@ -99,6 +99,11 @@ configured in `docker/docker-compose.yml`) and the downloaded files are
 git-ignored. Caddy serves them under `/models/<repo>/` at runtime. Setting
 `FALLBACK_MODEL_REPO` automatically enables `VITE_LOCAL_MODEL_FALLBACK`.
 
+To troubleshoot the local-fallback path itself, set
+`VITE_FORCE_LOCAL_MODEL_FALLBACK=true` — the UI will skip HuggingFace
+entirely and load weights from `/models/` on first try. Implies
+`VITE_LOCAL_MODEL_FALLBACK=true`.
+
 The container runs as UID 1000. If your host user has a different UID, you
 may need to `chown -R 1000:1000 ./fallback_models` once before enabling
 `FALLBACK_AUTO_DOWNLOAD=1` so the entrypoint can write into the bind mount.
