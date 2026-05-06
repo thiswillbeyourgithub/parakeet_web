@@ -221,7 +221,26 @@ export default function App() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [audioContext, setAudioContext] = useState(null);
   const [pendingAudioFile, setPendingAudioFile] = useState(null);
-  const [audioPreviewUrl, setAudioPreviewUrl] = useState(null);
+  const [audioPreviewUrl, _setAudioPreviewUrlRaw] = useState(null);
+  // Always go through this setter — it revokes any previously-active blob URL
+  // before swapping in the new one, so they don't accumulate over a session.
+  const setAudioPreviewUrl = useCallback((next) => {
+    _setAudioPreviewUrlRaw((prev) => {
+      if (prev && prev !== next) {
+        try { URL.revokeObjectURL(prev); } catch (_) { /* ignore */ }
+      }
+      return next;
+    });
+  }, []);
+  // Final cleanup when the component unmounts.
+  useEffect(() => () => {
+    _setAudioPreviewUrlRaw((prev) => {
+      if (prev) {
+        try { URL.revokeObjectURL(prev); } catch (_) { /* ignore */ }
+      }
+      return null;
+    });
+  }, []);
   const [isProcessingPreview, setIsProcessingPreview] = useState(false);
   const [hasBeenTranscribed, setHasBeenTranscribed] = useState(false);
   const [noiseSuppression, setNoiseSuppression] = useState(false);
@@ -1806,13 +1825,10 @@ export default function App() {
   }
 
   function clearPendingAudio() {
-    if (audioPreviewUrl) {
-      URL.revokeObjectURL(audioPreviewUrl);
-    }
     setPendingAudioFile(null);
-    setAudioPreviewUrl(null);
+    setAudioPreviewUrl(null); // setter revokes the previous blob URL
     setHasBeenTranscribed(false);
-    setIsProcessingPreview(false); // Reset processing state
+    setIsProcessingPreview(false);
   }
 
   async function startTranscription() {
