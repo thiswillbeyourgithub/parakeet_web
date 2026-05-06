@@ -1993,12 +1993,24 @@ export default function App() {
               const rawReplacement = fields[replacementIdx] ?? '';
               if (!rawRegex) continue;
               try {
-                // Strip Python-style inline flags (e.g. (?i)) since JS uses RegExp flags instead
-                const cleanedRegex = rawRegex.replace(/\(\?[gimsuy]+\)/g, '');
-                // Validate regex
-                new RegExp(cleanedRegex, 'gi');
+                // Extract Python-style inline flags (e.g. (?i), (?ims)) from the
+                // pattern and translate to JS RegExp flags so case-sensitive
+                // rules don't silently become insensitive.
+                let cleanedRegex = rawRegex;
+                let parsedFlags = '';
+                cleanedRegex = cleanedRegex.replace(/\(\?([gimsuy]+)\)/g, (_, fl) => {
+                  parsedFlags += fl;
+                  return '';
+                });
+                // Default to case-insensitive when no flags specified (preserves
+                // historical behaviour for rules that omit (?i)).
+                const jsFlags = 'g' + (parsedFlags
+                  ? [...new Set(parsedFlags.split(''))].filter(f => 'imsuy'.includes(f)).join('')
+                  : 'i');
+                new RegExp(cleanedRegex, jsFlags);
                 rules.push({
                   regex: cleanedRegex,
+                  flags: jsFlags,
                   replacement: rawReplacement
                     .replace(/\\n/g, '\n') // support \n in replacements
                     .replace(/^"(.*)"$/, '$1'), // strip outer quotes
@@ -2062,7 +2074,7 @@ export default function App() {
     let result = text;
     for (const rule of dictationRegexRules) {
       try {
-        const re = new RegExp(rule.regex, 'gi');
+        const re = new RegExp(rule.regex, rule.flags || 'gi');
         result = result.replace(re, rule.replacement);
       } catch (e) {
         // Skip invalid regex at runtime
