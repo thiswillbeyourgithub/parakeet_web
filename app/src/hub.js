@@ -7,6 +7,7 @@
  */
 
 import { MODELS, getModelConfig } from './models.js';
+import { openIdb, idbGet, idbPut } from './idb.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
 
 /**
@@ -24,7 +25,6 @@ export class HubDownloadError extends Error {
 
 const DB_NAME = 'parakeet-cache-db';
 const STORE_NAME = 'file-store';
-let dbPromise = null;
 
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
@@ -64,42 +64,15 @@ async function listRepoFiles(repoId, revision = 'main') {
 }
 
 function getDb() {
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, 1);
-      request.onerror = () => reject("Error opening IndexedDB");
-      request.onsuccess = () => resolve(request.result);
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME);
-        }
-      };
-    });
-  }
-  return dbPromise;
+  return openIdb(DB_NAME, STORE_NAME);
 }
 
 async function getFileFromDb(key) {
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(key);
-    request.onerror = () => reject("Error reading from DB");
-    request.onsuccess = () => resolve(request.result);
-  });
+  return idbGet(await getDb(), STORE_NAME, key);
 }
 
 async function saveFileToDb(key, blob) {
-    const db = await getDb();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.put(blob, key);
-        request.onerror = () => reject("Error writing to DB");
-        request.onsuccess = () => resolve(request.result);
-    });
+  return idbPut(await getDb(), STORE_NAME, key, blob);
 }
 
 /**

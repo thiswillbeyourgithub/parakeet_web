@@ -16,6 +16,7 @@ import {
 } from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
+import { openIdb, idbGet, idbPut, idbClear } from '../../src/idb.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -65,45 +66,17 @@ function InfoTooltip({ text }) {
   );
 }
 
-// Helper functions for IndexedDB persistence
+// IndexedDB-backed settings persistence built on the shared idb.js helper.
 const SETTINGS_DB_NAME = 'parakeetweb-settings-db';
 const SETTINGS_STORE_NAME = 'settings-store';
 const STORAGE_KEY_PREFIX = 'parakeetweb_';
-let settingsDbPromise = null;
 
-function getSettingsDb() {
-  if (!settingsDbPromise) {
-    settingsDbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(SETTINGS_DB_NAME, 1);
-      request.onerror = () => reject("Error opening settings IndexedDB");
-      request.onsuccess = () => resolve(request.result);
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
-          db.createObjectStore(SETTINGS_STORE_NAME);
-        }
-      };
-    });
-  }
-  return settingsDbPromise;
-}
+const getSettingsDb = () => openIdb(SETTINGS_DB_NAME, SETTINGS_STORE_NAME);
 
 async function loadSetting(key, defaultValue) {
   try {
-    const db = await getSettingsDb();
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction([SETTINGS_STORE_NAME], 'readonly');
-      const store = transaction.objectStore(SETTINGS_STORE_NAME);
-      const request = store.get(STORAGE_KEY_PREFIX + key);
-      request.onerror = () => {
-        console.warn(`Failed to load setting ${key}:`, request.error);
-        resolve(defaultValue);
-      };
-      request.onsuccess = () => {
-        const value = request.result;
-        resolve(value !== undefined ? value : defaultValue);
-      };
-    });
+    const value = await idbGet(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + key);
+    return value !== undefined ? value : defaultValue;
   } catch (e) {
     console.warn(`Failed to load setting ${key}:`, e);
     return defaultValue;
@@ -112,17 +85,7 @@ async function loadSetting(key, defaultValue) {
 
 async function saveSetting(key, value) {
   try {
-    const db = await getSettingsDb();
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction([SETTINGS_STORE_NAME], 'readwrite');
-      const store = transaction.objectStore(SETTINGS_STORE_NAME);
-      const request = store.put(value, STORAGE_KEY_PREFIX + key);
-      request.onerror = () => {
-        console.warn(`Failed to save setting ${key}:`, request.error);
-        reject(request.error);
-      };
-      request.onsuccess = () => resolve();
-    });
+    await idbPut(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + key, value);
   } catch (e) {
     console.warn(`Failed to save setting ${key}:`, e);
   }
@@ -130,20 +93,8 @@ async function saveSetting(key, value) {
 
 async function clearAllSettings() {
   try {
-    const db = await getSettingsDb();
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction([SETTINGS_STORE_NAME], 'readwrite');
-      const store = transaction.objectStore(SETTINGS_STORE_NAME);
-      const request = store.clear();
-      request.onerror = () => {
-        console.warn('Failed to clear settings:', request.error);
-        reject(request.error);
-      };
-      request.onsuccess = () => {
-        console.log('[App] All settings cleared');
-        resolve();
-      };
-    });
+    await idbClear(await getSettingsDb(), SETTINGS_STORE_NAME);
+    console.log('[App] All settings cleared');
   } catch (e) {
     console.warn('Failed to clear settings:', e);
   }
