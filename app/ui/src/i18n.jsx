@@ -511,17 +511,18 @@ const translations = {
 
 /**
  * Detect the preferred language from the browser.
- * Returns 'fr' if French is detected, otherwise 'en'.
+ * Returns 'fr' only if French is detected; English otherwise.
  */
 function detectLanguage() {
-  const langs = navigator.languages || [navigator.language || 'fr'];
+  const langs = navigator.languages || [navigator.language || 'en'];
   for (const lang of langs) {
     const code = lang.toLowerCase().split('-')[0];
     if (code === 'fr') return 'fr';
     if (code === 'en') return 'en';
   }
-  // If unsure (not French, not English), default to French
-  return 'fr';
+  // English is the lingua franca; only fall back to French for fr-* locales
+  // (which were already handled above).
+  return 'en';
 }
 
 const I18nContext = createContext();
