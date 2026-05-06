@@ -5,6 +5,7 @@ import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
+import { resamplePcmTo16k } from './lib/audio.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
@@ -944,21 +945,9 @@ export default function App() {
     const sourceSampleRate = audioContext?.sampleRate ?? 48000;
     console.log(`[Record] Captured ${totalSamples} samples at ${sourceSampleRate}Hz (${(totalSamples / sourceSampleRate).toFixed(2)}s)`);
 
-    // Resample from mic native rate → 16kHz mono via OfflineAudioContext
+    // Resample from mic native rate → 16kHz mono
     const targetSampleRate = 16000;
-    const offlineCtx = new OfflineAudioContext(
-      1,
-      Math.ceil((totalSamples / sourceSampleRate) * targetSampleRate),
-      targetSampleRate
-    );
-    const buf = offlineCtx.createBuffer(1, totalSamples, sourceSampleRate);
-    buf.getChannelData(0).set(rawPcm);
-    const src = offlineCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(offlineCtx.destination);
-    src.start();
-    const resampled = await offlineCtx.startRendering();
-    const pcm16k = resampled.getChannelData(0);
+    const pcm16k = await resamplePcmTo16k(rawPcm, sourceSampleRate);
     console.log(`[Record] Resampled to 16kHz (${pcm16k.length} samples, ${(pcm16k.length / 16000).toFixed(2)}s)`);
 
     // Close the recording AudioContext
@@ -1244,24 +1233,7 @@ export default function App() {
 
     // Resample to 16kHz if needed
     const targetSampleRate = 16000;
-    let pcm16k;
-    if (sourceSampleRate === targetSampleRate) {
-      pcm16k = rawPcm;
-    } else {
-      const offlineCtx = new OfflineAudioContext(
-        1,
-        Math.ceil((totalSamples / sourceSampleRate) * targetSampleRate),
-        targetSampleRate
-      );
-      const buf = offlineCtx.createBuffer(1, totalSamples, sourceSampleRate);
-      buf.getChannelData(0).set(rawPcm);
-      const src = offlineCtx.createBufferSource();
-      src.buffer = buf;
-      src.connect(offlineCtx.destination);
-      src.start();
-      const resampled = await offlineCtx.startRendering();
-      pcm16k = resampled.getChannelData(0);
-    }
+    const pcm16k = await resamplePcmTo16k(rawPcm, sourceSampleRate);
     console.log(`[RemoteMic] Final: ${pcm16k.length} samples at 16kHz (${(pcm16k.length / 16000).toFixed(2)}s)`);
 
     // Build WAV and feed to existing pipeline
