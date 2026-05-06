@@ -185,6 +185,42 @@ function validateRoomSecret(req, res, next) {
     next();
 }
 
+// ============ Body Validation ============
+//
+// The signaling server is a dumb relay, but it still hands raw SDP and
+// ICE candidate data to peers' WebRTC stacks. Untrusted clients holding a
+// valid room secret could otherwise post arbitrarily-shaped JSON, which
+// either crashes the receiver's RTCPeerConnection on parse, or silently
+// inflates per-room storage with junk. Reject anything that doesn't match
+// the minimal expected shape.
+
+const MAX_SDP_BYTES = 16 * 1024;          // real SDPs are ~2-4 kB
+const MAX_CANDIDATE_BYTES = 2 * 1024;
+const MAX_ICE_CANDIDATES_PER_ROOM = 64;
+
+function isPlainObject(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function validateSdp(body) {
+    if (!isPlainObject(body)) return 'body must be a JSON object';
+    if (body.type !== 'offer' && body.type !== 'answer') return 'invalid type';
+    if (typeof body.sdp !== 'string' || !body.sdp.length) return 'missing sdp';
+    if (Buffer.byteLength(body.sdp, 'utf8') > MAX_SDP_BYTES) return 'sdp too large';
+    return null;
+}
+
+function validateIceCandidate(body) {
+    if (!isPlainObject(body)) return 'body must be a JSON object';
+    // RTCIceCandidate.toJSON() always has a string 'candidate' field
+    // (possibly empty for end-of-candidates), and optional sdpMid / sdpMLineIndex.
+    if (typeof body.candidate !== 'string') return 'missing candidate';
+    if (Buffer.byteLength(body.candidate, 'utf8') > MAX_CANDIDATE_BYTES) return 'candidate too large';
+    if (body.sdpMid != null && typeof body.sdpMid !== 'string') return 'invalid sdpMid';
+    if (body.sdpMLineIndex != null && typeof body.sdpMLineIndex !== 'number') return 'invalid sdpMLineIndex';
+    return null;
+}
+
 function cleanupRooms() {
     const now = Date.now();
     for (const [id, room] of rooms.entries()) {
@@ -280,7 +316,9 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
 
 // Store SDP offer
 app.post('/api/rooms/:id/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
-    req.room.offer = req.body;
+    const err = validateSdp(req.body);
+    if (err) return res.status(400).json({ error: err });
+    req.room.offer = { type: req.body.type, sdp: req.body.sdp };
     debugLog('SIGNALING', `Offer stored for room ${req.params.id}`);
     res.json({ success: true });
 });
@@ -293,7 +331,9 @@ app.get('/api/rooms/:id/offer', rateLimitMiddleware('roomLookup'), validateRoomS
 
 // Store SDP answer
 app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
-    req.room.answer = req.body;
+    const err = validateSdp(req.body);
+    if (err) return res.status(400).json({ error: err });
+    req.room.answer = { type: req.body.type, sdp: req.body.sdp };
     debugLog('SIGNALING', `Answer stored for room ${req.params.id}`);
     res.json({ success: true });
 });
@@ -325,7 +365,16 @@ app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), validateRoom
 
 // ICE candidates for offer side
 app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
-    req.room.iceCandidatesOffer.push(req.body);
+    const err = validateIceCandidate(req.body);
+    if (err) return res.status(400).json({ error: err });
+    if (req.room.iceCandidatesOffer.length >= MAX_ICE_CANDIDATES_PER_ROOM) {
+        return res.status(429).json({ error: 'too many ICE candidates' });
+    }
+    req.room.iceCandidatesOffer.push({
+        candidate: req.body.candidate,
+        sdpMid: req.body.sdpMid ?? null,
+        sdpMLineIndex: req.body.sdpMLineIndex ?? null,
+    });
     debugLog('ICE', `Offer ICE candidate added for room ${req.params.id}`);
     res.json({ success: true });
 });
@@ -336,7 +385,16 @@ app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('roomLookup'), validateR
 
 // ICE candidates for answer side
 app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
-    req.room.iceCandidatesAnswer.push(req.body);
+    const err = validateIceCandidate(req.body);
+    if (err) return res.status(400).json({ error: err });
+    if (req.room.iceCandidatesAnswer.length >= MAX_ICE_CANDIDATES_PER_ROOM) {
+        return res.status(429).json({ error: 'too many ICE candidates' });
+    }
+    req.room.iceCandidatesAnswer.push({
+        candidate: req.body.candidate,
+        sdpMid: req.body.sdpMid ?? null,
+        sdpMLineIndex: req.body.sdpMLineIndex ?? null,
+    });
     debugLog('ICE', `Answer ICE candidate added for room ${req.params.id}`);
     res.json({ success: true });
 });
