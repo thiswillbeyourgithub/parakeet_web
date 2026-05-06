@@ -15,7 +15,7 @@ services:
     # cap_drop:ALL, no-new-privileges, and the read-only rootfs, this keeps
     # the blast radius of any RCE minimal. UID 1000 also matches the default
     # host user on most Linux distros so bind-mounted ./fallback_models is
-    # writable without extra chown when FALLBACK_AUTO_DOWNLOAD=1.
+    # readable without extra chown.
     user: "1000:1000"
     security_opt:
       - no-new-privileges:true
@@ -24,38 +24,25 @@ services:
     # Read-only root filesystem; writable paths are explicit below.
     read_only: true
     tmpfs:
-      # /tmp needs `exec` ONLY when FALLBACK_AUTO_DOWNLOAD=1 (the entrypoint
-      # installs uv/uvx under /tmp/uv-bin and runs them). If you are NOT using
-      # auto-download, replace this with `/tmp:mode=1777` (drop the `exec`
-      # flag) — an executable writable tmpfs is the canonical post-RCE staging
-      # spot, so removing exec shrinks the attack surface. Once your model is
-      # on disk in ./fallback_models you can also flip back to `mode=1777`.
-      - /tmp:exec,mode=1777
+      - /tmp:mode=1777
       - /var/regex
       - /run/config
       # Caddy default config/data dirs (it tries to create these on start).
       - /config/caddy
       - /data/caddy
     volumes:
-      # Local model fallback: bind-mount a host folder so the model is kept
-      # across image rebuilds. The entrypoint checks for
-      # /fallback_models/<FALLBACK_MODEL_REPO>/vocab.txt and either:
-      #   - lets Caddy serve it under /models/, or
-      #   - downloads it via uv+hf CLI if FALLBACK_AUTO_DOWNLOAD=1, or
-      #   - crashes the container so the operator notices.
-      # Mount must be :rw so the auto-download path can write into it.
-      # The folder will be created on the host on first run.
-      - ../fallback_models:/fallback_models:rw
+      # Local model fallback: bind-mount a host folder containing the ONNX
+      # model files. The entrypoint checks for
+      # /fallback_models/<FALLBACK_MODEL_REPO>/vocab.txt and crashes if it
+      # is missing — pre-populate the folder on the host with `hf download`
+      # (see README). Mounted read-only since nothing in the container writes
+      # to it.
+      - ../fallback_models:/fallback_models:ro
 
       # Custom dictation regex rules: uncomment and set the host path to a folder
       # containing your own CSV regex files (overrides the default Murmure download).
       # - /path/to/my/regex-csvs:/custom-regex:ro
     # Resource limits to mitigate denial-of-service risk.
-    # IMPORTANT: when FALLBACK_AUTO_DOWNLOAD=1 and the model is not yet on the
-    # bind mount, comment out the `memory:` line below for the first run.
-    # `hf download` (with hf-xet) buffers chunks well beyond 256M and the
-    # kernel OOM-killer will SIGKILL it (you'll see "Killed" in the logs).
-    # Once /fallback_models/<repo>/vocab.txt exists, restore the limit.
     deploy:
       resources:
         limits:
@@ -78,12 +65,6 @@ services:
       # HuggingFace repo to serve from /fallback_models/<repo>/.
       # Leave unset to disable the fallback feature entirely.
       - FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-}
-      # If 1, the entrypoint will install uv into /tmp and download the model
-      # from HuggingFace when missing. If 0 (default), a missing model crashes
-      # the container instead of silently downloading.
-      - FALLBACK_AUTO_DOWNLOAD=${FALLBACK_AUTO_DOWNLOAD:-0}
-      # Optional HF token for gated/private models or higher rate limits.
-      - HF_TOKEN=${HF_TOKEN:-}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
       # Remote microphone signaling server (shares coturn with WebSend)
