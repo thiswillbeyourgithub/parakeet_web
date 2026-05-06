@@ -22,6 +22,7 @@ import {
 } from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
+import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 
 const STATUS = {
     INIT: 'init',
@@ -73,42 +74,20 @@ function RemoteMicSender() {
     const timerStartRef = useRef(null);
     const levelAnimRef = useRef(null);
     const analyserRef = useRef(null);
-    const wakeLockRef = useRef(null);
+    const keepaliveHeldRef = useRef(false);
 
-    // --- Wake lock helpers ---
+    // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
-        if (!('wakeLock' in navigator)) return;
-        try {
-            wakeLockRef.current = await navigator.wakeLock.request('screen');
-            console.log('[RemoteMic] Wake lock acquired');
-            wakeLockRef.current.addEventListener('release', () => {
-                console.log('[RemoteMic] Wake lock released');
-            });
-        } catch (e) {
-            console.warn('[RemoteMic] Wake lock failed:', e.message);
-        }
+        if (keepaliveHeldRef.current) return;
+        keepaliveHeldRef.current = true;
+        acquireKeepalive();
     }, []);
 
     const releaseWakeLock = useCallback(() => {
-        if (wakeLockRef.current) {
-            wakeLockRef.current.release().catch(() => {});
-            wakeLockRef.current = null;
-        }
+        if (!keepaliveHeldRef.current) return;
+        keepaliveHeldRef.current = false;
+        releaseKeepalive();
     }, []);
-
-    // Re-acquire wake lock if page becomes visible again (e.g. tab switch)
-    useEffect(() => {
-        const onVisibilityChange = async () => {
-            if (document.visibilityState === 'visible' && !wakeLockRef.current) {
-                const s = status; // capture via closure — will be stale but good enough
-                if (s === STATUS.RECORDING) {
-                    await acquireWakeLock();
-                }
-            }
-        };
-        document.addEventListener('visibilitychange', onVisibilityChange);
-        return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-    }, [status, acquireWakeLock]);
 
     // --- Audio-only cleanup (keeps RTC alive) ---
     const cleanupAudio = useCallback(() => {
