@@ -250,6 +250,22 @@ export default function App() {
   const [remoteMicFingerprint, setRemoteMicFingerprint] = useState('');
   const remoteMicVerifyResolveRef = useRef(null); // (boolean) => void
 
+  // Tiny helpers so the elapsed-timer setup/teardown is in one place — used to
+  // be inlined ~7 times across the remote-mic flow which made changes risky.
+  const stopRemoteMicTimer = useCallback(() => {
+    if (remoteMicTimerRef.current) {
+      clearInterval(remoteMicTimerRef.current);
+      remoteMicTimerRef.current = null;
+    }
+  }, []);
+  const startRemoteMicTimer = useCallback(() => {
+    stopRemoteMicTimer();
+    const startTime = Date.now();
+    remoteMicTimerRef.current = setInterval(() => {
+      setRemoteMicElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+  }, [stopRemoteMicTimer]);
+
   // Load QR code library when remote mic modal opens; returns a promise that resolves when ready
   const loadQRCode = useRef(null);
   if (!loadQRCode.current) {
@@ -1054,10 +1070,7 @@ export default function App() {
         console.log('[RemoteMic] Disconnected');
         // Clean up audio/timer state but keep modal open with a "disconnected" status
         // so the user can click Regenerate QR instead of having to restart manually.
-        if (remoteMicTimerRef.current) {
-          clearInterval(remoteMicTimerRef.current);
-          remoteMicTimerRef.current = null;
-        }
+        stopRemoteMicTimer();
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
         pcmChunksRef.current = [];
@@ -1111,11 +1124,7 @@ export default function App() {
               setRemoteMicPaused(false);
               setIsRemoteMic(true);
 
-              // Start elapsed timer
-              const startTime = Date.now();
-              remoteMicTimerRef.current = setInterval(() => {
-                setRemoteMicElapsed(Math.floor((Date.now() - startTime) / 1000));
-              }, 1000);
+              startRemoteMicTimer();
             } else if (msg.type === 'verify-deny') {
               // Phone denied the fingerprint match — abort our side too
               if (remoteMicVerifyResolveRef.current) {
@@ -1129,12 +1138,7 @@ export default function App() {
               remoteMicSampleRateRef.current = msg.sampleRate;
               console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
               setRemoteMicRecording(true);
-              // Restart elapsed timer for new recording session
-              if (remoteMicTimerRef.current) clearInterval(remoteMicTimerRef.current);
-              const startTime = Date.now();
-              remoteMicTimerRef.current = setInterval(() => {
-                setRemoteMicElapsed(Math.floor((Date.now() - startTime) / 1000));
-              }, 1000);
+              startRemoteMicTimer();
             } else if (msg.type === 'audio-end') {
               console.log('[RemoteMic] Phone stopped recording, processing batch...');
               setRemoteMicRecording(false);
@@ -1205,10 +1209,7 @@ export default function App() {
   // Keeps the RTC connection alive.
   async function processRemoteMicBatch() {
     // Stop elapsed timer and reset level
-    if (remoteMicTimerRef.current) {
-      clearInterval(remoteMicTimerRef.current);
-      remoteMicTimerRef.current = null;
-    }
+    stopRemoteMicTimer();
     setRemoteMicLevel(0);
     setRemoteMicElapsed(0);
     setRemoteMicPaused(false);
@@ -1292,10 +1293,7 @@ export default function App() {
       remoteMicRtcRef.current = null;
     }
     remoteMicKeyRef.current = null;
-    if (remoteMicTimerRef.current) {
-      clearInterval(remoteMicTimerRef.current);
-      remoteMicTimerRef.current = null;
-    }
+    stopRemoteMicTimer();
     setIsRemoteMic(false);
     setRemoteMicRecording(false);
     setRemoteMicModal(false);
@@ -1319,10 +1317,7 @@ export default function App() {
 
   function regenerateRemoteMicQr() {
     // Tear down leftover state and start fresh — produces a new roomId/secret/QR.
-    if (remoteMicTimerRef.current) {
-      clearInterval(remoteMicTimerRef.current);
-      remoteMicTimerRef.current = null;
-    }
+    stopRemoteMicTimer();
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.close(); } catch (_) {}
       remoteMicRtcRef.current = null;
@@ -1338,10 +1333,7 @@ export default function App() {
   }
 
   function cancelRemoteMic() {
-    if (remoteMicTimerRef.current) {
-      clearInterval(remoteMicTimerRef.current);
-      remoteMicTimerRef.current = null;
-    }
+    stopRemoteMicTimer();
     if (remoteMicRtcRef.current) {
       remoteMicRtcRef.current.close();
       remoteMicRtcRef.current = null;
