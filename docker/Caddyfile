@@ -23,9 +23,11 @@
 		reverse_proxy localhost:3001
 	}
 
-	# Local model fallback files (bind-mounted from host).
+	# Local model fallback files: served from whatever host folder the operator
+	# bind-mounted into the container at LOCAL_MODEL_PATH (flat layout — the
+	# ONNX files and vocab.txt are expected directly inside that folder).
 	handle_path /models/* {
-		root * /fallback_models
+		root * {$LOCAL_MODEL_PATH:/models}
 		file_server
 	}
 

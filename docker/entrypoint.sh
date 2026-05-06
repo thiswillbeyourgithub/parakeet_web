@@ -1,8 +1,8 @@
 #!/bin/sh
 # Entrypoint for the parakeetweb production container.
 #
-# - Verifies the fallback model is present in /fallback_models (operator
-#   pre-populates the host bind-mount).
+# - Verifies the fallback model is present at LOCAL_MODEL_PATH (operator
+#   bind-mounts a host folder containing the ONNX files into the container).
 # - Populates /var/regex with the dictation regex CSV(s).
 # - Generates /run/config/config.js so the static bundle picks up runtime
 #   VITE_* envs without needing a rebuild.
@@ -19,31 +19,30 @@ echo "[entrypoint] VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT
 echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-(not set)}"
 echo "[entrypoint] VITE_FORCE_LOCAL_MODEL_FALLBACK=${VITE_FORCE_LOCAL_MODEL_FALLBACK:-(not set)}"
-echo "[entrypoint] FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-(not set)}"
+echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] =============================="
 
 # ---------- Fallback model: ensure weights exist on the bind mount ---------
-# The host bind-mounts /fallback_models. If FALLBACK_MODEL_REPO is set we
-# verify vocab.txt is present under /fallback_models/<repo>/; if it is
-# missing we crash so the operator notices and pre-populates the folder.
-if [ -z "${FALLBACK_MODEL_REPO}" ]; then
-  echo "[entrypoint] FALLBACK_MODEL_REPO not set — skipping fallback model setup."
+# When LOCAL_MODEL_PATH is set, the operator has bind-mounted a folder of
+# ONNX files into the container. We verify vocab.txt is present and let
+# Caddy serve that folder under /models/ (see Caddyfile).
+if [ -z "${LOCAL_MODEL_PATH}" ]; then
+  echo "[entrypoint] LOCAL_MODEL_PATH not set — skipping fallback model setup."
 else
-  MODEL_DIR="/fallback_models/${FALLBACK_MODEL_REPO}"
-  if [ -f "${MODEL_DIR}/vocab.txt" ]; then
-    echo "[entrypoint] Fallback model present at ${MODEL_DIR}"
+  if [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
+    echo "[entrypoint] Fallback model present at ${LOCAL_MODEL_PATH}"
   else
-    echo "[entrypoint] ERROR: fallback model missing at ${MODEL_DIR}."
-    echo "[entrypoint] Pre-populate the bind-mounted folder on the host, e.g.:"
-    echo "[entrypoint]   hf download ${FALLBACK_MODEL_REPO} \\"
-    echo "[entrypoint]     --local-dir ./fallback_models/${FALLBACK_MODEL_REPO}"
+    echo "[entrypoint] ERROR: fallback model missing at ${LOCAL_MODEL_PATH}."
+    echo "[entrypoint] Bind-mount a folder of ONNX files into the container at"
+    echo "[entrypoint] ${LOCAL_MODEL_PATH} (flat layout — vocab.txt and the .onnx"
+    echo "[entrypoint] files directly inside). Pre-populate the host folder with e.g.:"
+    echo "[entrypoint]   hf download istupakov/parakeet-tdt-0.6b-v3-onnx \\"
+    echo "[entrypoint]     --local-dir /some/host/path"
     exit 1
   fi
 fi
-# Caddy serves /fallback_models directly via handle_path /models/* — no
-# in-container symlinks required.
 
 # ---------- Dictation regex rules ------------------------------------------
 # DICTATION_REGEX_SOURCE overrides the default Murmure URL.

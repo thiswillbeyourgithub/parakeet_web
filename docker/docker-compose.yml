@@ -31,13 +31,12 @@ services:
       - /config/caddy
       - /data/caddy
     volumes:
-      # Local model fallback: bind-mount a host folder containing the ONNX
-      # model files. The entrypoint checks for
-      # /fallback_models/<FALLBACK_MODEL_REPO>/vocab.txt and crashes if it
-      # is missing — pre-populate the folder on the host with `hf download`
-      # (see README). Mounted read-only since nothing in the container writes
-      # to it.
-      - ../fallback_models:/fallback_models:ro
+      # Local model fallback: bind-mount a host folder of ONNX files (flat
+      # layout: vocab.txt + .onnx files directly inside) into the container,
+      # then set LOCAL_MODEL_PATH below to the in-container target. Caddy
+      # serves it under /models/. Pre-populate the host folder with e.g.:
+      #   hf download istupakov/parakeet-tdt-0.6b-v3-onnx --local-dir /host/path
+      # - /host/path/to/onnx-files:/models:ro
 
       # Custom dictation regex rules: uncomment and set the host path to a folder
       # containing your own CSV regex files (overrides the default Murmure download).
@@ -56,15 +55,16 @@ services:
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-true}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
-      # Local model fallback: auto-enabled when FALLBACK_MODEL_REPO is set.
+      # Local model fallback: auto-enabled when LOCAL_MODEL_PATH is set.
       # Can also be forced on/off explicitly.
-      - VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-${FALLBACK_MODEL_REPO:+true}}
+      - VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-${LOCAL_MODEL_PATH:+true}}
       # Force local fallback: skip HuggingFace entirely and always serve weights
       # from /models/. Useful for troubleshooting the local-fallback path.
       - VITE_FORCE_LOCAL_MODEL_FALLBACK=${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}
-      # HuggingFace repo to serve from /fallback_models/<repo>/.
-      # Leave unset to disable the fallback feature entirely.
-      - FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-}
+      # In-container path of the bind-mounted ONNX folder (must match the
+      # container side of the volume above). Caddy serves this directory at
+      # /models/. Leave unset to disable local fallback entirely.
+      - LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
       # Remote microphone signaling server (shares coturn with WebSend)
