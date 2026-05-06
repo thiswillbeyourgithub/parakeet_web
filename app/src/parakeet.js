@@ -382,6 +382,10 @@ export class ParakeetModel {
         // At temperature=0, the model is fully greedy — confidence is 1.0
         confVal = 1.0;
       }
+      // Clamp to a tiny positive value: degenerate logits (all -Infinity, NaN
+      // inputs) can produce confVal=0 or non-finite, which would poison the
+      // overall log-prob with -Infinity / NaN.
+      if (!Number.isFinite(confVal) || confVal <= 0) confVal = 1e-10;
       frameConfs.push(confVal);
       overallLogProb += Math.log(confVal);
 
