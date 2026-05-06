@@ -23,12 +23,12 @@ export class ParakeetTokenizer {
     this.blankToken = '<blk>';
     this.unkToken = '<unk>';
 
-    // Dynamically find blank token ID from vocabulary instead of hardcoding 1024,
-    // which would break for models with different vocab sizes.
+    // Dynamically find blank token ID from vocabulary. A silent default
+    // (e.g. 1024) silently corrupts decoding on models with a different
+    // vocab size (e.g. v3 multilingual = 4097), so fail loudly instead.
     this.blankId = id2token.findIndex(t => t === '<blk>');
     if (this.blankId === -1) {
-      console.warn('[ParakeetTokenizer] Blank token <blk> not found in vocabulary, defaulting to 1024');
-      this.blankId = 1024;
+      throw new Error('[ParakeetTokenizer] Blank token <blk> not found in vocabulary');
     }
 
     // Pre-compute sanitized tokens (replace SentencePiece marker ▁ with space)
