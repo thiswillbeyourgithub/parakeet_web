@@ -225,6 +225,11 @@ function cleanupRooms() {
     const now = Date.now();
     for (const [id, room] of rooms.entries()) {
         if (now - room.created > ROOM_TTL) {
+            // Wake any pending long-pollers so they stop holding refs to the room.
+            if (room.answerWaiters) {
+                for (const wake of room.answerWaiters) wake();
+                room.answerWaiters.clear();
+            }
             rooms.delete(id);
             console.log(`Room ${id} expired and removed`);
         }
@@ -306,7 +311,10 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
         offer: null,
         answer: null,
         iceCandidatesOffer: [],
-        iceCandidatesAnswer: []
+        iceCandidatesAnswer: [],
+        // Pending long-poll responses waiting for an answer; cleared when
+        // an answer arrives or the room is cleaned up.
+        answerWaiters: new Set()
     });
 
     console.log(`Room ${roomId} created`);
@@ -334,6 +342,11 @@ app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), validateRoomSe
     const err = validateSdp(req.body);
     if (err) return res.status(400).json({ error: err });
     req.room.answer = { type: req.body.type, sdp: req.body.sdp };
+    // Wake up any pending long-pollers immediately so their timers stop.
+    if (req.room.answerWaiters) {
+        for (const wake of req.room.answerWaiters) wake();
+        req.room.answerWaiters.clear();
+    }
     debugLog('SIGNALING', `Answer stored for room ${req.params.id}`);
     res.json({ success: true });
 });
@@ -344,20 +357,41 @@ app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), validateRoom
     if (req.room.answer) return res.json(req.room.answer);
 
     if (req.query.wait === 'true') {
-        const startTime = Date.now();
         const timeout = 30000;
-        const pollInterval = 500;
         const roomId = req.params.id;
+        const room = req.room;
+        let pendingTimer = null;
+        let finished = false;
 
-        const checkAnswer = () => {
+        const finish = (fn) => {
+            if (finished) return;
+            finished = true;
+            if (pendingTimer) clearTimeout(pendingTimer);
+            room.answerWaiters?.delete(wake);
+            fn();
+        };
+
+        // Notification path: POST /answer flushes the waiter set, calling
+        // wake() which resolves immediately instead of waiting for the next tick.
+        const wake = () => finish(() => {
             const currentRoom = rooms.get(roomId);
             if (!currentRoom) return res.status(404).json({ error: 'Room not found' });
             if (currentRoom.answer) return res.json(currentRoom.answer);
-            if (Date.now() - startTime >= timeout) return res.status(204).send();
-            setTimeout(checkAnswer, pollInterval);
-        };
+            return res.status(204).send();
+        });
 
-        checkAnswer();
+        room.answerWaiters?.add(wake);
+
+        // Backstop timeout — also covers the case where the room is GC'd.
+        pendingTimer = setTimeout(() => finish(() => {
+            const currentRoom = rooms.get(roomId);
+            if (!currentRoom) return res.status(404).json({ error: 'Room not found' });
+            if (currentRoom.answer) return res.json(currentRoom.answer);
+            return res.status(204).send();
+        }), timeout);
+
+        // If the client disconnects, drop the waiter so we don't leak refs.
+        req.on('close', () => finish(() => {}));
     } else {
         res.status(204).send();
     }
