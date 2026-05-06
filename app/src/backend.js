@@ -17,26 +17,10 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
   try {
     const ortModule = await import('onnxruntime-web');
     ort = ortModule.default || ortModule;
-    
-    // Debug: Check the structure of ort
-    console.log('[Parakeet.js] ORT structure:', { 
-      hasDefault: !!ortModule.default, 
-      hasEnv: !!ort.env, 
-      hasWasm: !!ort.env?.wasm,
-      hasWebgpu: !!ort.env?.webgpu,
-      keys: Object.keys(ort).slice(0, 10) // Show first 10 keys
-    });
-    
-    // If still no env, try accessing it differently
-    if (!ort.env) {
-      console.log('[Parakeet.js] Trying alternative access patterns...');
-      console.log('[Parakeet.js] ortModule keys:', Object.keys(ortModule));
-      
-      // Sometimes the module structure is nested
-      if (ortModule.ort) {
-        ort = ortModule.ort;
-        console.log('[Parakeet.js] Found ort in ortModule.ort');
-      }
+
+    // Some bundler configurations expose the namespace as ortModule.ort.
+    if (!ort.env && ortModule.ort) {
+      ort = ortModule.ort;
     }
   } catch (e) {
     console.error('[Parakeet.js] Failed to import onnxruntime-web:', e);
@@ -72,24 +56,11 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
   }
 
   if (backend === 'webgpu') {
-    // Check WebGPU support properly
-    const webgpuSupported = 'gpu' in navigator;
-    console.log(`[Parakeet.js] WebGPU supported: ${webgpuSupported}`);
-    
-    if (webgpuSupported) {
-      try {
-        // In newer versions of ONNX Runtime Web, WebGPU initialization is automatic
-        // No need to call ort.env.webgpu.init() manually
-        console.log('[Parakeet.js] WebGPU will be initialized automatically when creating session');
-      } catch (error) {
-        console.warn('[Parakeet.js] WebGPU initialization failed:', error);
-        console.warn('[Parakeet.js] Falling back to WASM');
-        backend = 'wasm';
-      }
-    } else {
+    if (!('gpu' in navigator)) {
       console.warn('[Parakeet.js] WebGPU not supported – falling back to WASM');
       backend = 'wasm';
     }
+    // Otherwise WebGPU is initialised automatically when the session is created.
   }
 
   // Expose ort globally so other modules (like SileroVAD) can reuse the same
