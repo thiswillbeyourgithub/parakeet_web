@@ -218,8 +218,16 @@ export class RemoteMicRTC {
             if (this.onSendError) this.onSendError('binary', 'data channel not open');
             return false;
         }
-        // Wait if buffer is backing up (>1MB)
+        // Wait if buffer is backing up (>1MB), but bound the wait so a
+        // degraded-but-not-failed channel can't pin this loop forever while
+        // the audio worklet keeps queuing chunks.
+        const backpressureDeadline = Date.now() + 5000;
         while (this.dataChannel.bufferedAmount > 1024 * 1024) {
+            if (Date.now() > backpressureDeadline) {
+                console.warn('[RemoteMicRTC] sendBinary backpressure timeout — dropping chunk');
+                if (this.onSendError) this.onSendError('binary', 'backpressure timeout');
+                return false;
+            }
             await new Promise(resolve => setTimeout(resolve, 10));
         }
         try {
