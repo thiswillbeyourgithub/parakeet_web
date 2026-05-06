@@ -320,10 +320,21 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const decoderName = `decoder_joint-model${decoderSuffix}`;
 
   // When using local fallback, skip the HF API call (it would fail anyway).
-  // In local mode we optimistically try .data files and let 404s be caught below.
-  const repoFiles = localFallbackBaseUrl
-    ? [`${encoderName}.data`, `${decoderName}.data`]  // optimistic — caught as optional below
-    : await listRepoFiles(repoId, options.revision || 'main');
+  // HEAD-probe the optional .data files so we don't fire noisy 404s on the
+  // main GET path when the model has none.
+  let repoFiles;
+  if (localFallbackBaseUrl) {
+    const probe = async (name) => {
+      try {
+        const res = await fetch(`${localFallbackBaseUrl}/${repoId}/${name}`, { method: 'HEAD' });
+        return res.ok ? name : null;
+      } catch { return null; }
+    };
+    const probed = await Promise.all([probe(`${encoderName}.data`), probe(`${decoderName}.data`)]);
+    repoFiles = probed.filter(Boolean);
+  } else {
+    repoFiles = await listRepoFiles(repoId, options.revision || 'main');
+  }
 
   const filesToGet = [
     { key: 'encoderUrl', name: encoderName },
