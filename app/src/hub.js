@@ -29,6 +29,10 @@ let dbPromise = null;
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
 
+function makeCacheKey(repoId, revision, subfolder, filename) {
+  return `hf-${repoId}-${revision}-${subfolder}-${filename}`;
+}
+
 async function listRepoFiles(repoId, revision = 'main') {
   const cacheKey = `${repoId}@${revision}`;
   if (repoFileCache.has(cacheKey)) return repoFileCache.get(cacheKey);
@@ -154,7 +158,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   const url = `${baseUrl}/${pathParts.join('/')}`;
   
   // Check IndexedDB first
-  const cacheKey = `hf-${repoId}-${revision}-${subfolder}-${filename}`;
+  const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
   
   if (typeof indexedDB !== 'undefined') {
     try {
@@ -212,10 +216,10 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress } = options;
+  const { progress, revision = 'main', subfolder = '' } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
-  const cacheKey = `hf-${repoId}-main--${filename}`;
+  const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
   if (typeof indexedDB !== 'undefined') {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
@@ -362,7 +366,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
         if (localFallbackBaseUrl) {
           // Local fallback mode: download from the instance instead of HuggingFace
-          results.urls[key] = await getLocalModelFile(localFallbackBaseUrl, repoId, name, { progress: wrappedProgress });
+          results.urls[key] = await getLocalModelFile(localFallbackBaseUrl, repoId, name, { ...options, progress: wrappedProgress });
         } else {
           results.urls[key] = await getModelFile(repoId, name, { ...options, progress: wrappedProgress });
         }
