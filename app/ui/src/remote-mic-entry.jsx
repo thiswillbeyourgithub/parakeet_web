@@ -312,6 +312,12 @@ function RemoteMicSender() {
             worklet.port.onmessage = async (e) => {
                 const pcmChunk = e.data; // Float32Array
                 if (!sharedKeyRef.current || !rtcRef.current) return;
+                // Defensive: the worklet should only ever post 128-sample
+                // Float32Arrays. Anything else is a bug or a hijacked port.
+                if (!(pcmChunk instanceof Float32Array)) {
+                    console.warn('[RemoteMic] Dropping non-Float32 worklet payload:', typeof pcmChunk);
+                    return;
+                }
 
                 try {
                     const encrypted = await encrypt(pcmChunk.buffer, sharedKeyRef.current);
