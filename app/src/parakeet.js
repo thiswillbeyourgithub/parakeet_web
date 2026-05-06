@@ -323,6 +323,10 @@ export class ParakeetModel {
       const encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
       enc = encOut['outputs'] ?? Object.values(encOut)[0];
     }
+    // Free encoder input tensors now that the encoder has produced its output —
+    // long sessions (continuous recording) would otherwise accumulate them.
+    input.dispose?.();
+    lenTensor.dispose?.();
 
     // Transpose encoder output [B, D, T] ➔ [T, D] for B=1
     const [ , D, Tenc ] = enc.dims;
