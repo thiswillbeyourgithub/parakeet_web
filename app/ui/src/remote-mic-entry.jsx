@@ -15,9 +15,11 @@ import { createRoot } from 'react-dom/client';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSharedKey, encrypt,
-    getPairFingerprint, computeFingerprintLength
+    deriveSharedKey, encrypt
 } from './lib/remote-crypto.js';
+import {
+    getAdaptiveFingerprintLength, computePairFingerprintForRole
+} from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 
@@ -191,19 +193,12 @@ function RemoteMicSender() {
                             rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64 });
 
                             // Compute the same short fingerprint as the
-                            // receiver (receiver-pub first, sender-pub second)
-                            // and ask the user to confirm both screens match.
+                            // receiver via the shared helper, which enforces a
+                            // fixed receiver-first byte order on both sides.
                             // Defends against a malicious signaling server
                             // that swapped keys to MITM the data channel.
-                            let hexLen = 6;
-                            try {
-                                const statsResp = await fetch('/api/signal/stats');
-                                if (statsResp.ok) {
-                                    const { activeRooms } = await statsResp.json();
-                                    hexLen = computeFingerprintLength(activeRooms || 0);
-                                }
-                            } catch (_) { /* fall back */ }
-                            const fp = await getPairFingerprint(theirKey, keyPair.publicKey, hexLen);
+                            const hexLen = await getAdaptiveFingerprintLength();
+                            const fp = await computePairFingerprintForRole('sender', keyPair.publicKey, theirKey, hexLen);
                             setFingerprint(fp);
                             const confirmed = await new Promise((resolve) => {
                                 verifyResolveRef.current = resolve;

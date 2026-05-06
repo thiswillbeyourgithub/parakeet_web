@@ -8,9 +8,11 @@ import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSharedKey, decrypt,
-    getPairFingerprint, computeFingerprintLength
+    deriveSharedKey, decrypt
 } from './lib/remote-crypto.js';
+import {
+    getAdaptiveFingerprintLength, computePairFingerprintForRole
+} from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 
@@ -1078,19 +1080,12 @@ export default function App() {
               const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
               console.log('[RemoteMic] Shared key derived, asking user to verify fingerprint');
 
-              // Compute a short adaptive fingerprint over both pubkeys (in a
-              // fixed order: receiver-pub then sender-pub). The phone runs the
-              // same computation; matching codes prove no signaling-server
-              // MITM. Length scales with active room count.
-              let hexLen = 6;
-              try {
-                const statsResp = await fetch('/api/signal/stats');
-                if (statsResp.ok) {
-                  const { activeRooms } = await statsResp.json();
-                  hexLen = computeFingerprintLength(activeRooms || 0);
-                }
-              } catch (_) { /* fall back to default */ }
-              const fp = await getPairFingerprint(keyPair.publicKey, theirKey, hexLen);
+              // Compute a short adaptive fingerprint over both pubkeys.
+              // The shared helper enforces the same byte order on both sides
+              // (receiver-pub first, sender-pub second) — diverging here would
+              // silently break the MITM defence.
+              const hexLen = await getAdaptiveFingerprintLength();
+              const fp = await computePairFingerprintForRole('receiver', keyPair.publicKey, theirKey, hexLen);
               setRemoteMicFingerprint(fp);
 
               // Block here until the user clicks Confirm or Deny in the modal.
