@@ -190,9 +190,9 @@ export async function getModelText(repoId, filename, options = {}) {
 /**
  * Download a file from a local server path (fallback when HuggingFace is unreachable).
  * Uses the same IndexedDB caching and progress streaming as getModelFile.
- * Files are expected at <baseUrl>/<repoId>/<filename>.
+ * Files are expected at <baseUrl>/<filename> (flat layout).
  * @param {string} baseUrl Local base URL (e.g., '/models')
- * @param {string} repoId Repo ID — used as subfolder path on the local server
+ * @param {string} repoId Repo ID — only used for the IndexedDB cache key
  * @param {string} filename File to download
  * @param {Object} [options]
  * @param {Function} [options.progress] Progress callback
@@ -215,7 +215,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
     }
   }
 
-  const url = `${baseUrl}/${repoId}/${filename}`;
+  const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
   const response = await fetch(url);
   if (!response.ok) {
@@ -232,14 +232,13 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
  * fallback is enabled so the admin gets early feedback about missing files.
  *
  * @param {string} baseUrl Local base URL (e.g., '/models')
- * @param {string} repoId Repo ID — used as subfolder path
  * @returns {Promise<{ok: boolean, message: string}>} Result with ok=true if the
  *   file is reachable, or ok=false with a descriptive message otherwise.
  */
-export async function checkLocalModelFiles(baseUrl, repoId) {
+export async function checkLocalModelFiles(baseUrl) {
   // vocab.txt is small and always required — a good canary file.
   const testFile = 'vocab.txt';
-  const url = `${baseUrl}/${repoId}/${testFile}`;
+  const url = `${baseUrl}/${testFile}`;
 
   try {
     const res = await fetch(url, { method: 'HEAD' });
@@ -248,8 +247,7 @@ export async function checkLocalModelFiles(baseUrl, repoId) {
     }
     return {
       ok: false,
-      message: `Local fallback is enabled but ${testFile} returned ${res.status}. `
-        + `Make sure model files are placed in public/models/${repoId}/.`,
+      message: `Local fallback is enabled but ${testFile} returned ${res.status} at ${url}.`,
     };
   } catch (e) {
     return {
@@ -309,7 +307,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   if (localFallbackBaseUrl) {
     const probe = async (name) => {
       try {
-        const res = await fetch(`${localFallbackBaseUrl}/${repoId}/${name}`, { method: 'HEAD' });
+        const res = await fetch(`${localFallbackBaseUrl}/${name}`, { method: 'HEAD' });
         return res.ok ? name : null;
       } catch { return null; }
     };
