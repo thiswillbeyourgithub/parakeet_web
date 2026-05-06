@@ -104,6 +104,15 @@ async function clearAllSettings() {
 // Injected by Vite from app/package.json — no need to manually sync
 const VERSION = __APP_VERSION__;
 
+// Module-scope hook: persists `value` to IndexedDB whenever it changes,
+// gated on `loaded` so we don't overwrite the on-disk value with the
+// initial React default before loadSetting has had a chance to run.
+function usePersistedSetting(key, value, loaded) {
+  useEffect(() => {
+    if (loaded) saveSetting(key, value);
+  }, [key, value, loaded]);
+}
+
 // Helper function to truncate long filenames
 function truncateFilename(filename, maxLength = 40) {
   if (filename.length <= maxLength) return filename;
@@ -623,32 +632,28 @@ export default function App() {
   }, [backend, settingsLoaded]);
 
   // Save settings to IndexedDB whenever they change (only after initial load).
-  // usePersistedSetting is a thin wrapper around useEffect that fires once
-  // per setting, only after settingsLoaded flips to true. Keeping the
-  // hook-call list flat (one per setting) preserves the previous behavior:
-  // changing setting X writes only X, not all eighteen of them.
-  function usePersistedSetting(key, value) {
-    useEffect(() => {
-      if (settingsLoaded) saveSetting(key, value);
-    }, [key, value]);
-  }
-  usePersistedSetting('encoderQuant', encoderQuant);
-  usePersistedSetting('decoderQuant', decoderQuant);
-  usePersistedSetting('preprocessor', preprocessor);
-  usePersistedSetting('verboseLog', verboseLog);
-  usePersistedSetting('frameStride', frameStride);
-  usePersistedSetting('temperature', temperature);
-  usePersistedSetting('cpuThreads', cpuThreads);
-  usePersistedSetting('noiseSuppression', noiseSuppression);
-  usePersistedSetting('echoCancellation', echoCancellation);
-  usePersistedSetting('autoGainControl', autoGainControl);
-  usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap);
-  usePersistedSetting('autoTranscribe', autoTranscribe);
-  usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard);
-  usePersistedSetting('enableChunking', enableChunking);
-  usePersistedSetting('chunkDuration', chunkDuration);
-  usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode);
-  usePersistedSetting('transcriptions', transcriptions);
+  // usePersistedSetting (defined at module scope below) is a thin wrapper
+  // around useEffect that fires once per setting, only after `loaded`
+  // flips to true. Keeping the hook-call list flat (one per setting)
+  // preserves the previous behavior: changing setting X writes only X,
+  // not all eighteen of them.
+  usePersistedSetting('encoderQuant', encoderQuant, settingsLoaded);
+  usePersistedSetting('decoderQuant', decoderQuant, settingsLoaded);
+  usePersistedSetting('preprocessor', preprocessor, settingsLoaded);
+  usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
+  usePersistedSetting('frameStride', frameStride, settingsLoaded);
+  usePersistedSetting('temperature', temperature, settingsLoaded);
+  usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
+  usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
+  usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
+  usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
+  usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
+  usePersistedSetting('autoTranscribe', autoTranscribe, settingsLoaded);
+  usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
+  usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
+  usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
+  usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
+  usePersistedSetting('transcriptions', transcriptions, settingsLoaded);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
 
