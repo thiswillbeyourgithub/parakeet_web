@@ -1,7 +1,8 @@
 #!/bin/sh
 # Entrypoint for the parakeetweb production container.
 #
-# - Verifies / optionally downloads the fallback model into /fallback_models.
+# - Verifies the fallback model is present in /fallback_models (operator
+#   pre-populates the host bind-mount).
 # - Populates /var/regex with the dictation regex CSV(s).
 # - Generates /run/config/config.js so the static bundle picks up runtime
 #   VITE_* envs without needing a rebuild.
@@ -19,95 +20,25 @@ echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-(not set)}"
 echo "[entrypoint] VITE_FORCE_LOCAL_MODEL_FALLBACK=${VITE_FORCE_LOCAL_MODEL_FALLBACK:-(not set)}"
 echo "[entrypoint] FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-(not set)}"
-echo "[entrypoint] FALLBACK_AUTO_DOWNLOAD=${FALLBACK_AUTO_DOWNLOAD:-0}"
-echo "[entrypoint] HF_TOKEN=$([ -n "$HF_TOKEN" ] && echo '****(set)' || echo '(not set)')"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] =============================="
 
 # ---------- Fallback model: ensure weights exist on the bind mount ---------
 # The host bind-mounts /fallback_models. If FALLBACK_MODEL_REPO is set we
-# verify vocab.txt is present under /fallback_models/<repo>/. If not:
-#   - FALLBACK_AUTO_DOWNLOAD=1 : install uv into /tmp (tmpfs) and download
-#     the model via the `hf` CLI, confined to the bind mount.
-#   - otherwise               : crash so the operator notices the gap.
+# verify vocab.txt is present under /fallback_models/<repo>/; if it is
+# missing we crash so the operator notices and pre-populates the folder.
 if [ -z "${FALLBACK_MODEL_REPO}" ]; then
   echo "[entrypoint] FALLBACK_MODEL_REPO not set — skipping fallback model setup."
 else
   MODEL_DIR="/fallback_models/${FALLBACK_MODEL_REPO}"
   if [ -f "${MODEL_DIR}/vocab.txt" ]; then
     echo "[entrypoint] Fallback model present at ${MODEL_DIR}"
-  elif [ "${FALLBACK_AUTO_DOWNLOAD:-0}" = "1" ]; then
-    echo "[entrypoint] Fallback model missing at ${MODEL_DIR} — auto-downloading."
-    echo "[entrypoint] WARNING: hf-xet needs more than 256M of RAM to download the model."
-    echo "[entrypoint] If the next step ends with 'Killed', comment out the"
-    echo "[entrypoint] 'memory: 256M' line in docker/docker-compose.yml for this first run,"
-    echo "[entrypoint] then restore it once /fallback_models/<repo>/vocab.txt exists."
-    echo "[entrypoint] WARNING: this path requires /tmp to be mounted with the 'exec' flag"
-    echo "[entrypoint] in docker/docker-compose.yml (it already is by default). Once the"
-    echo "[entrypoint] model is on disk, you can drop 'exec' from the /tmp tmpfs to shrink"
-    echo "[entrypoint] the runtime attack surface."
-    mkdir -p "${MODEL_DIR}"
-    export UV_INSTALL_DIR=/tmp/uv-bin
-    export UV_CACHE_DIR=/tmp/uv-cache
-    export UV_PYTHON_INSTALL_DIR=/tmp/uv-python
-    # uv writes a "receipt" under $XDG_CONFIG_HOME/uv (defaults to /config/uv,
-    # which is on the read-only root fs). Redirect it to the /tmp tmpfs.
-    export XDG_CONFIG_HOME=/tmp/uv-config
-    export XDG_DATA_HOME=/tmp/uv-data
-    mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-    export PATH="${UV_INSTALL_DIR}:${PATH}"
-    if ! command -v uv >/dev/null 2>&1; then
-      # Pin the uv installer to a specific version and verify its SHA-256
-      # before piping it into a shell. The previous code fetched the
-      # latest install.sh straight from astral.sh and ran it unverified,
-      # so a CDN compromise or MITM (or even a benign upstream rewrite)
-      # could ship arbitrary code into the container.
-      #
-      # TODO: when bumping UV_VERSION, recompute UV_INSTALL_SHA256 with:
-      #   curl -fsSL https://astral.sh/uv/${UV_VERSION}/install.sh \
-      #     | sha256sum
-      UV_VERSION="${UV_VERSION:-0.5.11}"
-      UV_INSTALL_SHA256="${UV_INSTALL_SHA256:-TODO_SHA256_FOR_${UV_VERSION}}"
-      UV_INSTALL_URL="https://astral.sh/uv/${UV_VERSION}/install.sh"
-      INSTALL_SCRIPT="/tmp/uv-install.sh"
-      echo "[entrypoint] Installing uv ${UV_VERSION} into ${UV_INSTALL_DIR}..."
-      mkdir -p "${UV_INSTALL_DIR}"
-      if command -v wget >/dev/null 2>&1; then
-        wget -qO "${INSTALL_SCRIPT}" "${UV_INSTALL_URL}"
-      elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "${INSTALL_SCRIPT}" "${UV_INSTALL_URL}"
-      else
-        echo "[entrypoint] ERROR: neither wget nor curl available to fetch uv"
-        exit 1
-      fi
-      ACTUAL_SHA256="$(sha256sum "${INSTALL_SCRIPT}" | awk '{print $1}')"
-      if [ "${UV_INSTALL_SHA256}" = "TODO_SHA256_FOR_${UV_VERSION}" ]; then
-        echo "[entrypoint] ERROR: UV_INSTALL_SHA256 is unset. Set it to:"
-        echo "[entrypoint]   ${ACTUAL_SHA256}"
-        echo "[entrypoint] (after verifying the script content) and rebuild."
-        exit 1
-      fi
-      if [ "${ACTUAL_SHA256}" != "${UV_INSTALL_SHA256}" ]; then
-        echo "[entrypoint] ERROR: uv installer SHA-256 mismatch."
-        echo "[entrypoint]   expected: ${UV_INSTALL_SHA256}"
-        echo "[entrypoint]   actual:   ${ACTUAL_SHA256}"
-        exit 1
-      fi
-      sh "${INSTALL_SCRIPT}"
-      rm -f "${INSTALL_SCRIPT}"
-    fi
-    echo "[entrypoint] Downloading ${FALLBACK_MODEL_REPO} from HuggingFace..."
-    uvx --from huggingface_hub hf download \
-      "${FALLBACK_MODEL_REPO}" --local-dir "${MODEL_DIR}"
-    if [ ! -f "${MODEL_DIR}/vocab.txt" ]; then
-      echo "[entrypoint] ERROR: download completed but vocab.txt is still missing in ${MODEL_DIR}"
-      exit 1
-    fi
-    echo "[entrypoint] Fallback model downloaded to ${MODEL_DIR}"
   else
-    echo "[entrypoint] ERROR: fallback model missing at ${MODEL_DIR} and FALLBACK_AUTO_DOWNLOAD!=1."
-    echo "[entrypoint] Either populate the bind-mounted folder manually or set FALLBACK_AUTO_DOWNLOAD=1."
+    echo "[entrypoint] ERROR: fallback model missing at ${MODEL_DIR}."
+    echo "[entrypoint] Pre-populate the bind-mounted folder on the host, e.g.:"
+    echo "[entrypoint]   hf download ${FALLBACK_MODEL_REPO} \\"
+    echo "[entrypoint]     --local-dir ./fallback_models/${FALLBACK_MODEL_REPO}"
     exit 1
   fi
 fi
