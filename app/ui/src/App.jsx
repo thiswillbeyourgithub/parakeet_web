@@ -216,6 +216,7 @@ export default function App() {
   const [recordingCountdown, setRecordingCountdown] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null); // legacy name kept for stopRecording guard
   const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
+  const clearPcmChunks = () => { clearPcmChunks(); };
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioChunks, setAudioChunks] = useState([]);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -866,7 +867,7 @@ export default function App() {
       const workletNode = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
 
       // Accumulate raw PCM chunks from the worklet processor
-      pcmChunksRef.current = [];
+      clearPcmChunks();
       workletNode.port.onmessage = (e) => {
         pcmChunksRef.current.push(e.data); // Float32Array, 128 samples each
       };
@@ -932,7 +933,7 @@ export default function App() {
 
     // Concatenate PCM chunks captured by the AudioWorklet into one buffer
     const chunks = pcmChunksRef.current;
-    pcmChunksRef.current = [];
+    clearPcmChunks();
     const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
     const rawPcm = new Float32Array(totalSamples);
     let offset = 0;
@@ -1027,7 +1028,7 @@ export default function App() {
     setRemoteMicError('');
     setRemoteMicLevel(0);
     setRemoteMicElapsed(0);
-    pcmChunksRef.current = [];
+    clearPcmChunks();
     remoteMicSampleRateRef.current = 16000;
 
     try {
@@ -1048,7 +1049,7 @@ export default function App() {
         stopRemoteMicTimer();
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
-        pcmChunksRef.current = [];
+        clearPcmChunks();
         setIsRemoteMic(false);
         setRemoteMicRecording(false);
         setRemoteMicLevel(0);
@@ -1190,7 +1191,7 @@ export default function App() {
     setRemoteMicPaused(false);
 
     const chunks = pcmChunksRef.current;
-    pcmChunksRef.current = [];
+    clearPcmChunks();
     const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
 
     if (totalSamples === 0) {
@@ -1281,7 +1282,7 @@ export default function App() {
       remoteMicRtcRef.current = null;
     }
     remoteMicKeyRef.current = null;
-    pcmChunksRef.current = [];
+    clearPcmChunks();
     setRemoteMicQrUrl('');
     setRemoteMicLevel(0);
     setRemoteMicPaused(false);
@@ -1302,7 +1303,7 @@ export default function App() {
     setRemoteMicModal(false);
     setRemoteMicLevel(0);
     setRemoteMicQrUrl('');
-    pcmChunksRef.current = [];
+    clearPcmChunks();
   }
 
   // --- Dictation device (SpeechMike) integration ---
