@@ -36,9 +36,19 @@ function debugLog(context, message, data = null) {
 }
 
 // ============ CORS / Origin Validation ============
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-    : [`https://${DOMAIN}`, `http://${DOMAIN}`];
+// ALLOWED_ORIGINS must be a comma-separated list of full origins, each
+// prefixed with http:// or https://. We refuse to guess the scheme — a
+// silent http:// default could let a network attacker downgrade the QR
+// link and intercept the signaling exchange.
+if (!process.env.ALLOWED_ORIGINS) {
+    throw new Error('ALLOWED_ORIGINS env var is required (comma-separated, each entry must start with http:// or https://)');
+}
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
+for (const origin of ALLOWED_ORIGINS) {
+    if (!/^https?:\/\//.test(origin)) {
+        throw new Error(`ALLOWED_ORIGINS entry "${origin}" must start with http:// or https://`);
+    }
+}
 
 // Trust proxy headers only from loopback (Caddy/Vite proxy on same host)
 app.set('trust proxy', 'loopback');
