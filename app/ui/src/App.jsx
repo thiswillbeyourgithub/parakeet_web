@@ -173,7 +173,6 @@ export default function App() {
   const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
   const clearPcmChunks = () => { pcmChunksRef.current = []; };
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
-  const [audioChunks, setAudioChunks] = useState([]);
   const [audioLevel, setAudioLevel] = useState(0);
   const [audioContext, setAudioContext] = useState(null);
   const [pendingAudioFile, setPendingAudioFile] = useState(null);
