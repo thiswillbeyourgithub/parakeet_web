@@ -38,9 +38,25 @@ export async function exportPublicKey(publicKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importPublicKey(base64Key) {
-    const binaryString = atob(base64Key);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
+    // Reject anything that isn't a plausible raw P-256 public key before
+    // handing bytes to WebCrypto. Raw uncompressed P-256 is exactly 65 bytes
+    // (0x04 || X || Y); the base64 form is therefore 88 chars including
+    // padding. This guards against a malicious peer (or compromised
+    // signaling relay) sending oversized / malformed input.
+    if (typeof base64Key !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64Key)) {
+        throw new Error('importPublicKey: input is not valid base64');
+    }
+    let binaryString;
+    try {
+        binaryString = atob(base64Key);
+    } catch {
+        throw new Error('importPublicKey: base64 decode failed');
+    }
+    if (binaryString.length !== 65 || binaryString.charCodeAt(0) !== 0x04) {
+        throw new Error(`importPublicKey: expected 65-byte uncompressed P-256 key, got ${binaryString.length} bytes`);
+    }
+    const bytes = new Uint8Array(65);
+    for (let i = 0; i < 65; i++) {
         bytes[i] = binaryString.charCodeAt(i);
     }
     return crypto.subtle.importKey(
