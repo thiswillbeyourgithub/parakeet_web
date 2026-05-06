@@ -249,6 +249,10 @@ export default function App() {
       if (window.QRCode) { resolve(); return; }
       const script = document.createElement('script');
       script.src = '/js/qrcode.min.js';
+      // SRI hash of app/ui/public/js/qrcode.min.js. If you replace that
+      // file, recompute with: openssl dgst -sha384 -binary <file> | base64
+      script.integrity = 'sha384-HGmnkDZJy7mRkoARekrrj0VjEFSh9a0Z8qxGri/kTTAJkgR8hqD1lHsYSh3JdzRi';
+      script.crossOrigin = 'anonymous';
       script.onload = () => { console.log('[RemoteMic] QR code library loaded'); setTimeout(resolve, 0); };
       document.head.appendChild(script);
     });
