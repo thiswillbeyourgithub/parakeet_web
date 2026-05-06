@@ -174,7 +174,11 @@ export default function App() {
   const repoId = CONFIG.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
   // Whether the instance can serve model weights locally (under /models/) as
   // a fallback when HuggingFace is blocked or unreachable.
-  const localFallbackEnabled = CONFIG.VITE_LOCAL_MODEL_FALLBACK === 'true';
+  // When true, always serve weights locally and skip HuggingFace entirely.
+  // Useful for troubleshooting the local-fallback path without having to
+  // simulate a blocked HF. Implies localFallbackEnabled.
+  const forceLocalFallback = CONFIG.VITE_FORCE_LOCAL_MODEL_FALLBACK === 'true';
+  const localFallbackEnabled = forceLocalFallback || CONFIG.VITE_LOCAL_MODEL_FALLBACK === 'true';
   // Tracks whether we should show the "HF blocked, try local?" prompt
   const [showFallbackPrompt, setShowFallbackPrompt] = useState(false);
   // Warning message when local fallback is enabled but model files are missing
@@ -699,7 +703,7 @@ export default function App() {
    * @param {boolean} [opts.useLocalFallback=false] When true, download weights
    *   from this instance (/models/) instead of HuggingFace.
    */
-  async function loadModel({ useLocalFallback = false } = {}) {
+  async function loadModel({ useLocalFallback = forceLocalFallback } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');

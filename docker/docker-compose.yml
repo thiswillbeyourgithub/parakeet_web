@@ -72,6 +72,9 @@ services:
       # Local model fallback: auto-enabled when FALLBACK_MODEL_REPO is set.
       # Can also be forced on/off explicitly.
       - VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-${FALLBACK_MODEL_REPO:+true}}
+      # Force local fallback: skip HuggingFace entirely and always serve weights
+      # from /models/. Useful for troubleshooting the local-fallback path.
+      - VITE_FORCE_LOCAL_MODEL_FALLBACK=${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}
       # HuggingFace repo to serve from /fallback_models/<repo>/.
       # Leave unset to disable the fallback feature entirely.
       - FALLBACK_MODEL_REPO=${FALLBACK_MODEL_REPO:-}
