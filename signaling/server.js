@@ -158,11 +158,15 @@ function rateLimitMiddleware(limitType) {
     };
 }
 
+// Retention and sweep cadence are intentionally the same: a stale
+// limiter survives at most one extra sweep (≤ RATE_LIMITER_MAX_AGE)
+// before being reaped, which keeps the bookkeeping window predictable.
+const RATE_LIMITER_MAX_AGE = 5 * 60 * 1000;
+
 function cleanupRateLimiters() {
     const now = Date.now();
-    const maxAge = 5 * 60 * 1000;
     for (const [key, limiter] of rateLimiters.entries()) {
-        const hasRecentActivity = limiter.timestamps.some(ts => now - ts < maxAge);
+        const hasRecentActivity = limiter.timestamps.some(ts => now - ts < RATE_LIMITER_MAX_AGE);
         const isBlocked = limiter.blockedUntil && now < limiter.blockedUntil;
         if (!hasRecentActivity && !isBlocked) {
             rateLimiters.delete(key);
@@ -170,7 +174,7 @@ function cleanupRateLimiters() {
     }
 }
 
-setInterval(cleanupRateLimiters, 2 * 60 * 1000);
+setInterval(cleanupRateLimiters, RATE_LIMITER_MAX_AGE);
 
 // ============ Room Helpers ============
 
