@@ -163,12 +163,24 @@ function RemoteMicSender() {
                 console.warn(`[RemoteMic] send-error stage=${stage} reason=${reason}`);
             };
 
+            // If the receiver never sends its public key, give up after 30s
+            // instead of hanging in CONNECTING/WAITING_KEY forever.
+            const keyTimeout = setTimeout(() => {
+                if (!sharedKeyRef.current) {
+                    console.warn('[RemoteMic] Timed out waiting for receiver public key');
+                    setErrorMsg(t('mobileConnectionError'));
+                    setStatus(STATUS.ERROR);
+                    rtc.close();
+                }
+            }, 30000);
+
             // Handle incoming messages (JSON control messages)
             rtc.onMessage = async (data) => {
                 if (typeof data === 'string') {
                     try {
                         const msg = JSON.parse(data);
                         if (msg.type === 'public-key') {
+                            clearTimeout(keyTimeout);
                             // Computer sent its public key — derive shared key
                             setStatus(STATUS.WAITING_KEY);
                             const keyPair = await generateKeyPair();
