@@ -258,6 +258,7 @@ export default function App() {
   const [remoteMicLevel, setRemoteMicLevel] = useState(0);
   const [remoteMicElapsed, setRemoteMicElapsed] = useState(0);
   const [remoteMicError, setRemoteMicError] = useState('');
+  const [remoteMicDecryptErrors, setRemoteMicDecryptErrors] = useState(0);
   const [remoteMicPaused, setRemoteMicPaused] = useState(false);
   const [remoteMicRecording, setRemoteMicRecording] = useState(false);
   const remoteMicRtcRef = useRef(null);
@@ -1026,6 +1027,7 @@ export default function App() {
     setRemoteMicModal(true);
     setRemoteMicStatus('connecting');
     setRemoteMicError('');
+    setRemoteMicDecryptErrors(0);
     setRemoteMicLevel(0);
     setRemoteMicElapsed(0);
     clearPcmChunks();
@@ -1147,10 +1149,11 @@ export default function App() {
             setRemoteMicLevel(Math.min(100, rms * 250));
           } catch (e) {
             // Don't swallow this: the user thinks audio is being received,
-            // but every chunk is failing — surface it once so the modal
-            // shows an actionable error instead of an empty waveform.
+            // but every chunk is failing — surface a running count so the
+            // modal shows the loss instead of just the first error.
             console.warn('[RemoteMic] Decrypt error:', e.message);
-            setRemoteMicError((prev) => prev || `Decryption failed (${e.message})`);
+            setRemoteMicDecryptErrors((n) => n + 1);
+            setRemoteMicError(`Decryption failed (${e.message})`);
           }
         }
       };
@@ -3074,6 +3077,11 @@ export default function App() {
             </>
           )}
 
+          {remoteMicDecryptErrors > 0 && remoteMicStatus !== 'error' && (
+            <p style={{ color: 'var(--danger)', textAlign: 'center', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+              ⚠ {remoteMicDecryptErrors} decrypt error{remoteMicDecryptErrors === 1 ? '' : 's'}
+            </p>
+          )}
           {remoteMicStatus !== 'error' && remoteMicStatus !== 'disconnected' && (
             <div style={{ textAlign: 'center', marginTop: '1rem' }}>
               <button onClick={cancelRemoteMic} style={{
