@@ -1144,6 +1144,10 @@ export default function App() {
               setRemoteMicPaused(true);
             } else if (msg.type === 'resumed') {
               setRemoteMicPaused(false);
+            } else {
+              // Catches protocol drift between desktop and phone bundles —
+              // silently dropping unknown types makes mismatches invisible.
+              console.warn('[RemoteMic] Unknown control message type:', msg.type);
             }
           } catch (e) {
             console.error('[RemoteMic] Error parsing message:', e);
@@ -1162,7 +1166,11 @@ export default function App() {
             const rms = Math.sqrt(sum / float32.length);
             setRemoteMicLevel(Math.min(100, rms * 250));
           } catch (e) {
+            // Don't swallow this: the user thinks audio is being received,
+            // but every chunk is failing — surface it once so the modal
+            // shows an actionable error instead of an empty waveform.
             console.warn('[RemoteMic] Decrypt error:', e.message);
+            setRemoteMicError((prev) => prev || `Decryption failed (${e.message})`);
           }
         }
       };
