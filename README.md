@@ -81,33 +81,40 @@ No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-t
 ## Local Model Fallback
 
 If HuggingFace is blocked or unreachable in your environment, you can serve
-model weights directly from the container. Pre-populate the host folder
-once, then point the container at it:
+model weights directly from the container. Pick any host folder, populate
+it with the ONNX files, bind-mount it into the container, and set
+`LOCAL_MODEL_PATH` to the matching in-container path:
 
 ```bash
-# 1. Pre-populate the host folder with the ONNX files:
+# 1. Populate any host folder with the ONNX files (flat layout):
 hf download istupakov/parakeet-tdt-0.6b-v3-onnx \
-    --local-dir ./fallback_models/istupakov/parakeet-tdt-0.6b-v3-onnx
-
-# 2. In docker/.env, set:
-FALLBACK_MODEL_REPO=istupakov/parakeet-tdt-0.6b-v3-onnx
+    --local-dir /host/path/to/onnx-files
 ```
 
-The `./fallback_models` folder is bind-mounted read-only at
-`/fallback_models` (configured in `docker/docker-compose.yml`) and the files
-are git-ignored. Caddy serves them under `/models/<repo>/` at runtime.
-Setting `FALLBACK_MODEL_REPO` automatically enables
-`VITE_LOCAL_MODEL_FALLBACK`. The container crashes at startup if the
-expected files are missing, so misconfigurations are caught early.
+```yaml
+# 2. In docker/docker-compose.yml, add a volume:
+volumes:
+  - /host/path/to/onnx-files:/models:ro
+```
+
+```bash
+# 3. In docker/.env, set:
+LOCAL_MODEL_PATH=/models
+```
+
+Caddy serves whatever is at `LOCAL_MODEL_PATH` under `/models/`. Setting
+`LOCAL_MODEL_PATH` automatically enables `VITE_LOCAL_MODEL_FALLBACK`. The
+container crashes at startup if `vocab.txt` is missing, so
+misconfigurations are caught early.
 
 To troubleshoot the local-fallback path itself, set
 `VITE_FORCE_LOCAL_MODEL_FALLBACK=true` — the UI will skip HuggingFace
 entirely and load weights from `/models/` on first try. Implies
 `VITE_LOCAL_MODEL_FALLBACK=true`.
 
-The container runs as UID 1000. If your host user has a different UID and
-the files end up unreadable to UID 1000, run
-`chmod -R a+rX ./fallback_models` (or `chown -R 1000:1000 ./fallback_models`).
+The container runs as UID 1000. If your files end up unreadable to UID
+1000, run `chmod -R a+rX /host/path/to/onnx-files` (or
+`chown -R 1000:1000 /host/path/to/onnx-files`).
 
 ### Requirements
 
