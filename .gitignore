@@ -18,10 +18,6 @@ data
 deploy.sh
 CLAUDE.md
 
-# Downloaded model files (keep the script and .gitkeep)
-fallback_models/*/
-deploy.sh
-
 # Downloaded dictation regex rules (fetched at runtime)
 app/ui/public/dictation-regex/
 
