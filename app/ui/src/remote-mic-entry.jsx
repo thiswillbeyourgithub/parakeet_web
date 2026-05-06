@@ -128,6 +128,10 @@ function RemoteMicSender() {
     }, [logs, logsOpen]);
 
     const start = useCallback(async () => {
+        // Hoisted so the catch block below can clear it on early failure;
+        // otherwise a join error left the timer to fire 30s later and call
+        // rtc.close() on an already-closed connection.
+        let keyTimeout = null;
         try {
             // Parse room info from URL hash: #roomId:secret
             const hash = window.location.hash.substring(1);
@@ -165,7 +169,7 @@ function RemoteMicSender() {
 
             // If the receiver never sends its public key, give up after 30s
             // instead of hanging in CONNECTING/WAITING_KEY forever.
-            const keyTimeout = setTimeout(() => {
+            keyTimeout = setTimeout(() => {
                 if (!sharedKeyRef.current) {
                     console.warn('[RemoteMic] Timed out waiting for receiver public key');
                     setErrorMsg(t('mobileConnectionError'));
@@ -246,6 +250,7 @@ function RemoteMicSender() {
             await rtc.joinRoom(roomId, secret);
 
         } catch (e) {
+            if (keyTimeout) clearTimeout(keyTimeout);
             console.error('[RemoteMic] Connection error:', e);
             setStatus(STATUS.ERROR);
             setErrorMsg(e.message || t('mobileConnectionError'));
