@@ -641,26 +641,35 @@ export default function App() {
     }
   }, [backend, settingsLoaded]);
 
-  // Save settings to IndexedDB whenever they change (only after initial load)
-  useEffect(() => { if (settingsLoaded) saveSetting('encoderQuant', encoderQuant); }, [encoderQuant, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('decoderQuant', decoderQuant); }, [decoderQuant, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('preprocessor', preprocessor); }, [preprocessor, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('verboseLog', verboseLog); }, [verboseLog, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('frameStride', frameStride); }, [frameStride, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('temperature', temperature); }, [temperature, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('cpuThreads', cpuThreads); }, [cpuThreads, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('noiseSuppression', noiseSuppression); }, [noiseSuppression, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('echoCancellation', echoCancellation); }, [echoCancellation, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('autoGainControl', autoGainControl); }, [autoGainControl, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('showConfidenceHeatmap', showConfidenceHeatmap); }, [showConfidenceHeatmap, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('autoTranscribe', autoTranscribe); }, [autoTranscribe, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('autoCopyToClipboard', autoCopyToClipboard); }, [autoCopyToClipboard, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('enableChunking', enableChunking); }, [enableChunking, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('chunkDuration', chunkDuration); }, [chunkDuration, settingsLoaded]);
-  useEffect(() => { if (settingsLoaded) saveSetting('transcriptDisplayMode', transcriptDisplayMode); }, [transcriptDisplayMode, settingsLoaded]);
+  // Save settings to IndexedDB whenever they change (only after initial load).
+  // usePersistedSetting is a thin wrapper around useEffect that fires once
+  // per setting, only after settingsLoaded flips to true. Keeping the
+  // hook-call list flat (one per setting) preserves the previous behavior:
+  // changing setting X writes only X, not all eighteen of them.
+  function usePersistedSetting(key, value) {
+    useEffect(() => {
+      if (settingsLoaded) saveSetting(key, value);
+    }, [key, value]);
+  }
+  usePersistedSetting('encoderQuant', encoderQuant);
+  usePersistedSetting('decoderQuant', decoderQuant);
+  usePersistedSetting('preprocessor', preprocessor);
+  usePersistedSetting('verboseLog', verboseLog);
+  usePersistedSetting('frameStride', frameStride);
+  usePersistedSetting('temperature', temperature);
+  usePersistedSetting('cpuThreads', cpuThreads);
+  usePersistedSetting('noiseSuppression', noiseSuppression);
+  usePersistedSetting('echoCancellation', echoCancellation);
+  usePersistedSetting('autoGainControl', autoGainControl);
+  usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap);
+  usePersistedSetting('autoTranscribe', autoTranscribe);
+  usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard);
+  usePersistedSetting('enableChunking', enableChunking);
+  usePersistedSetting('chunkDuration', chunkDuration);
+  usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode);
+  usePersistedSetting('transcriptions', transcriptions);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
-  useEffect(() => { if (settingsLoaded) saveSetting('transcriptions', transcriptions); }, [transcriptions, settingsLoaded]);
 
   /**
    * Load model weights and create an ONNX inference session.
