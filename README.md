@@ -2,7 +2,7 @@
 
 > ⚠️ **EXPERIMENTAL WIP** – Made with care but with AI. Expect bugs, breaking changes, and rough edges.
 
-**Try it now: [pw.olicorne.org](https://pw.olicorne.org/)** — no installation required.
+**Try it now: [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/)** — no installation required.
 
 ---
 
