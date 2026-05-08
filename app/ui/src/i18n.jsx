@@ -101,6 +101,10 @@ const translations = {
     noiseSuppression: 'Noise Suppression',
     echoCancellation: 'Echo Cancellation',
     autoGainControl: 'Auto Gain Control',
+    liveTranscription: 'Live transcription',
+    liveContextWindow: 'Context window',
+    liveContextAuto: 'Auto',
+    liveStreamingNote: 'Updates every few seconds while recording. The final transcript is still computed on stop.',
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers.',
@@ -118,6 +122,8 @@ const translations = {
     tooltipNoiseSuppression: 'Reduces background noise for clearer voice. Disable for music or when maximum audio fidelity is needed.',
     tooltipEchoCancellation: 'Removes echo and feedback. Disable for music recording or if you experience audio quality issues.',
     tooltipAutoGainControl: 'Automatically adjusts volume levels. Disable for music or when you want consistent volume.',
+    tooltipLiveTranscription: 'Stream transcription as you speak. The model re-runs every few seconds on a sliding window of recent audio. The final transcript still runs once after you stop.',
+    tooltipLiveContextWindow: 'How many seconds of recent audio the encoder sees on each live update. More context = better accuracy but more compute. Auto adapts the size to your machine’s speed (10–60s).',
 
     // About / info section
     about: 'About',
@@ -352,6 +358,10 @@ const translations = {
     noiseSuppression: 'Suppression du bruit',
     echoCancellation: "\u00c9limination de l'\u00e9cho",
     autoGainControl: 'Contr\u00f4le automatique du gain',
+    liveTranscription: 'Transcription en direct',
+    liveContextWindow: 'Fen\u00eatre de contexte',
+    liveContextAuto: 'Auto',
+    liveStreamingNote: "Mise \u00e0 jour toutes les quelques secondes pendant l'enregistrement. La transcription finale est calcul\u00e9e \u00e0 l'arr\u00eat.",
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent.",
@@ -369,6 +379,8 @@ const translations = {
     tooltipNoiseSuppression: "R\u00e9duit le bruit de fond pour une voix plus claire. D\u00e9sactivez pour la musique ou pour une fid\u00e9lit\u00e9 audio maximale.",
     tooltipEchoCancellation: "Supprime l'\u00e9cho et le retour audio. D\u00e9sactivez pour l'enregistrement musical ou en cas de probl\u00e8mes de qualit\u00e9.",
     tooltipAutoGainControl: "Ajuste automatiquement les niveaux de volume. D\u00e9sactivez pour la musique ou quand vous voulez un volume constant.",
+    tooltipLiveTranscription: "Transcription en flux pendant que vous parlez. Le mod\u00e8le est relanc\u00e9 toutes les quelques secondes sur une fen\u00eatre glissante. La transcription finale est toujours calcul\u00e9e \u00e0 l'arr\u00eat.",
+    tooltipLiveContextWindow: "Nombre de secondes d'audio r\u00e9cent vues par l'encodeur \u00e0 chaque mise \u00e0 jour. Plus de contexte = meilleure pr\u00e9cision mais plus de calcul. Auto adapte la taille \u00e0 la vitesse de votre machine (10\u201360s).",
 
     // About / info section
     about: '\u00c0 propos',

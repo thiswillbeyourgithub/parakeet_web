@@ -6,6 +6,7 @@ import Banner from './components/Banner.jsx';
 import Modal from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
+import { createLiveTranscriber } from './lib/liveTranscriber.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
@@ -167,6 +168,13 @@ export default function App() {
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
   const [chunkDuration, setChunkDuration] = useState(60); // seconds
+  // Live (streaming) transcription: re-runs the model on a sliding window
+  // every few seconds while recording. The canonical stop-pass still runs.
+  const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
+  const [liveContextWindow, setLiveContextWindow] = useState('auto'); // 'auto' | '10'..'60'
+  const [liveTranscript, setLiveTranscript] = useState({ text: '', words: [] });
+  const [liveStats, setLiveStats] = useState(null);
+  const liveTranscriberRef = useRef(null);
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -353,6 +361,8 @@ export default function App() {
           savedEnableChunking,
           savedChunkDuration,
           savedTranscriptDisplayMode,
+          savedLiveTranscriptionEnabled,
+          savedLiveContextWindow,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('encoderQuant', 'fp32'),
@@ -373,6 +383,8 @@ export default function App() {
           loadSetting('enableChunking', true),
           loadSetting('chunkDuration', 60),
           loadSetting('transcriptDisplayMode', 'raw'),
+          loadSetting('liveTranscriptionEnabled', false),
+          loadSetting('liveContextWindow', 'auto'),
         ]);
 
         setBackend(savedBackend);
@@ -394,6 +406,8 @@ export default function App() {
         setEnableChunking(savedEnableChunking);
         setChunkDuration(savedChunkDuration);
         setTranscriptDisplayMode(savedTranscriptDisplayMode);
+        setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
+        setLiveContextWindow(savedLiveContextWindow);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -653,6 +667,8 @@ export default function App() {
   usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
   usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
+  usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
+  usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('transcriptions', transcriptions, settingsLoaded);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
@@ -2390,16 +2406,55 @@ export default function App() {
                   <InfoTooltip text={t('tooltipEchoCancellation')} />
                 </label>
                 <label>
-                  <input 
-                    type="checkbox" 
-                    checked={autoGainControl} 
-                    onChange={e => setAutoGainControl(e.target.checked)} 
-                    disabled={isRecording} 
+                  <input
+                    type="checkbox"
+                    checked={autoGainControl}
+                    onChange={e => setAutoGainControl(e.target.checked)}
+                    disabled={isRecording}
                   />
                   {t('autoGainControl')}
                   <InfoTooltip text={t('tooltipAutoGainControl')} />
                 </label>
               </div>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={liveTranscriptionEnabled}
+                  onChange={e => setLiveTranscriptionEnabled(e.target.checked)}
+                  disabled={isRecording}
+                />
+                {t('liveTranscription')}
+                <InfoTooltip text={t('tooltipLiveTranscription')} />
+              </label>
+              {liveTranscriptionEnabled && (
+                <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span className="setting-label">
+                    {t('liveContextWindow')}:
+                    <InfoTooltip text={t('tooltipLiveContextWindow')} />
+                  </span>
+                  <select
+                    value={liveContextWindow}
+                    onChange={e => setLiveContextWindow(e.target.value)}
+                    disabled={isRecording}
+                  >
+                    <option value="auto">{t('liveContextAuto')}</option>
+                    <option value="10">10s</option>
+                    <option value="15">15s</option>
+                    <option value="20">20s</option>
+                    <option value="30">30s</option>
+                    <option value="45">45s</option>
+                    <option value="60">60s</option>
+                  </select>
+                </div>
+              )}
+              {liveTranscriptionEnabled && (
+                <p style={{ fontSize: '0.8rem', opacity: 0.7, margin: '0.25rem 0 0' }}>
+                  {t('liveStreamingNote')}
+                </p>
+              )}
             </div>
           </div>
         
