@@ -175,6 +175,10 @@ export default function App() {
   const [liveTranscript, setLiveTranscript] = useState({ text: '', words: [] });
   const [liveStats, setLiveStats] = useState(null);
   const liveTranscriberRef = useRef(null);
+  // Refs mirror the state so stable callbacks (RTC data-channel handler,
+  // built once per session) read the latest user setting.
+  const liveTranscriptionEnabledRef = useRef(false);
+  const liveContextWindowRef = useRef('auto');
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -672,6 +676,8 @@ export default function App() {
   usePersistedSetting('transcriptions', transcriptions, settingsLoaded);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
+  useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
+  useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
 
   /**
    * Load model weights and create an ONNX inference session.
@@ -752,6 +758,35 @@ export default function App() {
     }
   }
 
+
+  // Spin up the live transcriber if the user enabled it. Reads PCM out of
+  // the same pcmChunksRef both record paths feed; safe to call once per
+  // recording session. The canonical stop-pass still runs on stop.
+  function maybeStartLiveTranscriber(audioCtx) {
+    if (!liveTranscriptionEnabledRef.current) return;
+    if (!modelRef.current) return;
+    if (liveTranscriberRef.current) return;
+    setLiveTranscript({ text: '', words: [] });
+    setLiveStats(null);
+    const winSetting = liveContextWindowRef.current;
+    const live = createLiveTranscriber({
+      model: modelRef.current,
+      getPcmChunks: () => pcmChunksRef.current,
+      getSampleRate: () => audioCtx?.sampleRate || 48000,
+      windowMode: winSetting === 'auto' ? 'auto' : Number(winSetting),
+      onUpdate: ({ text, words }) => setLiveTranscript({ text, words }),
+      onStats: setLiveStats,
+    });
+    liveTranscriberRef.current = live;
+    live.start();
+  }
+
+  async function stopLiveTranscriberIfRunning() {
+    const live = liveTranscriberRef.current;
+    if (!live) return;
+    liveTranscriberRef.current = null;
+    try { await live.stop(); } catch (e) { console.warn('[Live] stop failed:', e); }
+  }
 
   async function startRecordingCountdown() {
     // Request microphone access immediately, in parallel with the countdown,
@@ -869,6 +904,8 @@ export default function App() {
       setStatus('recordingClickStop');
       console.log('[Record] Recording started (AudioWorklet PCM capture)');
 
+      maybeStartLiveTranscriber(audioCtx);
+
     } catch (err) {
       console.error('[Record] Failed to start recording:', err);
       stream.getTracks().forEach(track => track.stop());
@@ -890,6 +927,10 @@ export default function App() {
     setIsRecording(false);
     setIsPaused(false);
     setAudioLevel(0);
+
+    // Drain the live transcriber before we tear down pcmChunksRef so its
+    // last in-flight tick (if any) finishes against the buffer it expects.
+    await stopLiveTranscriberIfRunning();
 
     // Resume AudioContext if paused, so cleanup and close work correctly
     if (audioContext?.state === 'suspended') {
@@ -1097,9 +1138,14 @@ export default function App() {
               console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
               setRemoteMicRecording(true);
               startRemoteMicTimer();
+              // Phone audio is buffered into the same pcmChunksRef the local
+              // path uses, so the live transcriber works without any other
+              // wiring. Pass a getSampleRate() that reads the phone's rate.
+              maybeStartLiveTranscriber({ sampleRate: remoteMicSampleRateRef.current });
             } else if (msg.type === 'audio-end') {
               console.log('[RemoteMic] Phone stopped recording, processing batch...');
               setRemoteMicRecording(false);
+              await stopLiveTranscriberIfRunning();
               // Process accumulated audio but keep RTC alive for next recording
               processRemoteMicBatch();
             } else if (msg.type === 'paused') {
@@ -2793,6 +2839,28 @@ export default function App() {
                 {level >= 30 && t('goodLevel')}
               </p>
             </div>
+            {liveTranscriptionEnabled && (
+              <div style={{
+                marginTop: '0.75rem',
+                padding: '0.5rem 0.75rem',
+                background: 'var(--bg-subtle, rgba(0,0,0,0.04))',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.95em',
+                color: 'var(--text)',
+                whiteSpace: 'pre-wrap',
+                lineHeight: 1.4,
+                minHeight: '1.4em',
+              }}>
+                {liveTranscript.text
+                  ? (dictationRegexRules.length > 0 ? applyDictationRegex(liveTranscript.text) : liveTranscript.text)
+                  : <span style={{ opacity: 0.5 }}>…</span>}
+                {showAdvancedInfo && liveStats && (
+                  <div style={{ fontSize: '0.75em', opacity: 0.6, marginTop: '0.35rem', fontVariantNumeric: 'tabular-nums' }}>
+                    window={liveStats.window?.toFixed(1)}s · step={liveStats.step?.toFixed(1)}s · process={Math.round(liveStats.process_ms || 0)}ms
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })()}
