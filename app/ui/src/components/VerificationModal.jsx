@@ -1,4 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+const CONFIRM_DELAY_MS = 3000;
 
 /**
  * Blocking modal asking the user to compare a short hex fingerprint with the
@@ -12,11 +14,27 @@ import { useEffect } from 'react';
  * App.css) and the remote-mic phone page (which does not).
  */
 export default function VerificationModal({ fingerprint, prompt, confirmLabel, denyLabel, onConfirm, onDeny }) {
+    // Force the user to actually look at the fingerprint: confirm is disabled
+    // for CONFIRM_DELAY_MS to defeat reflexive Enter/Space presses that would
+    // otherwise auto-accept a tampered code.
+    const [remainingMs, setRemainingMs] = useState(CONFIRM_DELAY_MS);
+    const confirmReady = remainingMs <= 0;
+
+    useEffect(() => {
+        const start = Date.now();
+        const id = setInterval(() => {
+            const left = Math.max(0, CONFIRM_DELAY_MS - (Date.now() - start));
+            setRemainingMs(left);
+            if (left <= 0) clearInterval(id);
+        }, 100);
+        return () => clearInterval(id);
+    }, []);
+
     useEffect(() => {
         function onKey(e) {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                onConfirm();
+                if (confirmReady) onConfirm();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 onDeny();
@@ -24,7 +42,7 @@ export default function VerificationModal({ fingerprint, prompt, confirmLabel, d
         }
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [onConfirm, onDeny]);
+    }, [onConfirm, onDeny, confirmReady]);
 
     const overlay = {
         position: 'fixed', inset: 0, zIndex: 10000,
@@ -57,7 +75,19 @@ export default function VerificationModal({ fingerprint, prompt, confirmLabel, d
                     {fingerprint}
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    <button style={{ ...btnBase, background: '#16a34a', color: '#fff' }} onClick={onConfirm}>{confirmLabel}</button>
+                    <button
+                        style={{
+                            ...btnBase,
+                            background: confirmReady ? '#16a34a' : '#374151',
+                            color: '#fff',
+                            cursor: confirmReady ? 'pointer' : 'not-allowed',
+                            opacity: confirmReady ? 1 : 0.7,
+                        }}
+                        onClick={confirmReady ? onConfirm : undefined}
+                        disabled={!confirmReady}
+                    >
+                        {confirmReady ? confirmLabel : `${confirmLabel} (${Math.ceil(remainingMs / 1000)}s)`}
+                    </button>
                     <button style={{ ...btnBase, background: '#b91c1c', color: '#fff' }} onClick={onDeny}>{denyLabel}</button>
                 </div>
             </div>
