@@ -292,6 +292,9 @@ export class ParakeetModel {
       debug = false,
       skipCMVN = false,
       frameStride = 1,
+      previousDecoderState = null,
+      returnDecoderState = false,
+      timeOffset = 0,
     } = opts;
 
     const perfEnabled = true; // always collect and log timings
@@ -342,7 +345,11 @@ export class ParakeetModel {
     const frameConfs = [];
     let overallLogProb = 0;
 
-    let decoderState = null;
+    // Caller may pass a decoder state from a previous (contiguous) chunk to
+    // continue token-history continuity across calls. We hold a reference but
+    // never dispose the externally-owned object — the caller still owns it.
+    let decoderState = previousDecoderState || null;
+    const externalInitialState = previousDecoderState || null;
     let emittedTokens = 0;
 
     const decStartTime = perfEnabled ? performance.now() : 0;
@@ -403,8 +410,9 @@ export class ParakeetModel {
       // Dispose the joiner logits tensor now that subarray views are consumed
       _logitsTensor?.dispose?.();
 
-      // Free old decoder state tensors (avoids WASM/GPU memory leak)
-      if (decoderState && decoderState !== newState) {
+      // Free old decoder state tensors (avoids WASM/GPU memory leak), but
+      // never dispose a state object that was passed in by the caller.
+      if (decoderState && decoderState !== newState && decoderState !== externalInitialState) {
         this._disposeDecoderState(decoderState, newState);
       }
       decoderState = newState;
@@ -415,8 +423,12 @@ export class ParakeetModel {
       if (maxId === this.blankId) emittedTokens = 0;
     }
 
-    // Dispose final decoder state (no longer needed after loop)
-    this._disposeDecoderState(decoderState);
+    // Dispose final decoder state unless the caller asked to keep it for a
+    // future call. When returning state, the caller becomes its owner.
+    const finalDecoderState = decoderState;
+    if (!returnDecoderState) {
+      this._disposeDecoderState(decoderState);
+    }
 
     if (perfEnabled) {
       tDecode = performance.now() - decStartTime;
@@ -447,7 +459,9 @@ export class ParakeetModel {
         total_ms: +( (performance.now() - t0).toFixed(1) ),
         rtf: +((audio.length / sampleRate) / ((performance.now() - t0) / 1000)).toFixed(2)
       } : null;
-      return { utterance_text: text, words: [], metrics, is_final: true };
+      const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
+      if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
+      return earlyOut;
     }
 
     // --- Build words & detailed token arrays ---------------------------
@@ -466,9 +480,9 @@ export class ParakeetModel {
       const ts = tokenTimes[i] || [null, null];
       const conf = tokenConfs[i];
 
-      // tokensDetailed entry
+      // tokensDetailed entry. timeOffset shifts windowed timestamps to absolute time.
       const tokEntry = { token: [cleanTok] };
-      if (returnTimestamps) { tokEntry.start_time = +ts[0].toFixed(3); tokEntry.end_time = +ts[1].toFixed(3); }
+      if (returnTimestamps) { tokEntry.start_time = +(ts[0] + timeOffset).toFixed(3); tokEntry.end_time = +(ts[1] + timeOffset).toFixed(3); }
       if (returnConfidences) tokEntry.confidence = +conf.toFixed(4);
       tokensDetailed.push(tokEntry);
 
@@ -476,7 +490,7 @@ export class ParakeetModel {
       if (isWordStart) {
         if (currentWord) {
           const avg = wordConfs.length ? wordConfs.reduce((a,b)=>a+b,0)/wordConfs.length : 0;
-          words.push({ text: currentWord, start_time: +wordStart.toFixed(3), end_time: +wordEnd.toFixed(3), confidence: +avg.toFixed(4) });
+          words.push({ text: currentWord, start_time: +(wordStart + timeOffset).toFixed(3), end_time: +(wordEnd + timeOffset).toFixed(3), confidence: +avg.toFixed(4) });
         }
         currentWord = cleanTok;
         if (returnTimestamps) { wordStart = ts[0]; wordEnd = ts[1]; }
@@ -490,7 +504,7 @@ export class ParakeetModel {
 
     if (currentWord) {
       const avg = wordConfs.length ? wordConfs.reduce((a,b)=>a+b,0)/wordConfs.length : 0;
-      words.push({ text: currentWord, start_time: +wordStart.toFixed(3), end_time: +wordEnd.toFixed(3), confidence: +avg.toFixed(4) });
+      words.push({ text: currentWord, start_time: +(wordStart + timeOffset).toFixed(3), end_time: +(wordEnd + timeOffset).toFixed(3), confidence: +avg.toFixed(4) });
     }
 
     const avgWordConf = words.length && returnConfidences ? words.reduce((a,b)=>a+b.confidence,0)/words.length : null;
@@ -504,7 +518,7 @@ export class ParakeetModel {
       console.table({Preprocess:`${tPreproc.toFixed(1)} ms`, Encode:`${tEncode.toFixed(1)} ms`, Decode:`${tDecode.toFixed(1)} ms`, Tokenize:`${tToken.toFixed(1)} ms`, Total:`${total.toFixed(1)} ms`});
     }
 
-    return {
+    const fullOut = {
       utterance_text: text,
       words,
       tokens: tokensDetailed,
@@ -525,8 +539,10 @@ export class ParakeetModel {
         total_ms: +( (performance.now() - t0).toFixed(1) ),
         rtf: +((audio.length / sampleRate) / ((performance.now() - t0) / 1000)).toFixed(2)
       } : null,
-      is_final: true,
+      is_final: !returnDecoderState,
     };
+    if (returnDecoderState) fullOut.decoderState = finalDecoderState;
+    return fullOut;
   }
 
   /**
