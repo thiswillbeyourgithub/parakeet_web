@@ -11,6 +11,7 @@
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Dictation Mode](#dictation-mode)
+- [Live Transcription](#live-transcription)
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
 - [Mobile debugging](#mobile-debugging)
@@ -31,6 +32,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
 | ⚡ **WebGPU Accelerated** | Fast GPU inference with automatic WASM fallback for compatibility |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
+| ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
 | 🕐 **Word Timestamps** | Per-word timestamps and confidence score heatmap |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
@@ -66,6 +68,29 @@ This feature is very early and will improve rapidly.
 - **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on every container start.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
+
+## Live Transcription
+
+By default, transcription runs once when you stop recording. If you'd rather see the text appear as you speak, enable **Live transcription** in the settings panel. The model is then re-run every few seconds on a sliding window of recent audio, and the transcript updates incrementally during the recording. The dictation regex (if loaded) is applied to the entire visible text on every update, so corrections like "point virgule" → ";" happen live too.
+
+This works for both the local microphone and the [phone-as-mic](#remote-microphone-phone-as-mic) path — the live transcriber consumes the same audio buffer either way.
+
+### How it works
+
+Parakeet's encoder is non-streaming (it sees the whole window at once with self-attention), so accuracy depends heavily on having enough acoustic context. The live transcriber maintains a sliding **context window** of the last *N* seconds of audio and re-runs the model on it every few seconds. Words near the trailing edge of the window are "pending" (may be revised by the next, larger-context window) and words past a 3-second commit boundary are frozen for good. The result: every word is eventually transcribed with at least 3 seconds of right-context, while you still see updates as you speak.
+
+When you hit stop, the canonical full-audio transcription pass runs as it always has, and its result replaces the live one — so the live mode never affects the final accuracy.
+
+### Settings
+
+- **Live transcription** (off by default): toggle the streaming mode on or off.
+- **Context window**: how many seconds of recent audio the encoder sees on each update.
+  - **Auto** (recommended): starts at 15 s and adapts itself between **10 s and 60 s** based on how fast your machine actually transcribes. Faster machines get a larger window (more context, better accuracy); slower machines get a smaller one (so updates can keep up).
+  - Or pick a fixed value (10/15/20/30/45/60 s) if you want to override the auto-adapter — for example, choose 60 s on a fast desktop to maximize accuracy, or 10 s on a phone to keep latency low.
+
+The cadence (how often the live transcript updates) is always auto-adapted: if a transcription pass takes longer than expected, updates back off so the queue never grows. Enable **Display more details** in settings to see the current window size, step interval, and per-tick processing time below the live transcript.
+
+This feature was implemented with [Claude Code](https://www.anthropic.com/claude-code).
 
 ## Remote Microphone (Phone as Mic)
 
