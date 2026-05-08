@@ -2168,9 +2168,6 @@ export default function App() {
             {t('onTheGitHubRepo')}
           </p>
           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
-            <strong>{t('install')}:</strong> {t('installText')}
-          </p>
-          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('privacy')}:</strong> {t('privacyText')}{' '}
             <a href="https://umami.is" target="_blank" rel="noopener noreferrer">umami.is</a>{' '}
             {t('privacyText2')}

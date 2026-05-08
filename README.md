@@ -35,7 +35,6 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 🕐 **Word Timestamps** | Per-word timestamps and confidence score heatmap |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
 | 📦 **Quantization** | Choose between fp32 (accurate) and int8 (faster/smaller) model variants |
-| 📲 **PWA** | Installable as a Progressive Web App for an app-like experience |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
 
 
