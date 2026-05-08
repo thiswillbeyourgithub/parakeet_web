@@ -82,7 +82,17 @@ export function createLiveTranscriber(cfg) {
 
   function adaptStep(processMs) {
     const desired = clamp(processMs * 1.5 / 1000, STEP_MIN, STEP_MAX);
-    if (Math.abs(desired - currentStep) / currentStep > HYSTERESIS) currentStep = desired;
+    const drift = Math.abs(desired - currentStep) / currentStep;
+    if (drift <= HYSTERESIS) return;
+    const prev = currentStep;
+    currentStep = desired;
+    const clampedTo = desired === STEP_MIN ? ' [clamped to MIN]'
+      : desired === STEP_MAX ? ' [clamped to MAX]' : '';
+    console.log(
+      `[Live][adapt] step ${prev.toFixed(2)}s → ${currentStep.toFixed(2)}s` +
+      ` (process=${processMs.toFixed(0)}ms, target=1.5×process=${(processMs * 1.5).toFixed(0)}ms,` +
+      ` clamp=[${STEP_MIN}..${STEP_MAX}]s, drift=${(drift * 100).toFixed(0)}% > hysteresis=${HYSTERESIS * 100}%)${clampedTo}`
+    );
   }
 
   function adaptWindow() {
@@ -90,8 +100,25 @@ export function createLiveTranscriber(cfg) {
     // Budget: keep predicted process time at ~half the step target.
     const windowMaxBudget = (STEP_TARGET_MS * 0.5) / Math.max(emaCostPerS, 1);
     const target = clamp(windowMaxBudget, WINDOW_MIN, WINDOW_MAX);
-    if (target > currentWindow + 0.5) currentWindow = Math.min(currentWindow + 1, WINDOW_MAX);
-    else if (target < currentWindow - 0.5) currentWindow = Math.max(currentWindow - 1, WINDOW_MIN);
+    const prev = currentWindow;
+    let direction;
+    if (target > currentWindow + 0.5) {
+      currentWindow = Math.min(currentWindow + 1, WINDOW_MAX);
+      direction = 'grow';
+    } else if (target < currentWindow - 0.5) {
+      currentWindow = Math.max(currentWindow - 1, WINDOW_MIN);
+      direction = 'shrink';
+    } else {
+      return; // within deadband — no adjustment
+    }
+    if (currentWindow === prev) return; // already at the relevant clamp
+    const atClamp = currentWindow === WINDOW_MIN ? ' [at MIN]'
+      : currentWindow === WINDOW_MAX ? ' [at MAX]' : '';
+    console.log(
+      `[Live][adapt] window ${prev.toFixed(0)}s → ${currentWindow.toFixed(0)}s [${direction}]` +
+      ` (cost/s=${emaCostPerS.toFixed(0)}ms/s, budget=${(STEP_TARGET_MS * 0.5).toFixed(0)}ms →` +
+      ` raw_target=${windowMaxBudget.toFixed(1)}s, clamp=[${WINDOW_MIN}..${WINDOW_MAX}]s)${atClamp}`
+    );
   }
 
   function applyCommit(windowWords, windowStartAbs, windowSec) {
@@ -159,10 +186,19 @@ export function createLiveTranscriber(cfg) {
         pending: pendingWords.length,
       });
 
+      // RTF (realtime factor): how many seconds of audio per second of compute.
+      // <1 means the model is slower than realtime — the window will keep
+      // shrinking and step will grow. Watch this when troubleshooting perf.
+      const rtf = (windowSec * 1000) / Math.max(processMs, 1);
+      const stepHeadroomMs = currentStep * 1000 - processMs;
+      const windowAtClamp = currentWindow === WINDOW_MIN ? ' [WIN@MIN]'
+        : currentWindow === WINDOW_MAX ? ' [WIN@MAX]' : '';
       console.log(
         `[Live] window=${currentWindow.toFixed(1)}s step=${currentStep.toFixed(1)}s ` +
-        `process=${processMs.toFixed(0)}ms cost/s=${(emaCostPerS || 0).toFixed(0)}ms ` +
-        `committed=${committedWords.length} pending=${pendingWords.length}`
+        `process=${processMs.toFixed(0)}ms (rtf=${rtf.toFixed(1)}x, ` +
+        `step_headroom=${stepHeadroomMs.toFixed(0)}ms) ` +
+        `cost/s=${(emaCostPerS || 0).toFixed(0)}ms/s ` +
+        `committed=${committedWords.length} pending=${pendingWords.length}${windowAtClamp}`
       );
     } catch (e) {
       console.warn('[Live] tick failed:', e);
