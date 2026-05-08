@@ -195,8 +195,14 @@ export class ParakeetModel {
       : Promise.resolve(new OnnxPreprocessor(preprocessorUrl, { backend, wasmPaths, enableProfiling, enableGraphCapture: isFullWasm ? false : graphCaptureEnabled, numThreads: cpuThreads }));
 
     let encoderSession, joinerSession;
-    if (backend === 'webgpu-hybrid') {
-      // avoid parallel create to prevent double initWasm race
+    // ORT mounts externalData into a single global Module.MountedFiles map and
+    // unmounts (clears) the entire map at the end of every createSession call.
+    // Parallel creation races: whichever session finishes first wipes the map
+    // out from under the other, surfacing as "Module.MountedFiles is not
+    // available" / "Deserialize tensor ... failed" on the still-loading model.
+    const hasExternalData = !!(encoderSessionOptions.externalData || decoderSessionOptions.externalData);
+    if (backend === 'webgpu-hybrid' || hasExternalData) {
+      // avoid parallel create to prevent double initWasm race / external-data unmount race
       encoderSession = await createSession(encoderUrl, encoderSessionOptions);
       joinerSession = await createSession(decoderUrl, decoderSessionOptions);
     } else {
