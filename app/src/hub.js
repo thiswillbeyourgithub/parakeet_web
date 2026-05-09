@@ -33,6 +33,7 @@ const STORE_NAME = 'file-store';
 const FLUSH_INTERVAL = 8 * 1024 * 1024;
 const MAX_RETRIES = 6;
 const PARTIAL_PREFIX = 'partial-';
+const SEGMENT_INFIX = '-seg-';
 
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
@@ -114,37 +115,100 @@ async function saveFileToDb(key, blob) {
  */
 async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
+  const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
 
-  let partial = null;
+  // Resume metadata is tiny and safe to rewrite frequently. The actual
+  // bytes live in append-only segment records (segKey(0..segCount-1)),
+  // so each flush only writes the new bytes since the last flush. This
+  // keeps total IDB write cost linear in the file size.
+  let meta = null;
   if (typeof indexedDB !== 'undefined') {
-    try { partial = await getFileFromDb(partialKey); } catch (_) {}
+    try { meta = await getFileFromDb(partialKey); } catch (_) {}
   }
-  let chunks = partial?.chunks ? [...partial.chunks] : [];
-  let received = partial?.received || 0;
-  let total = partial?.total || 0;
-  let etag = partial?.etag || null;
-  let contentType = partial?.contentType || 'application/octet-stream';
-  // Snapshot the resume offset so progress events can flag the file as
-  // being resumed (UI shows "Resuming…" instead of a fresh download).
-  let resumedFrom = received;
+  // Backwards-compat: an old-format partial record had a `chunks` field.
+  // Treat it as no partial (re-download) rather than try to migrate.
+  if (meta && Array.isArray(meta.chunks)) meta = null;
 
+  // Segment blobs already on disk from previous flushes. Kept as Blobs
+  // (not loaded into JS heap) until final assembly.
+  const segments = [];
+  let segCount = meta?.segCount || 0;
+  let received = meta?.received || 0;
+  let total = meta?.total || 0;
+  let etag = meta?.etag || null;
+  let contentType = meta?.contentType || 'application/octet-stream';
+
+  if (segCount > 0 && typeof indexedDB !== 'undefined') {
+    try {
+      for (let i = 0; i < segCount; i++) {
+        const seg = await getFileFromDb(segKey(i));
+        if (!(seg instanceof Blob)) throw new Error(`segment ${i} missing or wrong type`);
+        segments.push(seg);
+      }
+    } catch (e) {
+      console.warn(`${logTag} Partial segments unreadable for ${filename}, restarting:`, e);
+      await deleteAllPartial();
+      segments.length = 0;
+      segCount = 0;
+      received = 0;
+      total = 0;
+      etag = null;
+      contentType = 'application/octet-stream';
+    }
+  }
+
+  // Tail chunks accumulated since the last flush, still in JS heap.
+  let tailChunks = [];
+  let tailBytes = 0;
+
+  // Snapshot the resume offset so progress events can flag the file as
+  // being resumed (UI shows "Resuming..." instead of a fresh download).
+  const resumedFrom = received;
   if (resumedFrom > 0) {
     console.log(`${logTag} Resuming ${filename} from ${received}/${total || '?'} bytes`);
   }
 
-  const flushPartial = async () => {
-    if (typeof indexedDB === 'undefined' || received === 0) return;
+  async function deleteAllPartial() {
+    if (typeof indexedDB === 'undefined') return;
     try {
-      await saveFileToDb(partialKey, { chunks, received, total, etag, contentType });
+      const db = await getDb();
+      await idbDelete(db, STORE_NAME, partialKey);
+      for (let i = 0; i < segCount; i++) {
+        try { await idbDelete(db, STORE_NAME, segKey(i)); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  async function writeMeta() {
+    if (typeof indexedDB === 'undefined') return;
+    try {
+      await saveFileToDb(partialKey, { received, total, etag, contentType, segCount });
     } catch (e) {
-      console.warn(`${logTag} Failed to persist partial state for ${filename}:`, e);
+      console.warn(`${logTag} Failed to persist partial meta for ${filename}:`, e);
     }
-  };
+  }
+
+  // Flush the in-memory tail to a new segment record, then drop it from heap.
+  async function flushTail() {
+    if (typeof indexedDB === 'undefined' || tailBytes === 0) return;
+    const segBlob = new Blob(tailChunks, { type: contentType });
+    try {
+      await saveFileToDb(segKey(segCount), segBlob);
+      segments.push(segBlob);
+      segCount += 1;
+      tailChunks = [];
+      tailBytes = 0;
+      await writeMeta();
+    } catch (e) {
+      console.warn(`${logTag} Failed to persist segment ${segCount} for ${filename}:`, e);
+    }
+  }
 
   // Already complete from a prior run that crashed before the final write
   const alreadyComplete = total > 0 && received >= total;
 
-  for (let attempt = 0; !alreadyComplete; attempt++) {
+  let attempt = 0;
+  while (!alreadyComplete) {
     try {
       const headers = {};
       if (received > 0) {
@@ -156,13 +220,17 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
         throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
       }
 
-      // We asked for a range but got a full body — server doesn't support
-      // ranges, or If-Range invalidated the partial. Restart from 0.
+      // We asked for a range but got a full body: server doesn't support
+      // ranges, or If-Range invalidated the partial. Restart from 0,
+      // dropping every segment we had on disk first.
       if (received > 0 && resp.status === 200) {
-        console.warn(`${logTag} Server returned full body for ${filename} — restarting from 0`);
-        chunks = [];
+        console.warn(`${logTag} Server returned full body for ${filename}, restarting from 0`);
+        await deleteAllPartial();
+        segments.length = 0;
+        segCount = 0;
         received = 0;
-        resumedFrom = 0;
+        tailChunks = [];
+        tailBytes = 0;
       }
 
       if (resp.status === 206) {
@@ -170,37 +238,40 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
         const m = cr && cr.match(/\/(\d+)$/);
         if (m) total = parseInt(m[1], 10);
       } else {
+        // 200 path: at this point received is guaranteed 0 (either fresh
+        // download, or just reset above), so total = content-length.
         const cl = resp.headers.get('content-length');
-        if (cl) total = received + parseInt(cl, 10);
+        if (cl) total = parseInt(cl, 10);
       }
       etag = resp.headers.get('etag') || resp.headers.get('last-modified') || etag;
       contentType = resp.headers.get('content-type') || contentType;
 
       const reader = resp.body.getReader();
-      let sinceFlush = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        chunks.push(value);
+        tailChunks.push(value);
+        tailBytes += value.length;
         received += value.length;
-        sinceFlush += value.length;
         if (progress && total > 0) progress({ loaded: received, total, file: filename, resumed: resumedFrom > 0, resumedFrom });
-        if (sinceFlush >= FLUSH_INTERVAL) {
-          await flushPartial();
-          sinceFlush = 0;
+        if (tailBytes >= FLUSH_INTERVAL) {
+          await flushTail();
         }
       }
       break;
     } catch (err) {
-      await flushPartial();
+      await flushTail();
       if (attempt >= MAX_RETRIES) throw err;
       const delay = Math.min(30000, 1000 * 2 ** attempt);
-      console.warn(`${logTag} Download error for ${filename} at ${received}/${total || '?'} — retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES}):`, err.message || err);
+      console.warn(`${logTag} Download error for ${filename} at ${received}/${total || '?'}, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES}):`, err.message || err);
       await new Promise(r => setTimeout(r, delay));
+      attempt += 1;
     }
   }
 
-  const blob = new Blob(chunks, { type: contentType });
+  // Final assembly: segments on disk plus the trailing in-memory chunks.
+  // Blob composition is by reference, so this is cheap.
+  const blob = new Blob([...segments, ...tailChunks], { type: contentType });
 
   if (typeof indexedDB !== 'undefined') {
     try {
@@ -209,9 +280,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
     } catch (e) {
       console.warn(`${logTag} Failed to cache in IndexedDB:`, e);
     }
-    try {
-      await idbDelete(await getDb(), STORE_NAME, partialKey);
-    } catch (_) {}
+    await deleteAllPartial();
   }
 
   return URL.createObjectURL(blob);
