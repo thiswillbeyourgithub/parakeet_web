@@ -230,6 +230,11 @@ body {
   color: var(--text);
 }
 
+/* Let vertical drags on sliders scroll the page; only horizontal drags adjust the value. */
+input[type="range"] {
+  touch-action: pan-y;
+}
+
 /* ─── Settings sidebar ───────────────────────────────────────────────────── */
 .settings-sidebar-overlay {
   position: fixed;
