@@ -18,6 +18,7 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbClear } from '../../src/idb.js';
+import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime } from './lib/format.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
@@ -1887,11 +1888,15 @@ export default function App() {
     try {
       // Clear all settings from IndexedDB
       await clearAllSettings();
-      
+
+      // Also wipe the model cache (completed weights and any partial-download
+      // chunks live in a separate IndexedDB), so reset truly starts from zero.
+      await clearModelCache();
+
       // Clear transcriptions
       setTranscriptions([]);
       setText('');
-      
+
       // Reload the page to reset all state to defaults
       window.location.reload();
     } catch (err) {

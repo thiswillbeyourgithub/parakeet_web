@@ -7,7 +7,7 @@
  */
 
 import { MODELS, getModelConfig } from './models.js';
-import { openIdb, idbGet, idbPut, idbDelete } from './idb.js';
+import { openIdb, idbGet, idbPut, idbDelete, idbClear } from './idb.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
 
 /**
@@ -86,6 +86,18 @@ async function getFileFromDb(key) {
 
 async function saveFileToDb(key, blob) {
   return idbPut(await getDb(), STORE_NAME, key, blob);
+}
+
+/**
+ * Wipe every cached model file and any in-flight partial-download state
+ * from IndexedDB. Used by the UI's "Reset All Settings and Data" action so
+ * a reset truly starts from zero, redownloading weights on next load.
+ */
+export async function clearCache() {
+  if (typeof indexedDB === 'undefined') return;
+  await idbClear(await getDb(), STORE_NAME);
+  repoFileCache.clear();
+  console.log('[Hub] Cleared cached model files and partial downloads');
 }
 
 /**
