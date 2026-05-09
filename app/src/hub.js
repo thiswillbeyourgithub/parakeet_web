@@ -7,7 +7,7 @@
  */
 
 import { MODELS, getModelConfig } from './models.js';
-import { openIdb, idbGet, idbPut } from './idb.js';
+import { openIdb, idbGet, idbPut, idbDelete } from './idb.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
 
 /**
@@ -25,6 +25,14 @@ export class HubDownloadError extends Error {
 
 const DB_NAME = 'parakeet-cache-db';
 const STORE_NAME = 'file-store';
+
+// Resumable-download tuning. Partial state is flushed to IndexedDB every
+// FLUSH_INTERVAL bytes so a tab close or network drop only loses up to that
+// much progress. MAX_RETRIES with exponential backoff handles transient
+// drops; persistent failures (CORS, 404, hard offline) still surface.
+const FLUSH_INTERVAL = 8 * 1024 * 1024;
+const MAX_RETRIES = 6;
+const PARTIAL_PREFIX = 'partial-';
 
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
@@ -86,37 +94,109 @@ async function saveFileToDb(key, blob) {
  * @returns {Promise<string>} URL to cached file (blob URL)
  */
 /**
- * Stream a fetch response body into a Blob, reporting progress, then
- * persist it to IndexedDB and return a blob URL. Shared between the
- * HuggingFace and local-fallback download paths so the streaming /
- * caching loop lives in one place.
+ * Download a URL into a Blob with resume + retry, reporting progress,
+ * then persist it to IndexedDB and return a blob URL. Shared between the
+ * HuggingFace and local-fallback paths.
  *
- * @param {Response} response - Already-issued fetch Response (response.ok must be true)
- * @param {string} cacheKey - IndexedDB key
+ * Uses HTTP Range requests so a dropped connection picks up where it left
+ * off instead of restarting from byte 0. Partial state (received chunks,
+ * total, ETag) is flushed to IndexedDB every FLUSH_INTERVAL bytes, so even
+ * the first download survives the tab being closed mid-stream. If the
+ * server doesn't support ranges (returns 200 to a Range request) the code
+ * falls back to a single-shot stream from 0.
+ *
+ * @param {string} url - Source URL to download
+ * @param {string} cacheKey - IndexedDB key for the final blob
  * @param {string} filename - Friendly name for logs and progress events
  * @param {Function|undefined} progress - Optional progress callback
  * @param {string} logTag - Log prefix, e.g. '[Hub]' or '[Hub:local]'
  * @returns {Promise<string>} Blob URL
  */
-async function _streamAndCache(response, cacheKey, filename, progress, logTag) {
-  const contentLength = response.headers.get('content-length');
-  const total = contentLength ? parseInt(contentLength) : 0;
-  let loaded = 0;
+async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
+  const partialKey = PARTIAL_PREFIX + cacheKey;
 
-  const reader = response.body.getReader();
-  const chunks = [];
+  let partial = null;
+  if (typeof indexedDB !== 'undefined') {
+    try { partial = await getFileFromDb(partialKey); } catch (_) {}
+  }
+  let chunks = partial?.chunks ? [...partial.chunks] : [];
+  let received = partial?.received || 0;
+  let total = partial?.total || 0;
+  let etag = partial?.etag || null;
+  let contentType = partial?.contentType || 'application/octet-stream';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    if (progress && total > 0) {
-      progress({ loaded, total, file: filename });
+  if (partial && received > 0) {
+    console.log(`${logTag} Resuming ${filename} from ${received}/${total || '?'} bytes`);
+  }
+
+  const flushPartial = async () => {
+    if (typeof indexedDB === 'undefined' || received === 0) return;
+    try {
+      await saveFileToDb(partialKey, { chunks, received, total, etag, contentType });
+    } catch (e) {
+      console.warn(`${logTag} Failed to persist partial state for ${filename}:`, e);
+    }
+  };
+
+  // Already complete from a prior run that crashed before the final write
+  const alreadyComplete = total > 0 && received >= total;
+
+  for (let attempt = 0; !alreadyComplete; attempt++) {
+    try {
+      const headers = {};
+      if (received > 0) {
+        headers['Range'] = `bytes=${received}-`;
+        if (etag) headers['If-Range'] = etag;
+      }
+      const resp = await fetch(url, { headers });
+      if (!resp.ok && resp.status !== 206) {
+        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      }
+
+      // We asked for a range but got a full body — server doesn't support
+      // ranges, or If-Range invalidated the partial. Restart from 0.
+      if (received > 0 && resp.status === 200) {
+        console.warn(`${logTag} Server returned full body for ${filename} — restarting from 0`);
+        chunks = [];
+        received = 0;
+      }
+
+      if (resp.status === 206) {
+        const cr = resp.headers.get('content-range');
+        const m = cr && cr.match(/\/(\d+)$/);
+        if (m) total = parseInt(m[1], 10);
+      } else {
+        const cl = resp.headers.get('content-length');
+        if (cl) total = received + parseInt(cl, 10);
+      }
+      etag = resp.headers.get('etag') || resp.headers.get('last-modified') || etag;
+      contentType = resp.headers.get('content-type') || contentType;
+
+      const reader = resp.body.getReader();
+      let sinceFlush = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        sinceFlush += value.length;
+        if (progress && total > 0) progress({ loaded: received, total, file: filename });
+        if (sinceFlush >= FLUSH_INTERVAL) {
+          await flushPartial();
+          sinceFlush = 0;
+        }
+      }
+      break;
+    } catch (err) {
+      await flushPartial();
+      if (attempt >= MAX_RETRIES) throw err;
+      const delay = Math.min(30000, 1000 * 2 ** attempt);
+      console.warn(`${logTag} Download error for ${filename} at ${received}/${total || '?'} — retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES}):`, err.message || err);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 
-  const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
+  const blob = new Blob(chunks, { type: contentType });
 
   if (typeof indexedDB !== 'undefined') {
     try {
@@ -125,6 +205,9 @@ async function _streamAndCache(response, cacheKey, filename, progress, logTag) {
     } catch (e) {
       console.warn(`${logTag} Failed to cache in IndexedDB:`, e);
     }
+    try {
+      await idbDelete(await getDb(), STORE_NAME, partialKey);
+    } catch (_) {}
   }
 
   return URL.createObjectURL(blob);
@@ -155,21 +238,15 @@ export async function getModelFile(repoId, filename, options = {}) {
     }
   }
   
-  // Download from HF
+  // Download from HF (resumable + retrying internally)
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
-  let response;
   try {
-    response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]');
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
-    // (network errors, CORS blocks, firewalls, HTTP errors, etc.)
+    // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
     throw new HubDownloadError(filename, fetchErr);
   }
-  
-  return _streamAndCache(response, cacheKey, filename, progress, '[Hub]');
 }
 
 /**
@@ -217,12 +294,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Local fallback failed for ${filename}: ${response.status} ${response.statusText}`);
-  }
-
-  return _streamAndCache(response, cacheKey, filename, progress, '[Hub:local]');
+  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]');
 }
 
 /**

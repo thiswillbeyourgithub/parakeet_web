@@ -47,6 +47,16 @@ export async function idbPut(db, storeName, key, value) {
   });
 }
 
+export async function idbDelete(db, storeName, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([storeName], 'readwrite');
+    const store = tx.objectStore(storeName);
+    const request = store.delete(key);
+    request.onerror = () => reject(request.error || new Error('Error deleting from DB'));
+    request.onsuccess = () => resolve();
+  });
+}
+
 export async function idbClear(db, storeName) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([storeName], 'readwrite');
