@@ -15,7 +15,7 @@
     "transcription"
   ],
   "dependencies": {
-    "onnxruntime-web": "1.25.1"
+    "onnxruntime-web": "1.26.0"
   },
   "overrides": {
     "protobufjs": "^7.5.5"
