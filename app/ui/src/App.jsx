@@ -701,9 +701,10 @@ export default function App() {
     console.time('LoadModel');
 
     try {
-      const progressCallback = ({ loaded, total, file }) => {
+      const progressCallback = ({ loaded, total, file, resumed }) => {
         const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-        setProgressText(`${file}: ${pct}%`);
+        const prefix = resumed ? `${t('resuming')} ` : '';
+        setProgressText(`${prefix}${file}: ${pct}%`);
         setProgressPct(pct);
       };
 

@@ -124,8 +124,11 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
   let total = partial?.total || 0;
   let etag = partial?.etag || null;
   let contentType = partial?.contentType || 'application/octet-stream';
+  // Snapshot the resume offset so progress events can flag the file as
+  // being resumed (UI shows "Resuming…" instead of a fresh download).
+  let resumedFrom = received;
 
-  if (partial && received > 0) {
+  if (resumedFrom > 0) {
     console.log(`${logTag} Resuming ${filename} from ${received}/${total || '?'} bytes`);
   }
 
@@ -159,6 +162,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
         console.warn(`${logTag} Server returned full body for ${filename} — restarting from 0`);
         chunks = [];
         received = 0;
+        resumedFrom = 0;
       }
 
       if (resp.status === 206) {
@@ -180,7 +184,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
         chunks.push(value);
         received += value.length;
         sinceFlush += value.length;
-        if (progress && total > 0) progress({ loaded: received, total, file: filename });
+        if (progress && total > 0) progress({ loaded: received, total, file: filename, resumed: resumedFrom > 0, resumedFrom });
         if (sinceFlush >= FLUSH_INTERVAL) {
           await flushPartial();
           sinceFlush = 0;

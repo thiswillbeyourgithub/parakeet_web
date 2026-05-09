@@ -8,6 +8,7 @@ const translations = {
     // Status messages
     idle: 'Idle',
     loadingModel: 'Loading model\u2026',
+    resuming: 'Resuming',
     creatingSessions: 'Creating sessions\u2026',
     compilingModel: 'Compiling model\u2026',
     modelReady: 'Model ready \u2714',
@@ -265,6 +266,7 @@ const translations = {
     // Status messages
     idle: 'En attente',
     loadingModel: 'Chargement du mod\u00e8le\u2026',
+    resuming: 'Reprise',
     creatingSessions: 'Cr\u00e9ation des sessions\u2026',
     compilingModel: 'Compilation du mod\u00e8le\u2026',
     modelReady: 'Mod\u00e8le pr\u00eat \u2714',
