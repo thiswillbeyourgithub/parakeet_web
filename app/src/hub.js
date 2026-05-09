@@ -34,6 +34,10 @@ const FLUSH_INTERVAL = 8 * 1024 * 1024;
 const MAX_RETRIES = 6;
 const PARTIAL_PREFIX = 'partial-';
 const SEGMENT_INFIX = '-seg-';
+// If no chunk arrives for this long, abort the fetch and retry. Without it
+// a silently half-open connection (proxy idle-out, dropped TCP) hangs the
+// reader forever instead of triggering the existing retry/backoff logic.
+const INACTIVITY_TIMEOUT_MS = 30000;
 
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
@@ -215,8 +219,23 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
         headers['Range'] = `bytes=${received}-`;
         if (etag) headers['If-Range'] = etag;
       }
-      const resp = await fetch(url, { headers });
+      // Inactivity watchdog: rearmed on every successful chunk read below.
+      const ac = new AbortController();
+      let watchdog = setTimeout(() => ac.abort(new Error('inactivity timeout')), INACTIVITY_TIMEOUT_MS);
+      const resetWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => ac.abort(new Error('inactivity timeout')), INACTIVITY_TIMEOUT_MS);
+      };
+      const clearWatchdog = () => clearTimeout(watchdog);
+      let resp;
+      try {
+        resp = await fetch(url, { headers, signal: ac.signal });
+      } catch (err) {
+        clearWatchdog();
+        throw err;
+      }
       if (!resp.ok && resp.status !== 206) {
+        clearWatchdog();
         throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
       }
 
@@ -247,16 +266,21 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
       contentType = resp.headers.get('content-type') || contentType;
 
       const reader = resp.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        tailChunks.push(value);
-        tailBytes += value.length;
-        received += value.length;
-        if (progress && total > 0) progress({ loaded: received, total, file: filename, resumed: resumedFrom > 0, resumedFrom });
-        if (tailBytes >= FLUSH_INTERVAL) {
-          await flushTail();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          resetWatchdog();
+          tailChunks.push(value);
+          tailBytes += value.length;
+          received += value.length;
+          if (progress && total > 0) progress({ loaded: received, total, file: filename, resumed: resumedFrom > 0, resumedFrom });
+          if (tailBytes >= FLUSH_INTERVAL) {
+            await flushTail();
+          }
         }
+      } finally {
+        clearWatchdog();
       }
       break;
     } catch (err) {
