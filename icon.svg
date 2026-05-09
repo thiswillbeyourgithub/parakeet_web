@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="t">
+  <title id="t">Parakeet Web icon: a purple parakeet whose tail becomes an audio waveform</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3d47"/>
+      <stop offset="1" stop-color="#23252c"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0.15" y1="0.1" x2="0.85" y2="0.95">
+      <stop offset="0" stop-color="#c8a8ff"/>
+      <stop offset="0.55" stop-color="#8a5cf0"/>
+      <stop offset="1" stop-color="#5a2bbf"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6a35d0"/>
+      <stop offset="1" stop-color="#3d178a"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d6b8ff"/>
+      <stop offset="1" stop-color="#7c4cd9"/>
+    </linearGradient>
+    <linearGradient id="beak" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff7a6b"/>
+      <stop offset="1" stop-color="#d8324a"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="256" height="256" rx="48" fill="url(#bg)"/>
+  <rect x="3" y="3" width="250" height="250" rx="46" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="1.5"/>
+
+  <g>
+    <rect x="38"  y="132" width="10" height="22" rx="3" fill="url(#bar)" opacity="0.85"/>
+    <rect x="56"  y="116" width="10" height="54" rx="3" fill="url(#bar)"/>
+    <rect x="74"  y="96"  width="10" height="94" rx="3" fill="#e84a5f"/>
+    <rect x="92"  y="108" width="10" height="70" rx="3" fill="url(#bar)"/>
+    <rect x="110" y="124" width="10" height="38" rx="3" fill="url(#bar)" opacity="0.9"/>
+  </g>
+
+  <path d="M120 142
+           C 120 96, 158 70, 196 74
+           C 222 76, 232 96, 232 122
+           C 232 158, 200 188, 160 188
+           C 138 188, 122 174, 120 152 Z"
+        fill="url(#body)"/>
+
+  <path d="M150 110
+           C 168 104, 196 108, 210 124
+           C 200 152, 178 168, 150 166
+           C 140 150, 140 124, 150 110 Z"
+        fill="url(#wing)" opacity="0.92"/>
+  <path d="M156 120 C 174 116, 192 122, 200 132" stroke="#b48bff" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.55"/>
+
+  <path d="M226 110 L 250 118 L 226 132 Z" fill="url(#beak)"/>
+  <path d="M226 110 L 250 118 L 238 121 Z" fill="#ffffff" opacity="0.18"/>
+
+  <circle cx="214" cy="108" r="5.5" fill="#1a1024"/>
+  <circle cx="215.5" cy="106.5" r="1.6" fill="#ffffff"/>
+
+  <ellipse cx="178" cy="92" rx="22" ry="6" fill="#ffffff" opacity="0.12"/>
+</svg>
