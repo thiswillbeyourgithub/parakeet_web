@@ -146,6 +146,12 @@ body {
   color: var(--accent);
 }
 
+.app-logo {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
 /* ─── Settings toggle button ─────────────────────────────────────────────── */
 .settings-toggle {
   width: 40px;

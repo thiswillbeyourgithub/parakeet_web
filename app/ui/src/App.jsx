@@ -2193,6 +2193,7 @@ export default function App() {
         </Banner>
       )}
       <div className="app-header">
+        <img src="/favicon.svg" alt="" aria-hidden="true" className="app-logo" />
         <h2>ParakeetWeb v{VERSION}</h2>
         <p style={{ margin: 0, flex: 1, paddingLeft: '1rem', fontSize: '0.9rem', color: 'var(--text-subtle)' }}>{t('status')}: {t(status) || status}</p>
         <LanguageSwitcher />
