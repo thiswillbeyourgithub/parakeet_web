@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./icon.svg" alt="Parakeet Web logo" width="128" height="128" />
+</p>
+
 # Parakeet Web
 
 > ⚠️ **EXPERIMENTAL WIP** – Made with care but with AI. Expect bugs, breaking changes, and rough edges.
