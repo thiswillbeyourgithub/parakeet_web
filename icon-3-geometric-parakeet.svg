@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Parakeet Web - Geometric low-poly parakeet</title>
+  <rect width="256" height="256" rx="48" fill="#FFF8E7"/>
+
+  <!-- Low poly parakeet, side profile facing right -->
+  <g transform="translate(38 60)">
+    <!-- Head -->
+    <polygon points="80,0 130,10 140,40 110,55 75,45" fill="#3DDC84" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <polygon points="75,45 110,55 95,75 60,65" fill="#1F9D55" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Body -->
+    <polygon points="60,65 95,75 130,90 100,130 50,115" fill="#3DDC84" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <polygon points="100,130 130,90 165,110 145,135" fill="#1F9D55" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Wing -->
+    <polygon points="95,75 130,90 145,135 100,130" fill="#FFB938" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Tail -->
+    <polygon points="50,115 100,130 80,160 30,145" fill="#1F9D55" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Beak -->
+    <polygon points="140,40 165,52 140,55" fill="#FF7A59" stroke="#0F2A1F" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Eye -->
+    <circle cx="120" cy="28" r="4" fill="#0F2A1F"/>
+    <!-- Branch / ground -->
+    <line x1="20" y1="170" x2="180" y2="170" stroke="#0F2A1F" stroke-width="4" stroke-linecap="round"/>
+    <!-- Feet -->
+    <line x1="80" y1="160" x2="80" y2="170" stroke="#0F2A1F" stroke-width="3"/>
+    <line x1="100" y1="160" x2="100" y2="170" stroke="#0F2A1F" stroke-width="3"/>
+  </g>
+</svg>
