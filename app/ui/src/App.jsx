@@ -297,6 +297,17 @@ export default function App() {
   // signaling server that could swap keys to MITM the data channel.
   const [remoteMicFingerprint, setRemoteMicFingerprint] = useState('');
   const remoteMicVerifyResolveRef = useRef(null); // (boolean) => void
+  // Resolve any in-flight fingerprint verify and null the ref. Every teardown
+  // path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
+  // disconnectRemoteMic) must call this so the awaiting Promise inside
+  // startRemoteMic doesn't hang and pin the ECDH private key in a dead
+  // closure (a slow memory-pressure DoS if the attacker stacks attempts).
+  const resolveRemoteMicVerify = useCallback((confirmed) => {
+    if (remoteMicVerifyResolveRef.current) {
+      remoteMicVerifyResolveRef.current(confirmed);
+      remoteMicVerifyResolveRef.current = null;
+    }
+  }, []);
 
   // Tiny helpers so the elapsed-timer setup/teardown is in one place — used to
   // be inlined ~7 times across the remote-mic flow which made changes risky.
@@ -1114,6 +1125,7 @@ export default function App() {
         // Clean up audio/timer state but keep modal open with a "disconnected" status
         // so the user can click Regenerate QR instead of having to restart manually.
         stopRemoteMicTimer();
+        resolveRemoteMicVerify(false);
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
         clearPcmChunks();
@@ -1392,6 +1404,7 @@ export default function App() {
   function regenerateRemoteMicQr() {
     // Tear down leftover state and start fresh — produces a new roomId/secret/QR.
     stopRemoteMicTimer();
+    resolveRemoteMicVerify(false);
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.close(); } catch (_) {}
       remoteMicRtcRef.current = null;
@@ -1408,6 +1421,7 @@ export default function App() {
 
   function cancelRemoteMic() {
     stopRemoteMicTimer();
+    resolveRemoteMicVerify(false);
     if (remoteMicRtcRef.current) {
       remoteMicRtcRef.current.close();
       remoteMicRtcRef.current = null;
