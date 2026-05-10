@@ -77,20 +77,22 @@ app.use('/api', (req, res, next) => {
  */
 function validateOrigin(req, res, next) {
     const origin = req.headers.origin;
-    // Origin-less requests (curl, server-to-server, SSRF pivots) bypass any
-    // browser-side allowlist and would otherwise leak /api/config (which
-    // contains fresh TURN credentials) and /api/stats. Require an Origin
-    // header on every /api route. Browser fetches always send Origin for
-    // cross-origin and same-origin POST/OPTIONS; same-origin GETs from the
-    // app are proxied by Vite/Caddy which preserve the Origin header.
-    if (!origin) {
-        console.warn(`Blocked request with no Origin header: ${req.method} ${req.originalUrl}`);
-        return res.status(403).json({ error: 'Forbidden', message: 'Origin header required' });
+    if (origin) {
+        if (ALLOWED_ORIGINS.includes(origin)) return next();
+        console.warn(`Blocked request from unauthorized origin: ${origin} (allowed: ${ALLOWED_ORIGINS.join(', ')})`);
+        return res.status(403).json({ error: 'Forbidden', message: 'Request origin not allowed' });
     }
-    if (ALLOWED_ORIGINS.includes(origin)) return next();
+    // Browsers omit Origin on same-origin GETs (the long-poll for /answer,
+    // the room-existence check on join, etc.), so we can't require it without
+    // breaking those flows. Sec-Fetch-Site is browser-set and forbidden to
+    // JavaScript, so curl/server-to-server callers (the SSRF/credential-leak
+    // concern) can't spoof it: same-origin in that header is a reliable
+    // browser-issued same-origin signal.
+    const fetchSite = req.headers['sec-fetch-site'];
+    if (fetchSite === 'same-origin') return next();
 
-    console.warn(`Blocked request from unauthorized origin: ${origin} (allowed: ${ALLOWED_ORIGINS.join(', ')})`);
-    return res.status(403).json({ error: 'Forbidden', message: 'Request origin not allowed' });
+    console.warn(`Blocked request with no Origin header and sec-fetch-site=${fetchSite || 'absent'}: ${req.method} ${req.originalUrl}`);
+    return res.status(403).json({ error: 'Forbidden', message: 'Origin header required' });
 }
 
 app.use('/api', validateOrigin);
