@@ -39,6 +39,14 @@ export class RemoteMicRTC {
         this._connectionTimeout = null;
         this._CONNECTION_TIMEOUT_MS = 15000;
         this._disconnectTimer = null;
+
+        // Wall-clock cap for the offerer's QR-waiting long-poll. Matches the
+        // server's room TTL (10 min) so we don't outlive the room itself; a
+        // compromised phone (or signaling flakiness it triggers) otherwise
+        // could keep this loop alive indefinitely while the ECDH key pair
+        // and QR resources stay pinned in startRemoteMic's closure.
+        this._WAIT_FOR_ANSWER_TIMEOUT_MS = 10 * 60 * 1000;
+        this._waitForAnswerAbort = null;
     }
 
     _getAuthHeaders(extra = {}) {
@@ -310,12 +318,23 @@ export class RemoteMicRTC {
         // CORS misconfig, mid-call IP ban) can't pin this in a tight retry
         // loop hammering the signaling server. 200/204/404 are the only
         // statuses that are part of the protocol; anything else terminates.
+        // Also bound the total wall-clock waiting window (matches room TTL)
+        // so an attacker triggering a 5xx storm or a stalled long-poll can't
+        // keep this alive past the room's lifetime, and route every fetch
+        // through an AbortController so close() can cancel cleanly.
         let transientRetries = 0;
         const MAX_TRANSIENT_RETRIES = 5;
+        const deadline = Date.now() + this._WAIT_FOR_ANSWER_TIMEOUT_MS;
         while (true) {
+            if (Date.now() >= deadline) {
+                throw new Error('Timed out waiting for phone to connect');
+            }
+            const controller = new AbortController();
+            this._waitForAnswerAbort = controller;
             try {
                 const response = await this._fetch(`/rooms/${this.roomId}/answer?wait=true`, {
-                    headers: this._getAuthHeaders()
+                    headers: this._getAuthHeaders(),
+                    signal: controller.signal,
                 });
 
                 if (response.status === 200) {
@@ -344,13 +363,20 @@ export class RemoteMicRTC {
                 // instead of looping forever.
                 throw new Error(`Signaling server rejected long-poll (HTTP ${response.status})`);
             } catch (e) {
-                if (e.message.includes('Room') || e.message.includes('Signaling server')) throw e;
+                if (e.name === 'AbortError') {
+                    throw new Error('waitForAnswer aborted');
+                }
+                if (e.message.includes('Room') || e.message.includes('Signaling server') || e.message.includes('Timed out')) throw e;
                 transientRetries += 1;
                 if (transientRetries > MAX_TRANSIENT_RETRIES) {
                     throw new Error(`Signaling unreachable after ${MAX_TRANSIENT_RETRIES} retries: ${e.message}`);
                 }
                 console.warn(`[RemoteMicRTC] Polling error (retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}):`, e.message);
                 await new Promise(resolve => setTimeout(resolve, 2000));
+            } finally {
+                if (this._waitForAnswerAbort === controller) {
+                    this._waitForAnswerAbort = null;
+                }
             }
         }
     }
@@ -506,6 +532,13 @@ export class RemoteMicRTC {
         if (this._disconnectTimer) {
             clearTimeout(this._disconnectTimer);
             this._disconnectTimer = null;
+        }
+        // Abort any in-flight waitForAnswer long-poll so close() actually
+        // unblocks the caller's await (otherwise the awaiting Promise can
+        // hang for the full room TTL even after the user cancels).
+        if (this._waitForAnswerAbort) {
+            try { this._waitForAnswerAbort.abort(); } catch (_) { /* ignore */ }
+            this._waitForAnswerAbort = null;
         }
         this.pendingIceCandidates = [];
         if (this.dataChannel) this.dataChannel.close();
