@@ -325,18 +325,28 @@ export default function App() {
     }, 1000);
   }, [stopRemoteMicTimer]);
 
-  // Load QR code library when remote mic modal opens; returns a promise that resolves when ready
+  // Load QR code library when remote mic modal opens; returns a promise that resolves when ready.
+  // qrLibRef captures the library object at the moment SRI-validated script
+  // execution finishes, so subsequent uses no longer probe `window.QRCode`.
+  // That global lookup is DOM-clobberable (an injected element with id or
+  // name "QRCode" would shadow it); reading once after onload eliminates
+  // the surface even before CSP lands.
+  const qrLibRef = useRef(null);
   const loadQRCode = useRef(null);
   if (!loadQRCode.current) {
     loadQRCode.current = new Promise((resolve) => {
-      if (window.QRCode) { resolve(); return; }
+      if (qrLibRef.current) { resolve(); return; }
       const script = document.createElement('script');
       script.src = '/js/qrcode.min.js';
       // SRI hash of app/ui/public/js/qrcode.min.js. If you replace that
       // file, recompute with: openssl dgst -sha384 -binary <file> | base64
       script.integrity = 'sha384-HGmnkDZJy7mRkoARekrrj0VjEFSh9a0Z8qxGri/kTTAJkgR8hqD1lHsYSh3JdzRi';
       script.crossOrigin = 'anonymous';
-      script.onload = () => { console.log('[RemoteMic] QR code library loaded'); setTimeout(resolve, 0); };
+      script.onload = () => {
+        qrLibRef.current = window.QRCode;
+        console.log('[RemoteMic] QR code library loaded');
+        setTimeout(resolve, 0);
+      };
       document.head.appendChild(script);
     });
   }
@@ -345,9 +355,9 @@ export default function App() {
   useEffect(() => {
     if (!remoteMicQrUrl || remoteMicStatus !== 'waiting') return;
     loadQRCode.current.then(() => {
-      if (remoteMicQrRef.current && window.QRCode) {
+      if (remoteMicQrRef.current && qrLibRef.current) {
         const canvas = document.createElement('canvas');
-        window.QRCode.toCanvas(canvas, remoteMicQrUrl, {
+        qrLibRef.current.toCanvas(canvas, remoteMicQrUrl, {
           width: 220,
           margin: 2,
           errorCorrectionLevel: 'M',
