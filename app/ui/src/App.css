@@ -154,24 +154,26 @@ body {
 
 /* ─── Settings toggle button ─────────────────────────────────────────────── */
 .settings-toggle {
-  width: 40px;
-  height: 40px;
+  width: 52px;
+  height: 52px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-muted);
-  font-size: 1.3rem;
+  font-size: 1.8rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s, border-color 0.2s;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
   padding: 0;
+  flex-shrink: 0;
 }
 
 .settings-toggle:hover {
   background: var(--bg-subtle);
   border-color: var(--border-strong);
+  transform: scale(1.05);
 }
 
 .settings-toggle:active {
