@@ -168,7 +168,12 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [verboseLog, setVerboseLog] = useState(true);
   const [frameStride, setFrameStride] = useState(1);
-  // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident
+  // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident.
+  // Kept tunable in code (still wired through to the backend) but hidden from the
+  // sidebar and never loaded from persisted settings: this param is extremely
+  // finicky, and any value above 0.0 breaks the model in unpredictable ways.
+  // To re-expose it, restore the slider in the sidebar and re-add it to the
+  // loadSetting/usePersistedSetting calls below.
   const [temperature, setTemperature] = useState(0.0);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
@@ -381,7 +386,6 @@ export default function App() {
           savedTranscriptions,
           savedVerboseLog,
           savedFrameStride,
-          savedTemperature,
           savedCpuThreads,
           savedNoiseSuppression,
           savedEchoCancellation,
@@ -401,7 +405,6 @@ export default function App() {
           loadSetting('transcriptions', []),
           loadSetting('verboseLog', true),
           loadSetting('frameStride', 1),
-          loadSetting('temperature', 0.5),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', false),
           loadSetting('echoCancellation', false),
@@ -422,7 +425,6 @@ export default function App() {
         setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
-        setTemperature(savedTemperature);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
@@ -675,7 +677,6 @@ export default function App() {
   usePersistedSetting('preprocessor', preprocessor, settingsLoaded);
   usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
-  usePersistedSetting('temperature', temperature, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
@@ -2325,21 +2326,10 @@ export default function App() {
               </div>
             )}
 
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('temperature')}: {temperature.toFixed(1)}
-                <InfoTooltip text={t('tooltipTemperature')} />
-              </span>
-              <input
-                type="range"
-                min="0.0"
-                max="3.0"
-                step="0.1"
-                value={temperature}
-                onChange={e=>setTemperature(Number(e.target.value))}
-                style={{flexBasis: '100%', marginTop: '0.25rem'}}
-              />
-            </div>
+            {/* Temperature slider intentionally hidden: the param is extremely
+                finicky and any value above 0.0 breaks the model in unpredictable
+                ways. Still wired up in code via the `temperature` state (default
+                0.0) so it can be re-added here without other plumbing. */}
 
             <div className="setting-row">
               <label>
