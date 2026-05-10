@@ -770,6 +770,9 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: 0.75rem 2rem 0.75rem 0.75rem;
   font-size: 0.85rem;
   line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+  font-weight: 400;
   color: var(--text-muted);
   box-shadow: var(--shadow-md);
   max-width: 320px;
