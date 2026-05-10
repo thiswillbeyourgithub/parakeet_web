@@ -387,6 +387,17 @@ input[type="range"] {
   margin-top: 1rem;
 }
 
+.settings-group-header {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  padding: 1.25rem 0 0.4rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.25rem;
+}
+
 /* Drawer footer action buttons — restyle .primary inside the drawer
    as full-width list-row items (à la WebSend's About / Production-mode rows),
    overriding the global .primary look without changing JSX. Higher

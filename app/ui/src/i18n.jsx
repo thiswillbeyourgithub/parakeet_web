@@ -106,6 +106,8 @@ const translations = {
     liveContextWindow: 'Context window',
     liveContextAuto: 'Auto',
     liveStreamingNote: 'Updates every few seconds while recording. The final transcript is still computed on stop.',
+    settingsGroupAdvanced: 'Advanced',
+    settingsGroupDebug: 'Debug',
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers.',
@@ -364,6 +366,8 @@ const translations = {
     liveContextWindow: 'Fen\u00eatre de contexte',
     liveContextAuto: 'Auto',
     liveStreamingNote: "Mise \u00e0 jour toutes les quelques secondes pendant l'enregistrement. La transcription finale est calcul\u00e9e \u00e0 l'arr\u00eat.",
+    settingsGroupAdvanced: 'Avanc\u00e9',
+    settingsGroupDebug: 'D\u00e9bogage',
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent.",

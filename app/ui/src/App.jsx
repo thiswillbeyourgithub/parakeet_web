@@ -2303,157 +2303,25 @@ export default function App() {
           <div className="settings-content">
             <div className="setting-row">
               <span className="setting-label">
-                {t('backend')}:
-                <InfoTooltip text={t('tooltipBackend')} />
-              </span>
-              <div className="setting-options">
-                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
-                  {t('wasmCpu')}
-                </label>
-                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
-                  {t('webgpu')}
-                </label>
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('frameStride')}: {frameStride}
-                <InfoTooltip text={t('tooltipFrameStride')} />
-              </span>
-              <input 
-                type="range" 
-                min="1" 
-                max="4" 
-                value={frameStride} 
-                onChange={e=>setFrameStride(Number(e.target.value))} 
-                style={{flexBasis: '100%', marginTop: '0.25rem'}} 
-              />
-            </div>
-
-            {(backend === 'wasm' || backend.startsWith('webgpu')) && (
-              <div className="setting-row">
-                <span className="setting-label">
-                  {t('cpuThreads')}: {cpuThreads}
-                  <InfoTooltip text={t('tooltipCpuThreads')} />
-                </span>
-                <input 
-                  type="range" 
-                  min="1" 
-                  max={maxCores} 
-                  value={cpuThreads} 
-                  onChange={e=>setCpuThreads(Number(e.target.value))} 
-                  disabled={status === 'modelReady'}
-                  style={{flexBasis: '100%', marginTop: '0.25rem', opacity: status === 'modelReady' ? 0.5 : 1}} 
-                />
-              </div>
-            )}
-
-            {/* Temperature slider intentionally hidden: the param is extremely
-                finicky and any value above 0.0 breaks the model in unpredictable
-                ways. Still wired up in code via the `temperature` state (default
-                0.0) so it can be re-added here without other plumbing. */}
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
-                {t('chunkLongAudio')}
-                <InfoTooltip text={t('tooltipChunking')} />
-              </label>
-              {enableChunking && (
-                <div style={{ marginTop: '0.25rem', width: '100%' }}>
-                  <span className="setting-label">
-                    {t('chunkDuration')}: {chunkDuration}s
-                  </span>
-                  <input
-                    type="range"
-                    min="15"
-                    max="300"
-                    step="5"
-                    value={chunkDuration}
-                    onChange={e => setChunkDuration(Number(e.target.value))}
-                    style={{ flexBasis: '100%', marginTop: '0.25rem', width: '100%' }}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
-                {t('showCertaintyHeatmap')}
-                <InfoTooltip text={t('tooltipHeatmap')} />
-              </label>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('defaultTranscriptDisplay')}:
-                <InfoTooltip text={t('tooltipDisplayMode')} />
-              </span>
-              <select
-                value={transcriptDisplayMode}
-                onChange={e => setTranscriptDisplayMode(e.target.value)}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
-              >
-                <option value="raw">{t('raw')}</option>
-                <option value="confidence">{t('confidence')}</option>
-                {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
-              </select>
-            </div>
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={autoTranscribe} onChange={e => setAutoTranscribe(e.target.checked)} />
-                {t('autoTranscribeAfterRecording')}
-                <InfoTooltip text={t('tooltipAutoTranscribe')} />
-              </label>
-            </div>
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
-                {t('autoCopyToClipboard')}
-                <InfoTooltip text={t('tooltipAutoCopy')} />
-              </label>
-            </div>
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
-                {t('displayMoreDetails')}
-                <InfoTooltip text={t('tooltipAdvancedInfo')} />
-              </label>
-            </div>
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
-                {t('maxDebugVerbosity')}
-                <InfoTooltip text={t('tooltipVerboseLog')} />
-              </label>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
                 {t('audioProcessing')}:
               </span>
               <div style={{ display: 'flex', flexDirection: 'row', gap: '1rem', flexWrap: 'wrap' }}>
                 <label>
-                  <input 
-                    type="checkbox" 
-                    checked={noiseSuppression} 
-                    onChange={e => setNoiseSuppression(e.target.checked)} 
-                    disabled={isRecording} 
+                  <input
+                    type="checkbox"
+                    checked={noiseSuppression}
+                    onChange={e => setNoiseSuppression(e.target.checked)}
+                    disabled={isRecording}
                   />
                   {t('noiseSuppression')}
                   <InfoTooltip text={t('tooltipNoiseSuppression')} />
                 </label>
                 <label>
-                  <input 
-                    type="checkbox" 
-                    checked={echoCancellation} 
-                    onChange={e => setEchoCancellation(e.target.checked)} 
-                    disabled={isRecording} 
+                  <input
+                    type="checkbox"
+                    checked={echoCancellation}
+                    onChange={e => setEchoCancellation(e.target.checked)}
+                    disabled={isRecording}
                   />
                   {t('echoCancellation')}
                   <InfoTooltip text={t('tooltipEchoCancellation')} />
@@ -2508,6 +2376,145 @@ export default function App() {
                   {t('liveStreamingNote')}
                 </p>
               )}
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={autoTranscribe} onChange={e => setAutoTranscribe(e.target.checked)} />
+                {t('autoTranscribeAfterRecording')}
+                <InfoTooltip text={t('tooltipAutoTranscribe')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
+                {t('autoCopyToClipboard')}
+                <InfoTooltip text={t('tooltipAutoCopy')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('defaultTranscriptDisplay')}:
+                <InfoTooltip text={t('tooltipDisplayMode')} />
+              </span>
+              <select
+                value={transcriptDisplayMode}
+                onChange={e => setTranscriptDisplayMode(e.target.value)}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="raw">{t('raw')}</option>
+                <option value="confidence">{t('confidence')}</option>
+                {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
+              </select>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
+                {t('showCertaintyHeatmap')}
+                <InfoTooltip text={t('tooltipHeatmap')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
+                {t('chunkLongAudio')}
+                <InfoTooltip text={t('tooltipChunking')} />
+              </label>
+              {enableChunking && (
+                <div style={{ marginTop: '0.25rem', width: '100%' }}>
+                  <span className="setting-label">
+                    {t('chunkDuration')}: {chunkDuration}s
+                  </span>
+                  <input
+                    type="range"
+                    min="15"
+                    max="300"
+                    step="5"
+                    value={chunkDuration}
+                    onChange={e => setChunkDuration(Number(e.target.value))}
+                    style={{ flexBasis: '100%', marginTop: '0.25rem', width: '100%' }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="settings-group-header">{t('settingsGroupAdvanced')}</div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('backend')}:
+                <InfoTooltip text={t('tooltipBackend')} />
+              </span>
+              <div className="setting-options">
+                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
+                  {t('wasmCpu')}
+                </label>
+                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
+                  {t('webgpu')}
+                </label>
+              </div>
+            </div>
+
+            {(backend === 'wasm' || backend.startsWith('webgpu')) && (
+              <div className="setting-row">
+                <span className="setting-label">
+                  {t('cpuThreads')}: {cpuThreads}
+                  <InfoTooltip text={t('tooltipCpuThreads')} />
+                </span>
+                <input
+                  type="range"
+                  min="1"
+                  max={maxCores}
+                  value={cpuThreads}
+                  onChange={e=>setCpuThreads(Number(e.target.value))}
+                  disabled={status === 'modelReady'}
+                  style={{flexBasis: '100%', marginTop: '0.25rem', opacity: status === 'modelReady' ? 0.5 : 1}}
+                />
+              </div>
+            )}
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('frameStride')}: {frameStride}
+                <InfoTooltip text={t('tooltipFrameStride')} />
+              </span>
+              <input
+                type="range"
+                min="1"
+                max="4"
+                value={frameStride}
+                onChange={e=>setFrameStride(Number(e.target.value))}
+                style={{flexBasis: '100%', marginTop: '0.25rem'}}
+              />
+            </div>
+
+            {/* Temperature slider intentionally hidden: the param is extremely
+                finicky and any value above 0.0 breaks the model in unpredictable
+                ways. Still wired up in code via the `temperature` state (default
+                0.0) so it can be re-added here without other plumbing. */}
+
+            <div className="settings-group-header">{t('settingsGroupDebug')}</div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
+                {t('displayMoreDetails')}
+                <InfoTooltip text={t('tooltipAdvancedInfo')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
+                {t('maxDebugVerbosity')}
+                <InfoTooltip text={t('tooltipVerboseLog')} />
+              </label>
             </div>
           </div>
         
