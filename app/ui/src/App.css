@@ -132,10 +132,28 @@ body {
 
 .app-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   margin-bottom: 1.5rem;
+  gap: 0.35rem;
+}
+
+.app-header__title-row {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+}
+
+.app-header__title-row h2 {
+  flex: 1;
+  margin: 0;
+}
+
+.app-header__status {
+  margin: 0;
+  padding-left: calc(36px + 0.5rem);
+  font-size: 0.9rem;
+  color: var(--text-subtle);
 }
 
 .app-header h2 {
