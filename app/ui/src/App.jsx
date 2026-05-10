@@ -1131,6 +1131,15 @@ export default function App() {
           try {
             const msg = JSON.parse(data);
             if (msg.type === 'sender-public-key') {
+              // Refuse a second handshake once one is already bound or in
+              // flight. Otherwise a malicious phone could overwrite
+              // remoteMicKeyRef.current mid-stream (silent key swap on the
+              // victim) or orphan the previous verify resolver, pinning
+              // the original ECDH private key in a dead closure.
+              if (remoteMicKeyRef.current || remoteMicVerifyResolveRef.current) {
+                console.warn('[RemoteMic] Ignoring duplicate sender-public-key — handshake already bound or in-flight');
+                return;
+              }
               // Derive shared key from phone's public key
               const theirKey = await importPublicKey(msg.key);
               const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
