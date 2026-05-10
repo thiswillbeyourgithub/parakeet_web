@@ -17,7 +17,13 @@
 import { getPairFingerprint, computeFingerprintLength } from './remote-crypto.js';
 
 const STATS_TIMEOUT_MS = 2000;
-const DEFAULT_HEX_LEN = 6;
+// Fail-safe fingerprint length used whenever the stats response is missing,
+// malformed, late, or otherwise untrustworthy. We pick the longest length the
+// crypto layer supports so a misbehaving (or compromised) stats endpoint can
+// never silently shrink the verification code: the worst case is "user reads
+// a slightly longer code", never "the fingerprint is too short to detect a
+// MITM swap." Defense in depth even though signaling is currently trusted.
+const SAFE_FALLBACK_HEX_LEN = 12;
 
 /**
  * Fetch /api/signal/stats and convert the active-room count into an
@@ -34,11 +40,16 @@ export async function getAdaptiveFingerprintLength(statsUrl = '/api/signal/stats
     const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const resp = await fetch(statsUrl, { signal: controller.signal });
-        if (!resp.ok) return DEFAULT_HEX_LEN;
-        const { activeRooms } = await resp.json();
-        return computeFingerprintLength(activeRooms || 0);
+        if (!resp.ok) return SAFE_FALLBACK_HEX_LEN;
+        const data = await resp.json();
+        // Only widen the fingerprint down when activeRooms is an explicit
+        // non-negative integer; missing or non-numeric -> longest length.
+        if (!data || !Number.isInteger(data.activeRooms) || data.activeRooms < 0) {
+            return SAFE_FALLBACK_HEX_LEN;
+        }
+        return computeFingerprintLength(data.activeRooms);
     } catch {
-        return DEFAULT_HEX_LEN;
+        return SAFE_FALLBACK_HEX_LEN;
     } finally {
         clearTimeout(t);
     }
