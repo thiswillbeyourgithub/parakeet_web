@@ -2514,18 +2514,22 @@ export default function App() {
                 <InfoTooltip text={t('tooltipChunking')} />
               </label>
               {enableChunking && (
-                <div style={{ marginTop: '0.25rem', width: '100%' }}>
-                  <span className="setting-label">
-                    {t('chunkDuration')}: {chunkDuration}s
+                <div style={{ marginTop: '0.25rem', width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('chunkDuration')} (s):
                   </span>
                   <input
-                    type="range"
+                    type="number"
+                    inputMode="numeric"
                     min="15"
                     max="300"
                     step="5"
                     value={chunkDuration}
-                    onChange={e => setChunkDuration(Number(e.target.value))}
-                    style={{ flexBasis: '100%', marginTop: '0.25rem', width: '100%' }}
+                    onChange={e => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setChunkDuration(Math.max(15, Math.min(300, v)));
+                    }}
+                    style={{ width: '5rem' }}
                   />
                 </div>
               )}
@@ -2551,35 +2555,43 @@ export default function App() {
             </div>
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (
-              <div className="setting-row">
-                <span className="setting-label">
-                  {t('cpuThreads')}: {cpuThreads}
+              <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                  {t('cpuThreads')} (1-{maxCores}):
                   <InfoTooltip text={t('tooltipCpuThreads')} />
                 </span>
                 <input
-                  type="range"
+                  type="number"
+                  inputMode="numeric"
                   min="1"
                   max={maxCores}
                   value={cpuThreads}
-                  onChange={e=>setCpuThreads(Number(e.target.value))}
+                  onChange={e=>{
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v)) setCpuThreads(Math.max(1, Math.min(maxCores, v)));
+                  }}
                   disabled={status === 'modelReady'}
-                  style={{flexBasis: '100%', marginTop: '0.25rem', opacity: status === 'modelReady' ? 0.5 : 1}}
+                  style={{ width: '4.5rem', opacity: status === 'modelReady' ? 0.5 : 1 }}
                 />
               </div>
             )}
 
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('frameStride')}: {frameStride}
+            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('frameStride')} (1-4):
                 <InfoTooltip text={t('tooltipFrameStride')} />
               </span>
               <input
-                type="range"
+                type="number"
+                inputMode="numeric"
                 min="1"
                 max="4"
                 value={frameStride}
-                onChange={e=>setFrameStride(Number(e.target.value))}
-                style={{flexBasis: '100%', marginTop: '0.25rem'}}
+                onChange={e=>{
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setFrameStride(Math.max(1, Math.min(4, v)));
+                }}
+                style={{ width: '4.5rem' }}
               />
             </div>
 
