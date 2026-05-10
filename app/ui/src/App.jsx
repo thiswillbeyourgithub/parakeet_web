@@ -1178,8 +1178,21 @@ export default function App() {
                 rtc.close();
               }
             } else if (msg.type === 'audio-config') {
-              remoteMicSampleRateRef.current = msg.sampleRate;
-              console.log(`[RemoteMic] Phone sample rate: ${msg.sampleRate}Hz`);
+              // Validate the phone-supplied sample rate before letting it
+              // reach the resampler / live transcriber. NaN, 0, negatives,
+              // strings, and absurd values would otherwise wedge UI in a
+              // stuck "connected" state via an unhandled rejection from
+              // OfflineAudioContext or a divide-by-zero in totalSec math.
+              const sr = msg.sampleRate;
+              if (!Number.isInteger(sr) || sr < 8000 || sr > 96000) {
+                console.error('[RemoteMic] Invalid audio-config sampleRate:', sr);
+                setRemoteMicError(t('remoteMicInvalidConfig'));
+                setRemoteMicStatus('error');
+                rtc.close();
+                return;
+              }
+              remoteMicSampleRateRef.current = sr;
+              console.log(`[RemoteMic] Phone sample rate: ${sr}Hz`);
               setRemoteMicRecording(true);
               startRemoteMicTimer();
               // Phone audio is buffered into the same pcmChunksRef the local
