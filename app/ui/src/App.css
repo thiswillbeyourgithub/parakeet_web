@@ -250,13 +250,6 @@ body {
   color: var(--text);
 }
 
-/* Disable native touch handling on sliders. App.jsx drives them via pointer
-   events with direction-sniffing so vertical drags scroll and never nudge
-   the value, even partially. */
-input[type="range"] {
-  touch-action: none;
-}
-
 /* ─── Settings sidebar ───────────────────────────────────────────────────── */
 .settings-sidebar-overlay {
   position: fixed;
