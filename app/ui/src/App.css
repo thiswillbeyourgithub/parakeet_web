@@ -792,6 +792,23 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* On narrow viewports the sidebar leaves no room for a centered popup,
+   so pin it to the viewport edges instead of the help button. */
+@media (max-width: 600px) {
+  .info-help-text {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    top: auto;
+    bottom: 1rem;
+    transform: none;
+    max-width: none;
+    width: auto;
+    min-width: 0;
+    animation: fadeIn 0.2s ease-out;
+  }
+}
+
 .info-help-close {
   position: absolute;
   top: 0.5rem;
