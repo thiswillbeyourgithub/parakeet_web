@@ -250,9 +250,11 @@ body {
   color: var(--text);
 }
 
-/* Let vertical drags on sliders scroll the page; only horizontal drags adjust the value. */
+/* Disable native touch handling on sliders. App.jsx drives them via pointer
+   events with direction-sniffing so vertical drags scroll and never nudge
+   the value, even partially. */
 input[type="range"] {
-  touch-action: pan-y;
+  touch-action: none;
 }
 
 /* ─── Settings sidebar ───────────────────────────────────────────────────── */

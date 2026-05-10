@@ -336,29 +336,118 @@ export default function App() {
     });
   }, [remoteMicQrUrl, remoteMicStatus]);
 
-  // Stop the mouse wheel from changing range slider values when scrolling
-  // the sidebar. The browser's default wheel-over-range behavior nudges
-  // the value AND consumes the wheel, so we cancel the default and
-  // forward the deltaY to the nearest scrollable ancestor.
+  // Make scrolling near a slider always scroll, never nudge its value.
+  // Two protections:
+  //   1. Wheel over a range input: cancel the default value-change and
+  //      forward the deltaY to the nearest scrollable ancestor.
+  //   2. Touch/pen on a range input: take over with pointer events.
+  //      CSS sets `touch-action: none` on ranges so the browser does not
+  //      jump-to-position on touchdown nor commit to a slider drag before
+  //      we have decided the gesture's direction. We watch the first few
+  //      pixels of motion: vertical-dominant becomes a scroll on the
+  //      nearest scrollable ancestor, horizontal-dominant drives the
+  //      slider value from the pointer X position. A pure tap (no
+  //      movement past the threshold) jumps to the touched position.
   useEffect(() => {
+    const findScrollable = (el) => {
+      let p = el.parentElement;
+      while (p) {
+        const s = window.getComputedStyle(p);
+        if (/(auto|scroll)/.test(s.overflowY) && p.scrollHeight > p.clientHeight) return p;
+        p = p.parentElement;
+      }
+      return document.scrollingElement || document.documentElement;
+    };
+
     const onWheel = (e) => {
       const tgt = e.target;
       if (!tgt || tgt.tagName !== 'INPUT' || tgt.type !== 'range') return;
       e.preventDefault();
       if (document.activeElement === tgt) tgt.blur();
-      let parent = tgt.parentElement;
-      while (parent) {
-        const style = window.getComputedStyle(parent);
-        if (/(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight) {
-          parent.scrollTop += e.deltaY;
-          return;
-        }
-        parent = parent.parentElement;
-      }
-      window.scrollBy(0, e.deltaY);
+      findScrollable(tgt).scrollTop += e.deltaY;
     };
     document.addEventListener('wheel', onWheel, { passive: false });
-    return () => document.removeEventListener('wheel', onWheel);
+
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value'
+    ).set;
+    const setRangeValue = (range, val) => {
+      const min = Number(range.min) || 0;
+      const max = Number(range.max) || 100;
+      const step = Number(range.step) || 1;
+      let v = Math.round((val - min) / step) * step + min;
+      v = Math.max(min, Math.min(max, v));
+      if (String(v) === range.value) return;
+      valueSetter.call(range, String(v));
+      range.dispatchEvent(new Event('input', { bubbles: true }));
+      range.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const valueFromX = (range, clientX) => {
+      const rect = range.getBoundingClientRect();
+      const min = Number(range.min) || 0;
+      const max = Number(range.max) || 100;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return min + ratio * (max - min);
+    };
+
+    let active = null;
+    const THRESHOLD = 6;
+
+    const onPointerDown = (e) => {
+      const tgt = e.target;
+      if (!tgt || tgt.tagName !== 'INPUT' || tgt.type !== 'range') return;
+      if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      if (tgt.disabled) return;
+      active = {
+        range: tgt,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastY: e.clientY,
+        mode: 'undecided',
+        scrollTarget: findScrollable(tgt),
+      };
+      try { tgt.setPointerCapture(e.pointerId); } catch {}
+    };
+
+    const onPointerMove = (e) => {
+      if (!active || e.pointerId !== active.pointerId) return;
+      const dx = e.clientX - active.startX;
+      const dy = e.clientY - active.startY;
+      if (active.mode === 'undecided') {
+        if (Math.hypot(dx, dy) < THRESHOLD) return;
+        active.mode = Math.abs(dy) > Math.abs(dx) ? 'scroll' : 'slide';
+      }
+      if (active.mode === 'slide') {
+        setRangeValue(active.range, valueFromX(active.range, e.clientX));
+      } else {
+        active.scrollTarget.scrollTop -= (e.clientY - active.lastY);
+        active.lastY = e.clientY;
+      }
+    };
+
+    const endPointer = (e) => {
+      if (!active || e.pointerId !== active.pointerId) return;
+      if (active.mode === 'undecided' && e.type === 'pointerup') {
+        // Treat as a tap: jump to the tapped position.
+        setRangeValue(active.range, valueFromX(active.range, e.clientX));
+      }
+      try { active.range.releasePointerCapture(active.pointerId); } catch {}
+      active = null;
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('pointermove', onPointerMove, true);
+    document.addEventListener('pointerup', endPointer, true);
+    document.addEventListener('pointercancel', endPointer, true);
+
+    return () => {
+      document.removeEventListener('wheel', onWheel);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('pointermove', onPointerMove, true);
+      document.removeEventListener('pointerup', endPointer, true);
+      document.removeEventListener('pointercancel', endPointer, true);
+    };
   }, []);
 
   // Tracks which history item has its kebab menu open (by transcription id)
