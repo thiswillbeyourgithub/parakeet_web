@@ -255,6 +255,11 @@ export default function App() {
   }, []);
   const [isProcessingPreview, setIsProcessingPreview] = useState(false);
   const [hasBeenTranscribed, setHasBeenTranscribed] = useState(false);
+  // True from the moment recording stops until the final transcription is
+  // displayed. Keeps the live transcript and a status indicator on screen so
+  // the UI never appears to freeze while audio is being assembled / decoded
+  // and the model is running its canonical pass.
+  const [awaitingFinal, setAwaitingFinal] = useState(false);
   const [noiseSuppression, setNoiseSuppression] = useState(false);
   const [echoCancellation, setEchoCancellation] = useState(false);
   const [autoGainControl, setAutoGainControl] = useState(true);
@@ -923,6 +928,9 @@ export default function App() {
       setAudioContext(audioCtx);
       setMediaRecorder(stream); // reuse state slot to hold the stream for cleanup
       setIsRecording(true);
+      // Drop any leftover awaiting state from a previous session that the
+      // user may have abandoned without transcribing.
+      setAwaitingFinal(false);
       setStatus('recordingClickStop');
       console.log('[Record] Recording started (AudioWorklet PCM capture)');
 
@@ -946,6 +954,10 @@ export default function App() {
     if (!isRecording) return;
 
     console.log('[Record] Stopping recording...');
+    // Flip awaitingFinal first so the live transcript and status banner
+    // remain visible across the (possibly long) gap between stop and the
+    // final ASR result hitting the transcriptions list.
+    setAwaitingFinal(true);
     setIsRecording(false);
     setIsPaused(false);
     setAudioLevel(0);
@@ -1166,6 +1178,9 @@ export default function App() {
               maybeStartLiveTranscriber({ sampleRate: remoteMicSampleRateRef.current });
             } else if (msg.type === 'audio-end') {
               console.log('[RemoteMic] Phone stopped recording, processing batch...');
+              // Set awaitingFinal before flipping remoteMicRecording so the
+              // live transcript banner stays visible without flicker.
+              setAwaitingFinal(true);
               setRemoteMicRecording(false);
               await stopLiveTranscriberIfRunning();
               // Process accumulated audio but keep RTC alive for next recording
@@ -1247,6 +1262,9 @@ export default function App() {
 
     if (totalSamples === 0) {
       console.log('[RemoteMic] No audio received in this batch');
+      // Nothing to transcribe, so processAudioFile will not run and clear
+      // the awaiting flag for us.
+      setAwaitingFinal(false);
       return;
     }
 
@@ -1286,6 +1304,7 @@ export default function App() {
 
   async function stopRemoteMic() {
     // Stop current recording but keep phone session alive
+    setAwaitingFinal(true);
     await processRemoteMicBatch();
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.sendMessage({ type: 'stop-recording' }); } catch (_) {}
@@ -1296,6 +1315,7 @@ export default function App() {
 
   async function disconnectRemoteMic() {
     // Full teardown — close RTC, phone goes to STOPPED
+    setAwaitingFinal(true);
     await processRemoteMicBatch();
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
@@ -1836,6 +1856,9 @@ export default function App() {
       alert(`Failed to transcribe "${file.name}": ${detailedMsg}`);
     } finally {
       setIsTranscribing(false);
+      // The final transcription has now been pushed (or the run failed and
+      // the user has been alerted). Either way, drop the awaiting indicator.
+      setAwaitingFinal(false);
     }
   }
 
@@ -1881,6 +1904,10 @@ export default function App() {
     setAudioPreviewUrl(null); // setter revokes the previous blob URL
     setHasBeenTranscribed(false);
     setIsProcessingPreview(false);
+    // The user threw away the just-recorded audio, so there is nothing
+    // left to wait for. Hide the live transcript / "awaiting" UI.
+    setAwaitingFinal(false);
+    setLiveTranscript({ text: '', words: [] });
   }
 
   async function startTranscription() {
@@ -2848,31 +2875,61 @@ export default function App() {
                 {level >= 30 && t('goodLevel')}
               </p>
             </div>
-            {liveTranscriptionEnabled && (
-              <div style={{
-                marginTop: '0.75rem',
-                padding: '0.5rem 0.75rem',
-                background: 'var(--bg-subtle, rgba(0,0,0,0.04))',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.95em',
-                color: 'var(--text)',
-                whiteSpace: 'pre-wrap',
-                lineHeight: 1.4,
-                minHeight: '1.4em',
-              }}>
-                {liveTranscript.text
-                  ? (dictationRegexRules.length > 0 ? applyDictationRegex(liveTranscript.text) : liveTranscript.text)
-                  : <span style={{ opacity: 0.5 }}>…</span>}
-                {showAdvancedInfo && liveStats && (
-                  <div style={{ fontSize: '0.75em', opacity: 0.6, marginTop: '0.35rem', fontVariantNumeric: 'tabular-nums' }}>
-                    window={liveStats.window?.toFixed(1)}s · step={liveStats.step?.toFixed(1)}s · process={Math.round(liveStats.process_ms || 0)}ms
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         );
       })()}
+
+      {/* Live transcript box. Stays mounted across the gap between stop and
+          the final ASR result, so the streaming text the user has been
+          watching does not vanish while audio is being assembled / decoded
+          and the canonical pass is running. */}
+      {liveTranscriptionEnabled && (isRecording || (isRemoteMic && remoteMicRecording) || awaitingFinal) && (
+        <div style={{
+          marginTop: '0.5rem',
+          padding: '0.5rem 0.75rem',
+          background: 'var(--bg-subtle, rgba(0,0,0,0.04))',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '0.95em',
+          color: 'var(--text)',
+          whiteSpace: 'pre-wrap',
+          lineHeight: 1.4,
+          minHeight: '1.4em',
+        }}>
+          {awaitingFinal && (
+            <div style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginBottom: '0.35rem', fontStyle: 'italic' }}>
+              {!pendingAudioFile
+                ? t('receivingAudio')
+                : isTranscribing
+                  ? t('runningFinalTranscription')
+                  : !hasBeenTranscribed
+                    ? t('awaitingTranscribeClick')
+                    : t('liveTranscriptKept')}
+            </div>
+          )}
+          {liveTranscript.text
+            ? (dictationRegexRules.length > 0 ? applyDictationRegex(liveTranscript.text) : liveTranscript.text)
+            : <span style={{ opacity: 0.5 }}>…</span>}
+          {showAdvancedInfo && liveStats && (
+            <div style={{ fontSize: '0.75em', opacity: 0.6, marginTop: '0.35rem', fontVariantNumeric: 'tabular-nums' }}>
+              window={liveStats.window?.toFixed(1)}s · step={liveStats.step?.toFixed(1)}s · process={Math.round(liveStats.process_ms || 0)}ms
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Placeholder shown where the audio player will land, so the user
+          sees explicit "waiting for audio" feedback instead of a blank gap
+          between stop and the player appearing. */}
+      {awaitingFinal && !pendingAudioFile && (
+        <div className="audio-preview-container" style={{ opacity: 0.85 }}>
+          <div className="audio-preview-header">
+            <strong>⏳ {t('preparingAudioPreview')}</strong>
+          </div>
+          <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-subtle)', fontSize: '0.9em' }}>
+            {t('preparingAudioHint')}
+          </div>
+        </div>
+      )}
 
       {/* Audio preview player */}
       {pendingAudioFile && (
