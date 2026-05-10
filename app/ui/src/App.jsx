@@ -45,23 +45,29 @@ async function getDictationLib() {
 // Simple help icon component with click-based tooltip
 function InfoTooltip({ text }) {
   const [isOpen, setIsOpen] = React.useState(false);
-  
+
+  // Prevent the click from bubbling to a wrapping <label>, which would
+  // otherwise toggle the associated checkbox/radio input.
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+  const toggle = (e) => { stop(e); setIsOpen(v => !v); };
+  const close = (e) => { stop(e); setIsOpen(false); };
+
   return (
-    <span className="info-help">
+    <span className="info-help" onClick={stop}>
       <button
         type="button"
         className="info-help-button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggle}
         aria-label="?"
       >
         ?
       </button>
       {isOpen && (
         <>
-          <div className="info-help-overlay" onClick={() => setIsOpen(false)} />
-          <div className="info-help-text">
+          <div className="info-help-overlay" onClick={close} />
+          <div className="info-help-text" onClick={stop}>
             {text}
-            <button className="info-help-close" onClick={() => setIsOpen(false)}>×</button>
+            <button className="info-help-close" onClick={close}>×</button>
           </div>
         </>
       )}
