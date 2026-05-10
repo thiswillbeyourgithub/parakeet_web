@@ -45,6 +45,7 @@ async function getDictationLib() {
 // Simple help icon component with click-based tooltip
 function InfoTooltip({ text }) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const rootRef = React.useRef(null);
 
   // Prevent the click from bubbling to a wrapping <label>, which would
   // otherwise toggle the associated checkbox/radio input.
@@ -52,8 +53,35 @@ function InfoTooltip({ text }) {
   const toggle = (e) => { stop(e); setIsOpen(v => !v); };
   const close = (e) => { stop(e); setIsOpen(false); };
 
+  // Dismiss on any outside interaction (click, touch, scroll, Escape).
+  // We listen at the document level instead of rendering a full-viewport
+  // overlay so the first click outside lands on its real target (another
+  // tooltip, sidebar close button, scrollbar, etc.) instead of being
+  // swallowed just to close the popup.
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const onOutside = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setIsOpen(false); };
+    const onScroll = () => setIsOpen(false);
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('touchstart', onOutside, { passive: true });
+    document.addEventListener('keydown', onKey);
+    // Capture phase so scrolls inside any container also dismiss.
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('touchstart', onOutside);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [isOpen]);
+
   return (
-    <span className="info-help" onClick={stop}>
+    <span ref={rootRef} className="info-help" onClick={stop}>
       <button
         type="button"
         className="info-help-button"
@@ -63,13 +91,10 @@ function InfoTooltip({ text }) {
         ?
       </button>
       {isOpen && (
-        <>
-          <div className="info-help-overlay" onClick={close} />
-          <div className="info-help-text" onClick={stop}>
-            {text}
-            <button className="info-help-close" onClick={close}>×</button>
-          </div>
-        </>
+        <div className="info-help-text" onClick={stop}>
+          {text}
+          <button className="info-help-close" onClick={close}>×</button>
+        </div>
       )}
     </span>
   );

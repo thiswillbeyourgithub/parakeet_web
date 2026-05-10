@@ -754,13 +754,6 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   color: white;
 }
 
-.info-help-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  background: transparent;
-}
-
 .info-help-text {
   position: absolute;
   z-index: 1000;
