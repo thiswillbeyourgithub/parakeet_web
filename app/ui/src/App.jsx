@@ -149,8 +149,6 @@ export default function App() {
   const [backend, setBackend] = useState('wasm');
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [, startTransition] = useTransition();
-  const [encoderQuant, setEncoderQuant] = useState('fp32');
-  const [decoderQuant, setDecoderQuant] = useState('fp32');
   const [preprocessor, setPreprocessor] = useState('nemo128');
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState('');
@@ -348,8 +346,6 @@ export default function App() {
         
         const [
           savedBackend,
-          savedEncoderQuant,
-          savedDecoderQuant,
           savedPreprocessor,
           savedTranscriptions,
           savedVerboseLog,
@@ -370,8 +366,6 @@ export default function App() {
           savedLiveContextWindow,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
-          loadSetting('encoderQuant', 'fp32'),
-          loadSetting('decoderQuant', 'fp32'),
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('transcriptions', []),
           loadSetting('verboseLog', true),
@@ -393,8 +387,6 @@ export default function App() {
         ]);
 
         setBackend(savedBackend);
-        setEncoderQuant(savedEncoderQuant);
-        setDecoderQuant(savedDecoderQuant);
         setPreprocessor(savedPreprocessor);
         setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
@@ -637,17 +629,10 @@ export default function App() {
     return () => releaseKeepalive();
   }, [isRecording, isTranscribing, isRemoteMic]);
 
-  // Auto-adjust quant presets when backend changes and save all settings to IndexedDB
+  // Persist backend selection
   useEffect(() => {
     if (!settingsLoaded) return;
     saveSetting('backend', backend);
-    if (backend.startsWith('webgpu')) {
-      setEncoderQuant('fp32');
-      setDecoderQuant('fp32');
-    } else if (backend === 'wasm') {
-      setEncoderQuant('int8');
-      setDecoderQuant('int8');
-    }
   }, [backend, settingsLoaded]);
 
   // Save settings to IndexedDB whenever they change (only after initial load).
@@ -656,8 +641,6 @@ export default function App() {
   // flips to true. Keeping the hook-call list flat (one per setting)
   // preserves the previous behavior: changing setting X writes only X,
   // not all eighteen of them.
-  usePersistedSetting('encoderQuant', encoderQuant, settingsLoaded);
-  usePersistedSetting('decoderQuant', decoderQuant, settingsLoaded);
   usePersistedSetting('preprocessor', preprocessor, settingsLoaded);
   usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
@@ -711,8 +694,8 @@ export default function App() {
 
       // 1. Download all model files (from HF or local fallback)
       const downloadOpts = {
-        encoderQuant,
-        decoderQuant,
+        encoderQuant: 'int8',
+        decoderQuant: 'int8',
         preprocessor,
         progress: progressCallback,
       };
@@ -2274,40 +2257,6 @@ export default function App() {
                 <label className={status === 'modelReady' ? 'disabled-option' : ''}>
                   <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
                   {t('webgpu')}
-                </label>
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('encoderQuantization')}:
-                <InfoTooltip text={t('tooltipQuantization')} />
-              </span>
-              <div className="setting-options">
-                <label className={status === 'modelReady' || backend.startsWith('webgpu') ? 'disabled-option' : ''}>
-                  <input type="radio" name="encoderQuant" value="int8" checked={encoderQuant === 'int8'} onChange={e => setEncoderQuant(e.target.value)} disabled={status === 'modelReady' || backend.startsWith('webgpu')} />
-                  {t('int8Faster')}
-                </label>
-                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="encoderQuant" value="fp32" checked={encoderQuant === 'fp32'} onChange={e => setEncoderQuant(e.target.value)} disabled={status === 'modelReady'} />
-                  {t('fp32HigherQuality')}
-                </label>
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('decoderQuantization')}:
-                <InfoTooltip text={t('tooltipQuantization')} />
-              </span>
-              <div className="setting-options">
-                <label className={status === 'modelReady' || backend.startsWith('webgpu') ? 'disabled-option' : ''}>
-                  <input type="radio" name="decoderQuant" value="int8" checked={decoderQuant === 'int8'} onChange={e => setDecoderQuant(e.target.value)} disabled={status === 'modelReady' || backend.startsWith('webgpu')} />
-                  {t('int8Faster')}
-                </label>
-                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="decoderQuant" value="fp32" checked={decoderQuant === 'fp32'} onChange={e => setDecoderQuant(e.target.value)} disabled={status === 'modelReady'} />
-                  {t('fp32HigherQuality')}
                 </label>
               </div>
             </div>
