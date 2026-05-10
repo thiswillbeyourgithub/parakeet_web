@@ -22,26 +22,9 @@
     <!-- Eruda mobile devtools: only loaded when ?debug=1 is in the URL.
          Previously auto-loaded on every Android/iOS visit, which shipped
          ~200 KB of devtools UI to every mobile user and grew the post-XSS
-         surface unnecessarily. Append ?debug=1 to opt in. -->
-    <script>
-      (function() {
-        try {
-          if (new URL(location.href).searchParams.get('debug') !== '1') return;
-        } catch (_) { return; }
-        var script = document.createElement('script');
-        // Vendored from cdn.jsdelivr.net/npm/eruda@3/eruda.min.js, served locally with SRI.
-        script.src = '/js/eruda.min.js';
-        script.integrity = 'sha384-F7xQBvh3l6dG/mMD6QPIeVmXtzWT4Ce3ZDu8ysPuzMWMx9bFOIMGnRPUhLuQipss';
-        script.onload = function() {
-          window.eruda.init();
-          console.log('[Debug] Eruda devtools initialized (?debug=1)');
-        };
-        script.onerror = function() {
-          console.warn('[Debug] Failed to load eruda');
-        };
-        document.head.appendChild(script);
-      })();
-    </script>
+         surface unnecessarily. Append ?debug=1 to opt in.
+         Loader is external + SRI-pinned so script-src can stay strict. -->
+    <script src="/js/eruda-loader.js" integrity="sha384-QeM25c+y2Q4kDX92EqIJuYjwSdK5Mq2CO8qBALc9PN5lY//wa7w4eBxJqDbnB2WK" crossorigin="anonymous"></script>
   </head>
   <body>
     <div id="root"></div>
