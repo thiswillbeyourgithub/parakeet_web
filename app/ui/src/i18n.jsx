@@ -564,24 +564,29 @@ export function useI18n() {
   return useContext(I18nContext);
 }
 
+const LANGUAGE_OPTIONS = [
+  { code: 'en', flag: '🇬🇧', label: 'English' },
+  { code: 'fr', flag: '🇫🇷', label: 'Français' },
+];
+
 export function LanguageSwitcher() {
   const { lang, setLang } = useI18n();
   return (
-    <select
-      value={lang}
-      onChange={e => setLang(e.target.value)}
-      style={{
-        padding: '0.2rem 0.4rem',
-        borderRadius: '4px',
-        border: '1px solid #d1d5db',
-        fontSize: '0.85rem',
-        background: 'white',
-        cursor: 'pointer',
-      }}
-      aria-label="Language"
-    >
-      <option value="fr">FR</option>
-      <option value="en">EN</option>
-    </select>
+    <div className="language-switcher" role="radiogroup" aria-label="Language">
+      {LANGUAGE_OPTIONS.map(opt => (
+        <button
+          key={opt.code}
+          type="button"
+          role="radio"
+          aria-checked={lang === opt.code}
+          aria-label={opt.label}
+          title={opt.label}
+          className={`language-flag${lang === opt.code ? ' language-flag--active' : ''}`}
+          onClick={() => setLang(opt.code)}
+        >
+          <span className="language-flag__emoji" aria-hidden="true">{opt.flag}</span>
+        </button>
+      ))}
+    </div>
   );
 }

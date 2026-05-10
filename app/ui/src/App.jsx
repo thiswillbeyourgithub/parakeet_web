@@ -2201,7 +2201,6 @@ export default function App() {
         <div className="app-header__title-row">
           <img src="/favicon.svg" alt="" aria-hidden="true" className="app-logo" />
           <h2>ParakeetWeb v{VERSION}</h2>
-          <LanguageSwitcher />
           <button
             className="settings-toggle"
             onClick={() => setShowSettings(!showSettings)}
@@ -2253,6 +2252,10 @@ export default function App() {
         <div className="settings-sidebar">
         <button className="settings-sidebar-close" onClick={() => setShowSettings(false)} aria-label={t('closeSettings')}>×</button>
         <div className="settings-section">
+        <div className="setting-row setting-row--language">
+          <span className="setting-label">{t('language')}</span>
+          <LanguageSwitcher />
+        </div>
         <p>
           <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: 'var(--text-subtle)'}}>(nemo128)</span>
         </p>
