@@ -1247,6 +1247,23 @@ export default function App() {
           try {
             const decrypted = await decrypt(data, remoteMicKeyRef.current);
             const float32 = new Float32Array(decrypted);
+            // Single pass: validate finiteness and accumulate the RMS. AES-GCM
+            // authenticates the bytes but a peer holding the legitimate key
+            // can still encrypt arbitrary 4-byte patterns; NaN/Infinity would
+            // otherwise propagate into the level meter, the resampler, and
+            // the model input, silently corrupting the user's transcript.
+            let sum = 0;
+            let finite = true;
+            for (let i = 0; i < float32.length; i++) {
+              const s = float32[i];
+              if (!Number.isFinite(s)) { finite = false; break; }
+              sum += s * s;
+            }
+            if (!finite) {
+              console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
+              setRemoteMicDecryptErrors((n) => n + 1);
+              return;
+            }
             // Drop chunks once the per-session sample cap is reached. The
             // first overflow surfaces an error; later chunks short-circuit
             // silently so a flooding phone can't spam the UI.
@@ -1260,10 +1277,6 @@ export default function App() {
             }
             pcmChunksRef.current.push(float32);
             remoteMicSampleCountRef.current = newCount;
-
-            // Compute audio level from decrypted PCM
-            let sum = 0;
-            for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
             const rms = Math.sqrt(sum / float32.length);
             setRemoteMicLevel(Math.min(100, rms * 250));
           } catch (e) {
