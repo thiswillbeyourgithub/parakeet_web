@@ -1185,3 +1185,77 @@ label .info-help-text {
 .setting-row--language {
   justify-content: space-between;
 }
+
+/* ─── Sidebar checkboxes / radios ───────────────────────────────────────── */
+.settings-sidebar input[type="checkbox"],
+.settings-sidebar input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 0.5rem 0 0;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-card);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  vertical-align: middle;
+}
+
+.settings-sidebar input[type="checkbox"] {
+  border-radius: 5px;
+}
+
+.settings-sidebar input[type="radio"] {
+  border-radius: 50%;
+}
+
+.settings-sidebar input[type="checkbox"]:hover:not(:disabled),
+.settings-sidebar input[type="radio"]:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.settings-sidebar input[type="checkbox"]:checked,
+.settings-sidebar input[type="radio"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-sidebar input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.settings-sidebar input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.settings-sidebar input[type="checkbox"]:focus-visible,
+.settings-sidebar input[type="radio"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.settings-sidebar input[type="checkbox"]:disabled,
+.settings-sidebar input[type="radio"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-sidebar label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
