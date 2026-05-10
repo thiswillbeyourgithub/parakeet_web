@@ -300,6 +300,31 @@ export default function App() {
     });
   }, [remoteMicQrUrl, remoteMicStatus]);
 
+  // Stop the mouse wheel from changing range slider values when scrolling
+  // the sidebar. The browser's default wheel-over-range behavior nudges
+  // the value AND consumes the wheel, so we cancel the default and
+  // forward the deltaY to the nearest scrollable ancestor.
+  useEffect(() => {
+    const onWheel = (e) => {
+      const tgt = e.target;
+      if (!tgt || tgt.tagName !== 'INPUT' || tgt.type !== 'range') return;
+      e.preventDefault();
+      if (document.activeElement === tgt) tgt.blur();
+      let parent = tgt.parentElement;
+      while (parent) {
+        const style = window.getComputedStyle(parent);
+        if (/(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight) {
+          parent.scrollTop += e.deltaY;
+          return;
+        }
+        parent = parent.parentElement;
+      }
+      window.scrollBy(0, e.deltaY);
+    };
+    document.addEventListener('wheel', onWheel, { passive: false });
+    return () => document.removeEventListener('wheel', onWheel);
+  }, []);
+
   // Tracks which history item has its kebab menu open (by transcription id)
   const [openKebabId, setOpenKebabId] = useState(null);
   // Tracks which history item is showing its confidence score overlay
