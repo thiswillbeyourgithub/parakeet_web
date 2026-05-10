@@ -724,11 +724,16 @@ export default function App() {
         setProgressPct(pct);
       };
 
-      // 1. Download all model files (from HF or local fallback)
+      // 1. Download all model files (from HF or local fallback).
+      // Pass `backend` so hub.js can pick the right encoder quant: WebGPU
+      // forces fp32 (~2.4 GB, no int8 support on the GPU EP), while WASM
+      // can use the int8 encoder (~600 MB) and stays under Chromium's
+      // ~2 GB blob URL fetch limit.
       const downloadOpts = {
         encoderQuant: 'int8',
         decoderQuant: 'int8',
         preprocessor,
+        backend,
         progress: progressCallback,
       };
       if (useLocalFallback) {
