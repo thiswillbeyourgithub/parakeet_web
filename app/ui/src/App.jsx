@@ -228,7 +228,17 @@ export default function App() {
   const [recordingCountdown, setRecordingCountdown] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null); // legacy name kept for stopRecording guard
   const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
-  const clearPcmChunks = () => { pcmChunksRef.current = []; };
+  // Hard cap on remote-mic PCM sample accumulation. A compromised phone that
+  // completes the handshake but never sends `audio-end` would otherwise grow
+  // pcmChunksRef without bound and OOM the tab. 10 minutes at the highest
+  // accepted sample rate (96 kHz) is the safety ceiling; in normal use the
+  // phone streams at 48 kHz so the real-time ceiling is ~20 minutes.
+  const REMOTE_MIC_MAX_SAMPLES = 10 * 60 * 96000;
+  const remoteMicSampleCountRef = useRef(0);
+  const clearPcmChunks = () => {
+    pcmChunksRef.current = [];
+    remoteMicSampleCountRef.current = 0;
+  };
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioLevel, setAudioLevel] = useState(0);
   const [audioContext, setAudioContext] = useState(null);
@@ -1203,7 +1213,19 @@ export default function App() {
           try {
             const decrypted = await decrypt(data, remoteMicKeyRef.current);
             const float32 = new Float32Array(decrypted);
+            // Drop chunks once the per-session sample cap is reached. The
+            // first overflow surfaces an error; later chunks short-circuit
+            // silently so a flooding phone can't spam the UI.
+            if (remoteMicSampleCountRef.current >= REMOTE_MIC_MAX_SAMPLES) return;
+            const newCount = remoteMicSampleCountRef.current + float32.length;
+            if (newCount > REMOTE_MIC_MAX_SAMPLES) {
+              remoteMicSampleCountRef.current = REMOTE_MIC_MAX_SAMPLES;
+              console.error('[RemoteMic] Sample cap reached, dropping further audio chunks');
+              setRemoteMicError(t('remoteMicCapExceeded'));
+              return;
+            }
             pcmChunksRef.current.push(float32);
+            remoteMicSampleCountRef.current = newCount;
 
             // Compute audio level from decrypted PCM
             let sum = 0;
