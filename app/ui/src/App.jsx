@@ -2208,7 +2208,7 @@ export default function App() {
       <div className="app-header">
         <div className="app-header__title-row">
           <img src="/favicon.svg" alt="" aria-hidden="true" className="app-logo" />
-          <h2>ParakeetWeb v{VERSION}</h2>
+          <h2>ParakeetWeb</h2>
           <button
             className="settings-toggle"
             onClick={() => setShowSettings(!showSettings)}
@@ -2224,7 +2224,7 @@ export default function App() {
       {/* About modal */}
       {showAbout && (
         <Modal onClose={() => setShowAbout(false)}>
-          <h3 style={{ marginTop: 0 }}>{t('aboutTitle')}</h3>
+          <h3 style={{ marginTop: 0 }}>{t('aboutTitle')} <span style={{ fontSize: '0.8rem', fontWeight: 'normal', color: 'var(--text-muted)' }}>v{VERSION}</span></h3>
           <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem', color: 'var(--accent)' }}>
             🔒 {t('tagline')}
           </p>
@@ -2581,6 +2581,9 @@ export default function App() {
           >
             {t('about')}
           </button>
+          <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 0' }}>
+            v{VERSION}
+          </p>
         </div>
         </div>
         </>
