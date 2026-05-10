@@ -151,9 +151,25 @@ export class RemoteMicRTC {
             }
         };
 
-        // Handle incoming data channel (sender side)
+        // Handle incoming data channel (sender side). Reject anything other
+        // than the single offerer-created 'remote-mic' channel: a malicious
+        // peer can otherwise call createDataChannel on its side to either
+        // replace this.dataChannel mid-session (redirecting our future
+        // sends to an attacker-chosen channel) or double-feed onMessage
+        // through a parallel handler.
         this.pc.ondatachannel = (event) => {
-            this._setupDataChannel(event.channel);
+            const ch = event.channel;
+            if (this.dataChannel) {
+                console.warn('[RemoteMicRTC] Ignoring extra data channel:', ch.label);
+                try { ch.close(); } catch (_) { /* ignore */ }
+                return;
+            }
+            if (ch.label !== 'remote-mic') {
+                console.warn('[RemoteMicRTC] Ignoring data channel with unexpected label:', ch.label);
+                try { ch.close(); } catch (_) { /* ignore */ }
+                return;
+            }
+            this._setupDataChannel(ch);
         };
     }
 
