@@ -290,6 +290,12 @@ export class RemoteMicRTC {
      * Wait for answer from sender (long-polling).
      */
     async waitForAnswer() {
+        // Bound transient-error retries so a persistent failure (server down,
+        // CORS misconfig, mid-call IP ban) can't pin this in a tight retry
+        // loop hammering the signaling server. 200/204/404 are the only
+        // statuses that are part of the protocol; anything else terminates.
+        let transientRetries = 0;
+        const MAX_TRANSIENT_RETRIES = 5;
         while (true) {
             try {
                 const response = await this._fetch(`/rooms/${this.roomId}/answer?wait=true`, {
@@ -309,14 +315,25 @@ export class RemoteMicRTC {
                     await this._fetchRemoteCandidates('answer');
                     this._startPolling('answer');
                     return;
-                } else if (response.status === 204) {
+                }
+                if (response.status === 204) {
+                    transientRetries = 0;
                     continue;
-                } else if (response.status === 404) {
+                }
+                if (response.status === 404) {
                     throw new Error('Room expired or not found');
                 }
+                // Any other status (401, 403, 429, 5xx, ...) is not part of
+                // the protocol. Surface it so the UI can show an error
+                // instead of looping forever.
+                throw new Error(`Signaling server rejected long-poll (HTTP ${response.status})`);
             } catch (e) {
-                if (e.message.includes('Room')) throw e;
-                console.warn('[RemoteMicRTC] Polling error, retrying:', e.message);
+                if (e.message.includes('Room') || e.message.includes('Signaling server')) throw e;
+                transientRetries += 1;
+                if (transientRetries > MAX_TRANSIENT_RETRIES) {
+                    throw new Error(`Signaling unreachable after ${MAX_TRANSIENT_RETRIES} retries: ${e.message}`);
+                }
+                console.warn(`[RemoteMicRTC] Polling error (retry ${transientRetries}/${MAX_TRANSIENT_RETRIES}):`, e.message);
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
