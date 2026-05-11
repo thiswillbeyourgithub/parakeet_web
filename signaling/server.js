@@ -235,8 +235,18 @@ function generateRoomSecret() {
 
 function secureCompare(a, b) {
     if (typeof a !== 'string' || typeof b !== 'string') return false;
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    // Compare byte lengths, not String#length: a 22-char UTF-16 input
+    // can encode to a different number of UTF-8 bytes than the 22-byte
+    // base64url secret, which would either bypass the length pre-check
+    // and throw RangeError inside crypto.timingSafeEqual, or pass it
+    // and run the timing-safe path on differently-sized buffers.
+    // Both paths leak timing distinguishable from a same-length wrong
+    // secret; the throw also surfaces as a 500 to the caller and
+    // pollutes logs.
+    const ab = Buffer.from(a, 'utf8');
+    const bb = Buffer.from(b, 'utf8');
+    if (ab.length !== bb.length) return false;
+    return crypto.timingSafeEqual(ab, bb);
 }
 
 // Dummy secret used to keep the compare path identical when the room
