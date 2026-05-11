@@ -94,6 +94,14 @@ mkdir -p /run/config
 # $(...) break out of the JS string literal — an operator setting e.g.
 # VITE_MODEL_REPO='";alert(1)//' would inject JS into every served page.
 # node is already in the image (signaling sidecar), so this is free.
+#
+# IMPORTANT INVARIANT: the generated file is served as an EXTERNAL
+# <script src="/config.js"> in index.html and remote-mic.html.
+# JSON.stringify does not escape "</script>", U+2028, or U+2029, so
+# inlining the config into HTML would turn an operator-set value such
+# as VITE_ANALYTICS_URL=...</script><script>alert(1)// into XSS for
+# every visitor. We still post-process the output (defense in depth)
+# so that even if a future refactor inlines the config, it stays safe.
 VITE_DEV_MODE="${VITE_DEV_MODE:-false}" \
 VITE_DICTATION_DEVICE_SUPPORT="${VITE_DICTATION_DEVICE_SUPPORT:-true}" \
 VITE_MODEL_REPO="${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}" \
@@ -113,7 +121,11 @@ node -e '
   ];
   const obj = {};
   for (const k of keys) obj[k] = process.env[k] ?? "";
-  process.stdout.write("window.__CONFIG__ = " + JSON.stringify(obj, null, 2) + ";\n");
+  const safe = JSON.stringify(obj, null, 2)
+    .replace(/<\/script/gi, "<\\/script")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+  process.stdout.write("window.__CONFIG__ = " + safe + ";\n");
 ' > /run/config/config.js
 echo "[entrypoint] Wrote runtime config to /run/config/config.js"
 
