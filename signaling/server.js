@@ -211,12 +211,26 @@ function secureCompare(a, b) {
     return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
-function validateRoomSecret(req, res, next) {
-    const room = rooms.get(req.params.id);
-    if (!room) return res.status(404).json({ error: 'Room not found' });
+// Dummy secret used to keep the compare path identical when the room
+// does not exist. The base64url alphabet matches what generateRoomSecret
+// emits so a wrong-alphabet header (F-45) still trips the same branch.
+const DUMMY_ROOM_SECRET = crypto.randomBytes(16).toString('base64url');
 
+function validateRoomSecret(req, res, next) {
+    // Always return the same shape for "room missing" and "secret wrong"
+    // so an unauthenticated client cannot distinguish the two and use
+    // the response code as an enumeration oracle over the 30-bit room
+    // ID space. Run secureCompare against a dummy secret on the
+    // missing-room branch so a timing observer sees the same work.
+    const room = rooms.get(req.params.id);
     const providedSecret = req.headers['x-room-secret'];
-    if (!providedSecret) return res.status(401).json({ error: 'Room secret required' });
+
+    if (!room) {
+        secureCompare(typeof providedSecret === 'string' ? providedSecret : '', DUMMY_ROOM_SECRET);
+        return res.status(401).json({ error: 'Invalid room secret' });
+    }
+
+    if (!providedSecret) return res.status(401).json({ error: 'Invalid room secret' });
     if (!secureCompare(providedSecret, room.secret)) return res.status(401).json({ error: 'Invalid room secret' });
 
     req.room = room;
