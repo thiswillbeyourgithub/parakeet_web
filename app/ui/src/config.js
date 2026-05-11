@@ -11,4 +11,9 @@ export const CONFIG = {
   VITE_FORCE_LOCAL_MODEL_FALLBACK: runtime.VITE_FORCE_LOCAL_MODEL_FALLBACK ?? import.meta.env.VITE_FORCE_LOCAL_MODEL_FALLBACK,
   VITE_ANALYTICS_URL: runtime.VITE_ANALYTICS_URL ?? import.meta.env.VITE_ANALYTICS_URL,
   VITE_ANALYTICS_WEBSITE_ID: runtime.VITE_ANALYTICS_WEBSITE_ID ?? import.meta.env.VITE_ANALYTICS_WEBSITE_ID,
+  // Every new VITE_* key the operator can set MUST be added here, otherwise
+  // entrypoint.sh dutifully writes it into window.__CONFIG__ and consumers
+  // (main.jsx, App.jsx, ...) silently receive `undefined` because this object
+  // is the only export they see. Past omission: VITE_ANALYTICS_SRI (see F-22).
+  VITE_ANALYTICS_SRI: runtime.VITE_ANALYTICS_SRI ?? import.meta.env.VITE_ANALYTICS_SRI,
 };
