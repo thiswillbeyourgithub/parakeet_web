@@ -556,10 +556,36 @@ export default function App() {
         modelRef.current.dispose();
       }
     };
-    
+
+    // BFCache hardening: when the browser parks the page in the
+    // back-forward cache (event.persisted === true on pagehide), the
+    // entire DOM + React state is held in memory and restored on Back.
+    // For a privacy-sensitive transcript UI on a shared machine this is
+    // a cross-actor leak: the next person who hits Back sees the prior
+    // user's transcript. Revoke the audio preview URL eagerly so the
+    // restored page can't replay the recording; then on the matching
+    // pageshow event with event.persisted=true, force a full reload so
+    // every visit re-asks for mic permission and starts from a blank UI.
+    const handlePageHide = (e) => {
+      if (e.persisted) {
+        setAudioPreviewUrl(null);
+      }
+    };
+    const handlePageShow = (e) => {
+      if (e.persisted) {
+        window.location.reload();
+      }
+    };
+
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, [setAudioPreviewUrl]);
 
   // When local fallback is enabled, verify model files are actually present
   // on the server so the admin gets early feedback about misconfiguration.
