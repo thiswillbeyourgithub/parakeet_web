@@ -148,6 +148,17 @@ function usePersistedSetting(key, value, loaded) {
 }
 
 // Helper function to truncate long filenames
+// Strip terminal-control and bidi-override codepoints before any
+// clipboard write. Keeps tab and newline. Defends against a
+// compromised dictation-regex CSV (F-51) and any other path that
+// concatenates upstream text into the clipboard payload.
+function sanitizeClipboardText(s) {
+  return String(s ?? '').replace(
+    /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f‪-‮⁦-⁩​-‏]/g,
+    ''
+  );
+}
+
 function truncateFilename(filename, maxLength = 40) {
   if (filename.length <= maxLength) return filename;
   
@@ -1902,7 +1913,7 @@ export default function App() {
           const textToCopy = transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0
             ? applyDictationRegex(res.utterance_text)
             : res.utterance_text;
-          await navigator.clipboard.writeText(textToCopy);
+          await navigator.clipboard.writeText(sanitizeClipboardText(textToCopy));
           setCopySuccess(true);
           setTimeout(() => setCopySuccess(false), 2000);
           console.log('[Transcribe] Auto-copied transcription to clipboard');
@@ -2043,9 +2054,9 @@ export default function App() {
 
   async function copyToClipboard() {
     if (!text) return;
-    
+
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(sanitizeClipboardText(text));
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000); // Reset after 2 seconds
     } catch (err) {
@@ -2058,7 +2069,7 @@ export default function App() {
     if (!transcription?.text) return;
 
     try {
-      await navigator.clipboard.writeText(getDisplayText(transcription));
+      await navigator.clipboard.writeText(sanitizeClipboardText(getDisplayText(transcription)));
       setCopiedHistoryId(transcription.id);
       setTimeout(() => setCopiedHistoryId(null), 2000); // Reset after 2 seconds
     } catch (err) {
@@ -2126,12 +2137,25 @@ export default function App() {
                   ? [...new Set(parsedFlags.split(''))].filter(f => 'imsuy'.includes(f)).join('')
                   : 'i');
                 new RegExp(cleanedRegex, jsFlags);
+                const replacement = rawReplacement
+                  .replace(/\\n/g, '\n') // support \n in replacements
+                  .replace(/^"(.*)"$/, '$1'); // strip outer quotes
+                // Refuse replacements containing C0/C1 controls (ESC, BEL,
+                // backspace, OSC introducer) and bidi-override codepoints.
+                // The auto-copy-to-clipboard path writes this directly into
+                // the user's system clipboard; a tampered upstream CSV
+                // could otherwise smuggle ANSI/OSC sequences that execute
+                // on paste-to-terminal in shells without bracketed-paste.
+                // Tab and newline are kept explicitly because they are
+                // legitimate replacement content.
+                if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f‪-‮⁦-⁩]/.test(replacement)) {
+                  console.warn(`[Dictation] Rejecting rule in ${file} line ${i + 1}: replacement contains control or bidi characters`);
+                  continue;
+                }
                 rules.push({
                   regex: cleanedRegex,
                   flags: jsFlags,
-                  replacement: rawReplacement
-                    .replace(/\\n/g, '\n') // support \n in replacements
-                    .replace(/^"(.*)"$/, '$1'), // strip outer quotes
+                  replacement,
                   source: file.replace('.csv', '')
                 });
               } catch (e) {
@@ -3221,7 +3245,7 @@ export default function App() {
                           {dictationRegexRules.length > 0 && (
                             <button onClick={async () => {
                               const cleaned = applyDictationRegex(trans.text);
-                              try { await navigator.clipboard.writeText(cleaned); setCopiedHistoryId(trans.id); setTimeout(() => setCopiedHistoryId(null), 2000); } catch (e) { console.error('[Copy] Failed:', e); }
+                              try { await navigator.clipboard.writeText(sanitizeClipboardText(cleaned)); setCopiedHistoryId(trans.id); setTimeout(() => setCopiedHistoryId(null), 2000); } catch (e) { console.error('[Copy] Failed:', e); }
                               setOpenKebabId(null);
                             }}>
                               {t('copyDictation')}
