@@ -618,7 +618,17 @@ app.get('/api/stats', rateLimitMiddleware('general'), (req, res) => {
 });
 
 // ============ Start Server ============
-app.listen(PORT, '0.0.0.0', () => {
+//
+// Slowloris-style request-body smuggling: Node's HTTP server has no
+// default body-read timeout, only a 60 s headersTimeout. Without an
+// overall request timeout, a peer that opens many concurrent POSTs
+// and dribbles the JSON body at sub-second cadence holds open one FD
+// + one rate-limiter slot per connection, exhausting the process FD
+// table well before the per-IP rate cap bites. server.requestTimeout
+// caps the wall-clock time the server will spend reading any single
+// request; keepAliveTimeout caps idle keep-alive sockets so an
+// attacker cannot just reuse them as parking spots.
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(50));
     console.log('  ParakeetWeb Signaling Server');
     console.log('='.repeat(50));
@@ -643,3 +653,15 @@ app.listen(PORT, '0.0.0.0', () => {
     }
     console.log('='.repeat(50));
 });
+
+// 30 s is the long-poll budget for /api/rooms/:id/answer (the only
+// legitimate endpoint that holds a request open). Use 35 s here so
+// the backstop timer fires before the server-level cap. The answer
+// long-poll already calls res.send() at the timer mark so it is not
+// affected by this cap in practice.
+server.requestTimeout = 35_000;
+// Headers must arrive promptly. Node default is 60 s; tighten it.
+server.headersTimeout = 10_000;
+// Keep-alive idle sockets are recycled fast so an attacker cannot
+// park many cheap FDs.
+server.keepAliveTimeout = 5_000;
