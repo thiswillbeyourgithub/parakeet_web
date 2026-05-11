@@ -119,6 +119,13 @@ function makeCacheKey(repoId, revision, subfolder, filename) {
   return `hf-${repoId}-${revision}-${subfolder}-${filename}`;
 }
 
+// Filenames accepted from HF's API. Restrict to a flat, safe alphabet so
+// a poisoned or attacker-controlled response cannot smuggle path
+// traversal ('..'), query/fragment delimiters ('?', '#'), URL-encoding
+// edge cases, or DOM-template gadgets if the value is ever interpolated
+// somewhere stricter than a fetch URL.
+const SAFE_RFILENAME_RE = /^[A-Za-z0-9._-]+$/;
+
 async function listRepoFiles(repoId, revision = 'main') {
   const cacheKey = `${repoId}@${revision}`;
   if (repoFileCache.has(cacheKey)) return repoFileCache.get(cacheKey);
@@ -128,7 +135,11 @@ async function listRepoFiles(repoId, revision = 'main') {
     const resp = await fetch(url);
     if (resp.ok) {
       const json = await resp.json();
-      const files = json.siblings?.map(s => s.rfilename) || [];
+      const raw = json.siblings?.map(s => s.rfilename) || [];
+      const files = raw.filter(name => typeof name === 'string' && SAFE_RFILENAME_RE.test(name));
+      if (files.length !== raw.length) {
+        console.warn(`[Hub] listRepoFiles ${repoId}@${revision}: dropped ${raw.length - files.length} sibling(s) with unsafe filenames`);
+      }
       repoFileCache.set(cacheKey, files);
       return files;
     }
