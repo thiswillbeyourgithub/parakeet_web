@@ -82,6 +82,39 @@ function _verifyHash(filename, actualHex, expected, logTag) {
   console.log(`${logTag} Integrity OK for ${filename} (sha256 ${actualHex.slice(0, 12)}...)`);
 }
 
+/**
+ * Verify a cached blob against the expected hash before returning it.
+ * On mismatch, evict the bad entry so the next call re-downloads. When no
+ * hash is pinned, the cache hit is trusted (with a one-time warning that
+ * also fired on the original download); the IndexedDB cache is treated as
+ * a decoder-only optimisation, not a trust anchor, so trust here is gated
+ * entirely on whether an expected hash exists. Returns true if safe to use.
+ */
+async function _isCacheHitValid(cachedBlob, filename, expectedHash, logTag, cacheKey) {
+  const exp = _normalizeHash(expectedHash);
+  if (!exp) {
+    // No pinned hash: nothing to verify against. _verifyHash already
+    // logs the unsafe-default warning on every download path.
+    return true;
+  }
+  let actual;
+  try {
+    actual = await _sha256Hex(cachedBlob);
+  } catch (e) {
+    console.warn(`${logTag} Failed to hash cached ${filename}, will re-download:`, e);
+    return false;
+  }
+  if (actual === exp) return true;
+  console.warn(`${logTag} INTEGRITY: cached ${filename} hash mismatch (expected ${exp}, got ${actual}). Evicting and re-downloading.`);
+  try {
+    const db = await getDb();
+    await idbDelete(db, STORE_NAME, cacheKey);
+  } catch (e) {
+    console.warn(`${logTag} Failed to evict tampered cache entry for ${filename}:`, e);
+  }
+  return false;
+}
+
 function makeCacheKey(repoId, revision, subfolder, filename) {
   return `hf-${repoId}-${revision}-${subfolder}-${filename}`;
 }
@@ -394,14 +427,24 @@ export async function getModelFile(repoId, filename, options = {}) {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
-        console.log(`[Hub] Using cached ${filename} from IndexedDB`);
-        return URL.createObjectURL(cachedBlob);
+        // Re-verify the cached bytes against the expected hash on every
+        // hit. Otherwise a one-shot MITM during the very first download
+        // (TLS-intercepting corporate proxy, captive portal, BGP hijack)
+        // would persist across every subsequent reload: the cache key
+        // never changes, and without this check the bad blob is returned
+        // forever even after the network returns to normal.
+        if (await _isCacheHitValid(cachedBlob, filename, expectedHash, '[Hub]', cacheKey)) {
+          console.log(`[Hub] Using cached ${filename} from IndexedDB`);
+          return URL.createObjectURL(cachedBlob);
+        }
+        // Fall through to re-download. _isCacheHitValid has already
+        // evicted the bad entry from IndexedDB.
       }
     } catch (e) {
       console.warn('[Hub] IndexedDB cache check failed:', e);
     }
   }
-  
+
   // Download from HF (resumable + retrying internally)
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
@@ -448,8 +491,10 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
-        console.log(`[Hub:local] Using cached ${filename} from IndexedDB`);
-        return URL.createObjectURL(cachedBlob);
+        if (await _isCacheHitValid(cachedBlob, filename, expectedHash, '[Hub:local]', cacheKey)) {
+          console.log(`[Hub:local] Using cached ${filename} from IndexedDB`);
+          return URL.createObjectURL(cachedBlob);
+        }
       }
     } catch (e) {
       console.warn('[Hub:local] IndexedDB cache check failed:', e);
