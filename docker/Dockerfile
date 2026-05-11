@@ -18,8 +18,12 @@ RUN cd app/ui && npm install --no-audit --no-fund
 COPY signaling/package.json ./signaling/
 RUN cd signaling && npm install --omit=dev
 
-# Optionally fail the build on high-severity npm vulnerabilities.
-ARG RUN_NPM_AUDIT=false
+# Fail the build on high-severity npm vulnerabilities by default. Direct
+# `docker build` invocations (CI, manual rebuild bypassing compose) used
+# to default to false here, silently disabling the audit gate; compose
+# already overrode this to true via build args but nothing else did. Flip
+# the Dockerfile-level default so the gate is on unless explicitly waived.
+ARG RUN_NPM_AUDIT=true
 RUN if [ "$RUN_NPM_AUDIT" = "true" ]; then \
       set -e; \
       cd app && npm audit --audit-level=high && \
