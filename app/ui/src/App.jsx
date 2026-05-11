@@ -6,6 +6,7 @@ import Banner from './components/Banner.jsx';
 import Modal from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
+import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
@@ -927,7 +928,7 @@ export default function App() {
           const opts = rate ? { sampleRate: rate } : undefined;
           const ctx = new AudioContext(opts);
           console.log(`[Record] Trying AudioContext at ${label} (actual: ${ctx.sampleRate}Hz)`);
-          await ctx.audioWorklet.addModule('pcm-recorder-worklet.js');
+          await verifiedAddModule(ctx.audioWorklet, '/pcm-recorder-worklet.js');
           const src = ctx.createMediaStreamSource(stream);
           audioCtx = ctx;
           sourceNode = src;

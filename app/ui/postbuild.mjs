@@ -22,7 +22,7 @@
 // same build that produces the assets. F-39 (reproducible build SHA256SUMS)
 // is the answer to that orthogonal threat.
 
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,6 +96,32 @@ async function emitOrtManifest() {
   console.log(`[postbuild] wrote dist/ort/manifest.json (${targets.length} entries)`);
 }
 
+// Generate dist/.well-known/asset-integrity.json with sha384 of any
+// non-/assets/, non-/ort/ files that are loaded at runtime via paths the
+// browser does not check against the HTML's SRI chain. Today the only
+// such file is /pcm-recorder-worklet.js: AudioWorklet.addModule() runs
+// the worklet in the AudioWorkletGlobalScope with full access to raw
+// PCM samples, and a tampered worklet would leak audio undetected.
+async function emitAssetIntegrity() {
+  const targets = ['pcm-recorder-worklet.js'];
+  const manifest = {};
+  for (const name of targets) {
+    try {
+      manifest[name] = await sha384(join(DIST, name));
+    } catch (_) {
+      // file may not be present in some dev builds; skip silently.
+    }
+  }
+  if (Object.keys(manifest).length === 0) {
+    console.log('[postbuild] no eligible loose runtime assets, skipping integrity manifest');
+    return;
+  }
+  const dir = join(DIST, '.well-known');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'asset-integrity.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  console.log(`[postbuild] wrote dist/.well-known/asset-integrity.json (${Object.keys(manifest).length} entries)`);
+}
+
 async function main() {
   const entries = await readdir(DIST, { withFileTypes: true });
   const htmls = entries.filter(e => e.isFile() && e.name.endsWith('.html')).map(e => join(DIST, e.name));
@@ -105,6 +131,7 @@ async function main() {
   }
   for (const h of htmls) await processHtml(h);
   await emitOrtManifest();
+  await emitAssetIntegrity();
 }
 
 main().catch(err => {

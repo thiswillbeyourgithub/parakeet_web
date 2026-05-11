@@ -23,6 +23,7 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
+import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLevelMonitor } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
 
@@ -323,7 +324,7 @@ function RemoteMicSender() {
             levelMonitorRef.current = createLevelMonitor(audioCtx, source, setAudioLevel);
 
             // PCM capture via AudioWorklet (same worklet as main app)
-            await audioCtx.audioWorklet.addModule('/pcm-recorder-worklet.js');
+            await verifiedAddModule(audioCtx.audioWorklet, '/pcm-recorder-worklet.js');
             const worklet = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
             workletRef.current = worklet;
 
