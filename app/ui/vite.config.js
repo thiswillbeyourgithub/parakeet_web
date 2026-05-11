@@ -94,6 +94,11 @@ export default defineConfig({
     },
   },
   build: {
+    // Pin sourcemap off explicitly. Vite's default is already false, but an
+    // accidental `--sourcemap` flag or future env tweak would otherwise emit
+    // .map files that Caddy's file_server happily serves, leaking original
+    // source paths and unminified code structure.
+    sourcemap: false,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
