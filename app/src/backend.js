@@ -28,9 +28,27 @@ async function _sha384B64(blob) {
   return 'sha384-' + btoa(bin);
 }
 
+// In production builds we refuse to silently fall back when the manifest
+// is unreachable or empty: an attacker who can swap /ort/*.wasm bytes can
+// also drop the one /ort/manifest.json request and re-open the very
+// attack surface F-38a was meant to close. Dev builds keep the soft path
+// so vite dev server (no postbuild step) and Node-side unit tests still
+// boot. import.meta.env.PROD is a static Vite-replaced boolean, so this
+// branch is dead-code-eliminated in dev.
+const _ASSET_INTEGRITY_HARD_FAIL = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
+
+function _integrityFailure(reason) {
+  if (_ASSET_INTEGRITY_HARD_FAIL) {
+    const err = new Error(`[Parakeet.js] ORT integrity manifest missing or invalid: ${reason}. Refusing to load ML runtime without integrity check.`);
+    err.name = 'IntegrityError';
+    throw err;
+  }
+  console.warn(`[Parakeet.js] ${reason}. Falling back to unchecked wasmPaths (DEV ONLY; production hard-fails).`);
+}
+
 async function _verifiedOrtWasmPaths(basePath) {
   if (typeof fetch === 'undefined' || !crypto?.subtle) {
-    console.warn('[Parakeet.js] WebCrypto unavailable; falling back to unchecked ORT wasmPaths (INTEGRITY NOT ENFORCED)');
+    _integrityFailure('WebCrypto unavailable');
     return basePath;
   }
   let manifest;
@@ -39,12 +57,12 @@ async function _verifiedOrtWasmPaths(basePath) {
     if (!resp.ok) throw new Error('manifest HTTP ' + resp.status);
     manifest = await resp.json();
   } catch (e) {
-    console.warn(`[Parakeet.js] No ORT integrity manifest at ${basePath}manifest.json (${e.message}). Falling back to unchecked wasmPaths. Production builds must ship dist/ort/manifest.json.`);
+    _integrityFailure(`No ORT integrity manifest at ${basePath}manifest.json (${e.message})`);
     return basePath;
   }
   const entries = Object.entries(manifest || {});
   if (entries.length === 0) {
-    console.warn('[Parakeet.js] ORT integrity manifest is empty; falling back to unchecked wasmPaths');
+    _integrityFailure('ORT integrity manifest is empty');
     return basePath;
   }
   const out = {};

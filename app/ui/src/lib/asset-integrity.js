@@ -15,13 +15,28 @@
 // server, old container image without postbuild output). Production
 // builds always ship the manifest.
 
+// Hard-fail in production: an attacker who can swap the worklet bytes can
+// also drop the one manifest request and re-open the F-38b attack surface.
+// Dev keeps the soft path so vite dev server (no postbuild manifest) and
+// integration tests still work.
+const _HARD_FAIL = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
+
 let manifestPromise = null;
 
 function loadManifest() {
   if (!manifestPromise) {
     manifestPromise = fetch('/.well-known/asset-integrity.json')
-      .then(r => r.ok ? r.json() : {})
-      .catch(() => ({}));
+      .then(r => {
+        if (!r.ok) {
+          if (_HARD_FAIL) throw new Error(`asset-integrity.json HTTP ${r.status}`);
+          return {};
+        }
+        return r.json();
+      })
+      .catch(err => {
+        if (_HARD_FAIL) throw err;
+        return {};
+      });
   }
   return manifestPromise;
 }
@@ -50,7 +65,12 @@ export async function verifiedAddModule(audioWorklet, path) {
   const manifest = await loadManifest();
   const expected = manifest[name];
   if (!expected || !crypto?.subtle) {
-    console.warn(`[asset-integrity] no pin for ${name}; addModule(${path}) UNCHECKED`);
+    if (_HARD_FAIL) {
+      const err = new Error(`[asset-integrity] no production pin for ${name}; refusing addModule(${path})`);
+      err.name = 'IntegrityError';
+      throw err;
+    }
+    console.warn(`[asset-integrity] no pin for ${name}; addModule(${path}) UNCHECKED (dev only)`);
     return audioWorklet.addModule(path);
   }
   const resp = await fetch(path);
