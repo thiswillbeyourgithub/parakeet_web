@@ -18,7 +18,7 @@ import {
 } from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
-import { openIdb, idbGet, idbPut, idbClear, idbDeleteDatabase } from '../../src/idb.js';
+import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime } from './lib/format.js';
 
@@ -123,6 +123,20 @@ async function saveSetting(key, value) {
     await idbPut(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + key, value);
   } catch (e) {
     console.warn(`Failed to save setting ${key}:`, e);
+  }
+}
+
+// Forget the on-disk transcripts key without nuking the rest of the
+// settings DB. Used when the user toggles persistTranscripts OFF or
+// hits "Clear all transcripts" - the next openIdb call reopens an
+// empty store. Caveat: this is still a logical delete inside LevelDB;
+// see idbDeleteDatabase for the residue-evicting alternative used by
+// the reset CTA (F-60).
+async function forgetPersistedTranscripts() {
+  try {
+    await idbDelete(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + 'transcriptions');
+  } catch (e) {
+    console.warn('Failed to forget transcripts:', e);
   }
 }
 
@@ -436,6 +450,13 @@ export default function App() {
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
   // Auto-copy: when enabled, transcription text is automatically copied to clipboard
   const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(true);
+  // Opt-in transcript persistence. Default OFF for new installs (privacy-first
+  // baseline matching the headline "audio never leaves your device" promise:
+  // memory-only by default). Existing users with on-disk transcripts at the
+  // time of upgrade get true so we don't silently abandon their history.
+  // F-55: see app/src/idb.js comments re LevelDB residue surviving a logical
+  // clear; this gate stops the write in the first place.
+  const [persistTranscripts, setPersistTranscripts] = useState(false);
   // About modal visibility
   const [showAbout, setShowAbout] = useState(false);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
@@ -484,6 +505,7 @@ export default function App() {
           savedShowConfidenceHeatmap,
           savedAutoTranscribe,
           savedAutoCopyToClipboard,
+          savedPersistTranscripts,
           savedShowAdvancedInfo,
           savedEnableChunking,
           savedChunkDuration,
@@ -503,6 +525,11 @@ export default function App() {
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
           loadSetting('autoCopyToClipboard', true),
+          // Migration: load with `null` so we can distinguish "user opted in/out"
+          // from "never set, default to false". Resolved below against existing
+          // transcript presence so we don't silently delete history of users
+          // who upgraded into the post-F-55 build.
+          loadSetting('persistTranscripts', null),
           loadSetting('showAdvancedInfo', false),
           loadSetting('enableChunking', true),
           loadSetting('chunkDuration', 60),
@@ -523,6 +550,14 @@ export default function App() {
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
         setAutoTranscribe(savedAutoTranscribe);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
+        // Resolve the persistTranscripts migration default. If the user has
+        // never seen this toggle (null) but already has on-disk transcripts,
+        // preserve that behaviour with ON; otherwise the privacy-first OFF.
+        setPersistTranscripts(
+          savedPersistTranscripts !== null
+            ? savedPersistTranscripts
+            : (Array.isArray(savedTranscriptions) && savedTranscriptions.length > 0)
+        );
         setShowAdvancedInfo(savedShowAdvancedInfo);
         setEnableChunking(savedEnableChunking);
         setChunkDuration(savedChunkDuration);
@@ -801,12 +836,16 @@ export default function App() {
   usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
   usePersistedSetting('autoTranscribe', autoTranscribe, settingsLoaded);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
+  usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
   usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
   usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
-  usePersistedSetting('transcriptions', transcriptions, settingsLoaded);
+  // Transcripts only flow to disk when the user opted in. When the toggle is
+  // OFF the gate is settingsLoaded && false === false, so usePersistedSetting
+  // no-ops on every transcripts change.
+  usePersistedSetting('transcriptions', transcriptions, settingsLoaded && persistTranscripts);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
@@ -2091,6 +2130,9 @@ export default function App() {
   function clearTranscriptions() {
     setTranscriptions([]);
     setText('');
+    // Forget the on-disk copy too. If persistTranscripts is OFF the key
+    // may not exist; idbDelete on a missing key is a no-op.
+    forgetPersistedTranscripts();
   }
 
   async function resetAllData() {
@@ -2587,6 +2629,25 @@ export default function App() {
                 <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
                 {t('autoCopyToClipboard')}
                 <InfoTooltip text={t('tooltipAutoCopy')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={persistTranscripts}
+                  onChange={e => {
+                    const next = e.target.checked;
+                    setPersistTranscripts(next);
+                    // Toggle OFF: scrub the on-disk copy immediately so the
+                    // user's existing history doesn't sit there forever.
+                    // usePersistedSetting's gate already stops new writes.
+                    if (!next) forgetPersistedTranscripts();
+                  }}
+                />
+                {t('persistTranscripts')}
+                <InfoTooltip text={t('tooltipPersistTranscripts')} />
               </label>
             </div>
 
