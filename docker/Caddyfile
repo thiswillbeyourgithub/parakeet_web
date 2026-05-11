@@ -20,10 +20,20 @@
 	# allowlist via VITE_CSP_CONNECT_HOSTS (umami analytics origin, custom
 	# dictation regex CSV host, etc.). Script-src likewise extensible via
 	# VITE_CSP_SCRIPT_HOSTS when umami is enabled.
+	#
+	# The HF connect-src list is the explicit set of subdomains HF
+	# currently redirects model files through (cas-bridge.xethub.hf.co for
+	# xet-based LFS, cdn-lfs.* for the older S3-backed path). It used to
+	# be `*.huggingface.co *.hf.co`, but a wildcard would also match any
+	# future HF-controlled subdomain (including user-controllable ones, if
+	# HF ever opens that namespace) and turn an XSS in the parakeet origin
+	# into an exfil channel through that subdomain. If HF rotates the CDN
+	# host, an operator can extend the list at runtime via
+	# VITE_CSP_CONNECT_HOSTS without rebuilding the image.
 	header {
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cas-bridge.xethub.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
 		# Permissions-Policy: only microphone and hid (WebHID for SpeechMike)
 		# are needed by the page. Everything else is explicitly disabled so a
 		# compromised script cannot elicit a prompt for camera, USB, serial,
