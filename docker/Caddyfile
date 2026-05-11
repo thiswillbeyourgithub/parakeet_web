@@ -24,6 +24,12 @@
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		# Permissions-Policy: only microphone and hid (WebHID for SpeechMike)
+		# are needed by the page. Everything else is explicitly disabled so a
+		# compromised script cannot elicit a prompt for camera, USB, serial,
+		# geolocation, etc. fullscreen=(self) is kept open for the legitimate
+		# UI fullscreen path.
+		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), bluetooth=(), camera=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(self), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), speaker-selection=(), usb=(), web-share=(), xr-spatial-tracking=()"
 	}
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
