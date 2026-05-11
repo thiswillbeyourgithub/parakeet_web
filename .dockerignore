@@ -1,0 +1,52 @@
+# Docker build context filter. The compose build sets `context: ..` (the
+# project root), so anything not excluded here is sent to the Docker
+# daemon and stored in the build cache. Two distinct risks if this file
+# is missing:
+#
+# 1. Host node_modules/ and dist/ shadow whatever `npm ci` produces and
+#    would be used verbatim if a future Dockerfile change broadens the
+#    COPY scope. A compromised developer machine would then leak code
+#    into every build, bypassing the lockfile entirely.
+# 2. Local dev artifacts (TLS cert keys, .env files with secrets) end
+#    up in the build context and may land in the image's layer cache.
+
+# Dependencies (must be installed inside the image, never copied from host)
+node_modules/
+**/node_modules/
+
+# Build outputs (re-emitted by the builder stage)
+dist/
+**/dist/
+!app/ui/vendor/**/dist/
+
+# Local secrets and TLS keys (vite dev server, docker compose)
+.env
+.env.*
+docker/.env
+*.pem
+*.key
+*.crt
+
+# VCS metadata (not needed at build time, balloons the context)
+.git/
+.gitignore
+
+# Editor / IDE droppings
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Claude / agent metadata (local-only)
+.claude/
+CLAUDE.md
+
+# Local-only tooling (scripts/ is already gitignored)
+scripts/
+data/
+deploy.sh
+TODO.md
