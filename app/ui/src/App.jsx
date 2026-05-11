@@ -159,6 +159,23 @@ function sanitizeClipboardText(s) {
   );
 }
 
+// Sanitise an arbitrary device-supplied string before rendering it in
+// the UI. WebHID productName comes from the USB descriptor and is
+// trivially spoofable by a hostile USB device or a Bad-USB tool. A
+// U+202E RLO override could make "SpeechMike" visually swap suffixes
+// at render-time, fooling a user who reads the UI label to confirm
+// they paired the right device (F-52). Strip control bytes and bidi
+// codepoints, length-cap so a hostile device cannot fill the UI with
+// a runaway productName.
+function sanitizeDeviceName(s, fallback = 'Dictation device') {
+  if (typeof s !== 'string' || !s.length) return fallback;
+  const cleaned = s.replace(
+    /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/g,
+    ''
+  ).trim().slice(0, 64);
+  return cleaned || fallback;
+}
+
 function truncateFilename(filename, maxLength = 40) {
   if (filename.length <= maxLength) return filename;
   
@@ -1550,25 +1567,25 @@ export default function App() {
     manager.addDeviceDisconnectedEventListener(() => {
       const remaining = manager.getDevices();
       setDictationDevice(remaining.length > 0
-        ? (remaining[0].hidDevice.productName || 'Dictation device')
+        ? sanitizeDeviceName(remaining[0].hidDevice.productName)
         : null);
     });
 
     // Update UI when a new device is connected (e.g. re-plugged)
     manager.addDeviceConnectedEventListener((device) => {
-      setDictationDevice(device.hidDevice.productName || 'Dictation device');
+      setDictationDevice(sanitizeDeviceName(device.hidDevice.productName));
     });
 
     if (requestDevice) {
       const devices = await manager.requestDevice();
       if (devices.length > 0) {
-        setDictationDevice(devices[0].hidDevice.productName || 'Dictation device');
+        setDictationDevice(sanitizeDeviceName(devices[0].hidDevice.productName));
       }
     } else {
       // Auto-reconnect: check for already-paired devices (no user gesture needed)
       const devices = manager.getDevices();
       if (devices.length > 0) {
-        setDictationDevice(devices[0].hidDevice.productName || 'Dictation device');
+        setDictationDevice(sanitizeDeviceName(devices[0].hidDevice.productName));
       }
     }
 
@@ -1583,7 +1600,7 @@ export default function App() {
       if (!manager) return;
       const devices = await manager.requestDevice();
       if (devices.length > 0) {
-        setDictationDevice(devices[0].hidDevice.productName || 'Dictation device');
+        setDictationDevice(sanitizeDeviceName(devices[0].hidDevice.productName));
       }
     } catch (err) {
       console.error('[Dictation] Failed to connect device:', err);
