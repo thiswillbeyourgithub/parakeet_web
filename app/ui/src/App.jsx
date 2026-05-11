@@ -2077,6 +2077,13 @@ export default function App() {
       // chunks live in a separate IndexedDB), so reset truly starts from zero.
       await clearModelCache();
 
+      // localStorage holds the language preference (i18n.jsx persists it under
+      // parakeetweb_lang); sessionStorage holds the low-RAM-warning dismissal
+      // flag. The user-facing "delete all data" copy promises a virgin app,
+      // and these survive otherwise. Clear them explicitly.
+      try { localStorage.removeItem('parakeetweb_lang'); } catch (_) {}
+      try { sessionStorage.clear(); } catch (_) {}
+
       // Clear transcriptions
       setTranscriptions([]);
       setText('');
