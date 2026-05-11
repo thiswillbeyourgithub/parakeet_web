@@ -35,6 +35,25 @@ function debugLog(context, message, data = null) {
     console.log(`[${timestamp}] [DEBUG:${context}] ${message}${dataStr}`);
 }
 
+/**
+ * Sanitize an attacker-controlled string before interpolating it into
+ * a log line. Strips C0/C1 control characters (which include ESC and
+ * the ANSI CSI introducer), DEL, and the Unicode bidi-override codepoints
+ * so a hostile header value cannot inject terminal control sequences,
+ * forge log lines, or reorder displayed text in operator terminal tails.
+ * Length-caps to keep log volume bounded.
+ */
+// U+202A..U+202E: bidi embedding/override (LRE/RLE/PDF/LRO/RLO).
+// U+2066..U+2069: bidi isolate marks (LRI/RLI/FSI/PDI).
+const BIDI_OVERRIDES = /[‪-‮⁦-⁩]/g;
+function sanitizeForLog(s, maxLen = 200) {
+    if (typeof s !== 'string') s = String(s ?? '');
+    return s
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, '?')
+        .replace(BIDI_OVERRIDES, '?')
+        .slice(0, maxLen);
+}
+
 // ============ CORS / Origin Validation ============
 // ALLOWED_ORIGINS must be a comma-separated list of full origins, each
 // prefixed with http:// or https://. We refuse to guess the scheme — a
@@ -79,7 +98,7 @@ function validateOrigin(req, res, next) {
     const origin = req.headers.origin;
     if (origin) {
         if (ALLOWED_ORIGINS.includes(origin)) return next();
-        console.warn(`Blocked request from unauthorized origin: ${origin} (allowed: ${ALLOWED_ORIGINS.join(', ')})`);
+        console.warn(`Blocked request from unauthorized origin: ${sanitizeForLog(origin)} (allowed: ${ALLOWED_ORIGINS.join(', ')})`);
         return res.status(403).json({ error: 'Forbidden', message: 'Request origin not allowed' });
     }
     // Browsers omit Origin on same-origin GETs (the long-poll for /answer,
@@ -91,7 +110,7 @@ function validateOrigin(req, res, next) {
     const fetchSite = req.headers['sec-fetch-site'];
     if (fetchSite === 'same-origin') return next();
 
-    console.warn(`Blocked request with no Origin header and sec-fetch-site=${fetchSite || 'absent'}: ${req.method} ${req.originalUrl}`);
+    console.warn(`Blocked request with no Origin header and sec-fetch-site=${sanitizeForLog(fetchSite || 'absent')}: ${sanitizeForLog(req.method, 16)} ${sanitizeForLog(req.originalUrl, 256)}`);
     return res.status(403).json({ error: 'Forbidden', message: 'Origin header required' });
 }
 
