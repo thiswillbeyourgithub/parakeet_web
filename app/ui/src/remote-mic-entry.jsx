@@ -163,13 +163,20 @@ function RemoteMicSender() {
         let keyTimeout = null;
         try {
             // Parse room info from URL hash: #roomId:secret
+            // JS String#split(sep, limit) truncates rather than packing the
+            // tail, so split(':', 2) on "ROOM:abc:def" yields ["ROOM","abc"]
+            // and silently drops ":def". Today the secret alphabet excludes
+            // `:`, but slicing at the first separator removes the latent
+            // footgun if the secret format ever widens.
             const hash = window.location.hash.substring(1);
-            if (!hash || !hash.includes(':')) {
+            const sep = hash.indexOf(':');
+            if (sep < 0) {
                 setStatus(STATUS.ERROR);
                 setErrorMsg(t('mobileInvalidLink'));
                 return;
             }
-            const [roomId, secret] = hash.split(':', 2);
+            const roomId = hash.slice(0, sep);
+            const secret = hash.slice(sep + 1);
             if (!roomId || !secret) {
                 setStatus(STATUS.ERROR);
                 setErrorMsg(t('mobileInvalidLinkMissing'));
