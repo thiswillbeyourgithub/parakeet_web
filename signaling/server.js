@@ -107,7 +107,16 @@ const rateLimiters = new Map();
 const RATE_LIMIT_CONFIG = {
     roomCreation: { windowMs: 60 * 1000, maxRequests: 5 },
     roomLookup: { windowMs: 60 * 1000, maxRequests: 30 },
-    general: { windowMs: 60 * 1000, maxRequests: 100 }
+    general: { windowMs: 60 * 1000, maxRequests: 100 },
+    // iceConfig gates /api/config which mints time-limited TURN credentials
+    // valid against the shared coturn instance for TURN_CREDENTIAL_TTL.
+    // A legitimate handshake only fetches once per session, so a tight cap
+    // here stops a same-origin script (or a compromised phone after
+    // handshake) from harvesting credentials in a loop and turning the
+    // operator's TURN server into an open relay. The cap is intentionally
+    // well below roomCreation to make harvesting visibly noisier than
+    // legitimate use.
+    iceConfig: { windowMs: 60 * 1000, maxRequests: 10 }
 };
 
 function getClientIp(req) {
@@ -286,7 +295,7 @@ function generateTurnCredentials() {
 
 // ============ API Endpoints ============
 
-app.get('/api/config', (req, res) => {
+app.get('/api/config', rateLimitMiddleware('iceConfig'), (req, res) => {
     const iceServers = [];
 
     if (STUN_SERVER) {
