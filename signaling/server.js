@@ -304,6 +304,8 @@ function validateRoomSecret(req, res, next) {
 // the minimal expected shape.
 
 const MAX_SDP_BYTES = 16 * 1024;          // real SDPs are ~2-4 kB
+const MAX_SDP_LINES = 200;                 // legitimate SDPs are ~30-80 lines
+const MAX_SDP_LINE_BYTES = 1024;
 const MAX_CANDIDATE_BYTES = 2 * 1024;
 const MAX_ICE_CANDIDATES_PER_ROOM = 64;
 
@@ -311,11 +313,49 @@ function isPlainObject(v) {
     return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+// RFC 4566: every SDP line is "<type>=<value>" where <type> is a single
+// case-sensitive letter. We accept the letters that real WebRTC SDP
+// actually uses (a, b, c, e, i, k, m, o, p, r, s, t, u, v, z). Anything
+// outside this alphabet is malformed by spec and refused, both to
+// shield the peer's parser from line-kind confusion and to prevent
+// future SDP attribute injection from working through this relay.
+const SDP_LINE_RE = /^[abceikmoprstuvz]=.*$/;
+
+// ICE candidate top line per RFC 5245 section 15.1:
+//   candidate:<foundation> <component> <transport> <priority> <connaddr> <port> typ <type>[ ...]
+// Empty string is the end-of-candidates sentinel that browsers send to
+// flush trickle ICE, and must be allowed.
+const ICE_CANDIDATE_RE = /^candidate:[A-Za-z0-9+/=._-]{1,64} \d{1,3} (udp|tcp|UDP|TCP) \d{1,10} [A-Za-z0-9.:_-]{1,128} \d{1,5} typ (host|srflx|prflx|relay)( .*)?$/;
+
 function validateSdp(body) {
     if (!isPlainObject(body)) return 'body must be a JSON object';
     if (body.type !== 'offer' && body.type !== 'answer') return 'invalid type';
     if (typeof body.sdp !== 'string' || !body.sdp.length) return 'missing sdp';
     if (Buffer.byteLength(body.sdp, 'utf8') > MAX_SDP_BYTES) return 'sdp too large';
+
+    // Structural pass: line-by-line shape check before this string is
+    // ever fed to a peer's RTCPeerConnection. Cheap defense in depth
+    // against (a) oversized fmtp/rtpmap floods that trip O(n²) parsers,
+    // (b) non-SDP attribute-shaped lines, (c) bare-LF separator tricks.
+    // Strip a single trailing \r\n so legitimately well-formed SDPs
+    // don't trip the "empty trailing line" check; real WebRTC SDPs
+    // typically end with one. Disallow embedded NUL bytes which some
+    // parsers handle inconsistently.
+    if (body.sdp.indexOf('\0') !== -1) return 'sdp contains NUL';
+    const lines = body.sdp.replace(/\r\n$/, '').split(/\r\n|\n/);
+    if (lines.length > MAX_SDP_LINES) return 'too many sdp lines';
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (Buffer.byteLength(line, 'utf8') > MAX_SDP_LINE_BYTES) return `sdp line ${i} too long`;
+        if (!SDP_LINE_RE.test(line)) return `invalid sdp line ${i}`;
+    }
+    // Required prelude: v=, o=, s=, t= at the top per RFC 4566. Order is
+    // fixed; checking the first lines catches most malformed-prelude
+    // attempts without re-implementing the whole grammar.
+    if (!lines[0]?.startsWith('v=')) return 'missing v= line';
+    if (!lines[1]?.startsWith('o=')) return 'missing o= line';
+    if (!lines[2]?.startsWith('s=')) return 'missing s= line';
+
     return null;
 }
 
@@ -325,8 +365,23 @@ function validateIceCandidate(body) {
     // (possibly empty for end-of-candidates), and optional sdpMid / sdpMLineIndex.
     if (typeof body.candidate !== 'string') return 'missing candidate';
     if (Buffer.byteLength(body.candidate, 'utf8') > MAX_CANDIDATE_BYTES) return 'candidate too large';
-    if (body.sdpMid != null && typeof body.sdpMid !== 'string') return 'invalid sdpMid';
-    if (body.sdpMLineIndex != null && typeof body.sdpMLineIndex !== 'number') return 'invalid sdpMLineIndex';
+    if (body.candidate.indexOf('\0') !== -1) return 'candidate contains NUL';
+    if (/[\r\n]/.test(body.candidate)) return 'candidate contains line break';
+    // Empty string is the trickle-ICE end-of-candidates sentinel.
+    if (body.candidate !== '' && !ICE_CANDIDATE_RE.test(body.candidate)) {
+        return 'invalid candidate format';
+    }
+    if (body.sdpMid != null) {
+        if (typeof body.sdpMid !== 'string') return 'invalid sdpMid';
+        if (body.sdpMid.length > 32) return 'sdpMid too long';
+        if (!/^[A-Za-z0-9._-]*$/.test(body.sdpMid)) return 'invalid sdpMid charset';
+    }
+    if (body.sdpMLineIndex != null) {
+        if (typeof body.sdpMLineIndex !== 'number') return 'invalid sdpMLineIndex';
+        if (!Number.isInteger(body.sdpMLineIndex) || body.sdpMLineIndex < 0 || body.sdpMLineIndex > 32) {
+            return 'invalid sdpMLineIndex range';
+        }
+    }
     return null;
 }
 
