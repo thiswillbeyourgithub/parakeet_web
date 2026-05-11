@@ -39,6 +39,10 @@
 		# cross-origin sub-resources. The site needs no referrer information
 		# from outside, so close the channel entirely.
 		Referrer-Policy "no-referrer"
+		# Forbid MIME-sniffing so a content-type-confusion attack against the
+		# operator-supplied dictation regex CSV or any future user-uploaded
+		# asset cannot escalate into script execution on a quirky browser.
+		X-Content-Type-Options "nosniff"
 	}
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
