@@ -18,19 +18,30 @@
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 WORKDIR /build
 
+# Each `npm ci` runs with --ignore-scripts so a compromised dep's
+# postinstall (the standard malware delivery channel) cannot execute
+# arbitrary code during build. The single legitimate exception is
+# esbuild (vite's bundler), which needs its install.js to fetch the
+# platform-specific binary; we explicitly `npm rebuild esbuild` to
+# allowlist exactly that one package.
+#
+# `npm ci` (not `npm install`) refuses to mutate the lockfile, so the
+# install set is exactly what's recorded in the committed
+# package-lock.json: same bytes on every build, same audit surface
+# in code review.
+
 # Top-level app package (provides parakeet.js core via vite alias to ../src/).
-# Using npm install (not npm ci) because onnxruntime-web is vendored and the
-# committed lockfile drifts from package.json.
-COPY app/package.json app/package-lock.json* ./app/
-RUN cd app && npm install --no-audit --no-fund
+COPY app/package.json app/package-lock.json ./app/
+RUN cd app && npm ci --ignore-scripts --no-audit --no-fund
 
 # UI app
-COPY app/ui/package.json app/ui/package-lock.json* ./app/ui/
-RUN cd app/ui && npm install --no-audit --no-fund
+COPY app/ui/package.json app/ui/package-lock.json ./app/ui/
+RUN cd app/ui && npm ci --ignore-scripts --no-audit --no-fund \
+    && npm rebuild esbuild
 
-# Signaling server (no lockfile committed; use npm install)
-COPY signaling/package.json ./signaling/
-RUN cd signaling && npm install --omit=dev
+# Signaling server
+COPY signaling/package.json signaling/package-lock.json ./signaling/
+RUN cd signaling && npm ci --ignore-scripts --no-audit --no-fund --omit=dev
 
 # Fail the build on high-severity npm vulnerabilities by default. Direct
 # `docker build` invocations (CI, manual rebuild bypassing compose) used
