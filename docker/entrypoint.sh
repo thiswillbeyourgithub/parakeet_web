@@ -54,10 +54,47 @@ REGEX_DIR="/var/regex"
 DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure-regex"
 REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_MURMURE_URL}"
 
+if ! _validate_regex_source "$REGEX_SOURCE"; then
+  echo "[entrypoint] ERROR: DICTATION_REGEX_SOURCE has an unsupported shape: $REGEX_SOURCE"
+  echo "[entrypoint] Allowed values: '/abs/path', './rel/path', or 'https://host/path'."
+  echo "[entrypoint] Refusing to start so an operator typo cannot silently leak"
+  echo "[entrypoint] container files or follow a redirect to internal endpoints."
+  exit 1
+fi
+
 _fetch() {
-  if command -v wget >/dev/null 2>&1; then wget -q -O "$1" "$2"
-  elif command -v curl >/dev/null 2>&1; then curl -sfL -o "$1" "$2"
-  else echo "[entrypoint] WARNING: neither wget nor curl found"; return 1; fi
+  # Refuse non-HTTPS, refuse redirects. Without this, a framagit-side
+  # redirect to e.g. http://169.254.169.254/... (cloud instance metadata)
+  # or an operator typo of file://... would be silently followed and the
+  # result served same-origin under /dictation-regex/.
+  if command -v wget >/dev/null 2>&1; then
+    wget -q --max-redirect=0 -O "$1" "$2"
+  elif command -v curl >/dev/null 2>&1; then
+    curl -sf --proto '=https' --max-redirs 0 -o "$1" "$2"
+  else
+    echo "[entrypoint] WARNING: neither wget nor curl found"
+    return 1
+  fi
+}
+
+# Validate DICTATION_REGEX_SOURCE early. Accept only:
+#   - absolute or ./relative local folder path
+#   - https://<host>/<path> URL (no leading whitespace, no scheme other
+#     than https). file://, http://, gopher://, etc. would otherwise be
+#     interpolated straight into the wget/curl invocation.
+_validate_regex_source() {
+  # Allowlist of characters acceptable in either a local path or an https
+  # URL. POSIX `case` glob, so portable across busybox ash / dash / bash.
+  # Rejects whitespace, $, `, ;, &, |, <, >, quotes, etc., any of which
+  # would let an operator typo turn into a fetch with redirect, command
+  # substitution, or non-https scheme.
+  case "$1" in
+    *[!A-Za-z0-9:/._?=\&%-]*) return 1 ;;
+  esac
+  case "$1" in
+    /*|./*|https://*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 mkdir -p "$REGEX_DIR"
