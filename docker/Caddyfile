@@ -115,6 +115,20 @@
 		file_server
 	}
 
+	# SPA fallback is scoped to actual page routes. Asset-shaped paths
+	# (/assets/*, /ort/*, /js/*, /pcm-recorder-worklet.js, etc.) bypass
+	# the try_files fallback and return a real 404 from file_server if
+	# the file is missing. Without this scoping, a stale-HTML deploy
+	# would serve index.html (Content-Type text/html) under an
+	# /assets/main-OLD.js URL: nosniff blocks execution and the page
+	# silently breaks. More importantly, the fallback used to hide
+	# genuine 404s on legitimate asset paths, masking deploy errors.
+	@asset_path path /assets/* /ort/* /js/* /pcm-recorder-worklet.js
+	handle @asset_path {
+		root * /srv
+		file_server
+	}
+
 	# SPA + remote-mic.html (Vite emits both as separate entry points).
 	handle {
 		root * /srv
