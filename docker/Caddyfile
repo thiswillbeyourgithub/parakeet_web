@@ -50,6 +50,11 @@
 		# :5173 listener can carry it harmlessly. Default 1 year, no preload
 		# (operators must opt in to the preload list deliberately).
 		Strict-Transport-Security "max-age={$VITE_HSTS_MAX_AGE:31536000}; includeSubDomains"
+		# Cross-Origin-Resource-Policy: keep our resources to same-origin.
+		# COEP require-corp is already on; CORP same-origin is the matching
+		# response-side guarantee so sibling subdomains cannot read our
+		# config.js / model files / fonts via cross-origin fetches.
+		Cross-Origin-Resource-Policy "same-origin"
 	}
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
