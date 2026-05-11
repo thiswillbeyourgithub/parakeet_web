@@ -66,3 +66,38 @@ export async function idbClear(db, storeName) {
     request.onsuccess = () => resolve();
   });
 }
+
+/**
+ * Delete the entire DB file and forget any memoised open() promise so
+ * the next openIdb() rebuilds fresh. objectStore.clear() only writes a
+ * delete-marker into LevelDB / WebSQL backing stores - the actual SST
+ * / log files survive until compaction, which means a forensics tool
+ * (or even chrome://indexeddb-internals) can recover the cleared
+ * values for an indeterminate window. deleteDatabase forces the
+ * backing files to be dropped synchronously and is the only reliable
+ * way to evict on-disk residue. The caller MUST first close all open
+ * IDBDatabase handles to the same dbName; we close any memoised one
+ * here.
+ */
+export async function idbDeleteDatabase(dbName) {
+  // Close every memoised connection that targets this dbName so the
+  // delete request doesn't get queued behind an open connection.
+  for (const [key, p] of dbPromises.entries()) {
+    if (key.startsWith(`${dbName}::`)) {
+      try { (await p).close(); } catch (_) {}
+      dbPromises.delete(key);
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(dbName);
+    req.onerror = () => reject(req.error || new Error(`Error deleting IndexedDB ${dbName}`));
+    req.onsuccess = () => resolve();
+    req.onblocked = () => {
+      // Another tab still holds the DB open. Resolve anyway so the caller
+      // can continue with a reload; deleteDatabase will fire onsuccess
+      // once that tab releases the handle.
+      console.warn(`[idb] deleteDatabase(${dbName}) blocked by another tab; will complete when other tab closes the DB`);
+      resolve();
+    };
+  });
+}

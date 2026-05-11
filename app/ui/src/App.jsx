@@ -18,7 +18,7 @@ import {
 } from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
-import { openIdb, idbGet, idbPut, idbClear } from '../../src/idb.js';
+import { openIdb, idbGet, idbPut, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime } from './lib/format.js';
 
@@ -128,8 +128,14 @@ async function saveSetting(key, value) {
 
 async function clearAllSettings() {
   try {
-    await idbClear(await getSettingsDb(), SETTINGS_STORE_NAME);
-    console.log('[App] All settings cleared');
+    // Delete the whole DB file rather than store.clear(): the latter
+    // only writes a delete-marker, leaving the cleared values
+    // recoverable from LevelDB SST/log residue until the next
+    // compaction (hours-to-days). deleteDatabase forces the backing
+    // files to be dropped, which is what the user expects from a
+    // "purge / reset" action. The next openIdb() rebuilds it empty.
+    await idbDeleteDatabase(SETTINGS_DB_NAME);
+    console.log('[App] All settings cleared (DB deleted)');
   } catch (e) {
     console.warn('Failed to clear settings:', e);
   }
