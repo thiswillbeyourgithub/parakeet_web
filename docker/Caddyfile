@@ -89,9 +89,22 @@
 	header /config.js Cache-Control "no-cache, must-revalidate"
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
+	#
+	# `header_up -X-Forwarded-For` removes any X-Forwarded-For the client
+	# supplied before Caddy's reverse_proxy appends its own. Without this,
+	# Caddy's default APPEND behaviour would leave the attacker-supplied
+	# entry leftmost, and Node (with `trust proxy: 'loopback'`) honours
+	# the leftmost entry as req.ip - giving the attacker a one-line
+	# bypass of every per-IP rate limiter. Same treatment for X-Real-IP
+	# and X-Forwarded-Host to keep the upstream's view of the client
+	# bound to what Caddy actually saw on the wire.
 	handle_path /api/signal/* {
 		rewrite * /api{uri}
-		reverse_proxy localhost:3001
+		reverse_proxy localhost:3001 {
+			header_up -X-Forwarded-For
+			header_up -X-Real-IP
+			header_up -X-Forwarded-Host
+		}
 	}
 
 	# Local model fallback files: served from whatever host folder the operator
