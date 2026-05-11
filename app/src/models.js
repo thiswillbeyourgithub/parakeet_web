@@ -57,6 +57,16 @@ export const MODELS = {
     subsampling: 8,
     predHidden: 640,
     predLayers: 2,
+    // TODO: pin to a specific commit SHA before deployment. 'main' is a
+    // moving target on HuggingFace: a repo takeover or force-push would
+    // silently swap model weights for every visitor on next load. See
+    // docker/env.example for the pinning recipe (and VITE_MODEL_REVISION
+    // for a runtime override).
+    revision: 'main',
+    // TODO: populate per-file lowercase sha256 hex digests using the
+    // recipe in docker/env.example. When empty, hub.js logs a loud warning
+    // and skips verification (model integrity is NOT enforced).
+    hashes: {},
   },
   'parakeet-tdt-0.6b-v3': {
     repoId: 'istupakov/parakeet-tdt-0.6b-v3-onnx',
@@ -69,6 +79,9 @@ export const MODELS = {
     subsampling: 8,
     predHidden: 640,
     predLayers: 2,
+    // TODO: see note above; pin via the recipe in docker/env.example.
+    revision: 'main',
+    hashes: {},
   },
 };
 

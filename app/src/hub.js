@@ -42,6 +42,46 @@ const INACTIVITY_TIMEOUT_MS = 30000;
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
 
+/**
+ * SHA-256 a Blob and return a lowercase hex digest. Used to verify model
+ * file integrity against per-file hashes pinned in models.js so a HF repo
+ * takeover, force-push, or one-shot MITM cannot silently swap weights
+ * (the model runs in WASM/WebGPU with full access to the user's mic audio).
+ */
+async function _sha256Hex(blob) {
+  const buf = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function _normalizeHash(h) {
+  if (!h) return '';
+  return String(h).toLowerCase().replace(/^sha-?256[:=-]/, '').trim();
+}
+
+/**
+ * Compare a freshly computed hash against an expected pin.
+ * - Empty expected: log a loud warning (integrity NOT enforced) and return.
+ *   This keeps the app working when models.js hasn't been pinned yet, but
+ *   the warning shows up in every console and is also surfaced in the UI
+ *   via the global error banner if devs forget.
+ * - Mismatch: throw HubDownloadError so the caller refuses InferenceSession
+ *   creation and the user sees a clear failure instead of a silent swap.
+ */
+function _verifyHash(filename, actualHex, expected, logTag) {
+  const exp = _normalizeHash(expected);
+  if (!exp) {
+    console.warn(`${logTag} INTEGRITY: no expected sha256 for ${filename}; model verification SKIPPED. Pin via recipe in docker/env.example and update models.js. Computed sha256: ${actualHex}`);
+    return;
+  }
+  if (exp !== actualHex) {
+    const err = new Error(`Integrity check failed for ${filename}: expected sha256 ${exp}, got ${actualHex}`);
+    err.name = 'IntegrityError';
+    throw err;
+  }
+  console.log(`${logTag} Integrity OK for ${filename} (sha256 ${actualHex.slice(0, 12)}...)`);
+}
+
 function makeCacheKey(repoId, revision, subfolder, filename) {
   return `hf-${repoId}-${revision}-${subfolder}-${filename}`;
 }
@@ -129,7 +169,7 @@ export async function clearCache() {
  * @param {string} logTag - Log prefix, e.g. '[Hub]' or '[Hub:local]'
  * @returns {Promise<string>} Blob URL
  */
-async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
+async function _streamAndCache(url, cacheKey, filename, progress, logTag, expectedHash) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
 
@@ -309,6 +349,21 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
   // Blob composition is by reference, so this is cheap.
   const blob = new Blob([...segments, ...tailChunks], { type: contentType });
 
+  // Integrity verification BEFORE persisting to IndexedDB. If a hash is
+  // pinned in models.js and the bytes we just received don't match, we
+  // must not cache the tampered blob (which would otherwise survive across
+  // reloads) and must not return a URL that the caller will feed to
+  // InferenceSession.create.
+  const actualHash = await _sha256Hex(blob);
+  try {
+    _verifyHash(filename, actualHash, expectedHash, logTag);
+  } catch (err) {
+    if (typeof indexedDB !== 'undefined') {
+      await deleteAllPartial();
+    }
+    throw err;
+  }
+
   if (typeof indexedDB !== 'undefined') {
     try {
       await saveFileToDb(cacheKey, blob);
@@ -323,7 +378,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
 }
 
 export async function getModelFile(repoId, filename, options = {}) {
-  const { revision = 'main', subfolder = '', progress } = options;
+  const { revision = 'main', subfolder = '', progress, expectedHash } = options;
   
   // Construct HF URL
   const baseUrl = 'https://huggingface.co';
@@ -350,7 +405,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   // Download from HF (resumable + retrying internally)
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
-    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]');
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', expectedHash);
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
@@ -385,7 +440,7 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress, revision = 'main', subfolder = '' } = options;
+  const { progress, revision = 'main', subfolder = '', expectedHash } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
@@ -403,7 +458,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]');
+  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]', expectedHash);
 }
 
 /**
@@ -465,6 +520,15 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
 
   const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl } = options;
 
+  // Resolve the effective revision: operator override (options.revision)
+  // wins, otherwise the per-model pin in models.js, otherwise the moving
+  // 'main' branch (logged as a warning by _verifyHash when hashes is empty).
+  const effectiveRevision = options.revision || modelConfig?.revision || 'main';
+  const expectedHashes = modelConfig?.hashes || {};
+  if (effectiveRevision === 'main' && Object.keys(expectedHashes).length === 0) {
+    console.warn(`[Hub] WARNING: model ${repoId} is being loaded from the moving 'main' branch with NO pinned hashes. A HF repo takeover or one-shot MITM could swap weights. Run recipe in docker/env.example and update models.js, or set VITE_MODEL_REVISION.`);
+  }
+
   // Decide quantisation per component
   let encoderQ = encoderQuant;
   let decoderQ = decoderQuant;
@@ -495,7 +559,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     const probed = await Promise.all([probe(`${encoderName}.data`), probe(`${decoderName}.data`)]);
     repoFiles = probed.filter(Boolean);
   } else {
-    repoFiles = await listRepoFiles(repoId, options.revision || 'main');
+    repoFiles = await listRepoFiles(repoId, effectiveRevision);
   }
 
   const filesToGet = [
@@ -537,11 +601,17 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   for (const { key, name } of filesToGet) {
     try {
         const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
+        const perFileOpts = {
+          ...options,
+          revision: effectiveRevision,
+          progress: wrappedProgress,
+          expectedHash: expectedHashes[name],
+        };
         if (localFallbackBaseUrl) {
           // Local fallback mode: download from the instance instead of HuggingFace
-          results.urls[key] = await getLocalModelFile(localFallbackBaseUrl, repoId, name, { ...options, progress: wrappedProgress });
+          results.urls[key] = await getLocalModelFile(localFallbackBaseUrl, repoId, name, perFileOpts);
         } else {
-          results.urls[key] = await getModelFile(repoId, name, { ...options, progress: wrappedProgress });
+          results.urls[key] = await getModelFile(repoId, name, perFileOpts);
         }
     } catch (e) {
         if (key.endsWith('DataUrl')) {

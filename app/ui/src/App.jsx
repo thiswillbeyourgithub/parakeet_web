@@ -772,6 +772,13 @@ export default function App() {
         backend,
         progress: progressCallback,
       };
+      // Operator-level override of the model revision pin. If unset, hub.js
+      // falls back to the per-model revision baked into models.js, which
+      // defaults to 'main' (with a loud warning) until the operator runs
+      // scripts/pin-model.sh to pin a commit SHA + per-file hashes.
+      if (CONFIG.VITE_MODEL_REVISION) {
+        downloadOpts.revision = CONFIG.VITE_MODEL_REVISION;
+      }
       if (useLocalFallback) {
         // Serve weights from this instance under /models/<repoId>/
         downloadOpts.localFallbackBaseUrl = '/models';
