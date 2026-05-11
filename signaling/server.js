@@ -123,12 +123,37 @@ function getClientIp(req) {
     return req.ip || 'unknown';
 }
 
+// Global cap on the rateLimiters Map. Each entry is ~200 B, so 10k
+// entries cap the bookkeeping memory at ~2 MB even under aggressive
+// IPv6 source rotation. When the cap is hit we evict the oldest-
+// activity entry on insert so legitimate traffic cannot starve, but
+// an attacker rotating /64s can no longer grow the map without
+// bound between sweeps.
+const RATE_LIMITERS_MAX_ENTRIES = 10_000;
+
+function evictOldestRateLimiter() {
+    let oldestKey = null;
+    let oldestActivity = Infinity;
+    for (const [key, limiter] of rateLimiters.entries()) {
+        // blocked entries are kept; they protect against the slot
+        // simply being recycled by the same attacker.
+        if (limiter.blockedUntil && Date.now() < limiter.blockedUntil) continue;
+        const last = limiter.timestamps.length ? limiter.timestamps[limiter.timestamps.length - 1] : 0;
+        if (last < oldestActivity) {
+            oldestActivity = last;
+            oldestKey = key;
+        }
+    }
+    if (oldestKey !== null) rateLimiters.delete(oldestKey);
+}
+
 function checkRateLimit(ip, limitType) {
     const config = RATE_LIMIT_CONFIG[limitType];
     const now = Date.now();
     const key = `${ip}:${limitType}`;
 
     if (!rateLimiters.has(key)) {
+        if (rateLimiters.size >= RATE_LIMITERS_MAX_ENTRIES) evictOldestRateLimiter();
         rateLimiters.set(key, { timestamps: [], blockedUntil: null });
     }
 
@@ -169,10 +194,13 @@ function rateLimitMiddleware(limitType) {
     };
 }
 
-// Retention and sweep cadence are intentionally the same: a stale
-// limiter survives at most one extra sweep (≤ RATE_LIMITER_MAX_AGE)
-// before being reaped, which keeps the bookkeeping window predictable.
-const RATE_LIMITER_MAX_AGE = 5 * 60 * 1000;
+// Retention is tighter than the longest rate window (60s) so a stale
+// limiter is reaped within ~2 minutes of last activity. The sweep
+// runs every minute so an IPv6-rotating attacker cannot accumulate
+// more than ~60 s × (insert rate) entries between sweeps, which
+// together with RATE_LIMITERS_MAX_ENTRIES bounds total memory.
+const RATE_LIMITER_MAX_AGE = 2 * 60 * 1000;
+const RATE_LIMITER_SWEEP_INTERVAL = 60 * 1000;
 
 function cleanupRateLimiters() {
     const now = Date.now();
@@ -185,7 +213,7 @@ function cleanupRateLimiters() {
     }
 }
 
-setInterval(cleanupRateLimiters, RATE_LIMITER_MAX_AGE);
+setInterval(cleanupRateLimiters, RATE_LIMITER_SWEEP_INTERVAL);
 
 // ============ Room Helpers ============
 
@@ -498,8 +526,10 @@ app.get('/api/rooms/:id', rateLimitMiddleware('roomLookup'), validateRoomSecret,
     });
 });
 
-// Active room count
-app.get('/api/stats', (req, res) => {
+// Active room count. Rate-limited (general bucket) so the counter
+// cannot be polled at high frequency to enumerate room-creation
+// timing or to grow rateLimiters Map entries without any per-IP cost.
+app.get('/api/stats', rateLimitMiddleware('general'), (req, res) => {
     res.json({ activeRooms: rooms.size });
 });
 
