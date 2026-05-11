@@ -33,6 +33,12 @@
 		# Belt-and-braces clickjacking defense alongside frame-ancestors 'none'
 		# in CSP, for legacy browsers that ignore frame-ancestors.
 		X-Frame-Options "DENY"
+		# no-referrer: room ID + secret live in the URL hash (never sent in
+		# Referer), but the path /remote-mic.html and any future query
+		# parameters would otherwise leak to umami, HuggingFace and other
+		# cross-origin sub-resources. The site needs no referrer information
+		# from outside, so close the channel entirely.
+		Referrer-Policy "no-referrer"
 	}
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
