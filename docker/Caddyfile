@@ -67,6 +67,27 @@
 		Cross-Origin-Resource-Policy "same-origin"
 	}
 
+	# ── Cache policy ──────────────────────────────────────────────────────
+	# Vite emits content-hashed filenames under /assets/ (e.g.
+	# main-Dg503GNh.js). Their bytes are bound to the filename, so they
+	# can be cached forever: a new build emits new filenames and the
+	# referencing HTML changes too. Mark them immutable so browsers and
+	# intermediate caches don't re-validate on every reload.
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+	# HTML entry points and the runtime /config.js MUST never be served
+	# stale. After a deploy, a user reusing a cached index.html (which
+	# references the OLD hashed asset names that no longer exist) would
+	# silently break. Same for /config.js when the operator changes envs:
+	# a stale cache would keep the old VITE_ANALYTICS_URL / SRI hash /
+	# model revision in play across container restarts.
+	@html {
+		path / /index.html /remote-mic.html
+	}
+	header @html Cache-Control "no-cache, must-revalidate"
+	header /config.js Cache-Control "no-cache, must-revalidate"
+
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
 	handle_path /api/signal/* {
 		rewrite * /api{uri}
