@@ -59,14 +59,25 @@ import { CONFIG } from './config.js';
 // Inject analytics script if environment variables are set
 const analyticsUrl = CONFIG.VITE_ANALYTICS_URL;
 const analyticsWebsiteId = CONFIG.VITE_ANALYTICS_WEBSITE_ID;
+// Optional Subresource Integrity hash for the umami script. If the umami
+// host is ever compromised or a SaaS account is taken over, the script
+// otherwise runs in this origin with full DOM access. When the operator
+// pins a hash (any browser-supported algorithm, e.g. sha384-...), the
+// browser refuses to execute a tampered script. The umami payload does
+// change between umami versions, so this stays opt-in.
+const analyticsSri = CONFIG.VITE_ANALYTICS_SRI;
 
 if (analyticsUrl && analyticsWebsiteId) {
   const script = document.createElement('script');
   script.defer = true;
   script.src = analyticsUrl;
   script.setAttribute('data-website-id', analyticsWebsiteId);
+  if (analyticsSri) {
+    script.integrity = analyticsSri;
+    script.crossOrigin = 'anonymous';
+  }
   document.head.appendChild(script);
-  console.log('[Analytics] Tracking initialized');
+  console.log('[Analytics] Tracking initialized' + (analyticsSri ? ' (SRI pinned)' : ''));
 }
 
 // Note: Eruda mobile debugger is now loaded in index.html for earlier initialization
