@@ -1,7 +1,21 @@
 # syntax=docker/dockerfile:1.6
 
+# Base images are pinned to immutable content digests so the runtime
+# bytes are determined entirely by the Dockerfile, not by whatever
+# Docker Hub serves under the moving tag today. To refresh after a
+# legitimate upstream update:
+#   for img in node:20-alpine caddy:2-alpine; do
+#     repo="library/${img%:*}"; tag="${img##*:}"
+#     token=$(curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" | jq -r .token)
+#     curl -fsSL -H "Authorization: Bearer $token" \
+#       -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+#       -D - -o /dev/null "https://registry-1.docker.io/v2/${repo}/manifests/${tag}" \
+#       | grep -i '^docker-content-digest:' | awk '{print $2}'
+#   done
+# Then paste the new sha256:... values below and commit.
+
 # ── Stage 1: build the static UI bundle and install signaling deps ──────────
-FROM node:20-alpine AS builder
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 WORKDIR /build
 
 # Top-level app package (provides parakeet.js core via vite alias to ../src/).
@@ -39,7 +53,7 @@ COPY signaling ./signaling
 RUN cd app/ui && npm run build
 
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
-FROM caddy:2-alpine
+FROM caddy:2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
 
 RUN apk add --no-cache nodejs libcap && \
     # Strip file caps from caddy: the official image sets cap_net_bind_service
