@@ -2,6 +2,72 @@
 // At runtime the caller can specify preferred backend ("webgpu", "wasm").
 // The function resolves once ONNX Runtime is ready and returns the `ort` module.
 
+// Fetch /ort/manifest.json (emitted by app/ui/postbuild.mjs) and use it to
+// verify each ORT WASM/MJS runtime asset before handing the bytes to ORT.
+// Without this, a serving-path compromise (a tampered Caddy, a malicious
+// reverse proxy, a poisoned CDN cache) could swap the ~11 MB jsep.wasm
+// for an attacker-built ML runtime that exfiltrates PCM at inference
+// time, completely transparent to the user.
+//
+// Returns a wasmPaths object map { filename: blobURL } where each blob
+// URL points at bytes whose sha384 matched the manifest. ORT 1.16+
+// accepts this object form for env.wasm.wasmPaths.
+//
+// Falls back to the original string wasmPaths (no integrity check) when:
+//   - manifest fetch returns 404 (e.g. running against a dev server with
+//     no postbuild step, or an old container image without the manifest).
+//   - WebCrypto isn't available (legacy browsers).
+// The fallback logs a loud warning; production deployments built via
+// the Dockerfile always ship the manifest.
+async function _sha384B64(blob) {
+  const buf = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-384', buf);
+  const bytes = new Uint8Array(digest);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return 'sha384-' + btoa(bin);
+}
+
+async function _verifiedOrtWasmPaths(basePath) {
+  if (typeof fetch === 'undefined' || !crypto?.subtle) {
+    console.warn('[Parakeet.js] WebCrypto unavailable; falling back to unchecked ORT wasmPaths (INTEGRITY NOT ENFORCED)');
+    return basePath;
+  }
+  let manifest;
+  try {
+    const resp = await fetch(basePath + 'manifest.json');
+    if (!resp.ok) throw new Error('manifest HTTP ' + resp.status);
+    manifest = await resp.json();
+  } catch (e) {
+    console.warn(`[Parakeet.js] No ORT integrity manifest at ${basePath}manifest.json (${e.message}). Falling back to unchecked wasmPaths. Production builds must ship dist/ort/manifest.json.`);
+    return basePath;
+  }
+  const entries = Object.entries(manifest || {});
+  if (entries.length === 0) {
+    console.warn('[Parakeet.js] ORT integrity manifest is empty; falling back to unchecked wasmPaths');
+    return basePath;
+  }
+  const out = {};
+  await Promise.all(entries.map(async ([name, expected]) => {
+    const url = basePath + name;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      // Skip variants this build did not ship. ORT will fall back to a
+      // sibling file it knows about; if every candidate is missing it
+      // surfaces a clear error at session-create time.
+      return;
+    }
+    const blob = await resp.blob();
+    const actual = await _sha384B64(blob);
+    if (actual !== expected) {
+      throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
+    }
+    out[name] = URL.createObjectURL(blob);
+  }));
+  console.log(`[Parakeet.js] ORT runtime integrity verified (${Object.keys(out).length} files)`);
+  return out;
+}
+
 /**
  * Initialise ONNX Runtime Web and pick the execution provider.
  * If WebGPU is requested but not supported, we transparently fall back to WASM.
@@ -32,11 +98,14 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
   }
   
   // Serve WASM artifacts from same-origin (vendored under app/ui/public/ort/).
-  // Avoids trusting a public CDN at runtime — a jsDelivr/npm compromise would
+  // Avoids trusting a public CDN at runtime. A jsDelivr/npm compromise would
   // otherwise silently swap the ML engine for every visitor. Files are baked
   // into the build, so the version always matches the vendored JS loader.
+  // Additionally verify each runtime asset against the build-time manifest
+  // before handing bytes to ORT; on success this becomes an object map of
+  // blob URLs whose sha384 matched the pin.
   if (!ort.env.wasm.wasmPaths) {
-    ort.env.wasm.wasmPaths = '/ort/';
+    ort.env.wasm.wasmPaths = await _verifiedOrtWasmPaths(wasmPaths || '/ort/');
   }
 
   // Configure WASM for better performance

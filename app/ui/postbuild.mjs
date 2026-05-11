@@ -73,6 +73,29 @@ async function processHtml(htmlPath) {
   }
 }
 
+// Generate dist/ort/manifest.json with sha384 of each ORT runtime asset.
+// backend.js fetches this at startup, verifies each /ort/*.{mjs,wasm} blob,
+// and hands ORT the verified bytes via wasmPaths. Without this manifest,
+// a serving-path compromise could swap the ~11 MB jsep.wasm for an
+// attacker-built ML runtime that exfiltrates PCM at inference time.
+async function emitOrtManifest() {
+  const ortDir = join(DIST, 'ort');
+  let entries;
+  try {
+    entries = await readdir(ortDir);
+  } catch (_) {
+    console.log('[postbuild] no dist/ort/ directory, skipping ORT manifest');
+    return;
+  }
+  const targets = entries.filter(n => /\.(mjs|wasm)$/.test(n));
+  const manifest = {};
+  for (const name of targets) {
+    manifest[name] = await sha384(join(ortDir, name));
+  }
+  await writeFile(join(ortDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  console.log(`[postbuild] wrote dist/ort/manifest.json (${targets.length} entries)`);
+}
+
 async function main() {
   const entries = await readdir(DIST, { withFileTypes: true });
   const htmls = entries.filter(e => e.isFile() && e.name.endsWith('.html')).map(e => join(DIST, e.name));
@@ -81,6 +104,7 @@ async function main() {
     process.exit(1);
   }
   for (const h of htmls) await processHtml(h);
+  await emitOrtManifest();
 }
 
 main().catch(err => {
