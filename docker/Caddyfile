@@ -43,6 +43,13 @@
 		# operator-supplied dictation regex CSV or any future user-uploaded
 		# asset cannot escalate into script execution on a quirky browser.
 		X-Content-Type-Options "nosniff"
+		# HSTS. TLS is normally terminated by the outer reverse proxy, which
+		# should already set this; setting it here as belt-and-braces means
+		# the header reaches clients even if the outer proxy is misconfigured.
+		# Browsers ignore HSTS over plain HTTP, so the in-container plain
+		# :5173 listener can carry it harmlessly. Default 1 year, no preload
+		# (operators must opt in to the preload list deliberately).
+		Strict-Transport-Security "max-age={$VITE_HSTS_MAX_AGE:31536000}; includeSubDomains"
 	}
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
