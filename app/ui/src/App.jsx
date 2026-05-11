@@ -363,7 +363,7 @@ export default function App() {
   const qrLibRef = useRef(null);
   const loadQRCode = useRef(null);
   if (!loadQRCode.current) {
-    loadQRCode.current = new Promise((resolve) => {
+    loadQRCode.current = new Promise((resolve, reject) => {
       if (qrLibRef.current) { resolve(); return; }
       const script = document.createElement('script');
       script.src = '/js/qrcode.min.js';
@@ -371,13 +371,31 @@ export default function App() {
       // file, recompute with: openssl dgst -sha384 -binary <file> | base64
       script.integrity = 'sha384-HGmnkDZJy7mRkoARekrrj0VjEFSh9a0Z8qxGri/kTTAJkgR8hqD1lHsYSh3JdzRi';
       script.crossOrigin = 'anonymous';
-      script.onload = () => {
+      // Wall-clock timeout: a network attacker who holds the script TCP
+      // connection open without sending the close-of-body byte (slowloris)
+      // would otherwise pin this Promise forever, hanging every consumer
+      // of loadQRCode.current and breaking QR display until page reload.
+      // 15 s is well past a normal LAN/WAN fetch of a ~10 KB script.
+      let settled = false;
+      const settle = (fn) => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
+      const timer = setTimeout(() => settle(() => {
+        loadQRCode.current = null; // allow next attempt to retry the load
+        reject(new Error('QR script load timed out'));
+      }), 15000);
+      script.onload = () => settle(() => {
         qrLibRef.current = window.QRCode;
         console.log('[RemoteMic] QR code library loaded');
         setTimeout(resolve, 0);
-      };
+      });
+      script.onerror = (e) => settle(() => {
+        loadQRCode.current = null;
+        reject(new Error('QR script load error'));
+      });
       document.head.appendChild(script);
     });
+    // Swallow unhandled-rejection noise from the load Promise itself; the
+    // consumers attach their own .catch handlers where they care.
+    loadQRCode.current.catch(() => {});
   }
 
   // Render QR code when both the URL is set and the DOM ref is available (status===waiting)
@@ -398,6 +416,8 @@ export default function App() {
           }
         });
       }
+    }).catch(err => {
+      console.warn('[RemoteMic] QR library unavailable, skipping QR render:', err.message);
     });
   }, [remoteMicQrUrl, remoteMicStatus]);
 
