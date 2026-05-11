@@ -183,6 +183,23 @@ function RemoteMicSender() {
                 return;
             }
 
+            // Scrub the secret out of the visible URL before the browser
+            // commits it to history / autocomplete / Chrome Sync / OBS
+            // screenshots of the phone. The secret is now held only in the
+            // local `secret` variable for the duration of the handshake.
+            try {
+                window.history.replaceState(
+                    null,
+                    document.title,
+                    window.location.pathname + window.location.search
+                );
+            } catch (_) {
+                // history.replaceState is allowed on same-origin pages; if a
+                // sandboxing edge case blocks it we still proceed because the
+                // attack surface is the long-term hash residue, not the
+                // single-page lifetime in memory.
+            }
+
             setStatus(STATUS.CONNECTING);
 
             // Connect to signaling server
