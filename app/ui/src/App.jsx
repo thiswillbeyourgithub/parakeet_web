@@ -481,8 +481,14 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
-  // Auto-copy: when enabled, transcription text is automatically copied to clipboard
-  const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(true);
+  // Auto-copy: when enabled, every transcription is written to the system
+  // clipboard. F-125: default OFF so the headline "audio never leaves your
+  // device" promise also holds for transcript text. The system clipboard is
+  // readable by any other app and by browser extensions that hold
+  // clipboardRead for any other site (Permissions-Policy on this origin
+  // does not constrain extension content-scripts), so the privacy contract
+  // is broken if this defaults on. Users who want auto-copy must opt in.
+  const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(false);
   // Opt-in transcript persistence. Default OFF for new installs (privacy-first
   // baseline matching the headline "audio never leaves your device" promise:
   // memory-only by default). Existing users with on-disk transcripts at the
@@ -557,7 +563,7 @@ export default function App() {
           loadSetting('autoGainControl', true),
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
-          loadSetting('autoCopyToClipboard', true),
+          loadSetting('autoCopyToClipboard', false),
           // Migration: load with `null` so we can distinguish "user opted in/out"
           // from "never set, default to false". Resolved below against existing
           // transcript presence so we don't silently delete history of users
