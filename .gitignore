@@ -15,6 +15,7 @@ docs/
 data
 deploy.sh
 CLAUDE.md
+TEMP_PLAN.md
 
 framagit_murmure
 TODO.md
