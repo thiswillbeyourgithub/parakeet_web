@@ -23,7 +23,7 @@ const translations = {
 
     // Buttons
     loadModel: 'Load Model',
-    sendMp3: '\ud83d\udcc1 Send mp3',
+    sendMp3: '\ud83d\udcc1 Send audio file',
     recordAudio: '\ud83c\udfa4 Record Audio',
     getReady: '\u23f1 Get Ready',
     stop: '\u23f9 Stop',
@@ -296,7 +296,7 @@ const translations = {
 
     // Buttons
     loadModel: 'Charger le mod\u00e8le',
-    sendMp3: '\ud83d\udcc1 Envoyer un mp3',
+    sendMp3: '\ud83d\udcc1 Envoyer un fichier audio',
     recordAudio: '\ud83c\udfa4 Enregistrer',
     getReady: '\u23f1 Pr\u00e9parez-vous',
     stop: '\u23f9 Stop',
