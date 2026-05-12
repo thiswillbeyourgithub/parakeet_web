@@ -1297,6 +1297,12 @@ export default function App() {
         stopRemoteMicTimer();
         resolveRemoteMicVerify(false);
         resolveRemoteMicPeerAck(false);
+        // F-88: onDisconnected used to null the ref without closing the
+        // underlying RTCPeerConnection, leaving its ICE poll setInterval
+        // alive against the signaling server for any disconnected-not-
+        // failed state (mobile network flap, ICE restart). Close
+        // explicitly so the poll self-clears via the `closed` branch.
+        try { remoteMicRtcRef.current?.close(); } catch (_) { /* already closing */ }
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
         clearPcmChunks();
