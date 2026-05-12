@@ -2433,11 +2433,17 @@ export default function App() {
       // chunks live in a separate IndexedDB), so reset truly starts from zero.
       await clearModelCache();
 
-      // localStorage holds the language preference (i18n.jsx persists it under
-      // parakeetweb_lang); sessionStorage holds the low-RAM-warning dismissal
-      // flag. The user-facing "delete all data" copy promises a virgin app,
-      // and these survive otherwise. Clear them explicitly.
-      try { localStorage.removeItem('parakeetweb_lang'); } catch (_) {}
+      // F-128: wipe the dedicated transcripts DB explicitly.
+      await forgetPersistedTranscripts();
+
+      // F-129: the user-facing "delete all data" copy promises a virgin app.
+      // localStorage holds parakeetweb_lang (i18n) and eruda-* keys when the
+      // page was loaded with ?debug=1; sessionStorage holds the low-RAM
+      // dismissal flag. Clear the whole scopes rather than allowlisting keys
+      // so a future regression that adds a new localStorage key is wiped too.
+      // The origin is dedicated to parakeet, so there are no legitimate
+      // non-parakeet keys to preserve.
+      try { localStorage.clear(); } catch (_) {}
       try { sessionStorage.clear(); } catch (_) {}
 
       // Clear transcriptions
