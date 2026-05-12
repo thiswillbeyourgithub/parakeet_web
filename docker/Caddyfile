@@ -42,12 +42,23 @@
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
-		# Permissions-Policy: only microphone and hid (WebHID for SpeechMike)
-		# are needed by the page. Everything else is explicitly disabled so a
-		# compromised script cannot elicit a prompt for camera, USB, serial,
-		# geolocation, etc. fullscreen=(self) is kept open for the legitimate
-		# UI fullscreen path.
-		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), bluetooth=(), camera=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(self), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), speaker-selection=(), usb=(), web-share=(), xr-spatial-tracking=()"
+		# Permissions-Policy: only microphone, hid (WebHID for SpeechMike)
+		# and clipboard-write are needed by the page. Everything else is
+		# explicitly disabled so a compromised script cannot elicit a
+		# prompt for camera, USB, serial, geolocation, etc.
+		# fullscreen=(self) is kept open for the legitimate UI fullscreen
+		# path.
+		#
+		# F-72: enumerate newer policy-controlled features that default to
+		# allow if omitted. browsing-topics / interest-cohort matter most
+		# (Topics API enrols a privacy-focused app's origin in ad-interest
+		# profiling unless explicitly denied); attribution-reporting and
+		# private-state-tokens are likewise advertising-side features.
+		# compute-pressure is a fingerprinting vector. unload=() prevents
+		# legacy unload-event timing channels. clipboard-write=(self)
+		# keeps the auto-copy feature working (sanitizeClipboardText
+		# flow) while clipboard-read stays denied.
+		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), attribution-reporting=(), autoplay=(), battery=(), bluetooth=(), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(self), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), interest-cohort=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), speaker-selection=(), unload=(), usb=(), web-share=(), xr-spatial-tracking=()"
 		# Belt-and-braces clickjacking defense alongside frame-ancestors 'none'
 		# in CSP, for legacy browsers that ignore frame-ancestors.
 		X-Frame-Options "DENY"
