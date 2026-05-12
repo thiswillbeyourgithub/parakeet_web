@@ -345,6 +345,12 @@ export default function App() {
   // and before any encrypted audio is processed. Mitigates a malicious
   // signaling server that could swap keys to MITM the data channel.
   const [remoteMicFingerprint, setRemoteMicFingerprint] = useState('');
+  // Timestamp of the most-recent successful fingerprint confirmation. The
+  // sharedKey lives for the lifetime of the WebRTC connection across many
+  // Start/Stop cycles; this surfaces that fact to the user so they
+  // understand they are NOT re-verifying per recording. F-68: re-verifying
+  // requires disconnecting the phone and re-pairing via fresh QR.
+  const [remoteMicVerifiedAt, setRemoteMicVerifiedAt] = useState(null);
   const remoteMicVerifyResolveRef = useRef(null); // (boolean) => void
   // Resolve any in-flight fingerprint verify and null the ref. Every teardown
   // path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
@@ -1266,6 +1272,7 @@ export default function App() {
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
         clearPcmChunks();
+        setRemoteMicVerifiedAt(null);
         setIsRemoteMic(false);
         setRemoteMicRecording(false);
         setRemoteMicLevel(0);
@@ -1320,6 +1327,7 @@ export default function App() {
               rtc.sendMessage({ type: 'verify-ok' });
 
               remoteMicKeyRef.current = sharedKey;
+              setRemoteMicVerifiedAt(Date.now());
               setRemoteMicStatus('connected');
               setRemoteMicModal(false); // close setup modal; use main UI from here
               setRemoteMicPaused(false);
@@ -1530,6 +1538,7 @@ export default function App() {
     }
     remoteMicKeyRef.current = null;
     stopRemoteMicTimer();
+    setRemoteMicVerifiedAt(null);
     setIsRemoteMic(false);
     setRemoteMicRecording(false);
     setRemoteMicModal(false);
@@ -1577,6 +1586,7 @@ export default function App() {
       remoteMicRtcRef.current = null;
     }
     remoteMicKeyRef.current = null;
+    setRemoteMicVerifiedAt(null);
     setIsRemoteMic(false);
     setRemoteMicRecording(false);
     setRemoteMicModal(false);
@@ -3079,6 +3089,16 @@ export default function App() {
       {isRemoteMic && !remoteMicRecording && (
         <Banner tone="success" style={{ marginTop: '0.5rem', justifyContent: 'center' }}>
           {t('remoteMicConnectedIdle') || 'Phone connected \u2014 waiting for recording'}
+        </Banner>
+      )}
+
+      {/* F-68: persistent verification status. The sharedKey is bound to
+          the entire WebRTC connection lifetime, not per recording; surface
+          that to the user so they know "re-verify" means "disconnect and
+          re-pair", not "click the button again". */}
+      {isRemoteMic && remoteMicVerifiedAt && (
+        <Banner tone="info" style={{ marginTop: '0.5rem', justifyContent: 'center', fontSize: '0.85rem' }}>
+          {t('verifyStatus').replace('{time}', new Date(remoteMicVerifiedAt).toLocaleTimeString())}
         </Banner>
       )}
 
