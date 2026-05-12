@@ -1500,6 +1500,20 @@ export default function App() {
         } else {
           // Binary data: encrypted audio chunk
           if (!remoteMicKeyRef.current) return;
+          // F-84: refuse binary chunks until the phone has announced its
+          // sample rate via audio-config. Without this gate a hostile
+          // phone bundle (e.g. a coerced spousal-monitoring build) could
+          // skip the audio-config step entirely and stream chunks against
+          // the default 16 kHz rate. pcmChunksRef would accumulate and
+          // (with autoTranscribe on) reach the model on the next
+          // audio-end, but remoteMicRecording would stay false the whole
+          // time so the desktop's UI would show no recording indicator.
+          // Dropping chunks until audio-config arrives keeps the
+          // "phone is sending audio" state observable on screen.
+          if (!remoteMicAudioConfiguredRef.current) {
+            console.warn('[RemoteMic] Dropping binary chunk: no audio-config received yet');
+            return;
+          }
           try {
             const decrypted = await decrypt(data, remoteMicKeyRef.current);
             const float32 = new Float32Array(decrypted);
