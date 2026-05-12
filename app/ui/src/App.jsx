@@ -1314,6 +1314,20 @@ export default function App() {
         if (typeof data === 'string') {
           try {
             const msg = JSON.parse(data);
+            // F-83: gate audio-* and pause/resume control messages on a
+            // verified session. Before peer-ack completes (and thus
+            // before remoteMicKeyRef is bound), the only legitimate
+            // control messages are the handshake set (sender-public-key,
+            // verify-ok, verify-deny). audio-config / audio-end /
+            // paused / resumed sent during the verify modal must NOT
+            // flip recording state, start the live transcriber, or
+            // poison sample-rate refs. The binary path already gates on
+            // remoteMicKeyRef.current; mirror that here.
+            const SESSION_GATED_TYPES = new Set(['audio-config', 'audio-end', 'paused', 'resumed']);
+            if (SESSION_GATED_TYPES.has(msg.type) && !remoteMicKeyRef.current) {
+              console.warn(`[RemoteMic] Ignoring ${msg.type} before peer-ack (no shared key yet)`);
+              return;
+            }
             if (msg.type === 'sender-public-key') {
               // Refuse a second handshake once one is already bound or in
               // flight. Otherwise a malicious phone could overwrite
