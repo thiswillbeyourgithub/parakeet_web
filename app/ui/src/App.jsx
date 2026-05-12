@@ -307,7 +307,7 @@ export default function App() {
   // Track the most recently added transcription ID for fade-in animation
   const newestTranscriptionIdRef = useRef(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [verboseLog, setVerboseLog] = useState(true);
+  const [verboseLog, setVerboseLog] = useState(false);
   const [frameStride, setFrameStride] = useState(1);
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident.
   // Kept tunable in code (still wired through to the backend) but hidden from the
@@ -630,7 +630,7 @@ export default function App() {
           loadSetting('backend', 'wasm'),
           loadSetting('preprocessor', 'nemo128'),
           loadPersistedTranscripts(),
-          loadSetting('verboseLog', true),
+          loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', false),
