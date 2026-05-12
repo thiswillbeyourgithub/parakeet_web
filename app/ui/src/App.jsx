@@ -2259,24 +2259,38 @@ export default function App() {
       let res;
       if (enableChunking && pcm.length > MAX_CHUNK_SAMPLES) {
         console.log(`[Transcribe] Audio is long (${(pcm.length / 16000).toFixed(1)}s), processing in chunks...`);
-        
+
         // Process in chunks with overlap for better boundary handling
         const OVERLAP_DURATION = 2; // seconds of overlap
         const OVERLAP_SAMPLES = OVERLAP_DURATION * 16000;
-        const chunks = [];
+        // Append-only accumulators. The previous code stored a full chunkRes
+        // object per chunk (text + words + metrics + timing) and rebuilt the
+        // partial text by mapping over it every UI tick. For long files that
+        // means O(N²) string-concat work plus retaining per-chunk word arrays
+        // until the very end. Streaming into a string + a flat words array
+        // keeps peak memory close to one chunk's footprint.
+        const combinedTextParts = [];
+        const combinedWords = [];
+        let firstChunkMetrics = null;
+        let firstChunkConfidences = null;
+        let totalProcessingTime = 0;
+        let chunksCompleted = 0;
         let lastReportedProgress = -1; // Track last reported progress to update UI only every 1%
-        
+        const totalChunks = Math.ceil(pcm.length / (MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES));
+
         for (let start = 0; start < pcm.length; start += MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES) {
           const end = Math.min(start + MAX_CHUNK_SAMPLES, pcm.length);
-          const chunk = pcm.slice(start, end);
-          const chunkNum = chunks.length + 1;
-          const totalChunks = Math.ceil(pcm.length / (MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES));
-          
+          // subarray (zero-copy view) rather than slice (full copy). The
+          // model copies into its own ORT tensor anyway, so the JS-side copy
+          // was pure waste and doubled chunk-time memory pressure.
+          const chunk = pcm.subarray(start, end);
+          const chunkNum = chunksCompleted + 1;
+
           console.log(`[Transcribe] Processing chunk ${chunkNum}/${totalChunks} (${(start/16000).toFixed(1)}s - ${(end/16000).toFixed(1)}s)`);
-          
+
           const chunkStartTime = performance.now();
           console.time(`Transcribe-chunk-${chunkNum}`);
-          const chunkRes = await modelRef.current.transcribe(chunk, 16000, {
+          let chunkRes = await modelRef.current.transcribe(chunk, 16000, {
             returnTimestamps: true,
             returnConfidences: true,
             frameStride,
@@ -2284,36 +2298,41 @@ export default function App() {
           });
           console.timeEnd(`Transcribe-chunk-${chunkNum}`);
           const chunkElapsed = performance.now() - chunkStartTime;
-          
-          // Adjust timestamps by chunk offset
+
+          // Adjust timestamps by chunk offset and stream into combinedWords.
           const timeOffset = start / 16000;
           if (chunkRes.words) {
-            chunkRes.words.forEach(word => {
+            for (const word of chunkRes.words) {
               word.start_time += timeOffset;
               word.end_time += timeOffset;
-            });
+              combinedWords.push(word);
+            }
           }
-          
-          chunks.push({
-            text: chunkRes.utterance_text,
-            words: chunkRes.words || [],
-            metrics: chunkRes.metrics,
-            timeOffset,
-            processingTime: chunkElapsed
-          });
-          
+          combinedTextParts.push(chunkRes.utterance_text);
+
+          // Capture first-chunk metadata so we don't have to retain per-chunk
+          // objects for the final res assembly.
+          if (chunksCompleted === 0) {
+            firstChunkMetrics = chunkRes.metrics;
+            firstChunkConfidences = chunkRes.confidence_scores;
+          }
+          totalProcessingTime += chunkRes.metrics?.total_ms || 0;
+          chunksCompleted += 1;
+
           // Calculate current progress percentage
           const chunkProgress = Math.round((chunkNum / totalChunks) * 100);
-          
+
           // Only update UI if progress increased by at least 1% or it's the last chunk
           if (chunkProgress > lastReportedProgress || chunkNum === totalChunks) {
             lastReportedProgress = chunkProgress;
-            
-            // Update text field with accumulated chunk texts
-            const partialText = chunks.map(c => c.text).join(' ');
-            
-            // Update progress bar and status text with timing info
-            const avgChunkTime = chunks.reduce((sum, c) => sum + (c.processingTime || 0), 0) / chunks.length;
+
+            // Partial text from the running parts buffer (O(1) append).
+            const partialText = combinedTextParts.join(' ');
+
+            // Update progress bar and status text with timing info. Use the
+            // running average from totalProcessingTime to avoid keeping per-
+            // chunk processingTime values.
+            const avgChunkTime = totalProcessingTime / chunksCompleted;
             const remainingChunks = totalChunks - chunkNum;
             const estimatedRemaining = remainingChunks * avgChunkTime / 1000;
 
@@ -2323,42 +2342,46 @@ export default function App() {
               setProgressPct(chunkProgress);
               setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${formatDuration(chunkElapsed/1000)} • Est. ${formatDuration(estimatedRemaining)} remaining`);
               setStatus(`${t('transcribingFile')} "${safeName}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
-              
+
               if (chunkNum === 1) {
-                setLatestMetrics(chunkRes.metrics);
+                setLatestMetrics(firstChunkMetrics);
               }
             });
-            
+
             // Yield to browser to keep UI responsive
             await new Promise(resolve => setTimeout(resolve, 0));
           }
+
+          // Drop the chunk result before the next allocation. The model
+          // already disposed its ORT tensors; this just makes sure the
+          // returned object (with its words array) is reachable only via
+          // combinedWords for the next GC cycle.
+          chunkRes = null;
         }
-        
+
         // Combine chunks and remove the "[transcribing...]" placeholder
-        console.log(`[Transcribe] Combining ${chunks.length} chunks...`);
-        const combinedText = chunks.map(c => c.text).join(' ');
-        const combinedWords = chunks.flatMap(c => c.words);
-        
+        console.log(`[Transcribe] Combining ${chunksCompleted} chunks...`);
+        const combinedText = combinedTextParts.join(' ');
+
         // Clear progress indicators
         setProgressPct(null);
         setProgressText('');
-        
+
         // Combine metrics (use first chunk's metrics as baseline)
         const totalDuration = pcm.length / 16000;
-        const totalProcessingTime = chunks.reduce((sum, c) => sum + (c.metrics?.total_ms || 0), 0);
-        
+
         res = {
           utterance_text: combinedText,
           words: combinedWords,
-          confidence_scores: chunks[0]?.confidence_scores || {},
+          confidence_scores: firstChunkConfidences || {},
           metrics: {
-            ...chunks[0]?.metrics,
+            ...firstChunkMetrics,
             total_ms: totalProcessingTime,
             rtf: totalDuration / (totalProcessingTime / 1000)
           },
           is_final: true
         };
-        
+
         console.log(`[Transcribe] Chunked transcription completed successfully`);
       } else {
         console.log(`[Transcribe] Starting model.transcribe() with options:`, {
