@@ -284,6 +284,11 @@ export default function App() {
   // phone streams at 48 kHz so the real-time ceiling is ~20 minutes.
   const REMOTE_MIC_MAX_SAMPLES = 10 * 60 * 96000;
   const remoteMicSampleCountRef = useRef(0);
+  // F-82: serialises processRemoteMicBatch invocations triggered by
+  // back-to-back phone audio-end messages, so concurrent transcribe()
+  // calls don't race on the shared ORT session and corrupt the user's
+  // transcript history. Holds the in-flight Promise, or null.
+  const inFlightBatchRef = useRef(null);
   // F-81 / F-84: tracks whether the phone has sent a valid audio-config
   // for the CURRENT recording session. Reset by processRemoteMicBatch
   // (after audio-end drains chunks) so each new recording starts a fresh
@@ -1451,8 +1456,21 @@ export default function App() {
               setAwaitingFinal(true);
               setRemoteMicRecording(false);
               await stopLiveTranscriberIfRunning();
-              // Process accumulated audio but keep RTC alive for next recording
-              processRemoteMicBatch();
+              // F-82: serialise batch processing. processRemoteMicBatch
+              // calls modelRef.current.transcribe against a SHARED ORT
+              // session; concurrent invocations either queue silently
+              // (breaking the live-pcm freshness invariant) or race on
+              // the encoder's intermediate tensors and emit garbage
+              // tokens into the user's transcript. await any prior
+              // in-flight batch before starting the next.
+              if (inFlightBatchRef.current) {
+                try { await inFlightBatchRef.current; } catch (_) { /* prior batch error already surfaced */ }
+              }
+              const thisBatch = processRemoteMicBatch();
+              inFlightBatchRef.current = thisBatch;
+              thisBatch.finally(() => {
+                if (inFlightBatchRef.current === thisBatch) inFlightBatchRef.current = null;
+              });
             } else if (msg.type === 'paused') {
               setRemoteMicPaused(true);
             } else if (msg.type === 'resumed') {
