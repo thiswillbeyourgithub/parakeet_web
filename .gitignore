@@ -9,7 +9,6 @@ docker/.env
 .env.production.local
 *.pem
 docs/
-scripts/
 
 .git_original_during_wip
 .aider*
