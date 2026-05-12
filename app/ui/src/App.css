@@ -769,7 +769,10 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   /* Position is computed in JS (see InfoTooltip in App.jsx) and applied
      inline via style.left/top/width so the popup can overlay sibling
      containers (e.g. the settings sidebar) without being clipped by
-     their overflow, and is always clamped within the viewport. */
+     their overflow, and is always clamped within the viewport.
+     The width below matches the JS clamp so the hidden first frame
+     already has a sane width even when the popup's in-flow ancestor
+     (an inline-block inside a narrow flex label) is much narrower. */
   position: fixed;
   z-index: 2100;
   background: var(--bg-card-elevated);
@@ -783,7 +786,9 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   font-weight: 400;
   color: var(--text-muted);
   box-shadow: var(--shadow-md);
-  max-width: 320px;
+  width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: normal;

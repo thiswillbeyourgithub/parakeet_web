@@ -69,17 +69,24 @@ function InfoTooltip({ text }) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const popupEl = popupRef.current;
-    const measuredW = popupEl ? popupEl.offsetWidth : 280;
+    // Use a viewport-clamped target width. We deliberately do NOT read
+    // offsetWidth: when the popup renders inside a narrow ancestor (e.g.
+    // the settings sidebar), shrink-to-fit can give a tiny natural width
+    // and pin the popup to a thin, very tall column that overflows on
+    // phones. CSS sets the same min(320px, 100vw - 16px) width so the
+    // hidden first frame already lays out at a sane width.
+    const width = Math.min(320, vw - 2 * margin);
     const measuredH = popupEl ? popupEl.offsetHeight : 0;
-    const maxW = Math.min(320, vw - 2 * margin);
-    const width = Math.min(measuredW || maxW, maxW);
     let left = rect.left + rect.width / 2 - width / 2;
     if (left + width > vw - margin) left = vw - margin - width;
     if (left < margin) left = margin;
     let top = rect.bottom + 8;
-    if (measuredH && top + measuredH > vh - margin) {
-      const above = rect.top - 8 - measuredH;
+    const availH = vh - 2 * margin;
+    const fitH = Math.min(measuredH, availH);
+    if (fitH && top + fitH > vh - margin) {
+      const above = rect.top - 8 - fitH;
       if (above >= margin) top = above;
+      else top = Math.max(margin, vh - margin - fitH);
     }
     setPos({ left, top, width });
   }, []);
