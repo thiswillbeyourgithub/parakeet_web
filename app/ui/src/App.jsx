@@ -143,7 +143,7 @@ async function loadPersistedTranscripts() {
     if (Array.isArray(fromOwn)) return fromOwn;
     const legacy = await idbGet(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + 'transcriptions');
     if (Array.isArray(legacy) && legacy.length > 0) {
-      await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, legacy);
+      await saveTranscripts(legacy);
       await idbDelete(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + 'transcriptions');
       return legacy;
     }
@@ -154,9 +154,27 @@ async function loadPersistedTranscripts() {
   }
 }
 
+// F-130: persist only the minimum the history UI needs to render on reload
+// (id, text, timestamp, wordCount). filename, words[] (per-word confidences
+// and start/end timestamps), metrics, and duration stay in-memory and are
+// re-derived/absent on reload. Narrows the on-disk record so a LevelDB
+// recovery cannot reconstruct the audio fingerprint of the original recording
+// (per-word timings, file name that may itself carry PHI like a patient
+// identifier) beyond the text content the user explicitly opted into saving.
+function slimTranscriptForPersist(t) {
+  if (!t || typeof t !== 'object') return t;
+  return {
+    id: t.id,
+    text: t.text,
+    timestamp: t.timestamp,
+    wordCount: t.wordCount,
+  };
+}
+
 async function saveTranscripts(arr) {
   try {
-    await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, arr);
+    const slim = Array.isArray(arr) ? arr.map(slimTranscriptForPersist) : arr;
+    await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, slim);
   } catch (e) {
     console.warn('Failed to save transcripts:', e);
   }
@@ -245,6 +263,7 @@ function sanitizeDeviceName(s, fallback = 'Dictation device') {
 }
 
 function truncateFilename(filename, maxLength = 40) {
+  if (!filename) return '';
   if (filename.length <= maxLength) return filename;
   
   const extension = filename.split('.').pop();
@@ -3670,7 +3689,7 @@ export default function App() {
                     <strong>{truncateFilename(trans.filename)}</strong>
                     {showAdvancedInfo && (
                       <span style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
-                        {trans.duration.toFixed(1)}s | {trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
+                        {typeof trans.duration === 'number' && `${trans.duration.toFixed(1)}s | `}{trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
                         {avgConf !== null && minConf !== null && ` | Avg: ${(avgConf * 100).toFixed(1)}% | Min: ${(minConf * 100).toFixed(1)}%`}
                       </span>
                     )}
