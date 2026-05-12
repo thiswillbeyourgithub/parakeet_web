@@ -1514,6 +1514,21 @@ export default function App() {
             console.warn('[RemoteMic] Dropping binary chunk: no audio-config received yet');
             return;
           }
+          // F-85: reject oversized binary messages BEFORE allocating the
+          // Float32Array. F-01 caps cumulative samples but a single
+          // decrypt of an N-byte ciphertext still allocates Float32Array
+          // of length N/4 and synchronously RMS-scans it on the main
+          // thread. 256 KiB caps a single chunk well above any honest
+          // phone payload (16 kHz mono Float32 at 100 ms = 6400 bytes;
+          // 96 kHz at 100 ms = 38400 bytes; even a 500 ms burst at
+          // 96 kHz is 192 000 bytes) while bounding the main-thread
+          // stall a flooding phone can inflict.
+          const REMOTE_MIC_MAX_BINARY_BYTES = 256 * 1024;
+          if (data.byteLength > REMOTE_MIC_MAX_BINARY_BYTES) {
+            console.warn(`[RemoteMic] Dropping binary chunk: ${data.byteLength} bytes exceeds ${REMOTE_MIC_MAX_BINARY_BYTES}`);
+            setRemoteMicDecryptErrors((n) => n + 1);
+            return;
+          }
           try {
             const decrypted = await decrypt(data, remoteMicKeyRef.current);
             const float32 = new Float32Array(decrypted);
