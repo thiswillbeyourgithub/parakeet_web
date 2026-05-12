@@ -319,6 +319,7 @@ export class ParakeetModel {
       returnConfidences = false,
       temperature = 1.2,
       debug = false,
+      enableProfiling = false,
       skipCMVN = false,
       frameStride = 1,
       previousDecoderState = null,
@@ -326,7 +327,10 @@ export class ParakeetModel {
       timeOffset = 0,
     } = opts;
 
-    const perfEnabled = true; // always collect and log timings
+    // Collect per-stage timings only when the caller opts in. Default off so a
+    // production transcribe() doesn't spam the console; `verbose: true` at model
+    // construction also flips it on for development.
+    const perfEnabled = this.verbose || debug || enableProfiling;
     let t0, tPreproc = 0, tEncode = 0, tDecode = 0, tToken = 0;
     if (perfEnabled) t0 = performance.now();
 
