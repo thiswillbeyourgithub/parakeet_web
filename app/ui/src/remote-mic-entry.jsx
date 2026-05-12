@@ -61,9 +61,20 @@ const logBuffer = {
 // component's unmount cleanup so we don't leak a global patch.
 function installConsoleCapture() {
     const orig = { log: console.log, warn: console.warn, error: console.error };
+    // F-123: JSON.stringify throws on circular refs (RTCPeerConnection events,
+    // WasmModule, Error.cause chains). Without this guard the intercept
+    // wrapper would propagate the throw back to the original caller and
+    // silently drop exactly the rich-object logs a stuck-handshake user
+    // needs to see. String(a) can also throw if toString is overridden, so
+    // fall through to a constant sentinel.
+    const safeStringify = (a) => {
+        try { return JSON.stringify(a); } catch {}
+        try { return String(a); } catch {}
+        return '[unserializable]';
+    };
     const intercept = (level, origFn) => (...args) => {
         origFn.apply(console, args);
-        const line = `[${level}] ${args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`;
+        const line = `[${level}] ${args.map(a => (typeof a === 'object' && a !== null ? safeStringify(a) : String(a))).join(' ')}`;
         logBuffer.push(line);
     };
     console.log   = intercept('LOG',   orig.log.bind(console));
