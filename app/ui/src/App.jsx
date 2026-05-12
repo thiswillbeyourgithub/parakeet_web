@@ -3137,19 +3137,23 @@ export default function App() {
             <div className="settings-group-header">{t('settingsGroupDebug')}</div>
 
             <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={showAdvancedInfo} onChange={e => { setShowAdvancedInfo(e.target.checked); saveSetting('showAdvancedInfo', e.target.checked); }} />
-                {t('displayMoreDetails')}
-                <InfoTooltip text={t('tooltipAdvancedInfo')} />
-              </label>
-            </div>
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={verboseLog} onChange={e => setVerboseLog(e.target.checked)} />
-                {t('maxDebugVerbosity')}
-                <InfoTooltip text={t('tooltipVerboseLog')} />
-              </label>
+              <span className="setting-label">
+                {t('debugLogging')}:
+                <InfoTooltip text={t('tooltipDebugLogging')} />
+              </span>
+              <select
+                value={(showAdvancedInfo || verboseLog) ? 'full' : 'off'}
+                onChange={e => {
+                  const on = e.target.value === 'full';
+                  setShowAdvancedInfo(on);
+                  saveSetting('showAdvancedInfo', on);
+                  setVerboseLog(on);
+                }}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="off">{t('debugOff')}</option>
+                <option value="full">{t('debugFullLogs')}</option>
+              </select>
             </div>
           </div>
         
