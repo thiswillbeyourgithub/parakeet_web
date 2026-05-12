@@ -3,7 +3,7 @@ import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
-import Modal from './components/Modal.jsx';
+import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
@@ -474,8 +474,16 @@ export default function App() {
     });
   }, [remoteMicQrUrl, remoteMicStatus]);
 
+  // F-127: when any modal is foregrounded, disable per-history kebab actions
+  // so an extension keystroke-injection (Tab + Enter while a modal is open)
+  // cannot drive clipboard exfiltration via the per-entry Copy buttons.
+  const anyModalOpen = useAnyModalOpen();
+
   // Tracks which history item has its kebab menu open (by transcription id)
   const [openKebabId, setOpenKebabId] = useState(null);
+  // Close any open kebab dropdown when a modal mounts so its inner Copy
+  // buttons are not reachable by Tab+Enter from inside the modal.
+  useEffect(() => { if (anyModalOpen) setOpenKebabId(null); }, [anyModalOpen]);
   // Tracks which history item is showing its confidence score overlay
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -2397,6 +2405,9 @@ export default function App() {
 
   async function copyHistoryItem(transcription) {
     if (!transcription?.text) return;
+    // F-127: defense in depth: refuse to copy if any modal is foregrounded
+    // even if the kebab dropdown was already open before the modal mounted.
+    if (anyModalOpen) return;
 
     try {
       await navigator.clipboard.writeText(sanitizeClipboardText(getDisplayText(transcription)));
@@ -3641,6 +3652,7 @@ export default function App() {
                         className="kebab-button"
                         title={t('moreActions')}
                         aria-label={t('moreActions')}
+                        disabled={anyModalOpen}
                         onClick={(e) => { e.stopPropagation(); setOpenKebabId(openKebabId === trans.id ? null : trans.id); }}
                       >
                         ⋮
