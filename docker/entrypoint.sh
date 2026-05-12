@@ -121,10 +121,26 @@ else
   else
     echo "[entrypoint] ERROR: fallback model missing at ${LOCAL_MODEL_PATH}."
     echo "[entrypoint] Bind-mount a folder of ONNX files into the container at"
-    echo "[entrypoint] ${LOCAL_MODEL_PATH} (flat layout — vocab.txt and the .onnx"
+    echo "[entrypoint] ${LOCAL_MODEL_PATH} (flat layout, vocab.txt and the .onnx"
     echo "[entrypoint] files directly inside). Pre-populate the host folder with e.g.:"
     echo "[entrypoint]   hf download istupakov/parakeet-tdt-0.6b-v3-onnx \\"
     echo "[entrypoint]     --local-dir /some/host/path"
+    exit 1
+  fi
+  # F-100: refuse the (LOCAL_MODEL_PATH set + VITE_ALLOW_UNVERIFIED_MODEL=true)
+  # combination. The unverified-model opt-in is for trusting HuggingFace
+  # bytes verified out of band; it is NOT a license to serve unverified
+  # weights from a writable bind-mount where any host-side compromise can
+  # swap the .onnx files silently. With pinned hashes the local fallback
+  # still goes through _streamAndCache with the expected hash, so a
+  # divergent bind-mount fails closed; bypassing that runtime check while
+  # pointing at a writable mount is a foot-gun.
+  if [ "${VITE_ALLOW_UNVERIFIED_MODEL:-}" = "true" ]; then
+    echo "[entrypoint] ERROR: VITE_ALLOW_UNVERIFIED_MODEL=true combined with"
+    echo "[entrypoint] LOCAL_MODEL_PATH is refused. The opt-in is for trusting"
+    echo "[entrypoint] HuggingFace bytes verified out of band; a writable host"
+    echo "[entrypoint] folder needs pinned hashes in models.js so the runtime"
+    echo "[entrypoint] check catches a poisoned bind-mount."
     exit 1
   fi
 fi
