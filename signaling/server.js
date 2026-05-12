@@ -12,6 +12,12 @@ const express = require('express');
 const crypto = require('crypto');
 
 const app = express();
+// F-144: suppress the default `X-Powered-By: Express` header. Caddy's
+// `header { -Server }` strips its own Server header but passes upstream
+// headers verbatim, so without this every /api/signal/* response would
+// fingerprint the backend stack to drive-by scanners. Restores the F-71
+// fingerprint-reduction intent across the reverse proxy.
+app.disable('x-powered-by');
 const PORT = parseInt(process.env.PORT, 10) || 3001;
 const DOMAIN = process.env.DOMAIN || 'localhost';
 const DEV = process.env.DEV === '1';
