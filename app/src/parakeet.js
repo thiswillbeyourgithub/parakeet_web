@@ -362,12 +362,29 @@ export class ParakeetModel {
     input.dispose?.();
     lenTensor.dispose?.();
 
-    // Transpose encoder output [B, D, T] ➔ [T, D] for B=1
+    // Transpose encoder output [B, D, T] ➔ [T, D] for B=1.
+    // t-outer / d-inner gives sequential writes to `transposed`, and the
+    // d-loop is unrolled 8x to cut V8's bounds-checking overhead. See
+    // upstream commit 85cf1fc for the benchmark notes.
     const [ , D, Tenc ] = enc.dims;
     const transposed = new Float32Array(Tenc * D);
-    for (let d = 0; d < D; d++) {
-      for (let t = 0; t < Tenc; t++) {
-        transposed[t * D + d] = enc.data[d * Tenc + t];
+    const encData = enc.data;
+    for (let t = 0; t < Tenc; t++) {
+      const tOffset = t * D;
+      let d = 0;
+      for (; d <= D - 8; d += 8) {
+        const srcOffset = d * Tenc + t;
+        transposed[tOffset + d]     = encData[srcOffset];
+        transposed[tOffset + d + 1] = encData[srcOffset + Tenc];
+        transposed[tOffset + d + 2] = encData[srcOffset + 2 * Tenc];
+        transposed[tOffset + d + 3] = encData[srcOffset + 3 * Tenc];
+        transposed[tOffset + d + 4] = encData[srcOffset + 4 * Tenc];
+        transposed[tOffset + d + 5] = encData[srcOffset + 5 * Tenc];
+        transposed[tOffset + d + 6] = encData[srcOffset + 6 * Tenc];
+        transposed[tOffset + d + 7] = encData[srcOffset + 7 * Tenc];
+      }
+      for (; d < D; d++) {
+        transposed[tOffset + d] = encData[d * Tenc + t];
       }
     }
 
