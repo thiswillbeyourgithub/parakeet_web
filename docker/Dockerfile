@@ -124,8 +124,15 @@ RUN cd app/ui && npm run build
 # serving. Sorted listing so the manifest is deterministic regardless of
 # filesystem walk order. Stored under /.well-known/ so it's discoverable
 # without a config change (Caddy auto-serves any file under /srv).
+#
+# F-111: exclude ONLY build-sums.txt from itself (it cannot list its
+# own future hash without a fixed point). The previous glob
+# `! -path './.well-known/*'` was over-broad and dropped the F-38b
+# trust anchor `asset-integrity.json` from the manifest entirely, so
+# the operator's deploy-verification recipe could not detect tampering
+# with the worklet pin. Asset-integrity.json must be enumerated.
 RUN cd app/ui/dist && mkdir -p .well-known && \
-    find . -type f ! -path './.well-known/*' | LC_ALL=C sort | \
+    find . -type f ! -path './.well-known/build-sums.txt' | LC_ALL=C sort | \
     while IFS= read -r f; do sha256sum "$f"; done > .well-known/build-sums.txt
 
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
