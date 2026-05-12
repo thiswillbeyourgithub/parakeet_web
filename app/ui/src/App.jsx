@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
-import { formatTime } from './lib/format.js';
+import { formatTime, formatDuration } from './lib/format.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -2280,13 +2280,13 @@ export default function App() {
             // Update progress bar and status text with timing info
             const avgChunkTime = chunks.reduce((sum, c) => sum + (c.processingTime || 0), 0) / chunks.length;
             const remainingChunks = totalChunks - chunkNum;
-            const estimatedRemaining = (remainingChunks * avgChunkTime / 1000).toFixed(1);
-            
+            const estimatedRemaining = remainingChunks * avgChunkTime / 1000;
+
             // Wrap UI updates in startTransition to keep UI responsive
             startTransition(() => {
               setText(partialText + ' [transcribing...]');
               setProgressPct(chunkProgress);
-              setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${(chunkElapsed/1000).toFixed(1)}s • Est. ${estimatedRemaining}s remaining`);
+              setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${formatDuration(chunkElapsed/1000)} • Est. ${formatDuration(estimatedRemaining)} remaining`);
               setStatus(`${t('transcribingFile')} "${safeName}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
               
               if (chunkNum === 1) {
@@ -3756,7 +3756,7 @@ export default function App() {
                     <strong>{truncateFilename(trans.filename)}</strong>
                     {showAdvancedInfo && (
                       <span style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
-                        {typeof trans.duration === 'number' && `${trans.duration.toFixed(1)}s | `}{trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
+                        {typeof trans.duration === 'number' && `${formatDuration(trans.duration)} | `}{trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
                         {avgConf !== null && minConf !== null && ` | Avg: ${(avgConf * 100).toFixed(1)}% | Min: ${(minConf * 100).toFixed(1)}%`}
                       </span>
                     )}
