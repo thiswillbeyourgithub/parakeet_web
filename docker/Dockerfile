@@ -40,6 +40,24 @@ ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 # package-lock.json: same bytes on every build, same audit surface
 # in code review.
 
+# F-104: refuse to build if any lockfile is missing the per-package
+# `integrity` field. Without it `npm ci` falls back to range resolution
+# against the (untrusted) registry, so a compromised mirror can ship
+# attacker-controlled bytes of the bundler itself (vite/esbuild/rollup).
+# The bundler then sees every source file and emits the JS browsers run,
+# so every supply-chain hardening downstream is moot. Each lockfile
+# legitimately ships >0 integrity entries; absence means the lockfile
+# was hand-edited or generated with an ancient npm and must be regen'd.
+COPY app/package-lock.json /tmp/lock-app.json
+COPY app/ui/package-lock.json /tmp/lock-ui.json
+COPY signaling/package-lock.json /tmp/lock-signaling.json
+RUN for f in /tmp/lock-app.json /tmp/lock-ui.json /tmp/lock-signaling.json; do \
+      if ! grep -q '"integrity":' "$f"; then \
+        echo "[Dockerfile] FATAL: $f has no integrity hashes; regenerate with a current npm"; \
+        exit 1; \
+      fi; \
+    done && rm /tmp/lock-app.json /tmp/lock-ui.json /tmp/lock-signaling.json
+
 # Top-level app package (provides parakeet.js core via vite alias to ../src/).
 COPY app/package.json app/package-lock.json ./app/
 RUN cd app && npm ci --ignore-scripts --no-audit --no-fund
