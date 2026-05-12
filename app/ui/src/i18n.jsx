@@ -567,11 +567,13 @@ function detectLanguage() {
 
 const I18nContext = createContext();
 
+const _hasOwn = Object.prototype.hasOwnProperty;
+const _isKnownLang = (code) => typeof code === 'string' && _hasOwn.call(translations, code);
+
 export function I18nProvider({ children }) {
   const [lang, setLang] = useState(() => {
-    // Check localStorage for saved preference
     const saved = localStorage.getItem('parakeetweb_lang');
-    if (saved && translations[saved]) return saved;
+    if (_isKnownLang(saved)) return saved;
     return detectLanguage();
   });
 
@@ -580,7 +582,8 @@ export function I18nProvider({ children }) {
   }, [lang]);
 
   const t = (key) => {
-    return translations[lang]?.[key] || translations.en[key] || key;
+    const table = _isKnownLang(lang) ? translations[lang] : translations.en;
+    return (_hasOwn.call(table, key) && table[key]) || translations.en[key] || key;
   };
 
   return (
