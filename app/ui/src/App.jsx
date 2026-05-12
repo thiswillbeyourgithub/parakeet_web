@@ -43,10 +43,16 @@ async function getDictationLib() {
   return _dictationLib;
 }
 
-// Simple help icon component with click-based tooltip
+// Simple help icon component with click-based tooltip.
+// The popup uses position: fixed with coordinates computed from the
+// button's bounding rect, so it can overlay sibling containers (e.g.
+// the settings sidebar) without being clipped by their overflow, and
+// is clamped to stay inside the viewport horizontally.
 function InfoTooltip({ text }) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const [pos, setPos] = React.useState(null);
   const rootRef = React.useRef(null);
+  const popupRef = React.useRef(null);
 
   // Prevent the click from bubbling to a wrapping <label>, which would
   // otherwise toggle the associated checkbox/radio input.
@@ -54,32 +60,66 @@ function InfoTooltip({ text }) {
   const toggle = (e) => { stop(e); setIsOpen(v => !v); };
   const close = (e) => { stop(e); setIsOpen(false); };
 
-  // Dismiss on any outside interaction (click, touch, scroll, Escape).
-  // We listen at the document level instead of rendering a full-viewport
-  // overlay so the first click outside lands on its real target (another
-  // tooltip, sidebar close button, scrollbar, etc.) instead of being
-  // swallowed just to close the popup.
+  // Compute popup coordinates from the button's rect, clamped to viewport.
+  const computePos = React.useCallback(() => {
+    const btn = rootRef.current && rootRef.current.querySelector('.info-help-button');
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const popupEl = popupRef.current;
+    const measuredW = popupEl ? popupEl.offsetWidth : 280;
+    const measuredH = popupEl ? popupEl.offsetHeight : 0;
+    const maxW = Math.min(320, vw - 2 * margin);
+    const width = Math.min(measuredW || maxW, maxW);
+    let left = rect.left + rect.width / 2 - width / 2;
+    if (left + width > vw - margin) left = vw - margin - width;
+    if (left < margin) left = margin;
+    let top = rect.bottom + 8;
+    if (measuredH && top + measuredH > vh - margin) {
+      const above = rect.top - 8 - measuredH;
+      if (above >= margin) top = above;
+    }
+    setPos({ left, top, width });
+  }, []);
+
+  // Dismiss on any outside interaction (click, touch, Escape) and
+  // recompute on resize. We listen at the document level instead of
+  // rendering a full-viewport overlay so the first click outside lands
+  // on its real target (another tooltip, sidebar close button, scrollbar,
+  // etc.) instead of being swallowed just to close the popup.
   React.useEffect(() => {
     if (!isOpen) return;
+    computePos();
     const onOutside = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) {
-        setIsOpen(false);
-      }
+      if (rootRef.current && rootRef.current.contains(e.target)) return;
+      if (popupRef.current && popupRef.current.contains(e.target)) return;
+      setIsOpen(false);
     };
     const onKey = (e) => { if (e.key === 'Escape') setIsOpen(false); };
     const onScroll = () => setIsOpen(false);
+    const onResize = () => computePos();
     document.addEventListener('mousedown', onOutside);
     document.addEventListener('touchstart', onOutside, { passive: true });
     document.addEventListener('keydown', onKey);
     // Capture phase so scrolls inside any container also dismiss.
     window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onOutside);
       document.removeEventListener('touchstart', onOutside);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
     };
-  }, [isOpen]);
+  }, [isOpen, computePos]);
+
+  // Re-measure once the popup has rendered so the initial frame already
+  // shows it correctly clamped and (if needed) flipped above the button.
+  React.useLayoutEffect(() => {
+    if (isOpen) computePos();
+  }, [isOpen, computePos]);
 
   return (
     <span ref={rootRef} className="info-help" onClick={stop}>
@@ -92,7 +132,12 @@ function InfoTooltip({ text }) {
         ?
       </button>
       {isOpen && (
-        <div className="info-help-text" onClick={stop}>
+        <div
+          ref={popupRef}
+          className="info-help-text"
+          onClick={stop}
+          style={pos ? { left: pos.left + 'px', top: pos.top + 'px', width: pos.width + 'px' } : { visibility: 'hidden' }}
+        >
           {text}
           <button className="info-help-close" onClick={close}>×</button>
         </div>
@@ -2859,7 +2904,7 @@ export default function App() {
 
       {/* About modal */}
       {showAbout && (
-        <Modal onClose={() => setShowAbout(false)}>
+        <Modal onClose={() => setShowAbout(false)} className="modal-panel--about">
           <h3 style={{ marginTop: 0 }}>{t('aboutTitle')} <span style={{ fontSize: '0.8rem', fontWeight: 'normal', color: 'var(--text-muted)' }}>v{VERSION}</span></h3>
           <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem', color: 'var(--accent)' }}>
             🔒 {t('tagline')}
