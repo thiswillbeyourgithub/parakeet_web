@@ -16,9 +16,6 @@ data
 deploy.sh
 CLAUDE.md
 
-# Downloaded dictation regex rules (fetched at runtime)
-app/ui/public/dictation-regex/
-
 framagit_murmure
 TODO.md
 
