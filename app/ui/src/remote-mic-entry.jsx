@@ -170,6 +170,24 @@ function RemoteMicSender() {
         return cleanupAll;
     }, [cleanupAll]);
 
+    // F-131: BFCache hardening on the phone side. Mirror App.jsx's
+    // pagehide/pageshow pattern so a phone parked in BFCache mid-session
+    // (Home button, app-switcher, deep link) does not revive with a stale
+    // MediaStream + AES-GCM sharedKey + ECDH private CryptoKey pinned in
+    // memory. On pagehide(persisted=true) tear down the session; on
+    // pageshow(persisted=true) reload so the user lands on a fresh INIT
+    // state and must re-scan QR to re-pair.
+    useEffect(() => {
+        const handlePageHide = (e) => { if (e.persisted) cleanupAll(); };
+        const handlePageShow = (e) => { if (e.persisted) window.location.reload(); };
+        window.addEventListener('pagehide', handlePageHide);
+        window.addEventListener('pageshow', handlePageShow);
+        return () => {
+            window.removeEventListener('pagehide', handlePageHide);
+            window.removeEventListener('pageshow', handlePageShow);
+        };
+    }, [cleanupAll]);
+
     // Install console capture and subscribe to log buffer updates.
     useEffect(() => {
         const restoreConsole = installConsoleCapture();
