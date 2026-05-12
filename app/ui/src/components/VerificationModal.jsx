@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useRegisterModalOpen } from './Modal.jsx';
 
 const CONFIRM_DELAY_MS = 3000;
 
@@ -31,6 +32,11 @@ const CONFIRM_DELAY_MS = 3000;
  * App.css) and the remote-mic phone page (which does not).
  */
 export default function VerificationModal({ fingerprint, prompt, warning, checklist, confirmLabel, denyLabel, onConfirm, onDeny }) {
+    // F-134: register with the shared modal-open counter so useAnyModalOpen()
+    // returns true and F-127's per-history Copy-button disable applies during
+    // the fingerprint compare (otherwise the highest-stakes modal would be
+    // the only one without the F-127 defence).
+    useRegisterModalOpen();
     // Confirm is gated on (a) the 3-second mount delay finishing AND (b) the
     // user ticking the "I read both codes" checkbox. The two together force a
     // deliberate, attention-bearing interaction; either alone is bypassable.
