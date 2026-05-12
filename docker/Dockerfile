@@ -94,8 +94,18 @@ RUN cd signaling && npm ci --ignore-scripts --no-audit --no-fund --omit=dev
 # to default to false here, silently disabling the audit gate; compose
 # already overrode this to true via build args but nothing else did. Flip
 # the Dockerfile-level default so the gate is on unless explicitly waived.
+#
+# F-108: enforce strict 'true'/'false' values. Any other value (typo
+# like 'True', '1', 'yes', trailing whitespace) used to silently
+# disable the audit because the string comparison fell through. Now
+# the build refuses to start with an unrecognised value, matching the
+# defensive validation posture of F-26/F-91/F-98/F-101.
 ARG RUN_NPM_AUDIT=true
-RUN if [ "$RUN_NPM_AUDIT" = "true" ]; then \
+RUN if [ "$RUN_NPM_AUDIT" != "true" ] && [ "$RUN_NPM_AUDIT" != "false" ]; then \
+      echo "[Dockerfile] FATAL: RUN_NPM_AUDIT must be exactly 'true' or 'false', got: '$RUN_NPM_AUDIT'"; \
+      exit 1; \
+    fi && \
+    if [ "$RUN_NPM_AUDIT" = "true" ]; then \
       set -e; \
       cd app && npm audit --audit-level=high && \
       cd ui && npm audit --audit-level=high && \
