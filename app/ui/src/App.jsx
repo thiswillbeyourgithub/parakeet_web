@@ -1418,14 +1418,24 @@ export default function App() {
               // Could arrive (a) before local confirm (verifyResolve in
               // flight), or (b) after local confirm while we're awaiting
               // the peer ack (peerAckResolve in flight).
+              //
+              // F-87: ignore verify-deny once peer-ack has completed
+              // (remoteMicKeyRef is set). Otherwise a malicious phone
+              // could send verify-deny mid-session to wipe the user's
+              // in-flight transcript with a misleading "verifyAborted"
+              // error message. After the handshake is bound the
+              // legitimate teardown signal is rtc disconnect, not a
+              // protocol message.
               if (remoteMicVerifyResolveRef.current) {
                 remoteMicVerifyResolveRef.current(false);
               } else if (remoteMicPeerAckResolveRef.current) {
                 remoteMicPeerAckResolveRef.current(false);
-              } else {
+              } else if (!remoteMicKeyRef.current) {
                 setRemoteMicError(t('verifyAborted'));
                 setRemoteMicStatus('error');
                 rtc.close();
+              } else {
+                console.warn('[RemoteMic] Ignoring verify-deny after peer-ack (session already bound)');
               }
             } else if (msg.type === 'audio-config') {
               // Validate the phone-supplied sample rate before letting it
