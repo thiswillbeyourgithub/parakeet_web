@@ -25,7 +25,7 @@ export async function fromUrls(cfg) {
 export async function fromHub(repoId, options = {}) {
   const { getParakeetModel } = await import('./hub.js');
   const { ParakeetModel } = await import('./parakeet.js');
-  
-  const urls = await getParakeetModel(repoId, options);
-  return ParakeetModel.fromUrls({ ...urls, ...options });
+
+  const result = await getParakeetModel(repoId, options);
+  return ParakeetModel.fromUrls({ ...result.urls, filenames: result.filenames, ...options });
 } 
