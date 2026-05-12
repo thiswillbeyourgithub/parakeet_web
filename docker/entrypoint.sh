@@ -77,6 +77,64 @@ _fetch() {
   fi
 }
 
+# F-91: Validate operator-supplied CSP allowlists before they are
+# interpolated into Caddy's CSP header. Caddy substitutes the env-var
+# value as a literal string; a typo like
+#   VITE_CSP_SCRIPT_HOSTS="'unsafe-inline'"
+#   VITE_CSP_CONNECT_HOSTS="*"
+#   VITE_CSP_CONNECT_HOSTS="https://a.com; default-src *"
+# is accepted verbatim and silently widens (or fully disables) the
+# policy with no error and no log line. Refuse to start if either
+# var contains characters that have CSP-directive semantics or that
+# build well-known bypass keywords.
+_validate_csp_hosts() {
+  # Empty is the documented default, accept it.
+  [ -z "$1" ] && return 0
+  # Forbid characters that change CSP semantics or smuggle directives.
+  # Allowed set: scheme letters, digits, dot, hyphen, colon (for the
+  # scheme delimiter and rare port numbers), forward slash, and ASCII
+  # space (separator between origins). Anything else, including ';',
+  # quotes, '*', '$', backtick, backslash, newline, is rejected.
+  case "$1" in
+    *[!A-Za-z0-9:/. -]*) return 1 ;;
+  esac
+  # Forbid known bypass tokens regardless of casing. The shell glob is
+  # case-sensitive; we lowercase via tr first.
+  lower=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  case "$lower" in
+    *unsafe-*|*data:*|*blob:*|*"*"*) return 1 ;;
+  esac
+  # Each space-separated token must look like https://<host>[:port][/path].
+  # We accept http:// only if the value also contains 'localhost' (dev
+  # convenience would force operators to use https everywhere otherwise,
+  # which is correct for prod but breaks local debugging). For prod
+  # safety we keep https-only.
+  for token in $1; do
+    case "$token" in
+      https://*) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+if ! _validate_csp_hosts "${VITE_CSP_SCRIPT_HOSTS:-}"; then
+  echo "[entrypoint] ERROR: VITE_CSP_SCRIPT_HOSTS contains forbidden characters or tokens"
+  echo "[entrypoint] Allowed: space-separated https:// origins only. No quotes, no"
+  echo "[entrypoint] semicolons, no wildcards, no unsafe-* keywords, no data:/blob:"
+  echo "[entrypoint] Got: ${VITE_CSP_SCRIPT_HOSTS}"
+  echo "[entrypoint] Refusing to start so an operator typo cannot silently widen CSP."
+  exit 1
+fi
+if ! _validate_csp_hosts "${VITE_CSP_CONNECT_HOSTS:-}"; then
+  echo "[entrypoint] ERROR: VITE_CSP_CONNECT_HOSTS contains forbidden characters or tokens"
+  echo "[entrypoint] Allowed: space-separated https:// origins only. No quotes, no"
+  echo "[entrypoint] semicolons, no wildcards, no unsafe-* keywords, no data:/blob:"
+  echo "[entrypoint] Got: ${VITE_CSP_CONNECT_HOSTS}"
+  echo "[entrypoint] Refusing to start so an operator typo cannot silently widen CSP."
+  exit 1
+fi
+
 # Validate DICTATION_REGEX_SOURCE early. Accept only:
 #   - absolute or ./relative local folder path
 #   - https://<host>/<path> URL (no leading whitespace, no scheme other
