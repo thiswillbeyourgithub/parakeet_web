@@ -146,11 +146,18 @@ export async function decrypt(encryptedPackage, sharedKey) {
  *
  * @param {CryptoKey} receiverPub - Receiver/computer ECDH public key
  * @param {CryptoKey} senderPub - Sender/phone ECDH public key
- * @param {number} [hexLength=12] - Number of hex characters (clamped to [3, 12])
+ * @param {number} [hexLength=16] - Number of hex characters (clamped to [16, 64])
  * @returns {Promise<string>} Hex fingerprint grouped as XXXX-XXXX-...
+ *
+ * F-80: the clamp ceiling used to be 12 hex (48 bits), which silently
+ * defeated the F-65 fix that raised callers to 16. A signaling-MITM
+ * attacker grinding ECDH+SHA-256 second-preimages can hit 48 bits in
+ * seconds on a laptop. The clamp now floors at 16 (matching the
+ * computeFingerprintLength return and SAFE_FALLBACK_HEX_LEN in
+ * remote-mic-handshake.js) and ceilings at 64 (full SHA-256 output).
  */
-export async function getPairFingerprint(receiverPub, senderPub, hexLength = 12) {
-    const len = Math.max(3, Math.min(12, Math.floor(hexLength)));
+export async function getPairFingerprint(receiverPub, senderPub, hexLength = 16) {
+    const len = Math.max(16, Math.min(64, Math.floor(hexLength)));
     const aBytes = new Uint8Array(await crypto.subtle.exportKey('raw', receiverPub));
     const bBytes = new Uint8Array(await crypto.subtle.exportKey('raw', senderPub));
     const combined = new Uint8Array(aBytes.length + bBytes.length);
