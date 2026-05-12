@@ -162,5 +162,14 @@ commits do not appear to have an upstream equivalent:
   delta is the FFT real-reconstruction path (PR74), 3-stage FFT unroll,
   shared precompute, buffer reuse, MurmurHash3-style mel cache key, and
   filterbank sparse bounds. Public API unchanged.
+- **2026-05-12 (round 3):** three small upstream items.
+  (a) `79d01fd` ports `85af256` — `fromHub` was flattening the wrong shape
+  into `fromUrls`; App.jsx was unaffected since it doesn't use `fromHub`.
+  (b) `6b8ba53` ports `9218917` — adds the four shape-validation checks
+  in `_runCombinedStep` (logits present, both output states present,
+  data length covers vocab, TDT duration logits non-empty), with eager
+  `logits.dispose()` on failure. (c) `93844f5` marked DONE — its
+  parakeet.js half was already absorbed by round 1's port `05c6fb6`,
+  and its backend.js half is already covered by `bd38bf1`.
 
 (Documentation prepared with help from Claude Code.)
