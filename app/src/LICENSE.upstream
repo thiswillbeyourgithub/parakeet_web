@@ -1,0 +1,34 @@
+This directory contains code derived from ysdede/parakeet.js, which is
+distributed under the MIT License reproduced below. The MIT copyright and
+permission notice are preserved here per the license's "shall be included
+in all copies or substantial portions" clause. The combined work
+(parakeet-web) is distributed under AGPLv3 (see ../../LICENSE); the MIT
+terms continue to apply to the portions originating upstream.
+
+Upstream: https://github.com/ysdede/parakeet.js
+Fork-point: commit 441412e6273808c32c91703af4b13d96c4273b20 (upstream v0.0.3)
+See SOURCE.md in this directory for fork details and divergence notes.
+
+----------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2025 Yunus Seyhan Dede
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
