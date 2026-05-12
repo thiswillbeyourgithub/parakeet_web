@@ -1,3 +1,5 @@
+// Forked from ysdede/parakeet.js (MIT). See SOURCE.md and LICENSE.upstream.
+
 export { ParakeetModel } from './parakeet.js';
 export { getModelFile, getModelText, getParakeetModel, getLocalModelFile, checkLocalModelFiles, HubDownloadError } from './hub.js';
 
