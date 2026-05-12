@@ -159,7 +159,38 @@ export default function VerificationModal({ fingerprint, prompt, warning, checkl
                             cursor: confirmReady ? 'pointer' : 'not-allowed',
                             opacity: confirmReady ? 1 : 0.7,
                         }}
-                        onClick={confirmReady ? onConfirm : undefined}
+                        onClick={confirmReady ? (e) => {
+                            // F-133: native buttons fire onClick on Space/Enter
+                            // when keyboard-focused, regardless of any
+                            // document-level keydown handler. Reject any
+                            // activation that did not come from a real pointer
+                            // (Space/Enter on a focused button produce a
+                            // synthetic click with detail === 0, while a real
+                            // mouse/touch click has detail === 1 and
+                            // pointerType set). Combined with the keydown
+                            // preventDefault below this fail-closes against
+                            // extension keystroke injection that drives
+                            // Tab + Space + Tab + wait + Space.
+                            if (!e.isTrusted) return;
+                            if (e.detail === 0 && e.pointerType !== 'mouse' && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+                            onConfirm();
+                        } : undefined}
+                        onKeyDown={(e) => {
+                            // F-133: suppress native button activation on the
+                            // keys an extension would synthesize. The user must
+                            // click; verbal-OOB comparison plus a deliberate
+                            // pointer activation is the contract. Enter fires
+                            // the default click on keydown; Space fires it on
+                            // keyup, so both handlers preventDefault.
+                            if (e.key === ' ' || e.key === 'Enter' || e.code === 'Space') {
+                                e.preventDefault();
+                            }
+                        }}
+                        onKeyUp={(e) => {
+                            if (e.key === ' ' || e.key === 'Enter' || e.code === 'Space') {
+                                e.preventDefault();
+                            }
+                        }}
                         disabled={!confirmReady}
                     >
                         {delayDone ? confirmLabel : `${confirmLabel} (${Math.ceil(remainingMs / 1000)}s)`}
