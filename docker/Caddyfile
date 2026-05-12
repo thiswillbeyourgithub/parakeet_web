@@ -125,8 +125,15 @@
 	# new pin). build-sums.txt is the operator-side deploy-verification
 	# anchor (env.example documents the diff workflow) and must also
 	# never be served stale. Both files are tiny, revalidation is cheap.
+	#
+	# F-76: pcm-recorder-worklet.js sits at a STABLE URL (AudioWorklet
+	# loads it by string path) so the immutable @hashed rule doesn't
+	# match. Heuristic browser caching of the previous worklet against
+	# the freshly deployed asset-integrity.json triggers F-38b's hash
+	# mismatch and breaks recording until the cache evicts. Must
+	# revalidate on every load.
 	@integrity {
-		path /.well-known/asset-integrity.json /.well-known/build-sums.txt
+		path /.well-known/asset-integrity.json /.well-known/build-sums.txt /pcm-recorder-worklet.js
 	}
 	header @integrity Cache-Control "no-cache, must-revalidate"
 
