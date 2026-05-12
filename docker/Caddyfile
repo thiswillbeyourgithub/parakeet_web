@@ -31,6 +31,14 @@
 	# host, an operator can extend the list at runtime via
 	# VITE_CSP_CONNECT_HOSTS without rebuilding the image.
 	header {
+		# F-71: strip Caddy's default `Server: Caddy` response header so the
+		# reverse-proxy identity (and indirectly its version range, pinned
+		# by digest in Dockerfile) does not advertise itself to drive-by
+		# scanners (Shodan / ZoomEye / mass CVE probers). Free defense in
+		# depth; the deploy is still fingerprintable by /.well-known/
+		# build-sums.txt for anyone targeting parakeet specifically, but
+		# noise reduction for untargeted scans costs nothing here.
+		-Server
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
