@@ -146,7 +146,13 @@
 		path / /index.html /remote-mic.html
 	}
 	header @html Cache-Control "no-cache, must-revalidate"
-	header /config.js Cache-Control "no-cache, must-revalidate"
+	# F-148: /config.js is the runtime-injected env (analytics URL, model
+	# revision, build-time SRI hashes, optional CSP host extensions). The
+	# bytes change per deploy and may carry per-operator secrets in env
+	# overrides; use no-store rather than no-cache so the disk cache never
+	# sees the bytes, defeating offline-attacker recovery from the cache
+	# file as well as any intermediate-cache misbehaviour.
+	header /config.js Cache-Control "no-store"
 
 	# F-75: the asset-integrity manifest is the trust anchor for the
 	# F-38/F-50 SRI chain (verifiedAddModule + ORT WASM hash check). A
