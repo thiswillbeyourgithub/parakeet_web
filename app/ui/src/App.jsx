@@ -106,7 +106,15 @@ const SETTINGS_DB_NAME = 'parakeetweb-settings-db';
 const SETTINGS_STORE_NAME = 'settings-store';
 const STORAGE_KEY_PREFIX = 'parakeetweb_';
 
+// F-128: transcripts live in their own DB so a per-entry delete can call
+// idbDeleteDatabase on JUST the transcripts container and evict LevelDB
+// residue, without taking the rest of the settings DB with it.
+const TRANSCRIPTS_DB_NAME = 'parakeetweb-transcripts-db';
+const TRANSCRIPTS_STORE_NAME = 'transcripts-store';
+const TRANSCRIPTS_KEY = 'transcripts';
+
 const getSettingsDb = () => openIdb(SETTINGS_DB_NAME, SETTINGS_STORE_NAME);
+const getTranscriptsDb = () => openIdb(TRANSCRIPTS_DB_NAME, TRANSCRIPTS_STORE_NAME);
 
 async function loadSetting(key, defaultValue) {
   try {
@@ -126,15 +134,55 @@ async function saveSetting(key, value) {
   }
 }
 
-// Forget the on-disk transcripts key without nuking the rest of the
-// settings DB. Used when the user toggles persistTranscripts OFF or
-// hits "Clear all transcripts" - the next openIdb call reopens an
-// empty store. Caveat: this is still a logical delete inside LevelDB;
-// see idbDeleteDatabase for the residue-evicting alternative used by
-// the reset CTA (F-60).
+// Load the persisted transcripts array from the dedicated transcripts DB.
+// Migrates a legacy `parakeetweb_transcriptions` value out of the settings DB
+// the first time it runs after the F-128 split.
+async function loadPersistedTranscripts() {
+  try {
+    const fromOwn = await idbGet(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY);
+    if (Array.isArray(fromOwn)) return fromOwn;
+    const legacy = await idbGet(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + 'transcriptions');
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, legacy);
+      await idbDelete(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + 'transcriptions');
+      return legacy;
+    }
+    return [];
+  } catch (e) {
+    console.warn('Failed to load transcripts:', e);
+    return [];
+  }
+}
+
+async function saveTranscripts(arr) {
+  try {
+    await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, arr);
+  } catch (e) {
+    console.warn('Failed to save transcripts:', e);
+  }
+}
+
+// F-128: wipe the transcripts DB entirely so LevelDB drops the SST/log files
+// holding the previous (longer) array, then re-persist the new shorter array
+// into a fresh DB. Called on per-entry delete so a deleted transcript leaves
+// no recoverable residue. The settings DB is untouched.
+async function wipeAndRewriteTranscripts(arr) {
+  try {
+    await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
+    if (Array.isArray(arr) && arr.length > 0) {
+      await saveTranscripts(arr);
+    }
+  } catch (e) {
+    console.warn('Failed to wipe transcripts DB:', e);
+  }
+}
+
+// Forget the on-disk transcripts container entirely. Used when the user
+// toggles persistTranscripts OFF or hits "Clear all transcripts". Uses
+// idbDeleteDatabase to evict LevelDB residue rather than a logical delete.
 async function forgetPersistedTranscripts() {
   try {
-    await idbDelete(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + 'transcriptions');
+    await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
   } catch (e) {
     console.warn('Failed to forget transcripts:', e);
   }
@@ -562,7 +610,7 @@ export default function App() {
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('preprocessor', 'nemo128'),
-          loadSetting('transcriptions', []),
+          loadPersistedTranscripts(),
           loadSetting('verboseLog', true),
           loadSetting('frameStride', 1),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
@@ -889,10 +937,24 @@ export default function App() {
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
-  // Transcripts only flow to disk when the user opted in. When the toggle is
-  // OFF the gate is settingsLoaded && false === false, so usePersistedSetting
-  // no-ops on every transcripts change.
-  usePersistedSetting('transcriptions', transcriptions, settingsLoaded && persistTranscripts);
+  // F-128: transcripts persist to a dedicated DB (parakeetweb-transcripts-db).
+  // When the array shrinks (per-entry delete, clear-all), wipe the whole DB
+  // before re-persisting so LevelDB drops the SST/log files that still hold
+  // the prior longer array. Append-only growth uses a plain idbPut.
+  const prevTranscriptsLenRef = useRef(transcriptions.length);
+  useEffect(() => {
+    if (!settingsLoaded || !persistTranscripts) {
+      prevTranscriptsLenRef.current = transcriptions.length;
+      return;
+    }
+    const prev = prevTranscriptsLenRef.current;
+    prevTranscriptsLenRef.current = transcriptions.length;
+    if (transcriptions.length < prev) {
+      wipeAndRewriteTranscripts(transcriptions);
+    } else {
+      saveTranscripts(transcriptions);
+    }
+  }, [transcriptions, settingsLoaded, persistTranscripts]);
   // Keep ref in sync so recorder.onstop callback always reads the latest value
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
