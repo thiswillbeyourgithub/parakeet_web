@@ -395,13 +395,27 @@ export default function App() {
   const [isPaused, setIsPaused] = useState(false); // pause/resume support for long recordings
   const [recordingCountdown, setRecordingCountdown] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null); // legacy name kept for stopRecording guard
-  const pcmChunksRef = useRef([]);       // accumulates Float32Array chunks from AudioWorklet
+  // pcmChunksRef holds slab objects of the form `{ buf, used }` where `buf`
+  // is a Float32Array backing buffer and `used` is the count of valid
+  // samples written into it. The worklet emits 128-sample frames at the
+  // mic sample rate (~375/sec at 48 kHz), so collecting them as separate
+  // Float32Arrays would allocate ~1.35M ArrayBuffers per hour — same raw
+  // byte size, but enormous allocator overhead and GC churn that
+  // contributed to long-recording crashes. Slabbing them into ~1 MB
+  // chunks keeps the object count under a few hundred per hour.
+  const pcmChunksRef = useRef([]);
+  const PCM_SLAB_SAMPLES = 1 << 18; // 262144 samples (~5.4s @ 48 kHz, ~2.7s @ 96 kHz)
   // Hard cap on remote-mic PCM sample accumulation. A compromised phone that
   // completes the handshake but never sends `audio-end` would otherwise grow
   // pcmChunksRef without bound and OOM the tab. 10 minutes at the highest
   // accepted sample rate (96 kHz) is the safety ceiling; in normal use the
   // phone streams at 48 kHz so the real-time ceiling is ~20 minutes.
   const REMOTE_MIC_MAX_SAMPLES = 10 * 60 * 96000;
+  // Hard cap on local-mic accumulation. At 96 kHz this is 90 min (~518 MB
+  // of raw float32 audio); at the typical 48 kHz mic rate it's ~3 hours.
+  // Past this point continuing to grow the buffer risks crashing the tab,
+  // so we stop the recording and surface an alert instead.
+  const LOCAL_RECORDING_MAX_SAMPLES = 90 * 60 * 96000;
   const remoteMicSampleCountRef = useRef(0);
   // F-82: serialises processRemoteMicBatch invocations triggered by
   // back-to-back phone audio-end messages, so concurrent transcribe()
@@ -419,6 +433,49 @@ export default function App() {
     pcmChunksRef.current = [];
     remoteMicSampleCountRef.current = 0;
     remoteMicAudioConfiguredRef.current = false;
+  };
+  // Append a Float32Array chunk into the slab list. Copies the data into
+  // the current slab (allocating a new one when full), so callers may
+  // safely reuse or discard the source buffer afterwards.
+  const appendPcmChunk = (chunk) => {
+    if (!chunk || chunk.length === 0) return;
+    const slabs = pcmChunksRef.current;
+    let writePos = 0;
+    while (writePos < chunk.length) {
+      let last = slabs[slabs.length - 1];
+      if (!last || last.used >= last.buf.length) {
+        // Size the slab generously enough to swallow the incoming chunk
+        // even if it's larger than the default slab (remote-mic chunks
+        // can be hundreds of ms long).
+        const slabSize = Math.max(PCM_SLAB_SAMPLES, chunk.length - writePos);
+        last = { buf: new Float32Array(slabSize), used: 0 };
+        slabs.push(last);
+      }
+      const room = last.buf.length - last.used;
+      const take = Math.min(room, chunk.length - writePos);
+      last.buf.set(chunk.subarray(writePos, writePos + take), last.used);
+      last.used += take;
+      writePos += take;
+    }
+  };
+  const getTotalPcmSamples = () => {
+    const slabs = pcmChunksRef.current;
+    let n = 0;
+    for (const s of slabs) n += s.used;
+    return n;
+  };
+  // Build one contiguous Float32Array from the slabs. Used at recording
+  // stop to produce the canonical full-audio buffer.
+  const concatPcmChunks = () => {
+    const slabs = pcmChunksRef.current;
+    const total = getTotalPcmSamples();
+    const out = new Float32Array(total);
+    let offset = 0;
+    for (const s of slabs) {
+      out.set(s.buf.subarray(0, s.used), offset);
+      offset += s.used;
+    }
+    return out;
   };
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioLevel, setAudioLevel] = useState(0);
@@ -1251,8 +1308,19 @@ export default function App() {
 
       // Accumulate raw PCM chunks from the worklet processor
       clearPcmChunks();
+      let localRecordingCapHit = false;
       workletNode.port.onmessage = (e) => {
-        pcmChunksRef.current.push(e.data); // Float32Array, 128 samples each
+        if (localRecordingCapHit) return;
+        if (getTotalPcmSamples() + e.data.length > LOCAL_RECORDING_MAX_SAMPLES) {
+          localRecordingCapHit = true;
+          console.error('[Record] Local recording cap reached, stopping recording');
+          alert(t('localRecordingCapExceeded') || 'Recording stopped: maximum duration reached.');
+          // stopRecording is defined as a sibling function in this component
+          // and tears down the worklet + AudioContext cleanly.
+          stopRecording();
+          return;
+        }
+        appendPcmChunk(e.data); // Float32Array, 128 samples each
       };
 
       sourceNode.connect(workletNode);
@@ -1327,16 +1395,10 @@ export default function App() {
     }
     setMediaRecorder(null);
 
-    // Concatenate PCM chunks captured by the AudioWorklet into one buffer
-    const chunks = pcmChunksRef.current;
+    // Concatenate PCM slabs captured by the AudioWorklet into one buffer
+    const rawPcm = concatPcmChunks();
+    const totalSamples = rawPcm.length;
     clearPcmChunks();
-    const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
-    const rawPcm = new Float32Array(totalSamples);
-    let offset = 0;
-    for (const chunk of chunks) {
-      rawPcm.set(chunk, offset);
-      offset += chunk.length;
-    }
     const sourceSampleRate = audioContext?.sampleRate ?? 48000;
     console.log(`[Record] Captured ${totalSamples} samples at ${sourceSampleRate}Hz (${(totalSamples / sourceSampleRate).toFixed(2)}s)`);
 
@@ -1752,7 +1814,7 @@ export default function App() {
               setRemoteMicError(t('remoteMicCapExceeded'));
               return;
             }
-            pcmChunksRef.current.push(float32);
+            appendPcmChunk(float32);
             remoteMicSampleCountRef.current = newCount;
             const rms = Math.sqrt(sum / float32.length);
             setRemoteMicLevel(Math.min(100, rms * 250));
@@ -1802,9 +1864,9 @@ export default function App() {
     setRemoteMicElapsed(0);
     setRemoteMicPaused(false);
 
-    const chunks = pcmChunksRef.current;
+    const rawPcm = concatPcmChunks();
+    const totalSamples = rawPcm.length;
     clearPcmChunks();
-    const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
 
     if (totalSamples === 0) {
       console.log('[RemoteMic] No audio received in this batch');
@@ -1812,13 +1874,6 @@ export default function App() {
       // the awaiting flag for us.
       setAwaitingFinal(false);
       return;
-    }
-
-    const rawPcm = new Float32Array(totalSamples);
-    let offset = 0;
-    for (const chunk of chunks) {
-      rawPcm.set(chunk, offset);
-      offset += chunk.length;
     }
 
     const sourceSampleRate = remoteMicSampleRateRef.current;

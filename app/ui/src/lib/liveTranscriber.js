@@ -31,7 +31,7 @@ const ema = (prev, sample, alpha = EMA_ALPHA) => prev == null ? sample : prev + 
  *
  * @param {Object} cfg
  * @param {Object} cfg.model            ParakeetModel instance (with transcribe()).
- * @param {() => Float32Array[]} cfg.getPcmChunks  Returns the live chunk array.
+ * @param {() => Array<{buf: Float32Array, used: number}>} cfg.getPcmChunks  Returns the live slab array.
  * @param {() => number} cfg.getSampleRate         Returns source sample rate (Hz).
  * @param {'auto'|number} cfg.windowMode  'auto' or a fixed window size in seconds (10..60).
  * @param {(state: {text: string, words: Object[]}) => void} cfg.onUpdate
@@ -66,16 +66,21 @@ export function createLiveTranscriber(cfg) {
     if (Number.isFinite(n)) currentWindow = clamp(n, WINDOW_MIN, WINDOW_MAX);
   }
 
+  // `chunks` entries are slab objects of the form `{ buf: Float32Array, used: number }`
+  // — `used` is the count of valid samples written into `buf` (which may be
+  // larger). Callers reading the live PCM must respect `used` instead of
+  // `buf.length`.
   function copyTailSamples(chunks, samplesNeeded) {
     const out = new Float32Array(samplesNeeded);
     let need = samplesNeeded;
     let dst = samplesNeeded;
     for (let i = chunks.length - 1; i >= 0 && need > 0; i--) {
       const c = chunks[i];
-      const take = Math.min(need, c.length);
+      const len = c.used;
+      const take = Math.min(need, len);
       dst -= take;
       need -= take;
-      out.set(c.subarray(c.length - take), dst);
+      out.set(c.buf.subarray(len - take, len), dst);
     }
     return out;
   }
@@ -149,7 +154,7 @@ export function createLiveTranscriber(cfg) {
     try {
       const sr = getSampleRate();
       const chunks = getPcmChunks();
-      const totalSamples = chunks.reduce((n, c) => n + c.length, 0);
+      const totalSamples = chunks.reduce((n, c) => n + c.used, 0);
       const totalSec = totalSamples / sr;
       if (totalSec < MIN_AUDIO_BEFORE_FIRST_TICK) return;
 
