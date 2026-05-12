@@ -9,7 +9,16 @@
 }
 
 :5173 {
-	encode zstd gzip
+	# F-77: compress static assets but NOT /api/signal/*. Today no
+	# signaling response reflects the X-Room-Secret header into the
+	# body, but a single future debug-echo line (e.g.
+	# `res.json({ error, received: req.headers['x-room-secret'] })`)
+	# would turn this back into a classic BREACH oracle: same-origin
+	# attacker code could measure compressed response sizes to recover
+	# the secret byte-by-byte. Signaling JSON is < 2 KB; the bandwidth
+	# saving is negligible, the foot-gun isn't.
+	@compress not path /api/signal/*
+	encode @compress zstd gzip
 
 	# Cross-origin isolation (SharedArrayBuffer / WebGPU / ONNX wasm) plus a
 	# strict default-deny Content-Security-Policy. The CSP forbids inline
