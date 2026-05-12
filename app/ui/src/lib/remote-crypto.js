@@ -43,7 +43,13 @@ export async function importPublicKey(base64Key) {
     // (0x04 || X || Y); the base64 form is therefore 88 chars including
     // padding. This guards against a malicious peer (or compromised
     // signaling relay) sending oversized / malformed input.
-    if (typeof base64Key !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64Key)) {
+    // Length-cap BEFORE running regex / atob so a hostile peer cannot force a
+    // ~48 KB allocation by sending a 64 KB SCTP message. Padded base64 of a
+    // 65-byte payload is 88 chars; 200 is a comfortable ceiling.
+    if (typeof base64Key !== 'string' || base64Key.length > 200) {
+        throw new Error('importPublicKey: input too long or not a string');
+    }
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Key)) {
         throw new Error('importPublicKey: input is not valid base64');
     }
     let binaryString;

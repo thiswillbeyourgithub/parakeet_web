@@ -1318,6 +1318,14 @@ export default function App() {
       // Handle incoming messages (JSON control + binary audio)
       rtc.onMessage = async (data) => {
         if (typeof data === 'string') {
+          // F-122: bound the JSON parser input. Control messages are tiny
+          // (handshake, audio-config, verify-ok/deny, paused/resumed). 4 KB
+          // is generous and caps a hostile phone's per-message allocation
+          // burst irrespective of the SCTP NDATA max-message-size.
+          if (data.length > 4096) {
+            console.warn('[RemoteMic] Dropping oversized control message:', data.length, 'bytes');
+            return;
+          }
           try {
             const msg = JSON.parse(data);
             // F-83: gate audio-* and pause/resume control messages on a
