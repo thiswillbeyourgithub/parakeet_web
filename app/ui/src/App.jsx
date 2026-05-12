@@ -352,6 +352,14 @@ export default function App() {
   // requires disconnecting the phone and re-pairing via fresh QR.
   const [remoteMicVerifiedAt, setRemoteMicVerifiedAt] = useState(null);
   const remoteMicVerifyResolveRef = useRef(null); // (boolean) => void
+  // F-63: bilateral verify-ok ack. After local user confirms the fingerprint
+  // we still wait for the peer's verify-ok before transitioning to the
+  // operational ('connected') state. Otherwise an attacker who controls one
+  // side (or a flaky network) could leave one peer streaming audio into a
+  // half-aborted session: the local side believes verification succeeded
+  // even though the remote user actually denied (or never responded).
+  // Waiting for the explicit peer ack collapses that ambiguous window.
+  const remoteMicPeerAckResolveRef = useRef(null); // (boolean) => void
   // Resolve any in-flight fingerprint verify and null the ref. Every teardown
   // path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
   // disconnectRemoteMic) must call this so the awaiting Promise inside
@@ -361,6 +369,12 @@ export default function App() {
     if (remoteMicVerifyResolveRef.current) {
       remoteMicVerifyResolveRef.current(confirmed);
       remoteMicVerifyResolveRef.current = null;
+    }
+  }, []);
+  const resolveRemoteMicPeerAck = useCallback((confirmed) => {
+    if (remoteMicPeerAckResolveRef.current) {
+      remoteMicPeerAckResolveRef.current(confirmed);
+      remoteMicPeerAckResolveRef.current = null;
     }
   }, []);
 
@@ -1269,6 +1283,7 @@ export default function App() {
         // so the user can click Regenerate QR instead of having to restart manually.
         stopRemoteMicTimer();
         resolveRemoteMicVerify(false);
+        resolveRemoteMicPeerAck(false);
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
         clearPcmChunks();
@@ -1326,6 +1341,33 @@ export default function App() {
               }
               rtc.sendMessage({ type: 'verify-ok' });
 
+              // F-63: wait for the phone's reciprocal verify-ok before
+              // binding the shared key and flipping to 'connected'. A 60s
+              // cap avoids hanging if the phone crashed or the user
+              // walked away mid-handshake; in normal use both peers ack
+              // within a second of each other.
+              const PEER_ACK_TIMEOUT_MS = 60000;
+              let peerAckTimer = null;
+              const peerAcked = await new Promise((resolve) => {
+                remoteMicPeerAckResolveRef.current = resolve;
+                peerAckTimer = setTimeout(() => {
+                  if (remoteMicPeerAckResolveRef.current) {
+                    remoteMicPeerAckResolveRef.current(false);
+                    remoteMicPeerAckResolveRef.current = null;
+                  }
+                }, PEER_ACK_TIMEOUT_MS);
+              });
+              if (peerAckTimer) clearTimeout(peerAckTimer);
+              remoteMicPeerAckResolveRef.current = null;
+
+              if (!peerAcked) {
+                console.warn('[RemoteMic] Peer did not ack verify-ok (deny or timeout), aborting');
+                setRemoteMicError(t('verifyAborted'));
+                setRemoteMicStatus('error');
+                rtc.close();
+                return;
+              }
+
               remoteMicKeyRef.current = sharedKey;
               setRemoteMicVerifiedAt(Date.now());
               setRemoteMicStatus('connected');
@@ -1334,10 +1376,25 @@ export default function App() {
               setIsRemoteMic(true);
 
               startRemoteMicTimer();
+            } else if (msg.type === 'verify-ok') {
+              // F-63: phone confirmed its end. Resolve the peer-ack wait
+              // so this side can bind the shared key. A stray verify-ok
+              // outside an in-flight wait is ignored (it would indicate
+              // protocol drift or a replay attempt by the phone).
+              if (remoteMicPeerAckResolveRef.current) {
+                remoteMicPeerAckResolveRef.current(true);
+              } else {
+                console.warn('[RemoteMic] Stray verify-ok ignored (no peer-ack wait in flight)');
+              }
             } else if (msg.type === 'verify-deny') {
-              // Phone denied the fingerprint match — abort our side too
+              // Phone denied the fingerprint match, abort our side too.
+              // Could arrive (a) before local confirm (verifyResolve in
+              // flight), or (b) after local confirm while we're awaiting
+              // the peer ack (peerAckResolve in flight).
               if (remoteMicVerifyResolveRef.current) {
                 remoteMicVerifyResolveRef.current(false);
+              } else if (remoteMicPeerAckResolveRef.current) {
+                remoteMicPeerAckResolveRef.current(false);
               } else {
                 setRemoteMicError(t('verifyAborted'));
                 setRemoteMicStatus('error');
@@ -1528,7 +1585,7 @@ export default function App() {
   }
 
   async function disconnectRemoteMic() {
-    // Full teardown — close RTC, phone goes to STOPPED
+    // Full teardown, close RTC, phone goes to STOPPED
     setAwaitingFinal(true);
     await processRemoteMicBatch();
     if (remoteMicRtcRef.current) {
@@ -1536,6 +1593,8 @@ export default function App() {
       remoteMicRtcRef.current.close();
       remoteMicRtcRef.current = null;
     }
+    resolveRemoteMicVerify(false);
+    resolveRemoteMicPeerAck(false);
     remoteMicKeyRef.current = null;
     stopRemoteMicTimer();
     setRemoteMicVerifiedAt(null);
@@ -1561,9 +1620,10 @@ export default function App() {
   }
 
   function regenerateRemoteMicQr() {
-    // Tear down leftover state and start fresh — produces a new roomId/secret/QR.
+    // Tear down leftover state and start fresh, produces a new roomId/secret/QR.
     stopRemoteMicTimer();
     resolveRemoteMicVerify(false);
+    resolveRemoteMicPeerAck(false);
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.close(); } catch (_) {}
       remoteMicRtcRef.current = null;
@@ -1581,6 +1641,7 @@ export default function App() {
   function cancelRemoteMic() {
     stopRemoteMicTimer();
     resolveRemoteMicVerify(false);
+    resolveRemoteMicPeerAck(false);
     if (remoteMicRtcRef.current) {
       remoteMicRtcRef.current.close();
       remoteMicRtcRef.current = null;

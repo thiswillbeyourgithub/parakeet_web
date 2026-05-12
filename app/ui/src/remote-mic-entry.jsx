@@ -90,6 +90,14 @@ function RemoteMicSender() {
     const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
     const [fingerprint, setFingerprint] = useState('');
     const verifyResolveRef = useRef(null); // (boolean) => void
+    // F-63: bilateral verify-ok ack. The phone must not bind the shared key
+    // (and thus start accepting/sending encrypted audio) until the receiver
+    // has reciprocated with its own verify-ok. Otherwise an attacker who
+    // gets the phone's user to confirm a poisoned fingerprint while the
+    // desktop user denies it would still leave the phone in a streaming-
+    // ready state on the next interaction. Waiting on the peer ack closes
+    // that asymmetry.
+    const peerAckResolveRef = useRef(null); // (boolean) => void
     const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
@@ -134,6 +142,17 @@ function RemoteMicSender() {
         cleanupAudio();
         if (rtcRef.current) { rtcRef.current.close(); rtcRef.current = null; }
         sharedKeyRef.current = null;
+        // Release any pending fingerprint or peer-ack waits so the awaiting
+        // Promises in start() don't pin the ECDH private key in a dead
+        // closure if cleanup runs mid-handshake.
+        if (verifyResolveRef.current) {
+            verifyResolveRef.current(false);
+            verifyResolveRef.current = null;
+        }
+        if (peerAckResolveRef.current) {
+            peerAckResolveRef.current(false);
+            peerAckResolveRef.current = null;
+        }
     }, [cleanupAudio]);
 
     useEffect(() => {
@@ -263,8 +282,34 @@ function RemoteMicSender() {
                             verifyResolveRef.current = null;
 
                             if (!confirmed) {
-                                console.warn('[RemoteMic] User denied fingerprint match — aborting');
+                                console.warn('[RemoteMic] User denied fingerprint match, aborting');
                                 rtc.sendMessage({ type: 'verify-deny' });
+                                setErrorMsg(t('verifyAborted'));
+                                setStatus(STATUS.ERROR);
+                                rtc.close();
+                                return;
+                            }
+                            rtc.sendMessage({ type: 'verify-ok' });
+
+                            // F-63: wait for the receiver's reciprocal
+                            // verify-ok before binding the shared key. 60s
+                            // cap is consistent with the desktop side.
+                            const PEER_ACK_TIMEOUT_MS = 60000;
+                            let peerAckTimer = null;
+                            const peerAcked = await new Promise((resolve) => {
+                                peerAckResolveRef.current = resolve;
+                                peerAckTimer = setTimeout(() => {
+                                    if (peerAckResolveRef.current) {
+                                        peerAckResolveRef.current(false);
+                                        peerAckResolveRef.current = null;
+                                    }
+                                }, PEER_ACK_TIMEOUT_MS);
+                            });
+                            if (peerAckTimer) clearTimeout(peerAckTimer);
+                            peerAckResolveRef.current = null;
+
+                            if (!peerAcked) {
+                                console.warn('[RemoteMic] Receiver did not ack verify-ok (deny or timeout), aborting');
                                 setErrorMsg(t('verifyAborted'));
                                 setStatus(STATUS.ERROR);
                                 rtc.close();
@@ -272,14 +317,33 @@ function RemoteMicSender() {
                             }
                             sharedKeyRef.current = sharedKey;
 
-                            // Phone is connected — let the user tap Start Recording when ready
+                            // Phone is connected, let the user tap Start Recording when ready
                             setStatus(STATUS.READY);
+                        } else if (msg.type === 'verify-ok') {
+                            // F-63: receiver confirmed its end. Resolve the
+                            // peer-ack wait so this side can bind the
+                            // shared key. Stray verify-ok outside an
+                            // in-flight wait is ignored.
+                            if (peerAckResolveRef.current) {
+                                peerAckResolveRef.current(true);
+                            } else {
+                                console.warn('[RemoteMic] Stray verify-ok ignored (no peer-ack wait in flight)');
+                            }
                         } else if (msg.type === 'verify-deny') {
-                            // Receiver denied the fingerprint match — abort
-                            if (verifyResolveRef.current) verifyResolveRef.current(false);
-                            setErrorMsg(t('verifyAborted'));
-                            setStatus(STATUS.ERROR);
-                            rtc.close();
+                            // Receiver denied the fingerprint match, abort.
+                            // Could arrive (a) before local confirm
+                            // (verifyResolve in flight) or (b) after local
+                            // confirm while awaiting peer ack
+                            // (peerAckResolve in flight).
+                            if (verifyResolveRef.current) {
+                                verifyResolveRef.current(false);
+                            } else if (peerAckResolveRef.current) {
+                                peerAckResolveRef.current(false);
+                            } else {
+                                setErrorMsg(t('verifyAborted'));
+                                setStatus(STATUS.ERROR);
+                                rtc.close();
+                            }
                         } else if (msg.type === 'stop-recording') {
                             // Computer requested end of current recording (keep connection alive)
                             stopRecording();
