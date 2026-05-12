@@ -8,7 +8,8 @@
  *                          (implicit in JS — we process exact-length audio, no batch padding)
  *   3. Zero-pad:           N_FFT/2 = 256 samples on each side
  *   4. STFT:               Cast to Float64, symmetric Hann window (400→512 zero-padded),
- *                          512-point FFT, hop_length=160
+ *                          real FFT via N/2 complex FFT + spectrum reconstruction
+ *                          (writes power bins 0..N_FFT/2), hop_length=160
  *   5. Power spectrum:     |real|² + |imag|²  → cast back to Float32
  *   6. Mel filterbank:     MatMul with slaney-normalized triangular filterbank
  *   7. Log:                log(mel + 2^-24)
@@ -34,6 +35,7 @@ const HOP_LENGTH = 160;
 const PREEMPH = 0.97;
 const LOG_ZERO_GUARD = 2 ** -24; // float(2**-24) ≈ 5.96e-8
 const N_FREQ_BINS = (N_FFT >> 1) + 1; // 257
+const INV_SQRT2 = Math.SQRT1_2;
 
 // Shared precompute caches to avoid per-instance allocations.
 const MEL_FILTERBANK_CACHE = new Map();
@@ -220,6 +222,7 @@ function fft(re, im, N, tw) {
       }
     }
   } else {
+    // Fallback if no precomputed bitrev (shouldn't happen with correct usage)
     let j = 0;
     for (let i = 0; i < N - 1; i++) {
       if (i < j) {
@@ -239,10 +242,103 @@ function fft(re, im, N, tw) {
     }
   }
 
-  // Butterfly stages
-  for (let len = 2; len <= N; len <<= 1) {
+  // Unrolled Stage 1 (len=2): wCos=1, wSin=0
+  if (N >= 2) {
+    for (let i = 0; i < N; i += 2) {
+      const p = i,
+        q = i + 1;
+      const tRe = re[q],
+        tIm = im[q];
+      re[q] = re[p] - tRe;
+      im[q] = im[p] - tIm;
+      re[p] += tRe;
+      im[p] += tIm;
+    }
+  }
+
+  // Unrolled Stage 2 (len=4): k=0 (1,0), k=1 (0,-1)
+  if (N >= 4) {
+    for (let i = 0; i < N; i += 4) {
+      // k=0
+      const p0 = i,
+        q0 = i + 2;
+      const tRe0 = re[q0],
+        tIm0 = im[q0];
+      re[q0] = re[p0] - tRe0;
+      im[q0] = im[p0] - tIm0;
+      re[p0] += tRe0;
+      im[p0] += tIm0;
+
+      // k=1: wCos=0, wSin=-1 -> tRe = im[q], tIm = -re[q]
+      const p1 = i + 1,
+        q1 = i + 3;
+      const tRe1 = im[q1],
+        tIm1 = -re[q1];
+      re[q1] = re[p1] - tRe1;
+      im[q1] = im[p1] - tIm1;
+      re[p1] += tRe1;
+      im[p1] += tIm1;
+    }
+  }
+
+  // Unrolled Stage 3 (len=8): k=0,1,2,3
+  if (N >= 8) {
+    for (let i = 0; i < N; i += 8) {
+      // k=0 (1,0)
+      {
+        const p = i,
+          q = i + 4;
+        const tRe = re[q],
+          tIm = im[q];
+        re[q] = re[p] - tRe;
+        im[q] = im[p] - tIm;
+        re[p] += tRe;
+        im[p] += tIm;
+      }
+      // k=1 (wCos=0.707, wSin=-0.707)
+      {
+        const wCos = INV_SQRT2,
+          wSin = -INV_SQRT2;
+        const p = i + 1,
+          q = p + 4;
+        const tRe = re[q] * wCos - im[q] * wSin;
+        const tIm = re[q] * wSin + im[q] * wCos;
+        re[q] = re[p] - tRe;
+        im[q] = im[p] - tIm;
+        re[p] += tRe;
+        im[p] += tIm;
+      }
+      // k=2 (0, -1)
+      {
+        const p = i + 2,
+          q = p + 4;
+        const tRe = im[q],
+          tIm = -re[q];
+        re[q] = re[p] - tRe;
+        im[q] = im[p] - tIm;
+        re[p] += tRe;
+        im[p] += tIm;
+      }
+      // k=3 (wCos=-0.707, wSin=-0.707)
+      {
+        const wCos = -INV_SQRT2,
+          wSin = -INV_SQRT2;
+        const p = i + 3,
+          q = p + 4;
+        const tRe = re[q] * wCos - im[q] * wSin;
+        const tIm = re[q] * wSin + im[q] * wCos;
+        re[q] = re[p] - tRe;
+        im[q] = im[p] - tIm;
+        re[p] += tRe;
+        im[p] += tIm;
+      }
+    }
+  }
+
+  // Remaining stages (len=16..N)
+  for (let len = 16; len <= N; len <<= 1) {
     const halfLen = len >> 1;
-    const step = N / len; // twiddle index stride
+    const step = N / len;
     for (let i = 0; i < N; i += len) {
       for (let k = 0; k < halfLen; k++) {
         const twIdx = k * step;
@@ -284,11 +380,14 @@ export class JsPreprocessor {
     // Share immutable precomputed constants across instances.
     this.melFilterbank = getCachedMelFilterbank(this.nMels);
     this.hannWindow = getCachedPaddedHannWindow();
+    // Keep full-size twiddles for compatibility with tests and diagnostics.
     this.twiddles = precomputeTwiddles(N_FFT);
+    // PR74 path: use one N/2 complex FFT for real-valued input reconstruction.
+    this.twiddlesHalf = precomputeTwiddles(N_FFT >> 1);
 
     // Pre-allocate reusable buffers
-    this._fftRe = new Float64Array(N_FFT);
-    this._fftIm = new Float64Array(N_FFT);
+    this._fftRe = new Float64Array(N_FFT >> 1);
+    this._fftIm = new Float64Array(N_FFT >> 1);
     this._powerBuf = new Float32Array(N_FREQ_BINS);
     this._paddedBuffer = null;
 
@@ -409,19 +508,57 @@ export class JsPreprocessor {
     const window = this.hannWindow;
     const fb = this.melFilterbank;
     const nMels = this.nMels;
-    const tw = this.twiddles;
+    const twFull = this.twiddles;
+    const twHalf = this.twiddlesHalf;
     const fbBounds = this.fbBounds;
+    const halfN = N_FFT >> 1;
+    const quarterN = halfN >> 1;
 
     for (let t = startFrame; t < nFrames; t++) {
       const offset = t * HOP_LENGTH;
-      for (let k = 0; k < N_FFT; k++) {
-        fftRe[k] = padded[offset + k] * window[k];
-        fftIm[k] = 0;
+      // PR74: real FFT via one N/2 complex FFT, then reconstruct full real spectrum power.
+      for (let k = 0; k < halfN; k++) {
+        const idx = k << 1;
+        fftRe[k] = padded[offset + idx] * window[idx];
+        fftIm[k] = padded[offset + idx + 1] * window[idx + 1];
       }
-      fft(fftRe, fftIm, N_FFT, tw);
-      for (let k = 0; k < N_FREQ_BINS; k++) {
-        powerBuf[k] = fftRe[k] * fftRe[k] + fftIm[k] * fftIm[k];
+
+      fft(fftRe, fftIm, halfN, twHalf);
+
+      const z0r = fftRe[0];
+      const z0i = fftIm[0];
+      powerBuf[0] = (z0r + z0i) * (z0r + z0i);
+      powerBuf[halfN] = (z0r - z0i) * (z0r - z0i);
+
+      for (let k = 1; k < quarterN; k++) {
+        const rk = fftRe[k];
+        const ik = fftIm[k];
+        const rnk = fftRe[halfN - k];
+        const ink = fftIm[halfN - k];
+
+        const xeR = 0.5 * (rk + rnk);
+        const xeI = 0.5 * (ik - ink);
+        const xoR = 0.5 * (ik + ink);
+        const xoI = -0.5 * (rk - rnk);
+
+        const wc = twFull.cos[k];
+        const ws = twFull.sin[k];
+        const tr = xoR * wc - xoI * ws;
+        const ti = xoR * ws + xoI * wc;
+
+        const xkR = xeR + tr;
+        const xkI = xeI + ti;
+        powerBuf[k] = xkR * xkR + xkI * xkI;
+
+        const xnkR = xeR - tr;
+        const xnkI = xeI - ti;
+        powerBuf[halfN - k] = xnkR * xnkR + xnkI * xnkI;
       }
+
+      const rQuarter = fftRe[quarterN];
+      const iQuarter = fftIm[quarterN];
+      powerBuf[quarterN] = rQuarter * rQuarter + iQuarter * iQuarter;
+
       for (let m = 0; m < nMels; m++) {
         let melVal = 0;
         const fbOff = m * N_FREQ_BINS;
