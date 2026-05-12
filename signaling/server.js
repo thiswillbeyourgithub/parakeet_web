@@ -180,6 +180,25 @@ function evictOldestRateLimiter() {
             oldestKey = key;
         }
     }
+    // F-117: when every slot is blocked, the loop above finds no
+    // candidate and the function silently no-ops, letting the map
+    // grow past RATE_LIMITERS_MAX_ENTRIES (an attacker rotating
+    // IPv6 /64s plus a quick burst can saturate all 10k slots with
+    // blocked entries, then keep inserting fresh ones until OOM).
+    // Fall back to evicting the SINGLE blocked entry with the
+    // earliest blockedUntil: it expires soonest anyway, and yielding
+    // its slot prevents the cap from being defeated. The
+    // recycle-protection rationale only matters per-attacker; the
+    // cap is a stronger global invariant.
+    if (oldestKey === null) {
+        let earliestExpiry = Infinity;
+        for (const [key, limiter] of rateLimiters.entries()) {
+            if (limiter.blockedUntil && limiter.blockedUntil < earliestExpiry) {
+                earliestExpiry = limiter.blockedUntil;
+                oldestKey = key;
+            }
+        }
+    }
     if (oldestKey !== null) rateLimiters.delete(oldestKey);
 }
 
