@@ -59,7 +59,17 @@
 		# Browsers ignore HSTS over plain HTTP, so the in-container plain
 		# :5173 listener can carry it harmlessly. Default 1 year, no preload
 		# (operators must opt in to the preload list deliberately).
-		Strict-Transport-Security "max-age={$VITE_HSTS_MAX_AGE:31536000}; includeSubDomains"
+		#
+		# F-70: includeSubDomains is OPT-IN via VITE_HSTS_SUFFIX. Defaulting
+		# it ON would permanently brick every sibling subdomain that still
+		# serves plain HTTP (legacy admin panel, internal status page, CI
+		# artifact host, etc.) for any visitor who opens parakeet even once;
+		# clients can only undo HSTS via chrome://net-internals per browser,
+		# making the operator mistake one-way and visitor-facing. Operators
+		# who own the full apex can opt in by setting
+		# VITE_HSTS_SUFFIX="; includeSubDomains" (or add "; preload" only
+		# after submitting to the HSTS preload list, which is irrevocable).
+		Strict-Transport-Security "max-age={$VITE_HSTS_MAX_AGE:31536000}{$VITE_HSTS_SUFFIX:}"
 		# Cross-Origin-Resource-Policy: keep our resources to same-origin.
 		# COEP require-corp is already on; CORP same-origin is the matching
 		# response-side guarantee so sibling subdomains cannot read our
