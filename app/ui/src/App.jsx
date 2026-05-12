@@ -284,9 +284,17 @@ export default function App() {
   // phone streams at 48 kHz so the real-time ceiling is ~20 minutes.
   const REMOTE_MIC_MAX_SAMPLES = 10 * 60 * 96000;
   const remoteMicSampleCountRef = useRef(0);
+  // F-81 / F-84: tracks whether the phone has sent a valid audio-config
+  // for the CURRENT recording session. Reset by processRemoteMicBatch
+  // (after audio-end drains chunks) so each new recording starts a fresh
+  // sample-rate negotiation. A second audio-config mid-stream is a
+  // protocol violation that we close the channel on, rather than letting
+  // it silently switch the resampler's source rate.
+  const remoteMicAudioConfiguredRef = useRef(false);
   const clearPcmChunks = () => {
     pcmChunksRef.current = [];
     remoteMicSampleCountRef.current = 0;
+    remoteMicAudioConfiguredRef.current = false;
   };
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioLevel, setAudioLevel] = useState(0);
@@ -1406,6 +1414,19 @@ export default function App() {
               // strings, and absurd values would otherwise wedge UI in a
               // stuck "connected" state via an unhandled rejection from
               // OfflineAudioContext or a divide-by-zero in totalSec math.
+              //
+              // F-81: refuse a second audio-config inside the same
+              // recording. The live transcriber binds to the first rate
+              // and won't re-bind; the batch resampler reads the current
+              // ref, so a mid-stream rate swap would corrupt the final
+              // transcript in a way that looks like model error.
+              if (remoteMicAudioConfiguredRef.current) {
+                console.error('[RemoteMic] Duplicate audio-config mid-recording, closing');
+                setRemoteMicError(t('remoteMicInvalidConfig'));
+                setRemoteMicStatus('error');
+                rtc.close();
+                return;
+              }
               const sr = msg.sampleRate;
               if (!Number.isInteger(sr) || sr < 8000 || sr > 96000) {
                 console.error('[RemoteMic] Invalid audio-config sampleRate:', sr);
@@ -1414,6 +1435,7 @@ export default function App() {
                 rtc.close();
                 return;
               }
+              remoteMicAudioConfiguredRef.current = true;
               remoteMicSampleRateRef.current = sr;
               console.log(`[RemoteMic] Phone sample rate: ${sr}Hz`);
               setRemoteMicRecording(true);
