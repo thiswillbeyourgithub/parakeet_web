@@ -154,5 +154,13 @@ commits do not appear to have an upstream equivalent:
   on non-blank emission and no longer forces an extra `t += 1` when staying
   on the same frame — this unblocks legitimate multi-token-per-frame
   emission (the fix's documented win on contraction-heavy audio).
+- **2026-05-12 (round 2):** wholesale-resynced `mel.js` from upstream HEAD
+  `262e1f9` as local `2732210`. Local mel.js had no parakeet-web-specific
+  divergence (single port commit, byte-identical to upstream's snapshot),
+  so replacing the file is cleaner than chained cherry-picks across 17
+  perf/correctness commits with cross-commit invariants. Bulk of the
+  delta is the FFT real-reconstruction path (PR74), 3-stage FFT unroll,
+  shared precompute, buffer reuse, MurmurHash3-style mel cache key, and
+  filterbank sparse bounds. Public API unchanged.
 
 (Documentation prepared with help from Claude Code.)
