@@ -171,6 +171,30 @@ commits do not appear to have an upstream equivalent:
   `logits.dispose()` on failure. (c) `93844f5` marked DONE — its
   parakeet.js half was already absorbed by round 1's port `05c6fb6`,
   and its backend.js half is already covered by `bd38bf1`.
+- **2026-05-12 (round 6):** three parakeet.js decoder-loop perf ports,
+  one no-op closure.
+  (a) `02ecdc1` ports `85cf1fc`, the encoder transpose now iterates
+  t-outer / d-inner with an 8x inner unroll and a tail loop for
+  `D % 8`. Output is bitwise-identical to the previous nested loop.
+  (b) `93f7807` ports `514cea5`, argmax now runs on raw `tokenLogits`
+  via an 8x unroll that caches the block into `v0..v7` locals before
+  the sequential compare-and-update. Since `argmax(logit / T)` equals
+  `argmax(logit)` for any positive `T`, this also drops one division
+  per element and lets the `temperature = 0` greedy branch skip the
+  scaled-max computation entirely. `maxVal` is computed once via
+  `maxLogit / temperature`, gated on `useTemp` (later deleted by
+  `3cebc1c` once unused).
+  (c) `3cebc1c` ports `501cef3`, softmax denom is now 8x unrolled with
+  eight independent `s0..s7` accumulators and fuses
+  `(logit / T) - (maxLogit / T)` into `(logit - maxLogit) * invTemp`,
+  removing a per-element divide. Local kept the `useTemp` gate so the
+  greedy path still short-circuits to `confVal = 1.0` without dividing
+  by zero.
+  Closed without code change: `e534fa8` (encoder frame copy memcpy)
+  marked DONE-DIVERGED since local already uses a `transposed.subarray`
+  zero-copy view per decoder step (strictly better than upstream's
+  `_encoderFrameBuffer.set(...)` which still performs an explicit
+  memcpy; same reasoning as round 4's analysis of `47427b5`).
 - **2026-05-12 (round 5):** two hub.js ports, four no-op closures.
   (a) `35534af` ports `6f8c6f4`, `listRepoFiles` cache URL and
   `getModelFile` resolve URL now encode revision; subfolder and
