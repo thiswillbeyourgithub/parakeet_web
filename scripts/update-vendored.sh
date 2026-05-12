@@ -13,6 +13,16 @@
 #
 # Per CLAUDE.md, this script must only be run when the user explicitly asks
 # for a vendored-deps refresh. Run it from the repo root.
+#
+# Note for future Claude sessions: this script does **not** sync parakeet.js
+# (app/src/). That code is a fork of ysdede/parakeet.js, not an npm vendor,
+# so the registry-tarball flow below does not apply. The recurring
+# upstream-sync runbook for parakeet.js lives in app/src/SOURCE.md under
+# "Upstream sync runbook"; the per-round triage backlog lives in
+# TEMP_PLAN.md at the repo root (gitignored). Run a parakeet.js sync round
+# only when the user explicitly asks; pick up where the previous round left
+# off using the "Last upstream commit triaged" SHA recorded in
+# app/src/SOURCE.md.
 
 set -e
 
