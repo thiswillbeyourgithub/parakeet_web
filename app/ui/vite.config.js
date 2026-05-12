@@ -99,6 +99,14 @@ export default defineConfig({
     // .map files that Caddy's file_server happily serves, leaking original
     // source paths and unminified code structure.
     sourcemap: false,
+    // F-96: force every asset through the hashed-filename path instead of
+    // being inlined as a data: URL. The CSP no longer allows data: in
+    // img-src or font-src; inlining a small image or font as data: would
+    // therefore break the page. Setting the limit to 0 also benefits
+    // SRI (F-37): every asset has a content-hashed filename and an
+    // independent integrity entry. Default would inline assets under
+    // 4 KiB.
+    assetsInlineLimit: 0,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),

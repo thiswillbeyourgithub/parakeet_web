@@ -50,7 +50,18 @@
 		-Server
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		# F-96: dropped `data:` from img-src and font-src. No first-
+		# party code emits data: URLs (vite.config.js assetsInlineLimit
+		# is set to 0 to keep it that way). data: in img-src is a known
+		# CSS-injection-chained exfil channel via SVG; data: in font-src
+		# feeds CSS-position-leak via custom-font glyph timing. Both are
+		# unneeded.
+		# F-97: dropped `blob:` from child-src. No iframes / frames /
+		# blob-targeted nested browsing contexts exist in the codebase
+		# (only AudioWorklet.addModule and ORT's WASM/MJS loader use
+		# blob: URLs, and those fall under worker-src). child-src is
+		# tightened to 'none' to match frame-ancestors 'none'.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
 		# Permissions-Policy: only microphone, hid (WebHID for SpeechMike)
 		# and clipboard-write are needed by the page. Everything else is
 		# explicitly disabled so a compromised script cannot elicit a
