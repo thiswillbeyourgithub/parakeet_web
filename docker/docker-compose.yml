@@ -32,15 +32,16 @@ services:
     read_only: true
     tmpfs:
       - /tmp:mode=1777
-      # mode=1777 is required because the container runs as UID 1000; without
-      # an explicit mode, docker mounts these tmpfs as root:root mode 755 and
-      # the entrypoint cannot write manifest.txt / config.js, and caddy cannot
-      # write its config/data dirs.
-      - /var/regex:mode=1777
-      - /run/config:mode=1777
-      # Caddy default config/data dirs (it tries to create these on start).
-      - /config/caddy:mode=1777
-      - /data/caddy:mode=1777
+      # The container runs as UID 1000; without explicit ownership options,
+      # docker mounts these tmpfs as root:root mode 755 and the entrypoint
+      # cannot write into them. /run/config additionally needs UID 1000 to
+      # OWN the directory because F-112 chmods /run/config itself to 0500
+      # after generating config.js (chmod requires ownership, not just write).
+      # Caddy also runs as UID 1000 and writes into /config/caddy + /data/caddy.
+      - /var/regex:uid=1000,gid=1000,mode=0700
+      - /run/config:uid=1000,gid=1000,mode=0700
+      - /config/caddy:uid=1000,gid=1000,mode=0700
+      - /data/caddy:uid=1000,gid=1000,mode=0700
     # volumes:
       # Local model fallback: bind-mount a host folder of ONNX files (flat
       # layout: vocab.txt + .onnx files directly inside) into the container,
