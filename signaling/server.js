@@ -423,7 +423,7 @@ setInterval(cleanupRooms, 60 * 1000);
 
 /**
  * Generate time-based TURN credentials using HMAC-SHA1.
- * Same algorithm as WebSend — both apps share the same coturn instance.
+ * Same algorithm as WebSend, both apps share the same coturn instance.
  */
 function generateTurnCredentials() {
     const expiryTime = Math.floor(Date.now() / 1000) + TURN_CREDENTIAL_TTL;
@@ -434,6 +434,39 @@ function generateTurnCredentials() {
         .update(username)
         .digest('base64');
     return { username, credential };
+}
+
+// F-116: global cap on TURN credential issuance, irrespective of source
+// IP. The per-IP iceConfig limiter caps a single source to 10/min but
+// an attacker rotating IPv6 /64s (2^64 source addresses) trivially
+// escapes that bucket and harvests credentials without bound, turning
+// the operator's coturn into an open relay (and bleeding bandwidth of
+// the shared-with-WebSend coturn). 200/min total is two orders of
+// magnitude above legitimate peak (1 credential per session start), so
+// real users are never throttled but a flood is rate-capped at the
+// equivalent of ~3 fresh credential sets per second. Each credential
+// is valid for TURN_CREDENTIAL_TTL (3600 s by default), so the
+// steady-state attacker harvest rate is bounded.
+//
+// Architectural fix (option b from the F-116 mitigation note) is to
+// mint credentials at room creation and stop exposing /api/config
+// unauthenticated; that is a non-trivial client refactor left for a
+// future iteration. This global bucket is the bounded-blast-radius
+// surgical fix.
+const TURN_GLOBAL_WINDOW_MS = 60 * 1000;
+const TURN_GLOBAL_MAX_PER_WINDOW = 200;
+const _turnIssueTimestamps = [];
+function tryConsumeTurnGlobalQuota() {
+    const now = Date.now();
+    const windowStart = now - TURN_GLOBAL_WINDOW_MS;
+    while (_turnIssueTimestamps.length && _turnIssueTimestamps[0] < windowStart) {
+        _turnIssueTimestamps.shift();
+    }
+    if (_turnIssueTimestamps.length >= TURN_GLOBAL_MAX_PER_WINDOW) {
+        return false;
+    }
+    _turnIssueTimestamps.push(now);
+    return true;
 }
 
 // ============ API Endpoints ============
@@ -451,17 +484,28 @@ app.get('/api/config', rateLimitMiddleware('iceConfig'), (req, res) => {
     }
 
     if (TURN_SERVER && TURN_SECRET) {
-        const { username, credential } = generateTurnCredentials();
-        iceServers.push({
-            urls: [
-                `turn:${TURN_SERVER}?transport=udp`,
-                `turn:${TURN_SERVER}?transport=tcp`,
-                ...(TURNS_PORT ? [`turns:${TURN_SERVER.replace(/:\d+$/, ':' + TURNS_PORT)}?transport=tcp`] : [])
-            ],
-            username,
-            credential
-        });
-        debugLog('CONFIG', `Using TURN server: ${TURN_SERVER}${TURNS_PORT ? ` (TURNS on port ${TURNS_PORT})` : ''}`);
+        // F-116: do not mint credentials when the global per-minute
+        // quota is exhausted. Returning STUN-only iceServers is a
+        // soft-fail: legitimate users on the same minute will still
+        // get a working WebRTC session when the peer is reachable
+        // directly, and only fail when a relay is genuinely required.
+        // A loud server-side log makes the rate-cap visible to the
+        // operator.
+        if (!tryConsumeTurnGlobalQuota()) {
+            console.warn(`[TURN] global issuance quota exhausted (${TURN_GLOBAL_MAX_PER_WINDOW}/min); returning STUN-only iceServers for ip=${sanitizeForLog(getClientIp(req))}`);
+        } else {
+            const { username, credential } = generateTurnCredentials();
+            iceServers.push({
+                urls: [
+                    `turn:${TURN_SERVER}?transport=udp`,
+                    `turn:${TURN_SERVER}?transport=tcp`,
+                    ...(TURNS_PORT ? [`turns:${TURN_SERVER.replace(/:\d+$/, ':' + TURNS_PORT)}?transport=tcp`] : [])
+                ],
+                username,
+                credential
+            });
+            debugLog('CONFIG', `Using TURN server: ${TURN_SERVER}${TURNS_PORT ? ` (TURNS on port ${TURNS_PORT})` : ''}`);
+        }
     } else if (TURN_SERVER && !TURN_SECRET) {
         console.warn('TURN_SERVER is set but TURN_SECRET is missing. TURN will not be available.');
     }
