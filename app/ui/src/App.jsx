@@ -366,7 +366,7 @@ export default function App() {
   const [chunkDuration, setChunkDuration] = useState(60); // seconds
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
-  const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(true);
+  const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
   const [liveContextWindow, setLiveContextWindow] = useState('auto'); // 'auto' | '10'..'60'
   const [liveTranscript, setLiveTranscript] = useState({ text: '', words: [] });
   const [liveStats, setLiveStats] = useState(null);
@@ -693,7 +693,7 @@ export default function App() {
           loadSetting('enableChunking', true),
           loadSetting('chunkDuration', 60),
           loadSetting('transcriptDisplayMode', 'raw'),
-          loadSetting('liveTranscriptionEnabled', true),
+          loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
         ]);
 
