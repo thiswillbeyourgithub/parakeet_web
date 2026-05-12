@@ -1988,8 +1988,14 @@ export default function App() {
     if (!modelRef.current) return alert(t('loadModelFirst'));
     if (!file) return;
 
+    // F-124: OS-controlled file.name can contain bidi-override / control
+    // codepoints; sanitize once and use the cleaned name in every
+    // user-visible string. Raw file.name still goes to console.log /
+    // console.time below since those are devtools-only.
+    const safeName = sanitizeDeviceName(file.name, 'file');
+
     setIsTranscribing(true);
-    setStatus(`${t('transcribingFile')} "${file.name}"…`);
+    setStatus(`${t('transcribingFile')} "${safeName}"…`);
 
     try {
       console.log(`[Transcribe] Starting transcription for file: "${file.name}"`);
@@ -2027,7 +2033,7 @@ export default function App() {
       
       // Yield to UI before heavy resampling operation
       await new Promise(resolve => setTimeout(resolve, 0));
-      setStatus(`${t('processingResampling')} "${file.name}"`);
+      setStatus(`${t('processingResampling')} "${safeName}"`);
       setProgressText(t('resamplingTo16k'));
       
       const offlineCtx = new OfflineAudioContext(
@@ -2139,7 +2145,7 @@ export default function App() {
               setText(partialText + ' [transcribing...]');
               setProgressPct(chunkProgress);
               setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${(chunkElapsed/1000).toFixed(1)}s • Est. ${estimatedRemaining}s remaining`);
-              setStatus(`${t('transcribingFile')} "${file.name}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
+              setStatus(`${t('transcribingFile')} "${safeName}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
               
               if (chunkNum === 1) {
                 setLatestMetrics(chunkRes.metrics);
@@ -2197,7 +2203,7 @@ export default function App() {
       // Add to transcriptions list
       const newTranscription = {
         id: Date.now(),
-        filename: file.name,
+        filename: safeName,
         text: res.utterance_text,
         timestamp: new Date().toLocaleTimeString(),
         duration: audioDuration, // original duration (without padding)
@@ -2258,7 +2264,10 @@ export default function App() {
         ? `${errorMsg}\n\nCheck console for full error details and stack trace.`
         : errorMsg;
       
-      alert(`Failed to transcribe "${file.name}": ${detailedMsg}`);
+      // F-124: file.name is OS-controlled and can contain bidi-override or
+      // control codepoints. Run through sanitizeDeviceName which already
+      // strips C0/C1 + bidi and length-caps to 64 chars.
+      alert(`Failed to transcribe "${safeName}": ${detailedMsg}`);
     } finally {
       setIsTranscribing(false);
       // The final transcription has now been pushed (or the run failed and
