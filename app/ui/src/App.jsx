@@ -664,14 +664,16 @@ export default function App() {
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
         setAutoTranscribe(savedAutoTranscribe);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
-        // Resolve the persistTranscripts migration default. If the user has
-        // never seen this toggle (null) but already has on-disk transcripts,
-        // preserve that behaviour with ON; otherwise the privacy-first OFF.
-        setPersistTranscripts(
-          savedPersistTranscripts !== null
-            ? savedPersistTranscripts
-            : (Array.isArray(savedTranscriptions) && savedTranscriptions.length > 0)
-        );
+        // F-132: strict privacy-first default. When the toggle key is null
+        // (fresh install, profile import without the toggle, manual DevTools
+        // edit that removed only the key) always default to OFF. The prior
+        // "resurrect ON when on-disk transcripts exist" branch could
+        // silently re-enable persistence on profile-import / dev-preview /
+        // stale-leveldb scenarios, contradicting the privacy-first contract.
+        // Pre-F-55 users keep their in-memory session for the current page
+        // but new transcripts won't persist forward until they opt in
+        // explicitly in Settings.
+        setPersistTranscripts(savedPersistTranscripts === true);
         setShowAdvancedInfo(savedShowAdvancedInfo);
         setEnableChunking(savedEnableChunking);
         setChunkDuration(savedChunkDuration);
