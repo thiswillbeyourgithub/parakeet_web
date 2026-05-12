@@ -149,7 +149,7 @@ FROM caddy:2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39d
 # operator running `docker run --rm parakeetweb cat /etc/parakeet-
 # build.txt` can audit the runtime versions against build-sums.txt.
 # libcap is needed once for setcap; we keep it transient via virtual.
-RUN apk add --no-cache 'nodejs=~20' && \
+RUN apk add --no-cache 'nodejs=~24' && \
     apk add --no-cache --virtual .build-deps libcap && \
     # Strip file caps from caddy: the official image sets cap_net_bind_service
     # so it can bind low ports, but combined with no-new-privileges this makes
