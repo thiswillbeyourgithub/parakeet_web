@@ -31,9 +31,21 @@ ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 # Each `npm ci` runs with --ignore-scripts so a compromised dep's
 # postinstall (the standard malware delivery channel) cannot execute
 # arbitrary code during build. The single legitimate exception is
-# esbuild (vite's bundler), which needs its install.js to fetch the
+# esbuild (vite's bundler), which needs its install.js to expose its
 # platform-specific binary; we explicitly `npm rebuild esbuild` to
 # allowlist exactly that one package.
+#
+# F-105: esbuild's install.js, when invoked, first probes
+# `require.resolve('@esbuild/<platform>/bin/esbuild')` and only falls
+# through to `downloadDirectlyFromNPM` (an unverified `https.get` to
+# `registry.npmjs.org`) if the optional dep is not on disk. With the
+# F-104 lockfile fix the `@esbuild/linux-x64` optional dep is now
+# integrity-verified at `npm ci` time, so the on-disk path is taken
+# and the unverified download branch is unreachable. We pin
+# ESBUILD_BINARY_PATH below as belt-and-braces so a future lockfile
+# regeneration that drops the optional dep cannot silently reintroduce
+# the download path: install.js will exit cleanly when the env-var
+# points at an extant binary, and fail loudly if it does not.
 #
 # `npm ci` (not `npm install`) refuses to mutate the lockfile, so the
 # install set is exactly what's recorded in the committed
@@ -64,8 +76,14 @@ RUN cd app && npm ci --ignore-scripts --no-audit --no-fund
 
 # UI app
 COPY app/ui/package.json app/ui/package-lock.json ./app/ui/
-RUN cd app/ui && npm ci --ignore-scripts --no-audit --no-fund \
-    && npm rebuild esbuild
+RUN cd app/ui && npm ci --ignore-scripts --no-audit --no-fund && \
+    if [ ! -x /build/app/ui/node_modules/@esbuild/linux-x64/bin/esbuild ]; then \
+      echo "[Dockerfile] FATAL: @esbuild/linux-x64 optional dep missing after npm ci; refusing to fall through to install.js downloadDirectlyFromNPM (unverified https.get)"; \
+      exit 1; \
+    fi && \
+    ESBUILD_BINARY_PATH=/build/app/ui/node_modules/@esbuild/linux-x64/bin/esbuild \
+      npm rebuild esbuild
+ENV ESBUILD_BINARY_PATH=/build/app/ui/node_modules/@esbuild/linux-x64/bin/esbuild
 
 # Signaling server
 COPY signaling/package.json signaling/package-lock.json ./signaling/
