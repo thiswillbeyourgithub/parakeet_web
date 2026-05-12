@@ -116,7 +116,10 @@
 		# who own the full apex can opt in by setting
 		# VITE_HSTS_SUFFIX="; includeSubDomains" (or add "; preload" only
 		# after submitting to the HSTS preload list, which is irrevocable).
-		Strict-Transport-Security "max-age={$VITE_HSTS_MAX_AGE:31536000}{$VITE_HSTS_SUFFIX:}"
+		# F-145: default max-age raised from 1y (31536000) to 2y (63072000)
+		# to match Chrome/Firefox HSTS preload-list requirements. Operators
+		# who need a different value still override via VITE_HSTS_MAX_AGE.
+		Strict-Transport-Security "max-age={$VITE_HSTS_MAX_AGE:63072000}{$VITE_HSTS_SUFFIX:}"
 		# Cross-Origin-Resource-Policy: keep our resources to same-origin.
 		# COEP require-corp is already on; CORP same-origin is the matching
 		# response-side guarantee so sibling subdomains cannot read our
