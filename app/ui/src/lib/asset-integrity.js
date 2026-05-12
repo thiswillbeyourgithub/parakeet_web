@@ -23,9 +23,14 @@ const _HARD_FAIL = typeof import.meta !== 'undefined' && import.meta.env?.PROD =
 
 let manifestPromise = null;
 
+// F-103: clear the cached promise on rejection so a transient network
+// blip on the first verifiedAddModule call doesn't permanently break
+// AudioWorklet load. Only successful resolutions are memoised; failures
+// fall through to the next caller. HARD_FAIL semantics (throw to the
+// caller) are preserved, just retryable instead of one-shot-fatal.
 function loadManifest() {
   if (!manifestPromise) {
-    manifestPromise = fetch('/.well-known/asset-integrity.json')
+    const inflight = fetch('/.well-known/asset-integrity.json')
       .then(r => {
         if (!r.ok) {
           if (_HARD_FAIL) throw new Error(`asset-integrity.json HTTP ${r.status}`);
@@ -34,9 +39,13 @@ function loadManifest() {
         return r.json();
       })
       .catch(err => {
-        if (_HARD_FAIL) throw err;
+        if (_HARD_FAIL) {
+          if (manifestPromise === inflight) manifestPromise = null;
+          throw err;
+        }
         return {};
       });
+    manifestPromise = inflight;
   }
   return manifestPromise;
 }
