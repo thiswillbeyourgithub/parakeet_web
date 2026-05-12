@@ -207,21 +207,18 @@ else
     echo "[entrypoint]     --local-dir /some/host/path"
     exit 1
   fi
-  # F-100: refuse the (LOCAL_MODEL_PATH set + VITE_ALLOW_UNVERIFIED_MODEL=true)
-  # combination. The unverified-model opt-in is for trusting HuggingFace
-  # bytes verified out of band; it is NOT a license to serve unverified
-  # weights from a writable bind-mount where any host-side compromise can
-  # swap the .onnx files silently. With pinned hashes the local fallback
-  # still goes through _streamAndCache with the expected hash, so a
-  # divergent bind-mount fails closed; bypassing that runtime check while
-  # pointing at a writable mount is a foot-gun.
+  # VITE_ALLOW_UNVERIFIED_MODEL=true with LOCAL_MODEL_PATH set is allowed:
+  # the operator has explicitly opted into trust-on-first-use for the
+  # bind-mounted weights. A host-side compromise that swaps the .onnx
+  # files will not be caught at runtime in this configuration, so this
+  # is only safe if the bind-mount source is treated as trusted (read-only
+  # mount, restricted host permissions, etc.). Log a clear warning so it
+  # shows up in `docker logs`.
   if [ "${VITE_ALLOW_UNVERIFIED_MODEL:-}" = "true" ]; then
-    echo "[entrypoint] ERROR: VITE_ALLOW_UNVERIFIED_MODEL=true combined with"
-    echo "[entrypoint] LOCAL_MODEL_PATH is refused. The opt-in is for trusting"
-    echo "[entrypoint] HuggingFace bytes verified out of band; a writable host"
-    echo "[entrypoint] folder needs pinned hashes in models.js so the runtime"
-    echo "[entrypoint] check catches a poisoned bind-mount."
-    exit 1
+    echo "[entrypoint] WARNING: VITE_ALLOW_UNVERIFIED_MODEL=true with LOCAL_MODEL_PATH."
+    echo "[entrypoint] The bind-mounted weights at ${LOCAL_MODEL_PATH} will be served"
+    echo "[entrypoint] without runtime hash verification. Ensure the host folder is"
+    echo "[entrypoint] trusted (ideally read-only) to mitigate poisoned-mount risk."
   fi
 fi
 
@@ -350,9 +347,9 @@ node -e '
 # as. An RCE in the externally-reachable signaling process (untrusted
 # phone client + npm-supply-chain risk on express et al) would
 # otherwise let an attacker overwrite /run/config/config.js to set
-# VITE_ALLOW_UNVERIFIED_MODEL=true (bypassing F-99/F-100), point
+# VITE_ALLOW_UNVERIFIED_MODEL=true (bypassing F-99), point
 # VITE_MODEL_REPO at an attacker-controlled HF repo, etc. The
-# entrypoint's startup validation of these env vars (F-99/F-100/F-101)
+# entrypoint's startup validation of these env vars (F-99/F-101)
 # only runs ONCE; the served bytes are never re-validated. chmod 0400
 # means the runtime user must explicitly chmod +w before re-writing,
 # which is detectable by any process trace and breaks naive RCE
