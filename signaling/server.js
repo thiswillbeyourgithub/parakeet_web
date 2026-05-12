@@ -93,6 +93,14 @@ app.use('/api', (req, res, next) => {
         res.set('Access-Control-Allow-Origin', origin);
         res.set('Access-Control-Allow-Headers', 'Content-Type, X-Room-Secret');
         res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        // F-150: cache preflight for 10 min so the browser does not refire
+        // OPTIONS before every signaling POST (offer / answer / candidate
+        // / verify exchanges happen in quick succession). Reduces both
+        // round-trip latency on the phone-pair handshake and the volume of
+        // requests that would otherwise be counted against the preflight
+        // rate limit, without weakening the per-request Origin check that
+        // runs on every real call.
+        res.set('Access-Control-Max-Age', '600');
     }
     if (req.method === 'OPTIONS') {
         return res.status(204).send();
