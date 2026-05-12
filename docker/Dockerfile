@@ -121,11 +121,28 @@ RUN cd app/ui/dist && mkdir -p .well-known && \
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
 FROM caddy:2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
 
-RUN apk add --no-cache nodejs libcap && \
+# F-107: the nodejs binary runs both the signaling server (which
+# untrusted phones connect to) and the entrypoint's config-generator
+# (which emits /run/config/config.js, served as JS to every visitor).
+# Bare `apk add --no-cache nodejs` fetches whatever Alpine ships at
+# rebuild time from dl-cdn.alpinelinux.org with no record of the
+# rotation. Pin a major version so a future Alpine major bump is a
+# build-time failure (visible) rather than a silent runtime swap, and
+# record the resolved exact version into /etc/parakeet-build.txt so an
+# operator running `docker run --rm parakeetweb cat /etc/parakeet-
+# build.txt` can audit the runtime versions against build-sums.txt.
+# libcap is needed once for setcap; we keep it transient via virtual.
+RUN apk add --no-cache 'nodejs=~20' && \
+    apk add --no-cache --virtual .build-deps libcap && \
     # Strip file caps from caddy: the official image sets cap_net_bind_service
     # so it can bind low ports, but combined with no-new-privileges this makes
     # exec fail. We bind 5173 (unprivileged), so no caps are needed.
     setcap -r /usr/sbin/caddy 2>/dev/null || setcap -r /usr/bin/caddy 2>/dev/null || true && \
+    apk del .build-deps && \
+    # Snapshot the resolved versions of every runtime-installed package so
+    # an operator can correlate a deployed container with the exact byte
+    # set it was built from.
+    apk info -v | LC_ALL=C sort > /etc/parakeet-build.txt && \
     # Create a non-root user for the runtime processes. UID 1000 matches the
     # default host user on most Linux distros, which keeps bind-mount perms
     # simple (e.g. ./fallback_models is readable by the same UID without an
