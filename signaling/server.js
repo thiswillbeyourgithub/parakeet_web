@@ -104,9 +104,26 @@ function validateOrigin(req, res, next) {
     // Browsers omit Origin on same-origin GETs (the long-poll for /answer,
     // the room-existence check on join, etc.), so we can't require it without
     // breaking those flows. Sec-Fetch-Site is browser-set and forbidden to
-    // JavaScript, so curl/server-to-server callers (the SSRF/credential-leak
-    // concern) can't spoof it: same-origin in that header is a reliable
-    // browser-issued same-origin signal.
+    // JavaScript-in-a-page, so a malicious cross-origin page CANNOT spoof it
+    // (the same-origin gate against malicious sites loaded by the user's
+    // browser).
+    //
+    // F-115: HOWEVER any non-browser client (curl, python requests, a
+    // compromised phone with native code, a malicious browser extension
+    // running with extended privileges) trivially sets
+    // `Sec-Fetch-Site: same-origin` verbatim. So this fallback does NOT
+    // gate non-browser callers from the open internet; it only gates
+    // browser-CSRF. The defense-in-depth chain is:
+    //   - rate limits (F-44/F-117) cap volume per IP + globally
+    //   - validateRoomSecret protects every /api/rooms/:id/* route
+    //   - F-116 will move /api/config behind validateRoomSecret too,
+    //     making `/api/stats` the only Sec-Fetch-Site-bypassable
+    //     endpoint with no room-secret gate (low-value: it returns an
+    //     active-rooms count, no peer state).
+    // We KEEP the fallback because removing it would break legitimate
+    // same-origin GETs (validateRoomSecret on room routes still gates
+    // the actual auth). The comment above the fallback used to claim
+    // "curl can't spoof it"; that was wrong and is corrected here.
     const fetchSite = req.headers['sec-fetch-site'];
     if (fetchSite === 'same-origin') return next();
 
