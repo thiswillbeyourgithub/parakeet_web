@@ -130,32 +130,67 @@ async function listRepoFiles(repoId, revision = 'main') {
   const cacheKey = `${repoId}@${revision}`;
   if (repoFileCache.has(cacheKey)) return repoFileCache.get(cacheKey);
 
-  const url = `https://huggingface.co/api/models/${repoId}?revision=${encodeURIComponent(revision)}`;
+  const encodedRevision = encodeURIComponent(revision);
+  // /tree/<rev> returns siblings scoped to that branch/SHA. The plain
+  // /api/models?revision= endpoint always lists the default branch's
+  // file set even when a revision is passed, which breaks quant-file
+  // detection on repos that ship int8 vs fp32 on different branches.
+  const treeUrl = `https://huggingface.co/api/models/${repoId}/tree/${encodedRevision}?recursive=1`;
+  const modelUrl = `https://huggingface.co/api/models/${repoId}?revision=${encodedRevision}`;
+
+  const filterSafe = (names, source) => {
+    const files = names.filter(name => typeof name === 'string' && SAFE_RFILENAME_RE.test(name));
+    if (files.length !== names.length) {
+      console.warn(`[Hub] listRepoFiles ${repoId}@${revision} (${source}): dropped ${names.length - files.length} entry(ies) with unsafe filenames`);
+    }
+    return files;
+  };
+
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(treeUrl);
     if (resp.ok) {
       const json = await resp.json();
-      const raw = json.siblings?.map(s => s.rfilename) || [];
-      const files = raw.filter(name => typeof name === 'string' && SAFE_RFILENAME_RE.test(name));
-      if (files.length !== raw.length) {
-        console.warn(`[Hub] listRepoFiles ${repoId}@${revision}: dropped ${raw.length - files.length} sibling(s) with unsafe filenames`);
+      let raw = [];
+      if (Array.isArray(json)) {
+        raw = json
+          .filter(entry => entry?.type === 'file' && typeof entry?.path === 'string')
+          .map(entry => entry.path);
+      } else {
+        raw = json.siblings?.map(s => s.rfilename) || [];
       }
+      const files = filterSafe(raw, 'tree');
       repoFileCache.set(cacheKey, files);
       return files;
     }
-    // 4xx (e.g. 404 wrong repo, 401 gated): empty listing is the right
-    // answer; the caller's per-file fetch will surface the real error.
     if (resp.status >= 400 && resp.status < 500) {
-      console.warn(`[Hub] listRepoFiles ${repoId}@${revision} returned ${resp.status}`);
+      console.warn(`[Hub] listRepoFiles ${repoId}@${revision} tree returned ${resp.status}; trying model metadata`);
+    } else {
+      // 5xx: transient on the tree endpoint, but still try the model
+      // endpoint before giving up.
+      console.warn(`[Hub] listRepoFiles ${repoId}@${revision} tree server error ${resp.status} – falling back to model metadata`);
+    }
+  } catch (err) {
+    console.warn('[Hub] listRepoFiles tree network error, falling back to model metadata:', err.message || err);
+  }
+
+  try {
+    const resp = await fetch(modelUrl);
+    if (resp.ok) {
+      const json = await resp.json();
+      const raw = json.siblings?.map(s => s.rfilename) || [];
+      const files = filterSafe(raw, 'model');
+      repoFileCache.set(cacheKey, files);
+      return files;
+    }
+    if (resp.status >= 400 && resp.status < 500) {
+      console.warn(`[Hub] listRepoFiles ${repoId}@${revision} model returned ${resp.status}`);
       repoFileCache.set(cacheKey, []);
       return [];
     }
-    // 5xx is transient — don't poison the cache so a later call can retry.
-    console.warn(`[Hub] listRepoFiles ${repoId}@${revision} server error ${resp.status} – retry possible`);
+    console.warn(`[Hub] listRepoFiles ${repoId}@${revision} model server error ${resp.status} – retry possible`);
     return [];
   } catch (err) {
-    // Network/CORS error: also transient — leave the cache unset.
-    console.warn('[Hub] listRepoFiles network error – falling back to optimistic fetch:', err.message || err);
+    console.warn('[Hub] listRepoFiles model network error – falling back to optimistic fetch:', err.message || err);
     return [];
   }
 }
