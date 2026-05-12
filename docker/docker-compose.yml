@@ -60,6 +60,7 @@ services:
       - VITE_DEV_MODE=${VITE_DEV_MODE:-false}
       - VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL}
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
+      - VITE_ANALYTICS_SRI=${VITE_ANALYTICS_SRI:-}
       - VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-true}
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}
       # Local model fallback: auto-enabled when LOCAL_MODEL_PATH is set.
