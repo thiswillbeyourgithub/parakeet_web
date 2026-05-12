@@ -129,6 +129,18 @@
 	# bound to what Caddy actually saw on the wire.
 	handle_path /api/signal/* {
 		rewrite * /api{uri}
+		# F-74: signaling responses (offer/answer/stats/room) carry
+		# transient handshake state and an activeRooms count that an
+		# intermediate cache (corporate egress proxy, ISP cache) might
+		# happily serve to the next requester on the same path, building
+		# a room-existence/activity oracle (related to F-43). No-store
+		# also keeps the back-button / bfcache from restoring a stale
+		# answer body. Pragma covers HTTP/1.0 intermediates. Vary on
+		# X-Room-Secret ensures any cache that does retain bytes keys on
+		# the secret rather than just the URL.
+		header Cache-Control "no-store"
+		header Pragma "no-cache"
+		header Vary "Origin, X-Room-Secret"
 		reverse_proxy localhost:3001 {
 			# F-39: strip XFF/X-Real-IP/X-Forwarded-Host before Caddy
 			# re-appends its own values; without this, client-supplied
