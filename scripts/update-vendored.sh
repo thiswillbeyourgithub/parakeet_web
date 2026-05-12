@@ -56,6 +56,63 @@ get_latest_version() {
   fi
 }
 
+# F-106: pull the registry's published integrity hash (`dist.integrity`)
+# for the resolved version. This is an independent anchor: even if the
+# tarball URL serves attacker-controlled bytes (registry takeover, mirror
+# poisoning), the metadata endpoint and the tarball endpoint would have
+# to agree, AND the published integrity would have to be the bad hash.
+# Returns the SRI string verbatim, e.g. "sha512-Bp1...==".
+get_registry_integrity() {
+  pkg="$1"
+  version="$2"
+  url="https://registry.npmjs.org/$pkg/$version"
+  if [ "$JSON_TOOL" = "jq" ]; then
+    curl -sfL "$url" | jq -r '.dist.integrity // ""'
+  else
+    curl -sfL "$url" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{console.log(JSON.parse(s).dist.integrity||"")}catch(_){console.log("")}})'
+  fi
+}
+
+# Verify a tarball file against an SRI integrity string from the
+# registry. Uses openssl (universally available on dev machines and
+# Alpine). Returns 0 on match, 1 on mismatch, 2 if SRI uses an unknown
+# algorithm or openssl is missing.
+verify_tarball_sri() {
+  tarball="$1"
+  sri="$2"
+  command -v openssl >/dev/null 2>&1 || return 2
+  case "$sri" in
+    sha256-*)
+      expected="${sri#sha256-}"
+      actual=$(openssl dgst -sha256 -binary "$tarball" | openssl base64 -A)
+      ;;
+    sha384-*)
+      expected="${sri#sha384-}"
+      actual=$(openssl dgst -sha384 -binary "$tarball" | openssl base64 -A)
+      ;;
+    sha512-*)
+      expected="${sri#sha512-}"
+      actual=$(openssl dgst -sha512 -binary "$tarball" | openssl base64 -A)
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+  [ "$expected" = "$actual" ]
+}
+
+# Extract the previously-pinned tarball SHA-256 from SOURCE.md, if any.
+# Used to detect a re-published version: same version string but
+# different bytes published under it (registry account-takeover signal).
+read_pinned_sha256() {
+  src="$1"
+  sed -n 's|^- Tarball SHA-256: `\([a-f0-9]\{64\}\)`$|\1|p' "$src" | head -n 1
+}
+read_pinned_version() {
+  src="$1"
+  sed -n 's|^- Version: `\([^`]*\)`$|\1|p' "$src" | head -n 1
+}
+
 # Refresh one npm-vendored package. Downloads the registry tarball, verifies
 # its SHA-256, replaces the vendor directory contents, and rewrites the
 # Version / Source / Tarball SHA-256 lines in SOURCE.md.
@@ -87,6 +144,49 @@ update_npm_pkg() {
   curl -sfL -o "$tmp/pkg.tgz" "$tarball_url"
   sha=$(sha256sum "$tmp/pkg.tgz" | awk '{print $1}')
   echo "    sha256 = $sha"
+
+  # F-106: independent-anchor verification.
+  #
+  # (1) Compare the locally-computed digest of the tarball against the
+  #     registry's published `dist.integrity`. This catches a tarball-
+  #     endpoint compromise where the bytes diverge from what the
+  #     metadata endpoint claims, AND it catches the case where someone
+  #     re-uploaded the same version with different bytes (the registry
+  #     would have refused to update `dist.integrity` for an immutable
+  #     version; if the value moved, that's a load-bearing signal).
+  registry_sri=$(get_registry_integrity "$pkg" "$version")
+  if [ -z "$registry_sri" ]; then
+    echo "    ERROR: registry did not publish dist.integrity for $pkg@$version" >&2
+    return 1
+  fi
+  echo "    registry integrity = $registry_sri"
+  if ! verify_tarball_sri "$tmp/pkg.tgz" "$registry_sri"; then
+    rv=$?
+    if [ "$rv" = "2" ]; then
+      echo "    ERROR: cannot verify SRI '$registry_sri' (openssl missing or unknown algorithm)" >&2
+    else
+      echo "    ERROR: tarball bytes do not match registry-published integrity" >&2
+      echo "    Refusing to overwrite vendor tree." >&2
+    fi
+    return 1
+  fi
+  echo "    registry integrity verified."
+
+  # (2) Compare against the previously-pinned SHA-256 in SOURCE.md. If
+  #     the upstream version string is unchanged but the bytes moved,
+  #     that signals an account takeover / forced re-publish. Refuse
+  #     silently to overwrite; the maintainer can `--force` after
+  #     out-of-band verification.
+  prev_version=$(read_pinned_version "$dest/SOURCE.md")
+  prev_sha=$(read_pinned_sha256 "$dest/SOURCE.md")
+  if [ -n "$prev_version" ] && [ -n "$prev_sha" ] \
+     && [ "$prev_version" = "$version" ] && [ "$prev_sha" != "$sha" ]; then
+    echo "    ERROR: $pkg@$version was previously pinned at sha256=$prev_sha" >&2
+    echo "    but the registry now serves sha256=$sha for the same version." >&2
+    echo "    This is the shape of a re-publish or registry compromise." >&2
+    echo "    Verify out-of-band before refreshing." >&2
+    return 1
+  fi
 
   # npm tarballs extract into a single top-level 'package/' directory.
   mkdir -p "$tmp/extract"
