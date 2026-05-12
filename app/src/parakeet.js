@@ -334,6 +334,21 @@ export class ParakeetModel {
     let t0, tPreproc = 0, tEncode = 0, tDecode = 0, tToken = 0;
     if (perfEnabled) t0 = performance.now();
 
+    // ORT-allocated resources tracked at function scope so the finally block
+    // can free them if any await between here and the normal dispose calls
+    // throws. Without this, an encoder/joiner failure mid-run pins encoder
+    // outputs and per-frame tensors in the WASM/GPU heap until the page
+    // reloads, which is fatal for chunked long-audio sessions.
+    let input = null;
+    let lenTensor = null;
+    let enc = null;
+    let inFlightEncTensor = null;
+    let decoderState = null;
+    let externalInitialState = null;
+    let finalDecoderState = null;
+
+    try {
+
     // 1. Feature extraction (ONNX pre-processor)
     let features, T, melBins;
     if (perfEnabled) {
@@ -345,22 +360,27 @@ export class ParakeetModel {
     }
 
     // 2. Encode entire utterance
-    const input = new this.ort.Tensor('float32', features, [1, melBins, T]);
-    const lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(T)]), [1]);
-    let enc;
+    input = new this.ort.Tensor('float32', features, [1, melBins, T]);
+    lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(T)]), [1]);
+    let encOut;
     if (perfEnabled) {
       const s = performance.now();
-      const encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
+      encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
       tEncode = performance.now() - s;
-      enc = encOut['outputs'] ?? Object.values(encOut)[0];
     } else {
-      const encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
-      enc = encOut['outputs'] ?? Object.values(encOut)[0];
+      encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
+    }
+    enc = encOut['outputs'] ?? Object.values(encOut)[0];
+    // Some encoder ONNX exports emit auxiliary outputs (e.g. encoded_length).
+    // Dispose anything other than the main `enc` tensor; otherwise those
+    // tensors leak into the WASM heap, one per transcribe() call.
+    for (const v of Object.values(encOut)) {
+      if (v !== enc) v?.dispose?.();
     }
     // Free encoder input tensors now that the encoder has produced its output —
     // long sessions (continuous recording) would otherwise accumulate them.
-    input.dispose?.();
-    lenTensor.dispose?.();
+    input.dispose?.(); input = null;
+    lenTensor.dispose?.(); lenTensor = null;
 
     // Transpose encoder output [B, D, T] ➔ [T, D] for B=1.
     // t-outer / d-inner gives sequential writes to `transposed`, and the
@@ -388,6 +408,11 @@ export class ParakeetModel {
       }
     }
 
+    // Encoder output has been copied into `transposed`; free its WASM/GPU
+    // buffer before entering the decode loop. With chunked long-audio
+    // transcription this single dispose is the biggest leak fix in the file.
+    enc.dispose?.(); enc = null;
+
     // --- Decode frame-by-frame ----------------------------------------
     const ids = [];
     const tokenTimes = [];
@@ -398,8 +423,8 @@ export class ParakeetModel {
     // Caller may pass a decoder state from a previous (contiguous) chunk to
     // continue token-history continuity across calls. We hold a reference but
     // never dispose the externally-owned object — the caller still owns it.
-    let decoderState = previousDecoderState || null;
-    const externalInitialState = previousDecoderState || null;
+    decoderState = previousDecoderState || null;
+    externalInitialState = previousDecoderState || null;
     let emittedTokens = 0;
 
     const decStartTime = perfEnabled ? performance.now() : 0;
@@ -411,10 +436,10 @@ export class ParakeetModel {
       }
       
       const frameBuf = transposed.subarray(t * D, (t + 1) * D);
-      const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
+      inFlightEncTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
 
       const prevTok = ids.length ? ids[ids.length - 1] : this.blankId;
-      const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, prevTok, decoderState);
+      const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, decoderState);
 
       // Argmax on raw logits.
       // Dividing by a positive temperature is monotonic, so argmax(logit/T)
@@ -521,6 +546,11 @@ export class ParakeetModel {
 
       // Dispose the joiner logits tensor now that subarray views are consumed
       _logitsTensor?.dispose?.();
+      // Dispose the per-frame encoder tensor. Without this, each decoded
+      // frame leaks its WASM-side handle (~450k handles for a 1h audio at
+      // sub=8/stride=0.01s).
+      inFlightEncTensor.dispose?.();
+      inFlightEncTensor = null;
 
       // Frame advancement matches NeMo / onnx-asr reference exactly:
       //   - step > 0 (TDT duration prediction): advance by step, reset counter.
@@ -542,10 +572,13 @@ export class ParakeetModel {
 
     // Dispose final decoder state unless the caller asked to keep it for a
     // future call. When returning state, the caller becomes its owner.
-    const finalDecoderState = decoderState;
+    // Either way we null `decoderState` so the function-level finally block
+    // doesn't double-dispose or free a caller-owned tensor.
+    finalDecoderState = decoderState;
     if (!returnDecoderState) {
       this._disposeDecoderState(decoderState);
     }
+    decoderState = null;
 
     if (perfEnabled) {
       tDecode = performance.now() - decStartTime;
@@ -660,6 +693,21 @@ export class ParakeetModel {
     };
     if (returnDecoderState) fullOut.decoderState = finalDecoderState;
     return fullOut;
+
+    } finally {
+      // Best-effort cleanup. On the success path each tensor is disposed and
+      // nulled as soon as it's no longer needed, so these are no-ops. If an
+      // await between the encoder run and the end of the decode loop threw,
+      // the still-live tensors are freed here. Skip `externalInitialState` —
+      // it's caller-owned.
+      input?.dispose?.();
+      lenTensor?.dispose?.();
+      enc?.dispose?.();
+      inFlightEncTensor?.dispose?.();
+      if (decoderState && decoderState !== externalInitialState) {
+        try { this._disposeDecoderState(decoderState); } catch (_) { /* ignore */ }
+      }
+    }
   }
 
   /**
