@@ -117,6 +117,19 @@
 	header @html Cache-Control "no-cache, must-revalidate"
 	header /config.js Cache-Control "no-cache, must-revalidate"
 
+	# F-75: the asset-integrity manifest is the trust anchor for the
+	# F-38/F-50 SRI chain (verifiedAddModule + ORT WASM hash check). A
+	# stale cached manifest paired with a freshly deployed asset can
+	# either DoS recording (false integrity failure: cached old hash,
+	# new bytes) or hide tampering (the cached manifest never sees the
+	# new pin). build-sums.txt is the operator-side deploy-verification
+	# anchor (env.example documents the diff workflow) and must also
+	# never be served stale. Both files are tiny, revalidation is cheap.
+	@integrity {
+		path /.well-known/asset-integrity.json /.well-known/build-sums.txt
+	}
+	header @integrity Cache-Control "no-cache, must-revalidate"
+
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
 	#
 	# `header_up -X-Forwarded-For` removes any X-Forwarded-For the client
