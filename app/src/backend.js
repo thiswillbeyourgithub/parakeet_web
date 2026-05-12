@@ -9,9 +9,14 @@
 // for an attacker-built ML runtime that exfiltrates PCM at inference
 // time, completely transparent to the user.
 //
-// Returns a wasmPaths object map { filename: blobURL } where each blob
-// URL points at bytes whose sha384 matched the manifest. ORT 1.16+
-// accepts this object form for env.wasm.wasmPaths.
+// Returns a wasmPaths object `{ mjs, wasm }` whose values are blob URLs
+// holding bytes whose sha384 matched the manifest. ORT 1.26+ reads
+// `wasmPaths.mjs` and `wasmPaths.wasm` directly when wasmPaths is an
+// object (it does NOT scan by filename). We pick the jsep variant
+// because the vendored bundle (ort.bundle.min.mjs) only references
+// `ort-wasm-simd-threaded.jsep.{mjs,wasm}`; if a future bundle pulls in
+// other variants the manifest entries are still verified and live on
+// disk, the public mapping just needs to point at the right pair.
 //
 // Falls back to the original string wasmPaths (no integrity check) when:
 //   - manifest fetch returns 404 (e.g. running against a dev server with
@@ -65,7 +70,7 @@ async function _verifiedOrtWasmPaths(basePath) {
     _integrityFailure('ORT integrity manifest is empty');
     return basePath;
   }
-  const out = {};
+  const verified = {};
   await Promise.all(entries.map(async ([name, expected]) => {
     const url = basePath + name;
     const resp = await fetch(url);
@@ -80,10 +85,24 @@ async function _verifiedOrtWasmPaths(basePath) {
     if (actual !== expected) {
       throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
     }
-    out[name] = URL.createObjectURL(blob);
+    verified[name] = URL.createObjectURL(blob);
   }));
-  console.log(`[Parakeet.js] ORT runtime integrity verified (${Object.keys(out).length} files)`);
-  return out;
+  console.log(`[Parakeet.js] ORT runtime integrity verified (${Object.keys(verified).length} files)`);
+
+  // ORT 1.26 expects `wasmPaths.mjs` / `wasmPaths.wasm` (not a
+  // filename-keyed map). The vendored ort.bundle.min.mjs only references
+  // the jsep variant, so we hand ORT the verified blob URLs for that
+  // pair. If the pair isn't in the manifest (a stripped build), fall
+  // back to the base path so ORT re-fetches over same-origin; the bytes
+  // it gets are still served from /ort/ which the manifest checked at
+  // startup, just without the blob-URL pinning.
+  const mjsUrl = verified['ort-wasm-simd-threaded.jsep.mjs'];
+  const wasmUrl = verified['ort-wasm-simd-threaded.jsep.wasm'];
+  if (mjsUrl && wasmUrl) {
+    return { mjs: mjsUrl, wasm: wasmUrl };
+  }
+  console.warn('[Parakeet.js] jsep variant missing from ORT manifest; falling back to base-path wasmPaths (still same-origin, integrity check ran at startup)');
+  return basePath;
 }
 
 /**
