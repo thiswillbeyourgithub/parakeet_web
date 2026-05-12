@@ -84,6 +84,15 @@ services:
       - TURNS_PORT=${TURNS_PORT:-}
       - SIGNALING_PORT=${SIGNALING_PORT:-3001}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      # F-142: forward operator HSTS / CSP overrides so the Caddyfile's
+      # {$VITE_HSTS_*} / {$VITE_CSP_*} substitutions resolve to non-empty
+      # values when set in .env. Without these the documented overrides
+      # silently no-op and HSTS stays bare 1y / CSP stays at the baked-in
+      # host allowlists.
+      - VITE_HSTS_MAX_AGE=${VITE_HSTS_MAX_AGE:-}
+      - VITE_HSTS_SUFFIX=${VITE_HSTS_SUFFIX:-}
+      - VITE_CSP_SCRIPT_HOSTS=${VITE_CSP_SCRIPT_HOSTS:-}
+      - VITE_CSP_CONNECT_HOSTS=${VITE_CSP_CONNECT_HOSTS:-}
 
   # ── coturn TURN relay server (optional) ─────────────────────────────
   # If you already run a coturn instance (e.g. for WebSend or Nextcloud Talk),

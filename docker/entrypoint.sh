@@ -180,6 +180,13 @@ echo "[entrypoint] VITE_FORCE_LOCAL_MODEL_FALLBACK=${VITE_FORCE_LOCAL_MODEL_FALL
 echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
+# F-142: surface the resolved HSTS / CSP override values so operators can
+# confirm at startup that their docker/.env overrides are actually in the
+# container. Empty values mean the Caddyfile's baked-in defaults apply.
+echo "[entrypoint] VITE_HSTS_MAX_AGE=${VITE_HSTS_MAX_AGE:-(not set, Caddy default applies)}"
+echo "[entrypoint] VITE_HSTS_SUFFIX=${VITE_HSTS_SUFFIX:-(not set, no includeSubDomains/preload)}"
+echo "[entrypoint] VITE_CSP_SCRIPT_HOSTS=${VITE_CSP_SCRIPT_HOSTS:-(not set, baked-in script hosts only)}"
+echo "[entrypoint] VITE_CSP_CONNECT_HOSTS=${VITE_CSP_CONNECT_HOSTS:-(not set, baked-in connect hosts only)}"
 echo "[entrypoint] =============================="
 
 # ---------- Fallback model: ensure weights exist on the bind mount ---------
