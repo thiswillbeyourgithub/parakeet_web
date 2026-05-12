@@ -7,9 +7,6 @@
     "build": "vite build && node postbuild.mjs",
     "preview": "vite preview"
   },
-  "dependencies": {
-    "parakeet.js": "^0.0.3"
-  },
   "devDependencies": {
     "vite": "^4.5.0"
   },
