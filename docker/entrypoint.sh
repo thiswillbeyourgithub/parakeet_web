@@ -11,6 +11,90 @@
 
 set -e
 
+# ---------- Helper functions ------------------------------------------------
+# F-98: every helper used by this script MUST be defined before the first
+# call site. POSIX /bin/sh (dash, busybox ash) does NOT hoist function
+# definitions: a forward reference returns 127 ("command not found"),
+# and inside an `if ! cmd; then ... fi` that 127 inverts to true and
+# fires the error branch. The previous layout placed _validate_regex_source
+# below its caller, so the container exited 1 on every startup with no
+# diagnostic. Same issue would have struck _validate_csp_hosts. Keep
+# every helper inside this block.
+
+# Refuse non-HTTPS, refuse redirects. Without this, a framagit-side
+# redirect to e.g. http://169.254.169.254/... (cloud instance metadata)
+# or an operator typo of file://... would be silently followed and the
+# result served same-origin under /dictation-regex/.
+_fetch() {
+  if command -v wget >/dev/null 2>&1; then
+    wget -q --max-redirect=0 -O "$1" "$2"
+  elif command -v curl >/dev/null 2>&1; then
+    curl -sf --proto '=https' --max-redirs 0 -o "$1" "$2"
+  else
+    echo "[entrypoint] WARNING: neither wget nor curl found"
+    return 1
+  fi
+}
+
+# F-26: Validate DICTATION_REGEX_SOURCE early. Accept only:
+#   - absolute or ./relative local folder path
+#   - https://<host>/<path> URL (no leading whitespace, no scheme other
+#     than https). file://, http://, gopher://, etc. would otherwise be
+#     interpolated straight into the wget/curl invocation.
+_validate_regex_source() {
+  # Allowlist of characters acceptable in either a local path or an https
+  # URL. POSIX `case` glob, so portable across busybox ash / dash / bash.
+  # Rejects whitespace, $, `, ;, &, |, <, >, quotes, etc., any of which
+  # would let an operator typo turn into a fetch with redirect, command
+  # substitution, or non-https scheme.
+  case "$1" in
+    *[!A-Za-z0-9:/._?=\&%-]*) return 1 ;;
+  esac
+  case "$1" in
+    /*|./*|https://*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# F-91: Validate operator-supplied CSP allowlists before they are
+# interpolated into Caddy's CSP header. Caddy substitutes the env-var
+# value as a literal string; a typo like
+#   VITE_CSP_SCRIPT_HOSTS="'unsafe-inline'"
+#   VITE_CSP_CONNECT_HOSTS="*"
+#   VITE_CSP_CONNECT_HOSTS="https://a.com; default-src *"
+# is accepted verbatim and silently widens (or fully disables) the
+# policy with no error and no log line. Refuse to start if either
+# var contains characters that have CSP-directive semantics or that
+# build well-known bypass keywords.
+_validate_csp_hosts() {
+  # Empty is the documented default, accept it.
+  [ -z "$1" ] && return 0
+  # Forbid known bypass tokens regardless of casing. The shell glob is
+  # case-sensitive; we lowercase via tr first.
+  lower=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  case "$lower" in
+    *unsafe-*|*data:*|*blob:*|*"*"*) return 1 ;;
+  esac
+  # Each space-separated token must look like https://<host>[:port][/path]
+  # AND only contain RFC-3986-safe characters. We can't put ASCII space
+  # inside a `case` glob bracket in dash (parser bug: `[. -]*)` confuses
+  # the `)` lookahead), so we split on whitespace and validate each
+  # token's chars separately.
+  for token in $1; do
+    case "$token" in
+      https://*) ;;
+      *) return 1 ;;
+    esac
+    # Per-token char allowlist: letters, digits, : / . - (no space, no
+    # quotes, no ; * $ ` etc). Same set as the existing
+    # _validate_regex_source token char check.
+    case "$token" in
+      *[!A-Za-z0-9:/.-]*) return 1 ;;
+    esac
+  done
+  return 0
+}
+
 echo "[entrypoint] === Environment variables ==="
 echo "[entrypoint] VITE_DEV_MODE=${VITE_DEV_MODE:-(not set)}"
 echo "[entrypoint] VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL:-(not set)}"
@@ -62,62 +146,6 @@ if ! _validate_regex_source "$REGEX_SOURCE"; then
   exit 1
 fi
 
-_fetch() {
-  # Refuse non-HTTPS, refuse redirects. Without this, a framagit-side
-  # redirect to e.g. http://169.254.169.254/... (cloud instance metadata)
-  # or an operator typo of file://... would be silently followed and the
-  # result served same-origin under /dictation-regex/.
-  if command -v wget >/dev/null 2>&1; then
-    wget -q --max-redirect=0 -O "$1" "$2"
-  elif command -v curl >/dev/null 2>&1; then
-    curl -sf --proto '=https' --max-redirs 0 -o "$1" "$2"
-  else
-    echo "[entrypoint] WARNING: neither wget nor curl found"
-    return 1
-  fi
-}
-
-# F-91: Validate operator-supplied CSP allowlists before they are
-# interpolated into Caddy's CSP header. Caddy substitutes the env-var
-# value as a literal string; a typo like
-#   VITE_CSP_SCRIPT_HOSTS="'unsafe-inline'"
-#   VITE_CSP_CONNECT_HOSTS="*"
-#   VITE_CSP_CONNECT_HOSTS="https://a.com; default-src *"
-# is accepted verbatim and silently widens (or fully disables) the
-# policy with no error and no log line. Refuse to start if either
-# var contains characters that have CSP-directive semantics or that
-# build well-known bypass keywords.
-_validate_csp_hosts() {
-  # Empty is the documented default, accept it.
-  [ -z "$1" ] && return 0
-  # Forbid characters that change CSP semantics or smuggle directives.
-  # Allowed set: scheme letters, digits, dot, hyphen, colon (for the
-  # scheme delimiter and rare port numbers), forward slash, and ASCII
-  # space (separator between origins). Anything else, including ';',
-  # quotes, '*', '$', backtick, backslash, newline, is rejected.
-  case "$1" in
-    *[!A-Za-z0-9:/. -]*) return 1 ;;
-  esac
-  # Forbid known bypass tokens regardless of casing. The shell glob is
-  # case-sensitive; we lowercase via tr first.
-  lower=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
-  case "$lower" in
-    *unsafe-*|*data:*|*blob:*|*"*"*) return 1 ;;
-  esac
-  # Each space-separated token must look like https://<host>[:port][/path].
-  # We accept http:// only if the value also contains 'localhost' (dev
-  # convenience would force operators to use https everywhere otherwise,
-  # which is correct for prod but breaks local debugging). For prod
-  # safety we keep https-only.
-  for token in $1; do
-    case "$token" in
-      https://*) ;;
-      *) return 1 ;;
-    esac
-  done
-  return 0
-}
-
 if ! _validate_csp_hosts "${VITE_CSP_SCRIPT_HOSTS:-}"; then
   echo "[entrypoint] ERROR: VITE_CSP_SCRIPT_HOSTS contains forbidden characters or tokens"
   echo "[entrypoint] Allowed: space-separated https:// origins only. No quotes, no"
@@ -134,26 +162,6 @@ if ! _validate_csp_hosts "${VITE_CSP_CONNECT_HOSTS:-}"; then
   echo "[entrypoint] Refusing to start so an operator typo cannot silently widen CSP."
   exit 1
 fi
-
-# Validate DICTATION_REGEX_SOURCE early. Accept only:
-#   - absolute or ./relative local folder path
-#   - https://<host>/<path> URL (no leading whitespace, no scheme other
-#     than https). file://, http://, gopher://, etc. would otherwise be
-#     interpolated straight into the wget/curl invocation.
-_validate_regex_source() {
-  # Allowlist of characters acceptable in either a local path or an https
-  # URL. POSIX `case` glob, so portable across busybox ash / dash / bash.
-  # Rejects whitespace, $, `, ;, &, |, <, >, quotes, etc., any of which
-  # would let an operator typo turn into a fetch with redirect, command
-  # substitution, or non-https scheme.
-  case "$1" in
-    *[!A-Za-z0-9:/._?=\&%-]*) return 1 ;;
-  esac
-  case "$1" in
-    /*|./*|https://*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 mkdir -p "$REGEX_DIR"
 rm -f "$REGEX_DIR"/*.csv "$REGEX_DIR/manifest.txt" 2>/dev/null || true
