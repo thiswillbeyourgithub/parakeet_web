@@ -337,7 +337,25 @@ node -e '
     .replace(/\u2029/g, "\\u2029");
   process.stdout.write("window.__CONFIG__ = " + safe + ";\n");
 ' > /run/config/config.js
-echo "[entrypoint] Wrote runtime config to /run/config/config.js"
+
+# F-112: lock the generated config down to read-only for everyone,
+# including the parakeet user the entrypoint and signaling sidecar run
+# as. An RCE in the externally-reachable signaling process (untrusted
+# phone client + npm-supply-chain risk on express et al) would
+# otherwise let an attacker overwrite /run/config/config.js to set
+# VITE_ALLOW_UNVERIFIED_MODEL=true (bypassing F-99/F-100), point
+# VITE_MODEL_REPO at an attacker-controlled HF repo, etc. The
+# entrypoint's startup validation of these env vars (F-99/F-100/F-101)
+# only runs ONCE; the served bytes are never re-validated. chmod 0400
+# means the runtime user must explicitly chmod +w before re-writing,
+# which is detectable by any process trace and breaks naive RCE
+# payloads. We also lock the directory to 0500 so a write attempt
+# falls back to a no-op rather than silently creating a sibling file
+# that Caddy might serve at /run/config/<other>.js (it won't, the
+# handler is path-scoped, but defense in depth).
+chmod 0400 /run/config/config.js
+chmod 0500 /run/config
+echo "[entrypoint] Wrote runtime config to /run/config/config.js (locked 0400)"
 
 # ---------- Start signaling sidecar (background) ---------------------------
 if [ -f /signaling/server.js ]; then
