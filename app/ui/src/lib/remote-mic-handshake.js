@@ -23,7 +23,12 @@ const STATS_TIMEOUT_MS = 2000;
 // never silently shrink the verification code: the worst case is "user reads
 // a slightly longer code", never "the fingerprint is too short to detect a
 // MITM swap." Defense in depth even though signaling is currently trusted.
-const SAFE_FALLBACK_HEX_LEN = 12;
+// 16 hex = 64 bits; matches the computeFingerprintLength floor in
+// remote-crypto.js. Anything shorter is brute-forceable in seconds by
+// a signaling-MITM attacker who runs ECDH-and-hash in a loop until
+// they find a public key whose pair-fingerprint matches what they
+// need the user to see (F-65).
+const SAFE_FALLBACK_HEX_LEN = 16;
 
 /**
  * Fetch /api/signal/stats and convert the active-room count into an

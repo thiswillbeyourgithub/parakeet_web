@@ -176,12 +176,21 @@ export async function getPairFingerprint(receiverPub, senderPub, hexLength = 12)
  * - 101-1000:      9 hex chars
  * - 1000+:        12 hex chars
  *
- * @param {number} activeRooms
+ * NOTE: The adaptive length is now floored at 16 hex (64 bits)
+ * regardless of activeRooms. Birthday-bound reasoning assumes random
+ * peer pairings, but a signaling-MITM attacker is doing a TARGETED
+ * second-preimage search against the specific fingerprint they want
+ * the user to see. At ~10^6 ECDH+SHA-256 ops per second on commodity
+ * hardware, anything below ~48 bits is laptop-trivial; the adaptive
+ * floor used to be 3 hex (12 bits = 4096 outcomes) which is sub-
+ * second to brute-force. 16 hex (64 bits) is the recognised floor for
+ * verbal-comparison fingerprints (Signal uses 60-digit decimal, OTR
+ * uses 40-hex / 160 bits). The activeRooms input is kept in the
+ * signature for compatibility but no longer influences the result.
+ *
+ * @param {number} _activeRooms unused; kept for API stability
  * @returns {number}
  */
-export function computeFingerprintLength(activeRooms) {
-    if (activeRooms <= 10) return 3;
-    if (activeRooms <= 100) return 6;
-    if (activeRooms <= 1000) return 9;
-    return 12;
+export function computeFingerprintLength(_activeRooms) {
+    return 16;
 }
