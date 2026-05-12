@@ -36,6 +36,28 @@ _fetch() {
   fi
 }
 
+# F-102: byte-level DoS protection. The dictation CSV is fetched at
+# container start from a third-party Git host. A poisoned upstream
+# (account takeover, one-shot MITM during container boot, malicious
+# fork in a misconfigured DICTATION_REGEX_SOURCE) can serve a multi-GB
+# body; Caddy then file_servers that body to every visitor, who calls
+# .text() on the response with no cap and OOMs the tab. Legitimate
+# Murmure CSV is ~30 KB; the cap below is two orders of magnitude
+# headroom. Refuse to start with a missing file rather than a giant
+# one so the operator notices.
+_REGEX_MAX_BYTES=5242880
+_enforce_size_cap() {
+  # $1: file path, $2: max bytes
+  [ -f "$1" ] || return 0
+  sz=$(stat -c%s "$1" 2>/dev/null || wc -c <"$1")
+  if [ "$sz" -gt "$2" ]; then
+    echo "[entrypoint] WARNING: $1 exceeds size cap ($sz > $2 bytes); deleting"
+    rm -f "$1"
+    return 1
+  fi
+  return 0
+}
+
 # F-26: Validate DICTATION_REGEX_SOURCE early. Accept only:
 #   - absolute or ./relative local folder path
 #   - https://<host>/<path> URL (no leading whitespace, no scheme other
@@ -246,12 +268,23 @@ case "$REGEX_SOURCE" in
     MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads"
     echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
     if _fetch "$REGEX_DIR/regex.csv" "$MURMURE_RAW"; then
-      echo "[entrypoint] Downloaded regex.csv"
+      if _enforce_size_cap "$REGEX_DIR/regex.csv" "$_REGEX_MAX_BYTES"; then
+        echo "[entrypoint] Downloaded regex.csv"
+      else
+        echo "[entrypoint] WARNING: regex.csv exceeded size cap, dropped"
+      fi
     else
       echo "[entrypoint] WARNING: Failed to download regex.csv"
     fi
     ;;
 esac
+
+# F-102: enforce the same cap on any CSV that came from a local folder
+# (operator-controlled, but a typo could still point at /etc or /var/log).
+for f in "$REGEX_DIR"/*.csv; do
+  [ -f "$f" ] || continue
+  _enforce_size_cap "$f" "$_REGEX_MAX_BYTES" || true
+done
 
 ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
 echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"

@@ -2393,24 +2393,73 @@ export default function App() {
 
   // Load dictation regex rules from CSV files served at /dictation-regex/
   useEffect(() => {
+    // F-102: cap dictation file size so a poisoned upstream that fed the
+    // entrypoint a multi-GB body cannot OOM the tab via .text(). The
+    // entrypoint applies the same cap server-side (defense in depth);
+    // this enforces it again client-side because the entrypoint cap can
+    // be bypassed by a host-side write to /var/regex/. Cap is two orders
+    // of magnitude above the legitimate ~30 KB Murmure CSV.
+    const DICTATION_MAX_BYTES = 5 * 1024 * 1024;
+    async function fetchTextCapped(url) {
+      const res = await fetch(url);
+      if (!res.ok) return { ok: false, status: res.status };
+      const declared = Number(res.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > DICTATION_MAX_BYTES) {
+        try { res.body?.cancel(); } catch (_) { /* noop */ }
+        return { ok: false, oversize: true, declared };
+      }
+      const reader = res.body?.getReader();
+      if (!reader) {
+        const text = await res.text();
+        if (text.length > DICTATION_MAX_BYTES) {
+          return { ok: false, oversize: true, declared: text.length };
+        }
+        return { ok: true, text };
+      }
+      let total = 0;
+      const chunks = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > DICTATION_MAX_BYTES) {
+          try { reader.cancel(); } catch (_) { /* noop */ }
+          return { ok: false, oversize: true, declared: total };
+        }
+        chunks.push(value);
+      }
+      const merged = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
+      return { ok: true, text: new TextDecoder('utf-8').decode(merged) };
+    }
     async function loadDictationRegex() {
       try {
         // Try to fetch the manifest first
-        const manifestRes = await fetch('/dictation-regex/manifest.txt');
-        if (!manifestRes.ok) {
-          console.log('[Dictation] No regex manifest found — dictation mode unavailable (download rules via Docker entrypoint)');
+        const manifest = await fetchTextCapped('/dictation-regex/manifest.txt');
+        if (!manifest.ok) {
+          if (manifest.oversize) {
+            console.warn('[Dictation] manifest.txt exceeds size cap; refusing to load any rules', manifest.declared);
+          } else {
+            console.log('[Dictation] No regex manifest found, dictation mode unavailable (download rules via Docker entrypoint)');
+          }
           setDictationRegexLoaded(true);
           return;
         }
-        const manifestText = await manifestRes.text();
+        const manifestText = manifest.text;
         const files = manifestText.trim().split('\n').filter(f => f.endsWith('.csv'));
 
         const rules = [];
         for (const file of files) {
           try {
-            const res = await fetch(`/dictation-regex/${file}`);
-            if (!res.ok) continue;
-            const csvText = await res.text();
+            const r = await fetchTextCapped(`/dictation-regex/${file}`);
+            if (!r.ok) {
+              if (r.oversize) {
+                console.warn(`[Dictation] ${file} exceeds size cap; skipping`, r.declared);
+              }
+              continue;
+            }
+            const csvText = r.text;
             const lines = csvText.trim().split('\n');
             // Parse header to find column indices
             const header = parseCSVLine(lines[0].trim()).map(h => h.trim().toLowerCase());
