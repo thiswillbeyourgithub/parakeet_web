@@ -130,9 +130,24 @@
 	handle_path /api/signal/* {
 		rewrite * /api{uri}
 		reverse_proxy localhost:3001 {
+			# F-39: strip XFF/X-Real-IP/X-Forwarded-Host before Caddy
+			# re-appends its own values; without this, client-supplied
+			# values would leak to Express via trust proxy: 'loopback'
+			# and forge req.ip past the rate limiter.
 			header_up -X-Forwarded-For
 			header_up -X-Real-IP
 			header_up -X-Forwarded-Host
+			# F-73: the same hygiene applies to the RFC 7239 Forwarded
+			# header and to X-Forwarded-Proto/Port. Express doesn't
+			# parse Forwarded today, but any future middleware
+			# (`forwarded` npm package, app.set('trust proxy', true))
+			# would suddenly honour an attacker-supplied
+			# `Forwarded: for=8.8.8.8` and forge req.ip exactly the
+			# way F-39 was meant to close. Force-set them to Caddy's
+			# view so they cannot smuggle attacker state.
+			header_up -Forwarded
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Port {server_port}
 		}
 	}
 
