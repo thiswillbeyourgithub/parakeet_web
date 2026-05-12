@@ -130,7 +130,7 @@ async function listRepoFiles(repoId, revision = 'main') {
   const cacheKey = `${repoId}@${revision}`;
   if (repoFileCache.has(cacheKey)) return repoFileCache.get(cacheKey);
 
-  const url = `https://huggingface.co/api/models/${repoId}?revision=${revision}`;
+  const url = `https://huggingface.co/api/models/${repoId}?revision=${encodeURIComponent(revision)}`;
   try {
     const resp = await fetch(url);
     if (resp.ok) {
@@ -423,12 +423,25 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, expect
 
 export async function getModelFile(repoId, filename, options = {}) {
   const { revision = 'main', subfolder = '', progress, expectedHash } = options;
-  
+
+  // Encode the path components so slash-containing branch names (e.g.
+  // 'refs/pr/1') and any URL-reserved characters in subfolder/filename
+  // are escaped per-segment instead of being interpreted as path
+  // separators by HuggingFace's router.
+  const encodedRevision = encodeURIComponent(revision);
+  const encodedSubfolder = subfolder
+    ? subfolder.split('/').map((part) => encodeURIComponent(part)).join('/')
+    : '';
+  const encodedFilename = filename
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
   // Construct HF URL
   const baseUrl = 'https://huggingface.co';
-  const pathParts = [repoId, 'resolve', revision];
-  if (subfolder) pathParts.push(subfolder);
-  pathParts.push(filename);
+  const pathParts = [repoId, 'resolve', encodedRevision];
+  if (encodedSubfolder) pathParts.push(encodedSubfolder);
+  pathParts.push(encodedFilename);
   const url = `${baseUrl}/${pathParts.join('/')}`;
   
   // Check IndexedDB first
@@ -581,8 +594,25 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // 'main' branch (logged as a warning by _verifyHash when hashes is empty).
   const effectiveRevision = options.revision || modelConfig?.revision || 'main';
   const expectedHashes = modelConfig?.hashes || {};
-  if (effectiveRevision === 'main' && Object.keys(expectedHashes).length === 0) {
-    console.warn(`[Hub] WARNING: model ${repoId} is being loaded from the moving 'main' branch with NO pinned hashes. A HF repo takeover or one-shot MITM could swap weights. Run recipe in docker/env.example and update models.js, or set VITE_MODEL_REVISION.`);
+  // F-99: fail-closed when running in production with no pinned hashes
+  // AND no operator opt-in. The trust-on-first-use behaviour
+  // (download whatever HF returns, hash it, never verify) is fine for
+  // local development but ships every visitor a fresh weights blob
+  // on a HF repo takeover or one-shot MITM. Default-deny means: a
+  // prod operator who hasn't followed the env.example pinning recipe
+  // must explicitly set VITE_ALLOW_UNVERIFIED_MODEL=true to acknowledge
+  // the trust gap. Dev (`import.meta.env.PROD === false`) keeps the
+  // warn-and-proceed path so local hacking is unaffected.
+  const _PROD = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
+  const _ALLOW_UNVERIFIED = (typeof window !== 'undefined' && window.__CONFIG__?.VITE_ALLOW_UNVERIFIED_MODEL === 'true')
+    || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_ALLOW_UNVERIFIED_MODEL === 'true');
+  if (Object.keys(expectedHashes).length === 0) {
+    if (_PROD && !_ALLOW_UNVERIFIED) {
+      throw new Error(`[Hub] model ${repoId} has no pinned hashes in models.js. Production refuses to load unverified weights. Either populate the hashes via the env.example recipe, or set VITE_ALLOW_UNVERIFIED_MODEL=true to opt in to trust-on-first-use.`);
+    }
+    if (effectiveRevision === 'main') {
+      console.warn(`[Hub] WARNING: model ${repoId} is being loaded from the moving 'main' branch with NO pinned hashes. A HF repo takeover or one-shot MITM could swap weights. Run recipe in docker/env.example and update models.js, or set VITE_MODEL_REVISION.`);
+    }
   }
 
   // Decide quantisation per component
