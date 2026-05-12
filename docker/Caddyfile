@@ -168,8 +168,14 @@
 	# browser that has the old manifest cached then hash-checks the
 	# new WASM against the old pin and fails. Same one-line fix as
 	# the worklet pair.
+	#
+	# F-143: the symmetric half. The manifest pins a sha384 of each
+	# `.wasm`/`.mjs` blob; if those are heuristically cached at stable
+	# URLs while the manifest is revalidated, the old WASM hashes
+	# against the new pin and recording fails closed. Pin the runtime
+	# blobs to no-cache too so the pair always rolls together.
 	@integrity {
-		path /.well-known/asset-integrity.json /.well-known/build-sums.txt /pcm-recorder-worklet.js /ort/manifest.json
+		path /.well-known/asset-integrity.json /.well-known/build-sums.txt /pcm-recorder-worklet.js /ort/manifest.json /ort/*.wasm /ort/*.mjs
 	}
 	header @integrity Cache-Control "no-cache, must-revalidate"
 
