@@ -416,16 +416,43 @@ export class ParakeetModel {
       const prevTok = ids.length ? ids[ids.length - 1] : this.blankId;
       const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, prevTok, decoderState);
 
-      // Temperature scaling & argmax
-      // When temperature is 0 (or near-zero), use pure argmax without division
-      // to avoid Infinity/NaN from division by zero, which would always select
-      // index 0 (<unk> in SentencePiece vocabularies).
+      // Argmax on raw logits.
+      // Dividing by a positive temperature is monotonic, so argmax(logit/T)
+      // equals argmax(logit). That lets us skip the per-element division
+      // and avoids the Infinity/NaN trap when temperature is 0.
+      // The inner 8x unroll caches the block into local v0..v7 before
+      // doing the sequential comparisons, which sidesteps redundant
+      // TypedArray index lookups and bounds checks in V8 each time a new
+      // max is found. See upstream commit 514cea5.
       const useTemp = temperature > 1e-8;
-      let maxVal = -Infinity, maxId = 0;
-      for (let i = 0; i < tokenLogits.length; i++) {
-        const v = useTemp ? tokenLogits[i] / temperature : tokenLogits[i];
-        if (v > maxVal) { maxVal = v; maxId = i; }
+      let maxLogit = -Infinity, maxId = 0;
+      const tLen = tokenLogits.length;
+      let ai = 0;
+      for (; ai < tLen % 8; ai++) {
+        if (tokenLogits[ai] > maxLogit) { maxLogit = tokenLogits[ai]; maxId = ai; }
       }
+      for (; ai < tLen; ai += 8) {
+        const v0 = tokenLogits[ai];
+        const v1 = tokenLogits[ai+1];
+        const v2 = tokenLogits[ai+2];
+        const v3 = tokenLogits[ai+3];
+        const v4 = tokenLogits[ai+4];
+        const v5 = tokenLogits[ai+5];
+        const v6 = tokenLogits[ai+6];
+        const v7 = tokenLogits[ai+7];
+        if (v0 > maxLogit) { maxLogit = v0; maxId = ai; }
+        if (v1 > maxLogit) { maxLogit = v1; maxId = ai + 1; }
+        if (v2 > maxLogit) { maxLogit = v2; maxId = ai + 2; }
+        if (v3 > maxLogit) { maxLogit = v3; maxId = ai + 3; }
+        if (v4 > maxLogit) { maxLogit = v4; maxId = ai + 4; }
+        if (v5 > maxLogit) { maxLogit = v5; maxId = ai + 5; }
+        if (v6 > maxLogit) { maxLogit = v6; maxId = ai + 6; }
+        if (v7 > maxLogit) { maxLogit = v7; maxId = ai + 7; }
+      }
+      // For the softmax stage that follows, maxVal is the scaled max in
+      // the same space as tokenLogits[i] / temperature. Only computed
+      // when temp > 0 (skipped on greedy path; confVal is 1.0 there).
+      const maxVal = useTemp ? maxLogit / temperature : maxLogit;
       let confVal;
       if (useTemp) {
         let sumExp = 0;
@@ -434,7 +461,7 @@ export class ParakeetModel {
         }
         confVal = 1 / sumExp;
       } else {
-        // At temperature=0, the model is fully greedy — confidence is 1.0
+        // At temperature=0, the model is fully greedy, confidence is 1.0.
         confVal = 1.0;
       }
       // Clamp to a tiny positive value: degenerate logits (all -Infinity, NaN
