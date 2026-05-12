@@ -2849,7 +2849,12 @@ export default function App() {
             ☰
           </button>
         </div>
-        <p className="app-header__status">{t('status')}: {t(status) || status}</p>
+        <p className="app-header__status">
+          {(status === 'loadingModel' || isTranscribing || isProcessingPreview || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
+            <span className="spinner spinner--inline" aria-hidden="true" />
+          )}
+          {t('status')}: {t(status) || status}
+        </p>
       </div>
 
       {/* About modal */}
@@ -3517,7 +3522,10 @@ export default function App() {
           minHeight: '1.4em',
         }}>
           {awaitingFinal && (
-            <div style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginBottom: '0.35rem', fontStyle: 'italic' }}>
+            <div style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginBottom: '0.35rem', fontStyle: 'italic', display: 'flex', alignItems: 'center' }}>
+              {(!pendingAudioFile || isTranscribing) && (
+                <span className="spinner spinner--inline" aria-hidden="true" />
+              )}
               {!pendingAudioFile
                 ? t('receivingAudio')
                 : isTranscribing
@@ -3529,7 +3537,11 @@ export default function App() {
           )}
           {liveTranscript.text
             ? (dictationRegexRules.length > 0 ? applyDictationRegex(liveTranscript.text) : liveTranscript.text)
-            : <span style={{ opacity: 0.5 }}>…</span>}
+            : (
+              <span className="live-dots" aria-label="Listening" style={{ color: 'var(--text-subtle)' }}>
+                <span /><span /><span />
+              </span>
+            )}
           {showAdvancedInfo && liveStats && (
             <div style={{ fontSize: '0.75em', opacity: 0.6, marginTop: '0.35rem', fontVariantNumeric: 'tabular-nums' }}>
               window={liveStats.window?.toFixed(1)}s · step={liveStats.step?.toFixed(1)}s · process={Math.round(liveStats.process_ms || 0)}ms
@@ -3543,8 +3555,9 @@ export default function App() {
           between stop and the player appearing. */}
       {awaitingFinal && !pendingAudioFile && (
         <div className="audio-preview-container" style={{ opacity: 0.85 }}>
-          <div className="audio-preview-header">
-            <strong>⏳ {t('preparingAudioPreview')}</strong>
+          <div className="audio-preview-header" style={{ display: 'flex', alignItems: 'center' }}>
+            <span className="spinner spinner--inline" aria-hidden="true" />
+            <strong>{t('preparingAudioPreview')}</strong>
           </div>
           <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-subtle)', fontSize: '0.9em' }}>
             {t('preparingAudioHint')}
@@ -3562,7 +3575,8 @@ export default function App() {
             </span>
           </div>
           {isProcessingPreview ? (
-            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-subtle)' }}>
+            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="spinner spinner--inline" aria-hidden="true" />
               {t('processingAudioPreview')}
             </div>
           ) : audioPreviewUrl ? (
@@ -3595,6 +3609,7 @@ export default function App() {
           style={{ marginTop: pendingAudioFile ? '0' : '1rem', marginBottom: '1rem' }}
           data-umami-event="transcribe_button"
         >
+          {isTranscribing && <span className="spinner spinner--inline" aria-hidden="true" />}
           {isTranscribing ? t('transcribing') : t('transcribe')}
         </button>
       )}
