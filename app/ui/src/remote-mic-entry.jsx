@@ -378,6 +378,15 @@ function RemoteMicSender() {
                                 verifyResolveRef.current(false);
                             } else if (peerAckResolveRef.current) {
                                 peerAckResolveRef.current(false);
+                            } else if (sharedKeyRef.current) {
+                                // F-136: a malicious peer can send verify-deny
+                                // mid-session to wipe an in-flight recording
+                                // and surface a misleading 'fingerprints did
+                                // not match' error. Mirrors the desktop F-87
+                                // fix: once the session is bound, verify-deny
+                                // is a stale control message and must be
+                                // ignored.
+                                console.warn('[RemoteMic] Ignoring verify-deny after session bound');
                             } else {
                                 setErrorMsg(t('verifyAborted'));
                                 setStatus(STATUS.ERROR);
