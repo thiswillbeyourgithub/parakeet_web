@@ -236,15 +236,38 @@ export class ParakeetModel {
 
     const out = await this.joinerSession.run(feeds);
     const logits = out['outputs'];
+    const outputState1 = out['output_states_1'];
+    const outputState2 = out['output_states_2'];
 
     const vocab = this.tokenizer.id2token.length;
-    const totalDim = logits.dims[3];
+
+    // Validate the joiner output shape early so callers see a clear error
+    // (mirrors upstream 9218917). Eagerly dispose `logits` on every failure
+    // path to free its WASM/GPU buffer; the per-frame decode loop already
+    // owns decoder-state disposal so we don't repeat it here.
+    if (!logits || !logits.data || typeof logits.data.subarray !== 'function') {
+      logits?.dispose?.();
+      throw new Error('ParakeetModel decoder output did not include a valid `outputs` tensor.');
+    }
+    if (!outputState1 || !outputState2) {
+      logits.dispose?.();
+      throw new Error('ParakeetModel decoder output did not include both decoder state tensors.');
+    }
     const data = logits.data;
+    if (data.length < vocab) {
+      logits.dispose?.();
+      throw new Error(`ParakeetModel decoder output is too small (${data.length}) for vocab size ${vocab}.`);
+    }
+    const totalDim = data.length;
 
     // subarray(): zero-copy view into joiner output buffer.
     // Do NOT mutate tokenLogits/durLogits without copying first (.slice()).
     const tokenLogits = data.subarray(0, vocab);
     const durLogits = data.subarray(vocab, totalDim);
+    if (durLogits.length === 0) {
+      logits.dispose?.();
+      throw new Error('ParakeetModel decoder output is missing required TDT duration logits.');
+    }
 
     let step = 0;
     if (durLogits.length) {
@@ -253,8 +276,8 @@ export class ParakeetModel {
     }
 
     const newState = {
-      state1: out['output_states_1'] || state1,
-      state2: out['output_states_2'] || state2,
+      state1: outputState1 || state1,
+      state2: outputState2 || state2,
     };
 
     // Expose the logits tensor so callers can dispose it after consuming the
