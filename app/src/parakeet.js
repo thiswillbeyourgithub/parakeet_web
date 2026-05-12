@@ -411,22 +411,39 @@ export class ParakeetModel {
         }
         if (returnConfidences) tokenConfs.push(confVal);
         emittedTokens += 1;
+        // Only adopt the new decoder state when a non-blank token is emitted.
+        // Free the previous state (unless caller-owned) before reassigning.
+        if (decoderState && decoderState !== newState && decoderState !== externalInitialState) {
+          this._disposeDecoderState(decoderState, newState);
+        }
+        decoderState = newState;
+      } else {
+        // Blank token: keep the previous decoderState and discard newState.
+        // Dispose newState's tensors that aren't aliased with the kept state.
+        if (newState && newState !== decoderState) {
+          this._disposeDecoderState(newState, decoderState);
+        }
       }
 
       // Dispose the joiner logits tensor now that subarray views are consumed
       _logitsTensor?.dispose?.();
 
-      // Free old decoder state tensors (avoids WASM/GPU memory leak), but
-      // never dispose a state object that was passed in by the caller.
-      if (decoderState && decoderState !== newState && decoderState !== externalInitialState) {
-        this._disposeDecoderState(decoderState, newState);
+      // Frame advancement matches NeMo / onnx-asr reference exactly:
+      //   - step > 0 (TDT duration prediction): advance by step, reset counter.
+      //   - blank OR max-tokens reached: advance by frameStride, reset counter.
+      //   - else: stay on the same frame so the decoder can emit another token.
+      // The previous local code forced an extra `t += 1` whenever we stayed,
+      // which masked legitimate multi-token-per-frame emission (e.g. "'s" + " no")
+      // and was the root cause behind drifting transcripts on contraction-heavy
+      // audio. It also failed to reset `emittedTokens` on the max-tokens branch,
+      // which is fixed here too.
+      if (step > 0) {
+        t += step;
+        emittedTokens = 0;
+      } else if (maxId === this.blankId || emittedTokens >= this.maxTokensPerStep) {
+        t += frameStride;
+        emittedTokens = 0;
       }
-      decoderState = newState;
-
-      const shouldAdvance = maxId === this.blankId || emittedTokens >= this.maxTokensPerStep;
-      t += step > 0 ? step : (shouldAdvance ? frameStride : 0);
-      if (!shouldAdvance && step === 0) t += 1; // safeguard
-      if (maxId === this.blankId) emittedTokens = 0;
     }
 
     // Dispose final decoder state unless the caller asked to keep it for a
