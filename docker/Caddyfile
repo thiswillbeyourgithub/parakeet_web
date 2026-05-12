@@ -160,8 +160,16 @@
 	# the freshly deployed asset-integrity.json triggers F-38b's hash
 	# mismatch and breaks recording until the cache evicts. Must
 	# revalidate on every load.
+	#
+	# F-110: /ort/manifest.json is the F-38a trust anchor for the ORT
+	# WASM blobs. It sits at a stable URL and the same stale-pair
+	# concern applies: a deploy that rolls onnxruntime-web ships new
+	# WASM bytes alongside a new manifest pinning their hashes; a
+	# browser that has the old manifest cached then hash-checks the
+	# new WASM against the old pin and fails. Same one-line fix as
+	# the worklet pair.
 	@integrity {
-		path /.well-known/asset-integrity.json /.well-known/build-sums.txt /pcm-recorder-worklet.js
+		path /.well-known/asset-integrity.json /.well-known/build-sums.txt /pcm-recorder-worklet.js /ort/manifest.json
 	}
 	header @integrity Cache-Control "no-cache, must-revalidate"
 
