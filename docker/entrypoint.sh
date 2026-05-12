@@ -95,6 +95,57 @@ _validate_csp_hosts() {
   return 0
 }
 
+# F-101: Validate VITE_MODEL_REPO and VITE_MODEL_REVISION before they
+# reach the browser bundle. Both are concatenated verbatim into the
+# HuggingFace URL path AND into the IndexedDB cache key. An operator
+# typo with `..` (e.g. revision='main/../../other-owner/other-repo/
+# resolve/main') resolves under the URL parser to a different repo
+# while staying on huggingface.co, and the bad value gets cached
+# forever because it is part of the cache key. Combined with the F-99
+# fail-closed behaviour this is largely defense-in-depth (an attacker
+# would also need pinned hashes to match or the opt-in), but the
+# defensive validation matches the posture taken by F-26 / F-91 for
+# every other operator-supplied env var.
+_validate_model_repo() {
+  # Empty is fine: the bundle falls back to the default repo.
+  [ -z "$1" ] && return 0
+  # Forbid ".." substring (parent-dir traversal) and any character
+  # outside the HuggingFace repo-id alphabet (letters, digits, _ - . /).
+  case "$1" in
+    *..*) return 1 ;;
+    *[!A-Za-z0-9._/-]*) return 1 ;;
+  esac
+  # Must look exactly like 'owner/name', no leading/trailing slash, no
+  # extra path segments.
+  case "$1" in
+    */*/*) return 1 ;;
+    /*|*/) return 1 ;;
+    */*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_validate_model_revision() {
+  # Empty means "use models.js per-model pin", which is the documented
+  # default.
+  [ -z "$1" ] && return 0
+  case "$1" in
+    *..*) return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+if ! _validate_model_repo "${VITE_MODEL_REPO:-}"; then
+  echo "[entrypoint] ERROR: VITE_MODEL_REPO has an unsupported shape: ${VITE_MODEL_REPO}"
+  echo "[entrypoint] Expected: owner/name (letters, digits, _ - . only)."
+  exit 1
+fi
+if ! _validate_model_revision "${VITE_MODEL_REVISION:-}"; then
+  echo "[entrypoint] ERROR: VITE_MODEL_REVISION has an unsupported shape: ${VITE_MODEL_REVISION}"
+  echo "[entrypoint] Expected: commit SHA or branch name (letters, digits, _ - . only)."
+  exit 1
+fi
+
 echo "[entrypoint] === Environment variables ==="
 echo "[entrypoint] VITE_DEV_MODE=${VITE_DEV_MODE:-(not set)}"
 echo "[entrypoint] VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL:-(not set)}"
