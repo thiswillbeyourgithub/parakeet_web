@@ -357,10 +357,28 @@ chmod 0400 /run/config/config.js
 chmod 0500 /run/config
 echo "[entrypoint] Wrote runtime config to /run/config/config.js (locked 0400)"
 
-# ---------- Start signaling sidecar (background) ---------------------------
+# ---------- Start signaling sidecar (background, auto-restart) -------------
+# F-120: if the signaling Node crashes (an uncaught exception, OOM
+# from limiter-Map growth, a panic on a crafted body, any future bug
+# surfaced by an untrusted phone payload), Caddy continues to run as
+# PID 1 and serves 502 to /api/signal/* until the operator manually
+# restarts the container. compose's `restart: unless-stopped` does
+# not help because the container is still running (Caddy is alive).
+#
+# Wrap the Node process in a supervise loop so a crash auto-restarts.
+# The 1 s sleep between restarts prevents a tight crash loop from
+# pegging the CPU; each restart logs a line so the operator can see
+# in `docker logs` if the sidecar is flapping.
 if [ -f /signaling/server.js ]; then
   echo "[entrypoint] Starting signaling server on port ${SIGNALING_PORT:-3001}..."
-  PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js &
+  (
+    while true; do
+      PORT="${SIGNALING_PORT:-3001}" node /signaling/server.js
+      _rc=$?
+      echo "[entrypoint] signaling server exited (rc=$_rc); restarting in 1 s"
+      sleep 1
+    done
+  ) &
 fi
 
 # ---------- Caddy in foreground --------------------------------------------
