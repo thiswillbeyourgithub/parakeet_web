@@ -2060,35 +2060,47 @@ export default function App() {
   // Helper function to resample audio to 16kHz mono and create a WAV blob for preview
   async function resampleToPreview(file) {
     console.log(`[Preview] Resampling "${file.name}" to 16kHz mono...`);
-    
-    const buf = await file.arrayBuffer();
-    
-    // Decode at native sample rate
-    const audioCtx = new AudioContext();
-    const decoded = await audioCtx.decodeAudioData(buf);
-    
-    // Resample to 16kHz mono using OfflineAudioContext
-    const targetSampleRate = 16000;
-    const offlineCtx = new OfflineAudioContext(
-      1,  // mono
-      Math.ceil(decoded.duration * targetSampleRate),
-      targetSampleRate
-    );
-    
-    const source = offlineCtx.createBufferSource();
-    source.buffer = decoded;
-    source.connect(offlineCtx.destination);
-    source.start();
-    
-    const resampled = await offlineCtx.startRendering();
-    
-    // Create WAV file from the resampled audio
-    const pcm = resampled.getChannelData(0);
-    const wavBlob = createWavBlob(pcm, targetSampleRate);
-    
-    console.log(`[Preview] Resampled to 16kHz mono (${(pcm.length / targetSampleRate).toFixed(2)}s)`);
-    
-    return wavBlob;
+
+    // The AudioContext owns a real audio thread and the decoded native-rate
+    // AudioBuffer (often hundreds of MB for long files). Without close() it
+    // sits around until GC eventually catches it; repeated previews of large
+    // files would balloon the tab. try/finally guarantees teardown.
+    let audioCtx = null;
+    try {
+      const buf = await file.arrayBuffer();
+
+      // Decode at native sample rate
+      audioCtx = new AudioContext();
+      const decoded = await audioCtx.decodeAudioData(buf);
+
+      // Resample to 16kHz mono using OfflineAudioContext (auto-tears down
+      // after startRendering, no explicit close needed).
+      const targetSampleRate = 16000;
+      const offlineCtx = new OfflineAudioContext(
+        1,  // mono
+        Math.ceil(decoded.duration * targetSampleRate),
+        targetSampleRate
+      );
+
+      const source = offlineCtx.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offlineCtx.destination);
+      source.start();
+
+      const resampled = await offlineCtx.startRendering();
+
+      // Create WAV file from the resampled audio
+      const pcm = resampled.getChannelData(0);
+      const wavBlob = createWavBlob(pcm, targetSampleRate);
+
+      console.log(`[Preview] Resampled to 16kHz mono (${(pcm.length / targetSampleRate).toFixed(2)}s)`);
+
+      return wavBlob;
+    } finally {
+      if (audioCtx) {
+        try { await audioCtx.close(); } catch (_) { /* already closed */ }
+      }
+    }
   }
 
   // Helper to create a WAV blob from PCM Float32Array
@@ -2146,6 +2158,11 @@ export default function App() {
     setIsTranscribing(true);
     setStatus(`${t('transcribingFile')} "${safeName}"…`);
 
+    // Hoisted so the outer finally can close the AudioContext even if the
+    // transcription path throws. The decoded native-rate AudioBuffer plus
+    // the audio thread can hold hundreds of MB for long files; leaving them
+    // alive while the user transcribes a sequence of files balloons memory.
+    let audioCtx = null;
     try {
       console.log(`[Transcribe] Starting transcription for file: "${file.name}"`);
       console.log(`[Transcribe] File details:`, {
@@ -2156,11 +2173,11 @@ export default function App() {
       });
 
       console.log(`[Transcribe] Reading file as ArrayBuffer...`);
-      const buf = await file.arrayBuffer();
+      let buf = await file.arrayBuffer();
       console.log(`[Transcribe] ArrayBuffer loaded, size: ${buf.byteLength} bytes`);
 
       console.log(`[Transcribe] Creating AudioContext at native sample rate...`);
-      const audioCtx = new AudioContext();  // Use native rate
+      audioCtx = new AudioContext();  // Use native rate
       console.log(`[Transcribe] AudioContext created:`, {
         sampleRate: audioCtx.sampleRate,
         state: audioCtx.state,
@@ -2168,7 +2185,8 @@ export default function App() {
       });
 
       console.log(`[Transcribe] Decoding audio data...`);
-      const decoded = await audioCtx.decodeAudioData(buf);
+      let decoded = await audioCtx.decodeAudioData(buf);
+      buf = null; // the ArrayBuffer is no longer needed once decoded
       console.log(`[Transcribe] Audio decoded successfully at native rate:`, {
         duration: `${decoded.duration.toFixed(2)}s`,
         numberOfChannels: decoded.numberOfChannels,
@@ -2195,13 +2213,23 @@ export default function App() {
       source.buffer = decoded;
       source.connect(offlineCtx.destination);
       source.start();
-      
-      const resampled = await offlineCtx.startRendering();
-      
+
+      let resampled = await offlineCtx.startRendering();
+
       // Yield to UI after heavy resampling operation
       await new Promise(resolve => setTimeout(resolve, 0));
-      
+
       const pcm = resampled.getChannelData(0);
+
+      // The native-rate AudioBuffer is large (often >100MB for hour-long
+      // files at 48kHz stereo). Now that pcm is in hand, drop references so
+      // GC can reclaim them before the chunking loop allocates its own
+      // working memory. Closing audioCtx also signals the audio thread it
+      // can release the decoded buffer it still holds.
+      decoded = null;
+      resampled = null;
+      try { await audioCtx.close(); } catch (_) { /* already closed */ }
+      audioCtx = null;
 
       console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz`);
       const audioDuration = pcm.length / 16000;
@@ -2418,6 +2446,12 @@ export default function App() {
       // strips C0/C1 + bidi and length-caps to 64 chars.
       alert(`Failed to transcribe "${safeName}": ${detailedMsg}`);
     } finally {
+      // If we threw before the explicit close above, the AudioContext is
+      // still holding the decoded buffer + an audio thread. Make sure it
+      // shuts down on every exit path.
+      if (audioCtx) {
+        try { await audioCtx.close(); } catch (_) { /* already closed */ }
+      }
       setIsTranscribing(false);
       // The final transcription has now been pushed (or the run failed and
       // the user has been alerted). Either way, drop the awaiting indicator.
