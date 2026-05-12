@@ -171,6 +171,28 @@ commits do not appear to have an upstream equivalent:
   `logits.dispose()` on failure. (c) `93844f5` marked DONE — its
   parakeet.js half was already absorbed by round 1's port `05c6fb6`,
   and its backend.js half is already covered by `bd38bf1`.
+- **2026-05-12 (round 5):** two hub.js ports, four no-op closures.
+  (a) `35534af` ports `6f8c6f4`, `listRepoFiles` cache URL and
+  `getModelFile` resolve URL now encode revision; subfolder and
+  filename are per-segment encoded so slash-bearing branch names
+  (`refs/pr/1`) no longer collapse into extra path segments.
+  (b) `2a9054d` ports `ac72866`, `listRepoFiles` now hits the
+  branch-aware `/api/models/<repo>/tree/<rev>?recursive=1` endpoint
+  first and falls back to the older `/api/models?revision=` listing.
+  Local `SAFE_RFILENAME_RE` reapplied to both paths via a `filterSafe`
+  helper so the no-traversal invariant survives the new fallback.
+  Closed without code change: `01820d9` (all 3 sub-fixes already
+  local: tokenizer NaN guard at `c0bc06d`, preprocessor full-buffer
+  check at `bd9cd82`, parakeet.js `audioDur` magic 160 is N/A here);
+  `edad2fd` (backend.js CDN-version fallback is N/A for local's
+  same-origin `/ort/` setup, parakeet.js subarray safety comment
+  already at line 264, incremental-cache eviction log doesn't apply
+  with no `_incrementalCache`); `365427a` (no `getStreamingConstants`
+  method locally, melBins already config-driven via `computeFeatures`);
+  `f503ab4` skipped as diverged: upstream flips `enableProfiling`
+  default to true for `result.metrics` back-compat, which would
+  re-fire the per-call `console.log` paths round 4 just gated, so
+  the local quiet-by-default contract stays.
 - **2026-05-12 (round 4):** two small ports, four no-op closures.
   (a) `ad2052e` ports `d232a4f` — replaced the redundant dynamic
   `await import('./parakeet.js' | './hub.js')` inside `fromUrls` /
