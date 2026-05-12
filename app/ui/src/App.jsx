@@ -1495,7 +1495,20 @@ export default function App() {
               console.warn('[RemoteMic] Unknown control message type:', msg.type);
             }
           } catch (e) {
-            console.error('[RemoteMic] Error parsing message:', e);
+            // F-86: a throw inside any control-message handler used to
+            // be only console.error'd, leaving the UI in 'waiting' or
+            // 'connecting' with the QR still up and no user-visible
+            // indication of failure. importPublicKey throws on
+            // malformed base64 / wrong byte length, deriveSharedKey
+            // throws on incompatible curve points, and the in-flight
+            // verify resolver would dangle. Tear the session down so
+            // the user can retry instead of staring at a wedged modal.
+            console.error('[RemoteMic] Error handling control message:', e);
+            resolveRemoteMicVerify(false);
+            resolveRemoteMicPeerAck(false);
+            setRemoteMicError(`Handshake error (${e?.message || 'unknown'})`);
+            setRemoteMicStatus('error');
+            try { rtc.close(); } catch (_) { /* already closing */ }
           }
         } else {
           // Binary data: encrypted audio chunk
