@@ -37,7 +37,7 @@ services:
       # Caddy default config/data dirs (it tries to create these on start).
       - /config/caddy
       - /data/caddy
-    volumes:
+    # volumes:
       # Local model fallback: bind-mount a host folder of ONNX files (flat
       # layout: vocab.txt + .onnx files directly inside) into the container,
       # then set LOCAL_MODEL_PATH below to the in-container target. Caddy
