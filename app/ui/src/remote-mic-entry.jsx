@@ -285,8 +285,18 @@ function RemoteMicSender() {
                     try {
                         const msg = JSON.parse(data);
                         if (msg.type === 'public-key') {
+                            // F-135: refuse a second handshake once one is in
+                            // flight or already bound. Mirrors the desktop's
+                            // F-86 guard (App.jsx:1448). Without this, a
+                            // hostile peer can re-send public-key mid-modal,
+                            // swap the displayed fingerprint under the user's
+                            // eyes, and orphan the prior ECDH private key.
+                            if (sharedKeyRef.current || verifyResolveRef.current || peerAckResolveRef.current) {
+                                console.warn('[RemoteMic] Ignoring duplicate public-key — handshake already bound or in-flight');
+                                return;
+                            }
                             clearTimeout(keyTimeout);
-                            // Computer sent its public key — derive shared key
+                            // Computer sent its public key, derive shared key
                             setStatus(STATUS.WAITING_KEY);
                             const keyPair = await generateKeyPair();
                             const theirKey = await importPublicKey(msg.key);
