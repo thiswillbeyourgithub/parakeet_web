@@ -138,7 +138,7 @@ const translations = {
     tooltipNoiseSuppression: 'Reduces background noise for clearer voice. Disable for music or when maximum audio fidelity is needed. Default: off.',
     tooltipEchoCancellation: 'Removes echo and feedback. Disable for music recording or if you experience audio quality issues. Default: off.',
     tooltipAutoGainControl: 'Automatically adjusts volume levels. Disable for music or when you want consistent volume. Default: on.',
-    tooltipLiveTranscription: 'Stream transcription as you speak. The model re-runs every few seconds on a sliding window of recent audio. The final transcript still runs once after you stop. Default: on.',
+    tooltipLiveTranscription: 'Stream transcription as you speak. The model re-runs every few seconds on a sliding window of recent audio (no global context, so live text may differ from the final result). After you stop, the full audio is always re-transcribed in one pass; that final pass is the canonical transcript, so live is extra compute on top of it. Default: off.',
     tooltipLiveContextWindow: 'How many seconds of recent audio the encoder sees on each live update. More context = better accuracy but more compute. Auto adapts the size to your machine’s speed (10–60s). Default: Auto.',
 
     // About / info section
@@ -411,7 +411,7 @@ const translations = {
     tooltipNoiseSuppression: "R\u00e9duit le bruit de fond pour une voix plus claire. D\u00e9sactivez pour la musique ou pour une fid\u00e9lit\u00e9 audio maximale. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipEchoCancellation: "Supprime l'\u00e9cho et le retour audio. D\u00e9sactivez pour l'enregistrement musical ou en cas de probl\u00e8mes de qualit\u00e9. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipAutoGainControl: "Ajuste automatiquement les niveaux de volume. D\u00e9sactivez pour la musique ou quand vous voulez un volume constant. Défaut : activé.",
-    tooltipLiveTranscription: "Transcription en flux pendant que vous parlez. Le mod\u00e8le est relanc\u00e9 toutes les quelques secondes sur une fen\u00eatre glissante. La transcription finale est toujours calcul\u00e9e \u00e0 l'arr\u00eat. D\u00e9faut : activ\u00e9.",
+    tooltipLiveTranscription: "Transcription en flux pendant que vous parlez. Le mod\u00e8le est relanc\u00e9 toutes les quelques secondes sur une fen\u00eatre glissante (sans contexte global, donc le texte en direct peut diff\u00e9rer du r\u00e9sultat final). Apr\u00e8s l'arr\u00eat, l'audio complet est syst\u00e9matiquement retranscrit en une seule passe ; cette passe finale est la transcription canonique, donc le mode direct est du calcul suppl\u00e9mentaire. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipLiveContextWindow: "Nombre de secondes d'audio r\u00e9cent vues par l'encodeur \u00e0 chaque mise \u00e0 jour. Plus de contexte = meilleure pr\u00e9cision mais plus de calcul. Auto adapte la taille \u00e0 la vitesse de votre machine (10\u201360s). D\u00e9faut : Auto.",
 
     // About / info section
