@@ -3408,6 +3408,8 @@ export default function App() {
         <VerificationModal
           fingerprint={remoteMicFingerprint}
           prompt={t('verifyPrompt')}
+          warning={t('verifyWarning')}
+          checklist={t('verifyChecklist')}
           confirmLabel={t('verifyConfirm')}
           denyLabel={t('verifyDeny')}
           onConfirm={() => remoteMicVerifyResolveRef.current && remoteMicVerifyResolveRef.current(true)}
