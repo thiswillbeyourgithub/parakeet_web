@@ -72,12 +72,15 @@ for (const origin of ALLOWED_ORIGINS) {
 // Trust proxy headers only from loopback (Caddy/Vite proxy on same host)
 app.set('trust proxy', 'loopback');
 
-// Parse JSON bodies
-app.use(express.json({ limit: '50kb' }));
-
-// CORS middleware — needed because Vite proxy forwards requests.
+// CORS middleware, needed because Vite proxy forwards requests.
 // The Origin header is non-secret (the browser sets it), so a plain
-// String#includes() match is fine — no timing-safe comparison needed.
+// String#includes() match is fine, no timing-safe comparison needed.
+//
+// F-119: CORS runs BEFORE express.json so that OPTIONS preflights
+// return 204 without parsing a body. Body parsing is intentionally
+// the LAST middleware before per-route handlers so an attacker who
+// fails the origin or rate-limit check never pays the JSON.parse
+// cost or the 50 KB Buffer allocation.
 app.use('/api', (req, res, next) => {
     const origin = req.headers.origin;
     if (origin && ALLOWED_ORIGINS.includes(origin)) {
@@ -131,7 +134,22 @@ function validateOrigin(req, res, next) {
     return res.status(403).json({ error: 'Forbidden', message: 'Origin header required' });
 }
 
+// F-118: apply a coarse per-IP rate limit BEFORE validateOrigin so
+// unauthorized requests (no Origin, bad Origin) are also rate-capped.
+// Without this an attacker with no valid Origin gets unbounded 403s
+// at line-rate, each one costing a log line, an Express trip, and a
+// socket write. The cap is well above legitimate peak (a fresh
+// browser session triggers <10 /api/* requests in the first minute)
+// so real users never hit it.
+app.use('/api', rateLimitMiddleware('preflight'));
 app.use('/api', validateOrigin);
+
+// F-119: parse JSON bodies AFTER validateOrigin + preflight rate
+// limit so an attacker without a valid Origin never reaches the
+// body parser. Otherwise express.json reads up to 50 KB and runs
+// synchronous JSON.parse for every rejected request, a CPU
+// amplification path that the rate limiter alone cannot fully close.
+app.use(express.json({ limit: '50kb' }));
 
 // ============ In-memory Room Storage ============
 const rooms = new Map();
@@ -141,6 +159,13 @@ const ROOM_TTL = 10 * 60 * 1000; // 10 minutes
 const rateLimiters = new Map();
 
 const RATE_LIMIT_CONFIG = {
+    // F-118: coarse per-IP cap applied to /api/* BEFORE any other
+    // middleware (including validateOrigin), so unauthorized
+    // requests cost an attacker against the same budget as
+    // authorized ones. 200/min is two orders of magnitude above a
+    // fresh session's peak (~10 /api/* requests in the first
+    // minute), so legitimate users never hit it.
+    preflight: { windowMs: 60 * 1000, maxRequests: 200 },
     roomCreation: { windowMs: 60 * 1000, maxRequests: 5 },
     roomLookup: { windowMs: 60 * 1000, maxRequests: 30 },
     general: { windowMs: 60 * 1000, maxRequests: 100 },
