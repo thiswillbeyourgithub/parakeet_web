@@ -2904,6 +2904,48 @@ export default function App() {
           <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: 'var(--text-subtle)'}}>(nemo128)</span>
         </p>
 
+          <button
+            onClick={() => setShowShortcuts(prev => !prev)}
+            style={{ marginBottom: '0.75rem', width: '100%' }}
+            className="primary"
+          >
+            {showShortcuts ? t('hideKeyboardShortcuts') : t('showKeyboardShortcuts')}
+          </button>
+
+          {showShortcuts && (
+            <div style={{
+              marginBottom: '0.75rem',
+              padding: '0.75rem',
+              background: '#f9fafb',
+              borderRadius: '4px',
+              border: '1px solid #e5e7eb',
+              fontSize: '0.9rem',
+              lineHeight: '1.8'
+            }}>
+              <strong>{t('keyboardShortcuts')}</strong>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.4rem' }}>
+                <tbody>
+                  {[
+                    ['S', t('shortcutToggleSettings')],
+                    ['R / S / Space', t('shortcutStopRecording')],
+                    ['R / Space', t('shortcutStartRecording')],
+                    ['F', t('shortcutSelectFile')],
+                    ['T', t('shortcutTranscribe')],
+                    ['L', t('shortcutLoadModel')],
+                  ].map(([key, desc]) => (
+                    <tr key={key}>
+                      <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', fontWeight: 'bold', fontFamily: 'monospace' }}>{key}</td>
+                      <td style={{ padding: '0.15rem 0' }}>{desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#888' }}>
+                {t('shortcutsDisabledInInputs')}
+              </p>
+            </div>
+          )}
+
           <div className="settings-content">
             <div className="setting-row">
               <span className="setting-label">
@@ -3200,47 +3242,6 @@ export default function App() {
             {t('resetAllSettingsAndData')}
           </button>
 
-          <button
-            onClick={() => setShowShortcuts(prev => !prev)}
-            style={{ marginTop: '0.5rem', width: '100%' }}
-            className="primary"
-          >
-            {showShortcuts ? t('hideKeyboardShortcuts') : t('showKeyboardShortcuts')}
-          </button>
-
-          {showShortcuts && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.75rem',
-              background: '#f9fafb',
-              borderRadius: '4px',
-              border: '1px solid #e5e7eb',
-              fontSize: '0.9rem',
-              lineHeight: '1.8'
-            }}>
-              <strong>{t('keyboardShortcuts')}</strong>
-              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.4rem' }}>
-                <tbody>
-                  {[
-                    ['S', t('shortcutToggleSettings')],
-                    ['R / S / Space', t('shortcutStopRecording')],
-                    ['R / Space', t('shortcutStartRecording')],
-                    ['F', t('shortcutSelectFile')],
-                    ['T', t('shortcutTranscribe')],
-                    ['L', t('shortcutLoadModel')],
-                  ].map(([key, desc]) => (
-                    <tr key={key}>
-                      <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', fontWeight: 'bold', fontFamily: 'monospace' }}>{key}</td>
-                      <td style={{ padding: '0.15rem 0' }}>{desc}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#888' }}>
-                {t('shortcutsDisabledInInputs')}
-              </p>
-            </div>
-          )}
           <button
             onClick={() => { setShowSettings(false); setShowAbout(true); }}
             style={{ marginTop: '1rem', width: '100%' }}
