@@ -149,5 +149,10 @@ commits do not appear to have an upstream equivalent:
   87 src/types commits since fork-point; ~30 queued for port, ~8 marked DONE,
   rest OUT-OF-SCOPE. No ports applied in this round — the round just
   bootstrapped the runbook.
+- **2026-05-12 (round 1):** ported upstream `0629e8f` (NeMo TDT alignment)
+  as local `05c6fb6`. The decode loop now only adopts the new decoder state
+  on non-blank emission and no longer forces an extra `t += 1` when staying
+  on the same frame — this unblocks legitimate multi-token-per-frame
+  emission (the fix's documented win on contraction-heavy audio).
 
 (Documentation prepared with help from Claude Code.)
