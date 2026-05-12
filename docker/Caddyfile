@@ -67,7 +67,15 @@
 		# legacy unload-event timing channels. clipboard-write=(self)
 		# keeps the auto-copy feature working (sanitizeClipboardText
 		# flow) while clipboard-read stays denied.
-		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), attribution-reporting=(), autoplay=(), battery=(), bluetooth=(), browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(self), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), interest-cohort=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), speaker-selection=(), unload=(), usb=(), web-share=(), xr-spatial-tracking=()"
+		# F-94: extend with newer advertising/ambient features that
+		# default to allow if omitted (run-ad-auction,
+		# join-ad-interest-group, shared-storage*, private-aggregation,
+		# publickey-credentials-create, otp-credentials,
+		# window-management, keyboard-map, digital-credentials-get,
+		# captured-surface-control, deferred-fetch, storage-access,
+		# wake-lock alias). Also tightens fullscreen from (self) to ()
+		# since no first-party code calls requestFullscreen.
+		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), attribution-reporting=(), autoplay=(), battery=(), bluetooth=(), browsing-topics=(), camera=(), captured-surface-control=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), deferred-fetch=(), digital-credentials-get=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), interest-cohort=(), join-ad-interest-group=(), keyboard-map=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), otp-credentials=(), payment=(), picture-in-picture=(), private-aggregation=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-create=(), publickey-credentials-get=(), run-ad-auction=(), screen-wake-lock=(), serial=(), shared-storage=(), shared-storage-select-url=(), speaker-selection=(), storage-access=(), unload=(), usb=(), wake-lock=(), web-share=(), window-management=(), xr-spatial-tracking=()"
 		# Belt-and-braces clickjacking defense alongside frame-ancestors 'none'
 		# in CSP, for legacy browsers that ignore frame-ancestors.
 		X-Frame-Options "DENY"
