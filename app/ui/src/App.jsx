@@ -1502,9 +1502,15 @@ export default function App() {
                 if (inFlightBatchRef.current === thisBatch) inFlightBatchRef.current = null;
               });
             } else if (msg.type === 'paused') {
-              setRemoteMicPaused(true);
+              // F-89: only honour paused/resumed while remoteMicRecording
+              // is active. Outside a recording these messages can only
+              // desync the UI from reality (showing "paused" while the
+              // phone is idle, or "resumed" with nothing to resume).
+              if (remoteMicRecording) setRemoteMicPaused(true);
+              else console.warn('[RemoteMic] Ignoring paused: not recording');
             } else if (msg.type === 'resumed') {
-              setRemoteMicPaused(false);
+              if (remoteMicRecording) setRemoteMicPaused(false);
+              else console.warn('[RemoteMic] Ignoring resumed: not recording');
             } else {
               // Catches protocol drift between desktop and phone bundles —
               // silently dropping unknown types makes mismatches invisible.
