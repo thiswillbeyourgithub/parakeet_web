@@ -171,5 +171,18 @@ commits do not appear to have an upstream equivalent:
   `logits.dispose()` on failure. (c) `93844f5` marked DONE — its
   parakeet.js half was already absorbed by round 1's port `05c6fb6`,
   and its backend.js half is already covered by `bd38bf1`.
+- **2026-05-12 (round 4):** two small ports, four no-op closures.
+  (a) `ad2052e` ports `d232a4f` — replaced the redundant dynamic
+  `await import('./parakeet.js' | './hub.js')` inside `fromUrls` /
+  `fromHub` with static module-scope imports (the same modules were
+  already re-exported at the top of the file). (b) `e9cfde2` ports
+  `82b57e8` — `transcribe()` no longer logs per-stage timings
+  unconditionally; gates on `this.verbose || debug || enableProfiling`.
+  Closed without code change: `9561ab2` (local already uses
+  `data.subarray`), `47427b5` (local's `subarray`-view pattern is
+  strictly better than the upstream `memcpy + reused tensor` pattern),
+  `9f68b5e` (no local incremental cache to evict), and `e136e1c`
+  (touches upstream-only `validateFiniteAudioSamples` and
+  `MelFeatureCache`).
 
 (Documentation prepared with help from Claude Code.)
