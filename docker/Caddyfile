@@ -182,6 +182,25 @@
 	}
 	header @integrity Cache-Control "no-cache, must-revalidate"
 
+	# F-146: every other static path was relying on RFC 7234 browser
+	# heuristic freshness (Last-Modified-based, typically 10% of age), so
+	# cache policy was unreviewable and contributed to the F-143 class of
+	# stale-after-deploy failures for non-WASM assets (eruda-loader, the
+	# dictation regex CSVs). Pin the policy explicitly:
+	#  - /js/*, /favicon.svg: short-lived, must-revalidate (5 min). Catches
+	#    eruda-loader rotation without spamming revalidations.
+	#  - /dictation-regex/*: no-cache, must-revalidate so a regex-source
+	#    update reaches users on the next page load.
+	#  - /models/*: large (hundreds of MB) and the JS layer content-hashes
+	#    them on use, so they can be heuristically cached for a day, but
+	#    pin the rule so the intent is reviewable.
+	@stable_static path /js/* /favicon.svg
+	header @stable_static Cache-Control "public, max-age=300, must-revalidate"
+	@dictation_regex path /dictation-regex/*
+	header @dictation_regex Cache-Control "no-cache, must-revalidate"
+	@local_models path /models/*
+	header @local_models Cache-Control "public, max-age=86400, must-revalidate"
+
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
 	#
 	# `header_up -X-Forwarded-For` removes any X-Forwarded-For the client
