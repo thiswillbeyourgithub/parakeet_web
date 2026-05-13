@@ -10,41 +10,32 @@ const CONFIRM_DELAY_MS = 3000;
  * the data channel: without the verbal compare, key swaps are invisible to
  * both peers.
  *
- * UX hardening (Round 9):
+ * UX:
  *  - The fingerprint is non-selectable (userSelect: 'none') so a malicious
  *    extension or programmatic copy cannot scrape the code into the
- *    clipboard for an attacker to forge a matching display on the peer
- *    side (F-64).
- *  - dir="ltr" + unicode-bidi: isolate on the fingerprint so a future
- *    Arabic/Hebrew translation or a user with RTL accessibility settings
- *    can never bidi-reorder the hex into a visually-matching but
- *    semantically-different string (F-69).
- *  - Deny is the safer default: first in DOM order, autoFocus on mount.
- *    Enter on the modal triggers Deny, not Confirm (F-67).
- *  - Confirm requires two steps: an "I read both codes aloud" checkbox
- *    AND the 3-second mount delay AND a deliberate click. Enter/Space
- *    is ignored on Confirm; only Esc/Enter on Deny is keyboard-driven
- *    (fail-closed) (F-66).
- *
- * Adapted from WebSend's verification-modal.js.
+ *    clipboard for an attacker to forge a matching display on the peer side.
+ *  - dir="ltr" + unicode-bidi: isolate on the fingerprint so RTL settings
+ *    cannot bidi-reorder the hex into a visually-matching but semantically
+ *    different string.
+ *  - Buttons stack vertically with deny on top so it is the closer target
+ *    while the user is reading the code; confirm unlocks after a 3-second
+ *    delay and Enter/Esc both work once unlocked.
  *
  * Self-contained inline styling so it works on both the main app (which loads
  * App.css) and the remote-mic phone page (which does not).
  */
-export default function VerificationModal({ fingerprint, prompt, warning, checklist, confirmLabel, denyLabel, onConfirm, onDeny }) {
+export default function VerificationModal({ fingerprint, prompt, warning, confirmLabel, denyLabel, onConfirm, onDeny }) {
     // F-134: register with the shared modal-open counter so useAnyModalOpen()
     // returns true and F-127's per-history Copy-button disable applies during
     // the fingerprint compare (otherwise the highest-stakes modal would be
     // the only one without the F-127 defence).
     useRegisterModalOpen();
-    // Confirm is gated on (a) the 3-second mount delay finishing AND (b) the
-    // user ticking the "I read both codes" checkbox. The two together force a
-    // deliberate, attention-bearing interaction; either alone is bypassable.
+    // Confirm is gated on the 3-second mount delay so the user actually
+    // reads the code rather than dismissing the modal reflexively.
     const [remainingMs, setRemainingMs] = useState(CONFIRM_DELAY_MS);
-    const [checked, setChecked] = useState(false);
     const denyRef = useRef(null);
-    const delayDone = remainingMs <= 0;
-    const confirmReady = delayDone && checked;
+    const confirmRef = useRef(null);
+    const confirmReady = remainingMs <= 0;
 
     useEffect(() => {
         const start = Date.now();
@@ -57,18 +48,16 @@ export default function VerificationModal({ fingerprint, prompt, warning, checkl
     }, []);
 
     // Focus Deny on mount so a stray Enter/Space hits the fail-closed
-    // branch, not Confirm.
+    // branch. Once the delay elapses, move focus to Confirm so the user
+    // can simply press Enter to accept.
     useEffect(() => {
         denyRef.current?.focus();
     }, []);
+    useEffect(() => {
+        if (confirmReady) confirmRef.current?.focus();
+    }, [confirmReady]);
 
     useEffect(() => {
-        // Esc -> deny (fail-closed). Enter/Space are intentionally NOT
-        // bound to Confirm: a held key from a preceding modal would
-        // otherwise auto-fire confirm the instant CONFIRM_DELAY_MS
-        // expires (key autorepeat ~30ms after ~250ms hold, well within
-        // the inattention window). Confirm requires an explicit mouse
-        // or touch click on the button.
         function onKey(e) {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -93,9 +82,9 @@ export default function VerificationModal({ fingerprint, prompt, warning, checkl
         textAlign: 'center',
     };
     const btnBase = {
-        padding: '0.75rem 1.25rem', borderRadius: '8px',
-        border: 0, fontSize: '1rem', fontWeight: 600,
-        cursor: 'pointer', minWidth: '8rem',
+        padding: '1.1rem 1.5rem', borderRadius: '10px',
+        border: 0, fontSize: '1.15rem', fontWeight: 700,
+        cursor: 'pointer', width: '100%',
     };
     return (
         <div style={overlay} role="dialog" aria-modal="true">
@@ -132,24 +121,10 @@ export default function VerificationModal({ fingerprint, prompt, warning, checkl
                 >
                     {fingerprint}
                 </div>
-                {checklist && (
-                    <label style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        gap: '0.5rem', margin: '0.75rem 0',
-                        fontSize: '0.9rem', cursor: 'pointer',
-                    }}>
-                        <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => setChecked(e.target.checked)}
-                            style={{ cursor: 'pointer' }}
-                        />
-                        <span>{checklist}</span>
-                    </label>
-                )}
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    {/* Deny is first in DOM order so tab-focus and the
-                        autoFocused button are both fail-closed. */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', marginTop: '1.5rem' }}>
+                    {/* Deny stays first in DOM order so it is the
+                        fail-closed default while the user is still
+                        comparing the code. */}
                     <button
                         ref={denyRef}
                         style={{ ...btnBase, background: '#b91c1c', color: '#fff' }}
@@ -158,6 +133,7 @@ export default function VerificationModal({ fingerprint, prompt, warning, checkl
                         {denyLabel}
                     </button>
                     <button
+                        ref={confirmRef}
                         style={{
                             ...btnBase,
                             background: confirmReady ? '#16a34a' : '#374151',
@@ -165,41 +141,10 @@ export default function VerificationModal({ fingerprint, prompt, warning, checkl
                             cursor: confirmReady ? 'pointer' : 'not-allowed',
                             opacity: confirmReady ? 1 : 0.7,
                         }}
-                        onClick={confirmReady ? (e) => {
-                            // F-133: native buttons fire onClick on Space/Enter
-                            // when keyboard-focused, regardless of any
-                            // document-level keydown handler. Reject any
-                            // activation that did not come from a real pointer
-                            // (Space/Enter on a focused button produce a
-                            // synthetic click with detail === 0, while a real
-                            // mouse/touch click has detail === 1 and
-                            // pointerType set). Combined with the keydown
-                            // preventDefault below this fail-closes against
-                            // extension keystroke injection that drives
-                            // Tab + Space + Tab + wait + Space.
-                            if (!e.isTrusted) return;
-                            if (e.detail === 0 && e.pointerType !== 'mouse' && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
-                            onConfirm();
-                        } : undefined}
-                        onKeyDown={(e) => {
-                            // F-133: suppress native button activation on the
-                            // keys an extension would synthesize. The user must
-                            // click; verbal-OOB comparison plus a deliberate
-                            // pointer activation is the contract. Enter fires
-                            // the default click on keydown; Space fires it on
-                            // keyup, so both handlers preventDefault.
-                            if (e.key === ' ' || e.key === 'Enter' || e.code === 'Space') {
-                                e.preventDefault();
-                            }
-                        }}
-                        onKeyUp={(e) => {
-                            if (e.key === ' ' || e.key === 'Enter' || e.code === 'Space') {
-                                e.preventDefault();
-                            }
-                        }}
+                        onClick={confirmReady ? onConfirm : undefined}
                         disabled={!confirmReady}
                     >
-                        {delayDone ? confirmLabel : `${confirmLabel} (${Math.ceil(remainingMs / 1000)}s)`}
+                        {confirmReady ? confirmLabel : `${confirmLabel} (${Math.ceil(remainingMs / 1000)}s)`}
                     </button>
                 </div>
             </div>

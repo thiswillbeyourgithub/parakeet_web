@@ -580,7 +580,6 @@ function RemoteMicSender() {
                     fingerprint={fingerprint}
                     prompt={t('verifyPrompt')}
                     warning={t('verifyWarning')}
-                    checklist={t('verifyChecklist')}
                     confirmLabel={t('verifyConfirm')}
                     denyLabel={t('verifyDeny')}
                     onConfirm={() => verifyResolveRef.current && verifyResolveRef.current(true)}
