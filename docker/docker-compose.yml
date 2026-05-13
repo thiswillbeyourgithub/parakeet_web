@@ -9,13 +9,6 @@ services:
         # opt out (e.g. when a known CVE is triaged but not yet patched
         # upstream).
         RUN_NPM_AUDIT: ${RUN_NPM_AUDIT:-true}
-        # Reproducible build: vite/rollup/esbuild honour SOURCE_DATE_EPOCH
-        # for any embedded timestamp. Operators with a git checkout should
-        # export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) before
-        # `docker compose build` so two builds of the same commit emit
-        # identical bytes. The published dist/.well-known/build-sums.txt
-        # then lets users verify the live site against a rebuild.
-        SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:-0}
     restart: unless-stopped
     container_name: parakeetweb
     # Run as non-root (UID 1000, created in the Dockerfile). Combined with

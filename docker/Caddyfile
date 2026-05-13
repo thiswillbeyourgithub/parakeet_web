@@ -47,9 +47,7 @@
 		# reverse-proxy identity (and indirectly its version range, pinned
 		# by digest in Dockerfile) does not advertise itself to drive-by
 		# scanners (Shodan / ZoomEye / mass CVE probers). Free defense in
-		# depth; the deploy is still fingerprintable by /.well-known/
-		# build-sums.txt for anyone targeting parakeet specifically, but
-		# noise reduction for untargeted scans costs nothing here.
+		# depth against untargeted scans.
 		-Server
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
@@ -192,9 +190,7 @@
 	# stale cached manifest paired with a freshly deployed asset can
 	# either DoS recording (false integrity failure: cached old hash,
 	# new bytes) or hide tampering (the cached manifest never sees the
-	# new pin). build-sums.txt is the operator-side deploy-verification
-	# anchor (env.example documents the diff workflow) and must also
-	# never be served stale. Both files are tiny, revalidation is cheap.
+	# new pin). The file is tiny, revalidation is cheap.
 	#
 	# F-76: pcm-recorder-worklet.js sits at a STABLE URL (AudioWorklet
 	# loads it by string path) so the immutable @hashed rule doesn't
@@ -217,7 +213,7 @@
 	# against the new pin and recording fails closed. Pin the runtime
 	# blobs to no-cache too so the pair always rolls together.
 	@integrity {
-		path /.well-known/asset-integrity.json /.well-known/build-sums.txt /pcm-recorder-worklet.js /ort/manifest.json /ort/*.wasm /ort/*.mjs
+		path /.well-known/asset-integrity.json /pcm-recorder-worklet.js /ort/manifest.json /ort/*.wasm /ort/*.mjs
 	}
 	header @integrity Cache-Control "no-cache, must-revalidate"
 

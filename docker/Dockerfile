@@ -18,16 +18,6 @@
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 WORKDIR /build
 
-# Reproducibility: SOURCE_DATE_EPOCH is the standard env that
-# vite/rollup/esbuild and most modern toolchains honour for any embedded
-# timestamp (so two builds of the same source produce the same bytes).
-# Operators should pass it via docker-compose or `docker build --build-arg
-# SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)`. Default is 0 (unix epoch)
-# so the Dockerfile stays operable without git; that default already
-# produces deterministic output, just not "matches commit X" metadata.
-ARG SOURCE_DATE_EPOCH=0
-ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
-
 # Each `npm ci` runs with --ignore-scripts so a compromised dep's
 # postinstall (the standard malware delivery channel) cannot execute
 # arbitrary code during build. The single legitimate exception is
@@ -119,22 +109,6 @@ COPY signaling ./signaling
 
 RUN cd app/ui && npm run build
 
-# Emit a manifest of every shipped file's sha256 so operators can rebuild
-# from the same source and verify they got the same bytes the server is
-# serving. Sorted listing so the manifest is deterministic regardless of
-# filesystem walk order. Stored under /.well-known/ so it's discoverable
-# without a config change (Caddy auto-serves any file under /srv).
-#
-# F-111: exclude ONLY build-sums.txt from itself (it cannot list its
-# own future hash without a fixed point). The previous glob
-# `! -path './.well-known/*'` was over-broad and dropped the F-38b
-# trust anchor `asset-integrity.json` from the manifest entirely, so
-# the operator's deploy-verification recipe could not detect tampering
-# with the worklet pin. Asset-integrity.json must be enumerated.
-RUN cd app/ui/dist && mkdir -p .well-known && \
-    find . -type f ! -path './.well-known/build-sums.txt' | LC_ALL=C sort | \
-    while IFS= read -r f; do sha256sum "$f"; done > .well-known/build-sums.txt
-
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
 FROM caddy:2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
 
@@ -147,7 +121,7 @@ FROM caddy:2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39d
 # build-time failure (visible) rather than a silent runtime swap, and
 # record the resolved exact version into /etc/parakeet-build.txt so an
 # operator running `docker run --rm parakeetweb cat /etc/parakeet-
-# build.txt` can audit the runtime versions against build-sums.txt.
+# build.txt` can audit the runtime versions of the image.
 # libcap is needed once for setcap; we keep it transient via virtual.
 RUN apk add --no-cache 'nodejs=~24' && \
     apk add --no-cache --virtual .build-deps libcap && \

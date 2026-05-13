@@ -19,8 +19,7 @@
 //   - non-/assets/ paths (icon, favicon, etc.)
 //
 // Not a defense against a compromised builder: the SRI is emitted by the
-// same build that produces the assets. F-39 (reproducible build SHA256SUMS)
-// is the answer to that orthogonal threat.
+// same build that produces the assets.
 
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
