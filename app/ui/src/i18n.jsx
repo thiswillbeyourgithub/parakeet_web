@@ -12,7 +12,6 @@ const translations = {
     creatingSessions: 'Creating sessions\u2026',
     compilingModel: 'Compiling model\u2026',
     modelReady: 'Model ready \u2714',
-    hfUnreachable: 'HuggingFace appears unreachable',
     failed: 'Failed',
     startingRecording: 'Starting recording...',
     recordingStartsNow: 'Recording starts now!',
@@ -61,7 +60,6 @@ const translations = {
     confidence: 'Confidence',
     dictationExp: 'Dictation (exp.)',
     dismiss: 'Dismiss',
-    downloadFromServer: 'Download from this server',
     clearTranscriptionHistory: 'Clear Transcription History',
     resetAllSettingsAndData: '\u26a0\ufe0f Reset All Settings and Data',
     showKeyboardShortcuts: 'Show Keyboard Shortcuts',
@@ -186,11 +184,6 @@ const translations = {
     lowRamConfirmContinue: 'Load anyway',
     sharedArrayBufferWarning: '\u26a0\ufe0f Performance Note: SharedArrayBuffer is not available. WASM will run single-threaded. For better performance, serve over HTTPS with proper headers or use WebGPU.',
 
-    // Fallback prompt
-    couldNotReachHF: 'Could not reach HuggingFace to download model weights.',
-    localCopyAvailable: 'This instance has a local copy of the weights \u2014 would you like to use it instead?',
-    localFallbackNotEnabled: 'Local fallback is not enabled on this instance.',
-
     // System info
     system: '\ud83d\udcbe System',
     ram: 'RAM',
@@ -289,7 +282,6 @@ const translations = {
     creatingSessions: 'Cr\u00e9ation des sessions\u2026',
     compilingModel: 'Compilation du mod\u00e8le\u2026',
     modelReady: 'Mod\u00e8le pr\u00eat \u2714',
-    hfUnreachable: 'HuggingFace semble inaccessible',
     failed: '\u00c9chec',
     startingRecording: "D\u00e9marrage de l'enregistrement...",
     recordingStartsNow: "L'enregistrement commence maintenant\u00a0!",
@@ -338,7 +330,6 @@ const translations = {
     confidence: 'Confiance',
     dictationExp: 'Dict\u00e9e (exp.)',
     dismiss: 'Fermer',
-    downloadFromServer: 'T\u00e9l\u00e9charger depuis ce serveur',
     clearTranscriptionHistory: "Effacer l'historique des transcriptions",
     resetAllSettingsAndData: '\u26a0\ufe0f R\u00e9initialiser tous les param\u00e8tres et donn\u00e9es',
     showKeyboardShortcuts: 'Afficher les raccourcis clavier',
@@ -462,11 +453,6 @@ const translations = {
     lowRamConfirmBody: "Charger le mod\u00e8le de reconnaissance vocale sur un appareil \u00e0 faible m\u00e9moire peut faire planter cet onglet du navigateur. Continuer quand m\u00eame\u00a0?",
     lowRamConfirmContinue: 'Charger quand m\u00eame',
     sharedArrayBufferWarning: "\u26a0\ufe0f Note de performance\u00a0: SharedArrayBuffer n'est pas disponible. WASM fonctionnera en mono-thread. Pour de meilleures performances, servez via HTTPS avec les bons en-t\u00eates ou utilisez WebGPU.",
-
-    // Fallback prompt
-    couldNotReachHF: 'Impossible de joindre HuggingFace pour t\u00e9l\u00e9charger les poids du mod\u00e8le.',
-    localCopyAvailable: "Cette instance poss\u00e8de une copie locale des poids \u2014 souhaitez-vous l'utiliser\u00a0?",
-    localFallbackNotEnabled: "Le fallback local n'est pas activ\u00e9 sur cette instance.",
 
     // System info
     system: '\ud83d\udcbe Syst\u00e8me',

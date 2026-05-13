@@ -341,8 +341,6 @@ export default function App() {
   // simulate a blocked HF. Implies localFallbackEnabled.
   const forceLocalFallback = CONFIG.VITE_FORCE_LOCAL_MODEL_FALLBACK === 'true';
   const localFallbackEnabled = forceLocalFallback || CONFIG.VITE_LOCAL_MODEL_FALLBACK === 'true';
-  // Tracks whether we should show the "HF blocked, try local?" prompt
-  const [showFallbackPrompt, setShowFallbackPrompt] = useState(false);
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
@@ -1104,7 +1102,6 @@ export default function App() {
       modelRef.current = null;
     }
 
-    setShowFallbackPrompt(false);
     setStatus('loadingModel');
     setProgress('');
     setProgressText('');
@@ -1169,16 +1166,16 @@ export default function App() {
       setProgressPct(null);
     } catch (e) {
       console.error(e);
-      // If HuggingFace is blocked and local fallback is available, prompt the user
+      // If HuggingFace is blocked and local fallback is available, retry silently
+      // against the locally-served weights. The startup healthcheck (see the
+      // checkLocalModelFiles effect) already surfaces a banner if those files
+      // are missing, so we don't need to ask the user here.
       if (e instanceof HubDownloadError && localFallbackEnabled && !useLocalFallback) {
-        setStatus('hfUnreachable');
-        setProgressText('');
-        setProgressPct(null);
-        setShowFallbackPrompt(true);
-      } else {
-        setStatus('failed');
-        setProgress('');
+        console.log('[App] HuggingFace unreachable, falling back to local weights');
+        return loadModel({ useLocalFallback: true });
       }
+      setStatus('failed');
+      setProgress('');
     }
   }
 
@@ -3805,29 +3802,6 @@ export default function App() {
           <button onClick={() => setFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
             {t('dismiss')}
           </button>
-        </div>
-      )}
-
-      {/* Fallback prompt: shown when HuggingFace is unreachable and
-          the instance has local model weights available */}
-      {showFallbackPrompt && (
-        <div className="fallback-prompt">
-          <p>
-            {t('couldNotReachHF')}
-            {localFallbackEnabled
-              ? ` ${t('localCopyAvailable')}`
-              : ` ${t('localFallbackNotEnabled')}`}
-          </p>
-          {localFallbackEnabled && (
-            <div className="fallback-actions">
-              <button onClick={() => loadModel({ useLocalFallback: true })}>
-                {t('downloadFromServer')}
-              </button>
-              <button onClick={() => setShowFallbackPrompt(false)}>
-                {t('cancel')}
-              </button>
-            </div>
-          )}
         </div>
       )}
 
