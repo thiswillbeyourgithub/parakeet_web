@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
-import { formatTime, formatDuration } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes } from './lib/format.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -1113,7 +1113,8 @@ export default function App() {
       const progressCallback = ({ loaded, total, file, resumed }) => {
         const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
         const prefix = resumed ? `${t('resuming')} ` : '';
-        setProgressText(`${prefix}${file}: ${pct}%`);
+        const sizes = total > 0 ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
+        setProgressText(`${prefix}${file}:${sizes} (${pct}%)`);
         setProgressPct(pct);
       };
 
