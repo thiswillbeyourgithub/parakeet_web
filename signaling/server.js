@@ -10,6 +10,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
 
 const app = express();
 // F-144: suppress the default `X-Powered-By: Express` header. Caddy's
@@ -588,6 +589,80 @@ function teardownPeer(peer, reason) {
     }
 }
 
+// WebSocket relay infrastructure. The single WebSocketServer instance is
+// fed by the http.Server-level 'upgrade' listener at the bottom of this
+// file; we use { noServer: true } so we control auth/origin/rate-limit
+// BEFORE handshakeUpgrade allocates a socket per request.
+const _relayWss = new WebSocketServer({ noServer: true });
+
+function attachRelay(room, ws, slotName) {
+    if (!room.relay) {
+        room.relay = { a: null, b: null, sessionBytes: 0 };
+    }
+    const r = room.relay;
+    ws.kind = 'ws';
+    ws.slotName = slotName;
+    r[slotName] = ws;
+    _relayWsLive.add(ws);
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
+    ws.on('message', (data, isBinary) => {
+        const len = Buffer.isBuffer(data) ? data.length : (data && data.byteLength) || 0;
+        if (!isBinary && len > RELAY_MAX_CONTROL_MSG_BYTES) {
+            // Hostile peer pumping multi-MB text frames: close this half.
+            // Peer is left intact so it observes the disconnect.
+            try { ws.close(4413, 'Control message too large'); } catch (_) { /* ignore */ }
+            return;
+        }
+        r.sessionBytes += len;
+        if (r.sessionBytes > RELAY_MAX_TOTAL_SESSION_BYTES) {
+            // Tear down both halves so the cap is end-to-end.
+            const peer = slotName === 'a' ? r.b : r.a;
+            try { ws.close(4413, 'Session byte cap exceeded'); } catch (_) { /* ignore */ }
+            teardownPeer(peer, 'Session byte cap exceeded');
+            return;
+        }
+        const peer = slotName === 'a' ? r.b : r.a;
+        deliverToPeer(peer, data, isBinary);
+        // Pre-handshake frames (peer hasn't joined yet) are dropped on
+        // the floor. The protocol is interactive: the receiver
+        // renegotiates on its own when the peer arrives.
+    });
+
+    ws.on('close', () => {
+        _relayWsLive.delete(ws);
+        if (room.relay) {
+            if (room.relay[slotName] === ws) room.relay[slotName] = null;
+            // Symmetric pair: once one half is gone the session is dead.
+            // The receiver re-pairs via a fresh /relay/handshake if it
+            // still wants to try.
+            const peer = slotName === 'a' ? room.relay.b : room.relay.a;
+            teardownPeer(peer, 'Peer disconnected');
+        }
+    });
+
+    ws.on('error', () => {
+        try { ws.close(1011, 'Server error'); } catch (_) { /* ignore */ }
+    });
+}
+
+// Heartbeat: any WS that fails to pong within one interval is treated as
+// dead and force-closed. Without this a proxy that silently drops the
+// underlying TCP socket leaves the peer holding an open ws for the room
+// TTL, blocking re-pair on the same slot.
+setInterval(() => {
+    for (const ws of _relayWsLive) {
+        if (ws.isAlive === false) {
+            try { ws.terminate(); } catch (_) { /* ignore */ }
+            _relayWsLive.delete(ws);
+            continue;
+        }
+        ws.isAlive = false;
+        try { ws.ping(); } catch (_) { /* ignore */ }
+    }
+}, RELAY_WS_PING_INTERVAL_MS).unref();
+
 function deliverToPeer(peerSlot, data, isBinary) {
     if (!peerSlot) return;
     if (peerSlot.kind === 'lp') {
@@ -1114,3 +1189,92 @@ server.headersTimeout = 10_000;
 // Keep-alive idle sockets are recycled fast so an attacker cannot
 // park many cheap FDs.
 server.keepAliveTimeout = 5_000;
+
+// ============ WebSocket Relay Upgrade Handler ============
+//
+// The Express app handles regular HTTP routes; the WebSocket relay
+// piggybacks on the same TCP listener via http.Server's 'upgrade'
+// event. Auth, origin, and rate-limit checks run BEFORE
+// handshakeUpgrade() so an unauthenticated peer never reaches the
+// ws library's parser.
+
+// Path: /api/rooms/<6 chars>/relay  (signaling-server view; Caddy
+// strips the /api/signal prefix before reverse-proxying).
+const RELAY_WS_PATH_RE = /^\/api\/rooms\/([A-Z0-9]{6})\/relay$/;
+
+// Mirror Express trust-proxy=loopback: when the immediate TCP peer is
+// loopback (Caddy on the same host), trust Caddy's X-Forwarded-For
+// since Caddy has already stripped any client-supplied value. For
+// non-loopback peers (no Caddy in front, e.g. dev), use the socket
+// address directly.
+function _getUpgradeClientIp(req) {
+    const peer = req.socket.remoteAddress;
+    if (peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1') {
+        const xff = req.headers['x-forwarded-for'];
+        if (typeof xff === 'string' && xff.length) {
+            const first = xff.split(',')[0].trim();
+            if (first) return first;
+        }
+    }
+    return peer || 'unknown';
+}
+
+server.on('upgrade', (req, socket, head) => {
+    // Deny early: closing the socket is cheaper than running the ws
+    // accept handshake just to immediately reject.
+    const denyAndClose = (statusLine, extra = '') => {
+        try { socket.write(`HTTP/1.1 ${statusLine}\r\n${extra}\r\n`); } catch (_) { /* ignore */ }
+        try { socket.destroy(); } catch (_) { /* ignore */ }
+    };
+
+    if (!RELAY_ENABLE) return denyAndClose('404 Not Found');
+
+    let url;
+    try {
+        url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    } catch (_) {
+        return denyAndClose('400 Bad Request');
+    }
+
+    const match = RELAY_WS_PATH_RE.exec(url.pathname);
+    if (!match) return denyAndClose('404 Not Found');
+
+    // Origin check mirrors validateOrigin: if Origin is present it must
+    // be in the allow-list; if absent we accept (legitimate non-browser
+    // tooling and proxies that strip Origin on upgrade). The room secret
+    // gates the actual authorisation; Origin is browser-CSRF defence.
+    const origin = req.headers.origin;
+    if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+        console.warn(`[RELAY-WS] Blocked upgrade from unauthorized origin: ${sanitizeForLog(origin)}`);
+        return denyAndClose('403 Forbidden');
+    }
+
+    const ip = _getUpgradeClientIp(req);
+    // Use the 'general' bucket - same bucket that LP /up and /down hit -
+    // so a per-IP cap is shared across all relay transport variants.
+    const rl = checkRateLimit(ip, 'general');
+    if (!rl.allowed) {
+        return denyAndClose(`429 Too Many Requests`, `Retry-After: ${rl.retryAfter}\r\n`);
+    }
+
+    const roomId = match[1];
+    const room = rooms.get(roomId);
+    const providedSecret = url.searchParams.get('secret') || '';
+    // Compare against DUMMY_ROOM_SECRET on missing-room branch so a
+    // timing observer cannot distinguish "wrong room id" from "wrong
+    // secret" (same enumeration-oracle concern as validateRoomSecret).
+    const compareTarget = room ? room.secret : DUMMY_ROOM_SECRET;
+    const ok = providedSecret && secureCompare(providedSecret, compareTarget);
+    if (!room || !ok) return denyAndClose('401 Unauthorized');
+
+    const r = room.relay || { a: null, b: null, sessionBytes: 0 };
+    let slotName;
+    if (!r.a) slotName = 'a';
+    else if (!r.b) slotName = 'b';
+    else return denyAndClose('409 Conflict');
+
+    _relayWss.handleUpgrade(req, socket, head, (ws) => {
+        attachRelay(room, ws, slotName);
+        debugLog('RELAY', `WS slot ${slotName} attached for room ${roomId}`);
+    });
+});
