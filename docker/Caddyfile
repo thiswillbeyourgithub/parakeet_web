@@ -26,19 +26,22 @@
 	# because ONNX Runtime Web needs it, and keeps style-src 'unsafe-inline'
 	# until the JSX inline-style migration in a later round. Connect-src
 	# allows the HuggingFace model fetch path and an operator-configurable
-	# allowlist via VITE_CSP_CONNECT_HOSTS (umami analytics origin, custom
-	# dictation regex CSV host, etc.). Script-src likewise extensible via
-	# VITE_CSP_SCRIPT_HOSTS when umami is enabled.
+	# allowlist via VITE_CSP_CONNECT_HOSTS (custom dictation regex CSV host,
+	# extra HF rotation subdomain, etc.). Script-src likewise extensible via
+	# VITE_CSP_SCRIPT_HOSTS. The analytics origin is derived from
+	# VITE_ANALYTICS_URL in entrypoint.sh and auto-appended to both lists, so
+	# operators only declare it once.
 	#
-	# The HF connect-src list is the explicit set of subdomains HF
-	# currently redirects model files through (cas-bridge.xethub.hf.co for
-	# xet-based LFS, cdn-lfs.* for the older S3-backed path). It used to
-	# be `*.huggingface.co *.hf.co`, but a wildcard would also match any
-	# future HF-controlled subdomain (including user-controllable ones, if
-	# HF ever opens that namespace) and turn an XSS in the parakeet origin
-	# into an exfil channel through that subdomain. If HF rotates the CDN
-	# host, an operator can extend the list at runtime via
-	# VITE_CSP_CONNECT_HOSTS without rebuilding the image.
+	# _CSP_HF_HOSTS is computed by entrypoint.sh: the explicit set of HF
+	# subdomains (cas-bridge.xethub.hf.co for xet-based LFS, cdn-lfs.* for
+	# the older S3-backed path) when HF serving is allowed, empty when
+	# VITE_FORCE_LOCAL_MODEL_FALLBACK=true. It used to be a wildcard
+	# `*.huggingface.co *.hf.co`, but that would also match any future
+	# HF-controlled subdomain (including user-controllable ones if HF ever
+	# opens that namespace) and turn an XSS in the parakeet origin into an
+	# exfil channel through that subdomain. If HF rotates the CDN host,
+	# an operator can extend the list at runtime via VITE_CSP_CONNECT_HOSTS
+	# without rebuilding the image.
 	header {
 		# F-71: strip Caddy's default `Server: Caddy` response header so the
 		# reverse-proxy identity (and indirectly its version range, pinned
@@ -77,7 +80,7 @@
 		# bytes are constant and ship in the JS bundle, so this is no
 		# broader than `'self'` for the same content; data: in media-src
 		# is not a known script-execution surface.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; media-src 'self' blob: data:; font-src 'self'; connect-src 'self' blob: https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; media-src 'self' blob: data:; font-src 'self'; connect-src 'self' blob: {$_CSP_HF_HOSTS:} {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
 		# Permissions-Policy: only microphone, hid (WebHID for SpeechMike)
 		# and clipboard-write are needed by the page. Everything else is
 		# explicitly disabled so a compromised script cannot elicit a

@@ -78,6 +78,26 @@ _validate_regex_source() {
   esac
 }
 
+# Extract https://host[:port] from a full URL. Stdout on success, exit 1
+# on failure. Strict: refuses anything that isn't https://, refuses hosts
+# with characters outside the CSP-token allowlist used by
+# _validate_csp_hosts. Used to derive a CSP origin from VITE_ANALYTICS_URL.
+_extract_origin() {
+  _u="${1%%#*}"
+  _u="${_u%%\?*}"
+  case "$_u" in
+    https://*) ;;
+    *) return 1 ;;
+  esac
+  _rest="${_u#https://}"
+  _host="${_rest%%/*}"
+  case "$_host" in
+    '') return 1 ;;
+    *[!A-Za-z0-9.:-]*) return 1 ;;
+  esac
+  printf 'https://%s' "$_host"
+}
+
 # F-91: Validate operator-supplied CSP allowlists before they are
 # interpolated into Caddy's CSP header. Caddy substitutes the env-var
 # value as a literal string; a typo like
@@ -254,6 +274,48 @@ if ! _validate_csp_hosts "${VITE_CSP_CONNECT_HOSTS:-}"; then
   echo "[entrypoint] Got: ${VITE_CSP_CONNECT_HOSTS}"
   echo "[entrypoint] Refusing to start so an operator typo cannot silently widen CSP."
   exit 1
+fi
+
+# Auto-derive CSP allowlist entries so operators don't have to repeat values
+# that are already declared via sibling env vars.
+#
+# 1. HuggingFace connect-src list: the explicit subdomains HF currently
+#    redirects model files through. Default ON, but cleared entirely when
+#    VITE_FORCE_LOCAL_MODEL_FALLBACK=true, since the app never reaches HF
+#    in that mode and there is no reason to advertise those origins.
+# 2. Analytics origin: derived from VITE_ANALYTICS_URL (if set). Appended
+#    to both VITE_CSP_SCRIPT_HOSTS (umami script-src) and
+#    VITE_CSP_CONNECT_HOSTS (umami beacon connect-src), so the operator
+#    only has to set the URL once. The values that flow into Caddy are
+#    only ever the operator-validated VITE_CSP_*_HOSTS plus an origin
+#    extracted by _extract_origin (which enforces the same character
+#    allowlist as _validate_csp_hosts), so no unvalidated input reaches
+#    the CSP header.
+_HF_HOSTS_DEFAULT="https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co"
+if [ "${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}" = "true" ]; then
+  _CSP_HF_HOSTS=""
+  echo "[entrypoint] VITE_FORCE_LOCAL_MODEL_FALLBACK=true: dropping HF origins from CSP."
+else
+  _CSP_HF_HOSTS="$_HF_HOSTS_DEFAULT"
+fi
+export _CSP_HF_HOSTS
+
+if [ -n "${VITE_ANALYTICS_URL:-}" ]; then
+  if _analytics_origin=$(_extract_origin "$VITE_ANALYTICS_URL"); then
+    case " ${VITE_CSP_SCRIPT_HOSTS:-} " in
+      *" $_analytics_origin "*) ;;
+      *) VITE_CSP_SCRIPT_HOSTS="${VITE_CSP_SCRIPT_HOSTS:+$VITE_CSP_SCRIPT_HOSTS }$_analytics_origin" ;;
+    esac
+    case " ${VITE_CSP_CONNECT_HOSTS:-} " in
+      *" $_analytics_origin "*) ;;
+      *) VITE_CSP_CONNECT_HOSTS="${VITE_CSP_CONNECT_HOSTS:+$VITE_CSP_CONNECT_HOSTS }$_analytics_origin" ;;
+    esac
+    export VITE_CSP_SCRIPT_HOSTS VITE_CSP_CONNECT_HOSTS
+    echo "[entrypoint] Auto-allowlisted ${_analytics_origin} in CSP script-src and connect-src (derived from VITE_ANALYTICS_URL)."
+  else
+    echo "[entrypoint] WARNING: VITE_ANALYTICS_URL is not an https:// URL or has unsupported characters; CSP not auto-extended."
+    echo "[entrypoint] Got: ${VITE_ANALYTICS_URL}"
+  fi
 fi
 
 mkdir -p "$REGEX_DIR"
