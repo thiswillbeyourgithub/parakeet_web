@@ -953,34 +953,51 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [status, isRecording, isPaused, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed, recordingCountdown]);
 
-  // Monitor memory usage and system strain
+  // Monitor memory usage and system strain.
+  //
+  // Gated on showAdvancedInfo: the values are only rendered when the advanced
+  // info panel is enabled, so running the monitor while it's hidden burns
+  // main-thread work and forces an App-wide re-render every 1-3s for nothing.
+  // The history list isn't memoized, so those idle re-renders walked every
+  // word-span as transcriptions accumulated and were the dominant cause of
+  // "idle freeze after a few transcriptions".
   useEffect(() => {
+    if (!showAdvancedInfo) return;
     const info = {};
     let frameRateMonitor = null;
-    let lastFrameTime = performance.now();
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
-    
+
+    // Shallow-compare against the last committed object so identical readings
+    // don't trigger a re-render. setMemoryInfo with a fresh {...info} would
+    // otherwise always change reference and re-render.
+    const commit = () => {
+      setMemoryInfo((prev) => {
+        if (Object.keys(info).length === 0) return prev == null ? prev : null;
+        if (prev && Object.keys(prev).length === Object.keys(info).length) {
+          let same = true;
+          for (const k of Object.keys(info)) {
+            if (prev[k] !== info[k]) { same = false; break; }
+          }
+          if (same) return prev;
+        }
+        return { ...info };
+      });
+    };
+
     const updateMemory = async () => {
-      // Device RAM (if available) - shows total device RAM in GB
       if (navigator.deviceMemory) {
         info.deviceRAM = `${navigator.deviceMemory} GB`;
       }
-      
-      // JS heap usage (Chrome only) - shows current usage
       if (performance.memory) {
         const used = (performance.memory.usedJSHeapSize / 1024 / 1024 / 1024).toFixed(2);
         const limit = (performance.memory.jsHeapSizeLimit / 1024 / 1024 / 1024).toFixed(2);
         info.heapUsed = `${used} GB / ${limit} GB`;
         info.heapPercent = ((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100).toFixed(1);
       }
-      
-      // Fallback: Hardware concurrency (CPU cores)
       if (navigator.hardwareConcurrency) {
         info.cpuCores = `${navigator.hardwareConcurrency} cores`;
       }
-      
-      // Fallback: Storage quota (shows available disk space for browser)
       if (navigator.storage && navigator.storage.estimate) {
         try {
           const estimate = await navigator.storage.estimate();
@@ -994,52 +1011,41 @@ export default function App() {
           console.warn('[Memory] Storage estimate failed:', e);
         }
       }
-      
-      setMemoryInfo(Object.keys(info).length > 0 ? { ...info } : null);
+      commit();
     };
-    
-    // Frame rate monitoring (fallback for detecting system strain)
+
     const monitorFrameRate = () => {
       const now = performance.now();
       frameCount++;
-      
-      // Update FPS every second
       if (now - lastFpsUpdate >= 1000) {
         const fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
         info.fps = `${fps} fps`;
-        
-        // Add warning if FPS is low (indicates system strain)
         if (fps < 30) {
           info.fpsWarning = '⚠️ Low FPS';
         } else {
           delete info.fpsWarning;
         }
-        
         frameCount = 0;
         lastFpsUpdate = now;
-        setMemoryInfo({ ...info });
+        commit();
       }
-      
-      lastFrameTime = now;
       frameRateMonitor = requestAnimationFrame(monitorFrameRate);
     };
-    
-    // Start monitoring
+
     updateMemory();
-    const interval = setInterval(updateMemory, 3000); // Update every 3 seconds
-    
-    // Only monitor FPS if standard memory APIs aren't available (reduces overhead)
+    const interval = setInterval(updateMemory, 3000);
+
     if (!navigator.deviceMemory && !performance.memory) {
       frameRateMonitor = requestAnimationFrame(monitorFrameRate);
     }
-    
+
     return () => {
       clearInterval(interval);
       if (frameRateMonitor) {
         cancelAnimationFrame(frameRateMonitor);
       }
     };
-  }, []);
+  }, [showAdvancedInfo]);
 
   // Keepalive while recording or transcribing: prevents background-tab JS
   // throttling (silent audio trick) and keeps the screen on (wake lock).
