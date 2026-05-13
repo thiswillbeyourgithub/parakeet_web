@@ -2325,7 +2325,7 @@ export default function App() {
       console.log(`[Transcribe] Extracted PCM data from channel 0:`, {
         length: pcm.length,
         duration: `${audioDuration.toFixed(2)}s`,
-        samplesPerSecond: decoded.sampleRate,
+        samplesPerSecond: targetSampleRate,
         min: minVal,
         max: maxVal,
         note: pcm.length > 10000 ? '(min/max from first 10k samples)' : undefined
