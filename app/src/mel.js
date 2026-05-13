@@ -622,6 +622,10 @@ export class JsPreprocessor {
 
     return features;
   }
+
+  // No native resources to release; method exists for interface parity with
+  // OnnxPreprocessor so ParakeetModel.dispose() can call it uniformly.
+  dispose() {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
