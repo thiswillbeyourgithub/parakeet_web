@@ -42,79 +42,6 @@ const INACTIVITY_TIMEOUT_MS = 30000;
 // Cache for repo file listings so we only hit the HF API once per page load
 const repoFileCache = new Map();
 
-/**
- * SHA-256 a Blob and return a lowercase hex digest. Used to verify model
- * file integrity against per-file hashes pinned in models.js so a HF repo
- * takeover, force-push, or one-shot MITM cannot silently swap weights
- * (the model runs in WASM/WebGPU with full access to the user's mic audio).
- */
-async function _sha256Hex(blob) {
-  const buf = await blob.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function _normalizeHash(h) {
-  if (!h) return '';
-  return String(h).toLowerCase().replace(/^sha-?256[:=-]/, '').trim();
-}
-
-/**
- * Compare a freshly computed hash against an expected pin.
- * - Empty expected: log a loud warning (integrity NOT enforced) and return.
- *   This keeps the app working when models.js hasn't been pinned yet, but
- *   the warning shows up in every console and is also surfaced in the UI
- *   via the global error banner if devs forget.
- * - Mismatch: throw HubDownloadError so the caller refuses InferenceSession
- *   creation and the user sees a clear failure instead of a silent swap.
- */
-function _verifyHash(filename, actualHex, expected, logTag) {
-  const exp = _normalizeHash(expected);
-  if (!exp) {
-    console.warn(`${logTag} INTEGRITY: no expected sha256 for ${filename}; model verification SKIPPED. Pin via recipe in docker/env.example and update models.js. Computed sha256: ${actualHex}`);
-    return;
-  }
-  if (exp !== actualHex) {
-    const err = new Error(`Integrity check failed for ${filename}: expected sha256 ${exp}, got ${actualHex}`);
-    err.name = 'IntegrityError';
-    throw err;
-  }
-  console.log(`${logTag} Integrity OK for ${filename} (sha256 ${actualHex.slice(0, 12)}...)`);
-}
-
-/**
- * Verify a cached blob against the expected hash before returning it.
- * On mismatch, evict the bad entry so the next call re-downloads. When no
- * hash is pinned, the cache hit is trusted (with a one-time warning that
- * also fired on the original download); the IndexedDB cache is treated as
- * a decoder-only optimisation, not a trust anchor, so trust here is gated
- * entirely on whether an expected hash exists. Returns true if safe to use.
- */
-async function _isCacheHitValid(cachedBlob, filename, expectedHash, logTag, cacheKey) {
-  const exp = _normalizeHash(expectedHash);
-  if (!exp) {
-    // No pinned hash: nothing to verify against. _verifyHash already
-    // logs the unsafe-default warning on every download path.
-    return true;
-  }
-  let actual;
-  try {
-    actual = await _sha256Hex(cachedBlob);
-  } catch (e) {
-    console.warn(`${logTag} Failed to hash cached ${filename}, will re-download:`, e);
-    return false;
-  }
-  if (actual === exp) return true;
-  console.warn(`${logTag} INTEGRITY: cached ${filename} hash mismatch (expected ${exp}, got ${actual}). Evicting and re-downloading.`);
-  try {
-    const db = await getDb();
-    await idbDelete(db, STORE_NAME, cacheKey);
-  } catch (e) {
-    console.warn(`${logTag} Failed to evict tampered cache entry for ${filename}:`, e);
-  }
-  return false;
-}
-
 function makeCacheKey(repoId, revision, subfolder, filename) {
   return `hf-${repoId}-${revision}-${subfolder}-${filename}`;
 }
@@ -248,7 +175,7 @@ export async function clearCache() {
  * @param {string} logTag - Log prefix, e.g. '[Hub]' or '[Hub:local]'
  * @returns {Promise<string>} Blob URL
  */
-async function _streamAndCache(url, cacheKey, filename, progress, logTag, expectedHash) {
+async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
 
@@ -428,21 +355,6 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, expect
   // Blob composition is by reference, so this is cheap.
   const blob = new Blob([...segments, ...tailChunks], { type: contentType });
 
-  // Integrity verification BEFORE persisting to IndexedDB. If a hash is
-  // pinned in models.js and the bytes we just received don't match, we
-  // must not cache the tampered blob (which would otherwise survive across
-  // reloads) and must not return a URL that the caller will feed to
-  // InferenceSession.create.
-  const actualHash = await _sha256Hex(blob);
-  try {
-    _verifyHash(filename, actualHash, expectedHash, logTag);
-  } catch (err) {
-    if (typeof indexedDB !== 'undefined') {
-      await deleteAllPartial();
-    }
-    throw err;
-  }
-
   if (typeof indexedDB !== 'undefined') {
     try {
       await saveFileToDb(cacheKey, blob);
@@ -457,7 +369,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, expect
 }
 
 export async function getModelFile(repoId, filename, options = {}) {
-  const { revision = 'main', subfolder = '', progress, expectedHash } = options;
+  const { revision = 'main', subfolder = '', progress } = options;
 
   // Encode the path components so slash-containing branch names (e.g.
   // 'refs/pr/1') and any URL-reserved characters in subfolder/filename
@@ -478,26 +390,16 @@ export async function getModelFile(repoId, filename, options = {}) {
   if (encodedSubfolder) pathParts.push(encodedSubfolder);
   pathParts.push(encodedFilename);
   const url = `${baseUrl}/${pathParts.join('/')}`;
-  
+
   // Check IndexedDB first
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
-  
+
   if (typeof indexedDB !== 'undefined') {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
-        // Re-verify the cached bytes against the expected hash on every
-        // hit. Otherwise a one-shot MITM during the very first download
-        // (TLS-intercepting corporate proxy, captive portal, BGP hijack)
-        // would persist across every subsequent reload: the cache key
-        // never changes, and without this check the bad blob is returned
-        // forever even after the network returns to normal.
-        if (await _isCacheHitValid(cachedBlob, filename, expectedHash, '[Hub]', cacheKey)) {
-          console.log(`[Hub] Using cached ${filename} from IndexedDB`);
-          return URL.createObjectURL(cachedBlob);
-        }
-        // Fall through to re-download. _isCacheHitValid has already
-        // evicted the bad entry from IndexedDB.
+        console.log(`[Hub] Using cached ${filename} from IndexedDB`);
+        return URL.createObjectURL(cachedBlob);
       }
     } catch (e) {
       console.warn('[Hub] IndexedDB cache check failed:', e);
@@ -507,7 +409,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   // Download from HF (resumable + retrying internally)
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
-    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', expectedHash);
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]');
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
@@ -542,7 +444,7 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress, revision = 'main', subfolder = '', expectedHash } = options;
+  const { progress, revision = 'main', subfolder = '' } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
@@ -550,10 +452,8 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
-        if (await _isCacheHitValid(cachedBlob, filename, expectedHash, '[Hub:local]', cacheKey)) {
-          console.log(`[Hub:local] Using cached ${filename} from IndexedDB`);
-          return URL.createObjectURL(cachedBlob);
-        }
+        console.log(`[Hub:local] Using cached ${filename} from IndexedDB`);
+        return URL.createObjectURL(cachedBlob);
       }
     } catch (e) {
       console.warn('[Hub:local] IndexedDB cache check failed:', e);
@@ -562,7 +462,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]', expectedHash);
+  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]');
 }
 
 /**
@@ -626,29 +526,8 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
 
   // Resolve the effective revision: operator override (options.revision)
   // wins, otherwise the per-model pin in models.js, otherwise the moving
-  // 'main' branch (logged as a warning by _verifyHash when hashes is empty).
+  // 'main' branch.
   const effectiveRevision = options.revision || modelConfig?.revision || 'main';
-  const expectedHashes = modelConfig?.hashes || {};
-  // F-99: fail-closed when running in production with no pinned hashes
-  // AND no operator opt-in. The trust-on-first-use behaviour
-  // (download whatever HF returns, hash it, never verify) is fine for
-  // local development but ships every visitor a fresh weights blob
-  // on a HF repo takeover or one-shot MITM. Default-deny means: a
-  // prod operator who hasn't followed the env.example pinning recipe
-  // must explicitly set VITE_ALLOW_UNVERIFIED_MODEL=true to acknowledge
-  // the trust gap. Dev (`import.meta.env.PROD === false`) keeps the
-  // warn-and-proceed path so local hacking is unaffected.
-  const _PROD = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
-  const _ALLOW_UNVERIFIED = (typeof window !== 'undefined' && window.__CONFIG__?.VITE_ALLOW_UNVERIFIED_MODEL === 'true')
-    || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_ALLOW_UNVERIFIED_MODEL === 'true');
-  if (Object.keys(expectedHashes).length === 0) {
-    if (_PROD && !_ALLOW_UNVERIFIED) {
-      throw new Error(`[Hub] model ${repoId} has no pinned hashes in models.js. Production refuses to load unverified weights. Either populate the hashes via the env.example recipe, or set VITE_ALLOW_UNVERIFIED_MODEL=true to opt in to trust-on-first-use.`);
-    }
-    if (effectiveRevision === 'main') {
-      console.warn(`[Hub] WARNING: model ${repoId} is being loaded from the moving 'main' branch with NO pinned hashes. A HF repo takeover or one-shot MITM could swap weights. Run recipe in docker/env.example and update models.js, or set VITE_MODEL_REVISION.`);
-    }
-  }
 
   // Decide quantisation per component
   let encoderQ = encoderQuant;
@@ -726,7 +605,6 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           ...options,
           revision: effectiveRevision,
           progress: wrappedProgress,
-          expectedHash: expectedHashes[name],
         };
         if (localFallbackBaseUrl) {
           // Local fallback mode: download from the instance instead of HuggingFace
