@@ -109,6 +109,13 @@ function RemoteMicSender() {
     // ready state on the next interaction. Waiting on the peer ack closes
     // that asymmetry.
     const peerAckResolveRef = useRef(null); // (boolean) => void
+    // Buffer for a peer verify-ok that arrives BEFORE the local user clicks
+    // confirm on the phone's fingerprint modal (i.e. the desktop user
+    // confirmed first). Without this, the early message would be discarded
+    // as "stray", and the phone would later wait the full 60s peer-ack
+    // timeout for a message that already arrived. Mirrors the desktop's
+    // remoteMicEarlyPeerVerifyRef. Cleared on every cleanup path.
+    const earlyPeerVerifyRef = useRef(null);
     const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
@@ -164,6 +171,7 @@ function RemoteMicSender() {
             peerAckResolveRef.current(false);
             peerAckResolveRef.current = null;
         }
+        earlyPeerVerifyRef.current = null;
     }, [cleanupAudio]);
 
     useEffect(() => {
@@ -336,6 +344,17 @@ function RemoteMicSender() {
                             const PEER_ACK_TIMEOUT_MS = 60000;
                             let peerAckTimer = null;
                             const peerAcked = await new Promise((resolve) => {
+                                // If the desktop confirmed before us, its
+                                // verify-ok was buffered while our modal
+                                // was up. Consume it now rather than
+                                // arming a 60s wait for a message that
+                                // already arrived.
+                                if (earlyPeerVerifyRef.current !== null) {
+                                    const early = earlyPeerVerifyRef.current;
+                                    earlyPeerVerifyRef.current = null;
+                                    resolve(early);
+                                    return;
+                                }
                                 peerAckResolveRef.current = resolve;
                                 peerAckTimer = setTimeout(() => {
                                     if (peerAckResolveRef.current) {
@@ -359,14 +378,23 @@ function RemoteMicSender() {
                             // Phone is connected, let the user tap Start Recording when ready
                             setStatus(STATUS.READY);
                         } else if (msg.type === 'verify-ok') {
-                            // F-63: receiver confirmed its end. Resolve the
-                            // peer-ack wait so this side can bind the
-                            // shared key. Stray verify-ok outside an
-                            // in-flight wait is ignored.
+                            // F-63: receiver confirmed its end. Three cases:
+                            //  (a) Our peer-ack wait is armed -> resolve.
+                            //  (b) Session already bound -> stale replay,
+                            //      ignore.
+                            //  (c) Otherwise desktop confirmed before us;
+                            //      buffer the arrival so the peer-ack wait
+                            //      consumes it as soon as the local user
+                            //      taps confirm. Without (c) the locally-
+                            //      late side waits the full 60s timeout
+                            //      and surfaces a misleading abort.
                             if (peerAckResolveRef.current) {
                                 peerAckResolveRef.current(true);
+                            } else if (sharedKeyRef.current) {
+                                console.warn('[RemoteMic] Stray verify-ok ignored (session already bound)');
                             } else {
-                                console.warn('[RemoteMic] Stray verify-ok ignored (no peer-ack wait in flight)');
+                                earlyPeerVerifyRef.current = true;
+                                console.log('[RemoteMic] Peer verify-ok arrived before local confirm, buffered');
                             }
                         } else if (msg.type === 'verify-deny') {
                             // Receiver denied the fingerprint match, abort.

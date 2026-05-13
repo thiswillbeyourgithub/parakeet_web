@@ -548,6 +548,16 @@ export default function App() {
   // even though the remote user actually denied (or never responded).
   // Waiting for the explicit peer ack collapses that ambiguous window.
   const remoteMicPeerAckResolveRef = useRef(null); // (boolean) => void
+  // Buffer for a peer verify-ok/deny that arrives BEFORE the local user
+  // clicks confirm on the fingerprint modal. Whichever peer confirms first
+  // sends verify-ok while the other is still staring at the modal; without
+  // this buffer that early message hits the peer-ack handler with no
+  // resolver armed yet, gets discarded as "stray", and the locally-late
+  // peer then waits 60s for a message that already arrived. Values: true
+  // (peer sent verify-ok), false (peer sent verify-deny), null (no early
+  // arrival). Cleared on every handshake start/teardown via
+  // resolveRemoteMicPeerAck so a fresh re-pair never inherits stale state.
+  const remoteMicEarlyPeerVerifyRef = useRef(null);
   // Resolve any in-flight fingerprint verify and null the ref. Every teardown
   // path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
   // disconnectRemoteMic) must call this so the awaiting Promise inside
@@ -564,6 +574,7 @@ export default function App() {
       remoteMicPeerAckResolveRef.current(confirmed);
       remoteMicPeerAckResolveRef.current = null;
     }
+    remoteMicEarlyPeerVerifyRef.current = null;
   }, []);
 
   // Tiny helpers so the elapsed-timer setup/teardown is in one place — used to
@@ -1598,6 +1609,16 @@ export default function App() {
               const PEER_ACK_TIMEOUT_MS = 60000;
               let peerAckTimer = null;
               const peerAcked = await new Promise((resolve) => {
+                // If the phone confirmed before we did, its verify-ok (or
+                // verify-deny) was buffered while our modal was up. Consume
+                // it now instead of arming a 60s wait for a message that
+                // already arrived.
+                if (remoteMicEarlyPeerVerifyRef.current !== null) {
+                  const early = remoteMicEarlyPeerVerifyRef.current;
+                  remoteMicEarlyPeerVerifyRef.current = null;
+                  resolve(early);
+                  return;
+                }
                 remoteMicPeerAckResolveRef.current = resolve;
                 peerAckTimer = setTimeout(() => {
                   if (remoteMicPeerAckResolveRef.current) {
@@ -1626,14 +1647,22 @@ export default function App() {
 
               startRemoteMicTimer();
             } else if (msg.type === 'verify-ok') {
-              // F-63: phone confirmed its end. Resolve the peer-ack wait
-              // so this side can bind the shared key. A stray verify-ok
-              // outside an in-flight wait is ignored (it would indicate
-              // protocol drift or a replay attempt by the phone).
+              // F-63: phone confirmed its end. Three cases:
+              //  (a) Our peer-ack wait is already armed -> resolve it.
+              //  (b) Session already bound (remoteMicKeyRef set) -> stale
+              //      replay, ignore.
+              //  (c) Otherwise the phone confirmed before us; buffer the
+              //      arrival so the peer-ack wait consumes it as soon as
+              //      the local user clicks confirm. Without (c) the
+              //      locally-late side would wait the full 60s timeout
+              //      and surface a misleading "verifyAborted" error.
               if (remoteMicPeerAckResolveRef.current) {
                 remoteMicPeerAckResolveRef.current(true);
+              } else if (remoteMicKeyRef.current) {
+                console.warn('[RemoteMic] Stray verify-ok ignored (session already bound)');
               } else {
-                console.warn('[RemoteMic] Stray verify-ok ignored (no peer-ack wait in flight)');
+                remoteMicEarlyPeerVerifyRef.current = true;
+                console.log('[RemoteMic] Peer verify-ok arrived before local confirm, buffered');
               }
             } else if (msg.type === 'verify-deny') {
               // Phone denied the fingerprint match, abort our side too.
