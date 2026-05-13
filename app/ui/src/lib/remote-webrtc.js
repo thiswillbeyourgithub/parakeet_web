@@ -4,8 +4,15 @@
  * Adapted with the help of Claude Code.
  *
  * Handles peer connection lifecycle, signaling, and data channel
- * for streaming encrypted audio chunks.
+ * for streaming encrypted audio chunks. Supports an HTTPS relay
+ * fallback (WebSocket or long-poll) for networks that block both
+ * direct WebRTC and TURN/TURNS; relay frames carry the same
+ * AES-256-GCM ciphertext as the data channel, so the security
+ * model is unchanged.
  */
+
+import { CONFIG } from '../config.js';
+import { RelayWsTransport, RelayHttpTransport } from './remote-relay-transport.js';
 
 export class RemoteMicRTC {
     /**
@@ -47,6 +54,19 @@ export class RemoteMicRTC {
         // and QR resources stay pinned in startRemoteMic's closure.
         this._WAIT_FOR_ANSWER_TIMEOUT_MS = 10 * 60 * 1000;
         this._waitForAnswerAbort = null;
+
+        // HTTPS relay fallback state. The race: try WebRTC and relay in
+        // parallel after SDP exchange; whichever reaches "connected"
+        // first wins, the other is torn down. The grace window matches
+        // WebSend (10 s lets WebRTC win on healthy networks; afterwards
+        // the relay takes over). VITE_RELAY_ENABLE=false disables the
+        // race entirely and the class behaves exactly as before.
+        this.relayTransport = null;
+        this._RELAY_GRACE_MS = 10_000;
+        this._relayGraceTimer = null;
+        this._relayInFlight = false;
+        this._raceResolved = false;
+        this._relayEnable = CONFIG.VITE_RELAY_ENABLE !== 'false';
     }
 
     _getAuthHeaders(extra = {}) {
@@ -142,18 +162,42 @@ export class RemoteMicRTC {
                     this._disconnectTimer = null;
                 }
                 this._stopPolling();
+                // WebRTC won the race: cancel the pending grace timer
+                // and tear down any relay that may have been opened in
+                // parallel. Relay sockets that lost the race are dead
+                // weight on the signaling server; close them so the
+                // slot frees up for other rooms.
+                this._raceResolved = true;
+                if (this._relayGraceTimer) {
+                    clearTimeout(this._relayGraceTimer);
+                    this._relayGraceTimer = null;
+                }
+                if (this.relayTransport) {
+                    try { this.relayTransport.close(); } catch (_) { /* ignore */ }
+                    this.relayTransport = null;
+                }
                 // Note: onConnected is fired from data channel onopen (for offerer)
                 // to ensure the channel is ready before sending. For non-data-channel
                 // connections (future), fire here as fallback.
                 if (!this.isOfferer && this.onConnected) this.onConnected();
             } else if (state === 'failed') {
                 this._stopPolling();
-                if (this.onDisconnected) this.onDisconnected();
+                // If relay has already won or is in flight, suppress
+                // the disconnect: the relay's own disconnect callback
+                // will fire if it also fails. Without this gate, a
+                // WebRTC failure during a successful relay session
+                // would incorrectly bubble onDisconnected to the UI.
+                if (!this.relayTransport && !this._relayInFlight) {
+                    if (this.onDisconnected) this.onDisconnected();
+                }
             } else if (state === 'disconnected') {
                 this._disconnectTimer = setTimeout(() => {
                     if (this.pc && this.pc.connectionState === 'disconnected') {
                         console.error('[RemoteMicRTC] Connection did not recover after 5s');
-                        if (this.onDisconnected) this.onDisconnected();
+                        // Same relay gate as the 'failed' branch above.
+                        if (!this.relayTransport && !this._relayInFlight) {
+                            if (this.onDisconnected) this.onDisconnected();
+                        }
                     }
                 }, 5000);
             }
@@ -213,6 +257,9 @@ export class RemoteMicRTC {
      * @returns {boolean}
      */
     sendMessage(message) {
+        // Relay won the race: route through the active transport. The
+        // transport's sendMessage signature matches this one (sync bool).
+        if (this.relayTransport) return this.relayTransport.sendMessage(message);
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             // Callers usually ignore the bool return; log so a dropped control
             // message (e.g. verify-deny lost because the peer already closed)
@@ -237,6 +284,7 @@ export class RemoteMicRTC {
      * @returns {Promise<boolean>}
      */
     async sendBinary(data) {
+        if (this.relayTransport) return this.relayTransport.sendBinary(data);
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             console.warn('[RemoteMicRTC] sendBinary dropped — data channel not open');
             if (this.onSendError) this.onSendError('binary', 'data channel not open');
@@ -262,6 +310,103 @@ export class RemoteMicRTC {
             if (this.onSendError) this.onSendError('binary', e.message);
             return false;
         }
+    }
+
+    // ============ HTTPS Relay Race ============
+    //
+    // Race state machine: WebRTC and the relay run in parallel after
+    // the SDP exchange completes. The first to "connected" wins; the
+    // loser is torn down. Matches WebSend's 10 s grace window.
+
+    /**
+     * Start the relay grace timer. Idempotent; safe to call from both
+     * sides (offerer at end of waitForAnswer, answerer at end of
+     * joinRoom). The timer fires after _RELAY_GRACE_MS unless WebRTC
+     * has already won.
+     */
+    _startRelayRace() {
+        if (!this._relayEnable) return;
+        if (this._raceResolved) return;
+        if (this._relayGraceTimer) return;
+        if (!this.roomId || !this.roomSecret) return;
+        this._relayGraceTimer = setTimeout(() => {
+            this._relayGraceTimer = null;
+            if (this._raceResolved) return;
+            // Fire-and-forget; the method handles its own race-check
+            // against late WebRTC wins.
+            this._tryRelay();
+        }, this._RELAY_GRACE_MS);
+    }
+
+    async _tryRelay() {
+        if (this._raceResolved || this._relayInFlight) return;
+        this._relayInFlight = true;
+        console.log('[RemoteMicRTC] WebRTC grace expired, trying relay (ws first, then http)');
+
+        const wsTransport = new RelayWsTransport({
+            baseUrl: this.signalingBaseUrl,
+            roomId: this.roomId,
+            roomSecret: this.roomSecret,
+        });
+        const wsOk = await wsTransport.connect();
+        // Re-check resolution: WebRTC may have connected during the
+        // WS handshake. If so, abandon the relay attempt.
+        if (this._raceResolved) {
+            try { wsTransport.close(); } catch (_) { /* ignore */ }
+            this._relayInFlight = false;
+            return;
+        }
+        if (wsOk) {
+            this._adoptRelay(wsTransport);
+            return;
+        }
+
+        const httpTransport = new RelayHttpTransport({
+            baseUrl: this.signalingBaseUrl,
+            roomId: this.roomId,
+            roomSecret: this.roomSecret,
+        });
+        const httpOk = await httpTransport.connect();
+        if (this._raceResolved) {
+            try { httpTransport.close(); } catch (_) { /* ignore */ }
+            this._relayInFlight = false;
+            return;
+        }
+        if (httpOk) {
+            this._adoptRelay(httpTransport);
+            return;
+        }
+
+        // Both transports failed. Let the existing connection-timeout
+        // path fire onDisconnected; do not double-fire here.
+        this._relayInFlight = false;
+        console.warn('[RemoteMicRTC] Both relay transports failed');
+    }
+
+    _adoptRelay(transport) {
+        this._raceResolved = true;
+        this._relayInFlight = false;
+        this.relayTransport = transport;
+        transport.onMessage = (data) => {
+            if (this.onMessage) this.onMessage(data);
+        };
+        transport.onDisconnected = () => {
+            if (this.onDisconnected) this.onDisconnected();
+        };
+        transport.onSendError = (stage, reason) => {
+            if (this.onSendError) this.onSendError(stage, reason);
+        };
+        // Stop the ICE polling / connection-timeout (they're moot now).
+        this._stopPolling();
+        // Close the pc: WebRTC lost the race, free its resources. The
+        // resulting onconnectionstatechange='closed' is benign (we
+        // gate disconnect on !relayTransport).
+        if (this.pc) {
+            try { this.pc.close(); } catch (_) { /* ignore */ }
+        }
+        if (this.onStateChange) this.onStateChange('connected');
+        if (this.onConnected) this.onConnected();
+        console.log('[RemoteMicRTC] Relay adopted; WebRTC pc closed');
     }
 
     // ============ Signaling ============
@@ -349,6 +494,11 @@ export class RemoteMicRTC {
 
                     await this._fetchRemoteCandidates('answer');
                     this._startPolling('answer');
+                    // Phone has answered: both peers now know the room
+                    // and can race the relay against the WebRTC ICE
+                    // negotiation. The grace timer gives ICE 10 s to
+                    // win before claiming a relay slot.
+                    this._startRelayRace();
                     return;
                 }
                 if (response.status === 204) {
@@ -437,6 +587,10 @@ export class RemoteMicRTC {
         if (!answerResponse.ok) throw new Error(`Failed to store answer (HTTP ${answerResponse.status})`);
         console.log('[RemoteMicRTC] Answer sent, establishing connection...');
         this._startPolling('offer');
+        // Mirror waitForAnswer: kick off the 10 s grace race against
+        // the relay so the phone falls back to wss/long-poll if ICE
+        // cannot get through.
+        this._startRelayRace();
     }
 
     // ============ ICE Handling ============
@@ -481,7 +635,12 @@ export class RemoteMicRTC {
             if (state !== 'connected' && state !== 'failed' && state !== 'closed') {
                 console.error(`[RemoteMicRTC] Connection timed out after ${this._CONNECTION_TIMEOUT_MS / 1000}s`);
                 this._stopPolling();
-                if (this.onDisconnected) this.onDisconnected();
+                // Suppress disconnect when the relay has won or is
+                // still mid-handshake. The relay's own onDisconnected
+                // hook is the source of truth once it's adopted.
+                if (!this.relayTransport && !this._relayInFlight) {
+                    if (this.onDisconnected) this.onDisconnected();
+                }
             }
         }, this._CONNECTION_TIMEOUT_MS);
     }
@@ -539,6 +698,18 @@ export class RemoteMicRTC {
         if (this._waitForAnswerAbort) {
             try { this._waitForAnswerAbort.abort(); } catch (_) { /* ignore */ }
             this._waitForAnswerAbort = null;
+        }
+        // Cancel the relay race timer and tear down any active relay.
+        // Mark the race resolved so a late _tryRelay completion does
+        // not adopt a transport into a closed session.
+        this._raceResolved = true;
+        if (this._relayGraceTimer) {
+            clearTimeout(this._relayGraceTimer);
+            this._relayGraceTimer = null;
+        }
+        if (this.relayTransport) {
+            try { this.relayTransport.close(); } catch (_) { /* ignore */ }
+            this.relayTransport = null;
         }
         this.pendingIceCandidates = [];
         if (this.dataChannel) this.dataChannel.close();
