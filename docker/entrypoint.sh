@@ -143,11 +143,9 @@ _validate_csp_hosts() {
 # typo with `..` (e.g. revision='main/../../other-owner/other-repo/
 # resolve/main') resolves under the URL parser to a different repo
 # while staying on huggingface.co, and the bad value gets cached
-# forever because it is part of the cache key. Combined with the F-99
-# fail-closed behaviour this is largely defense-in-depth (an attacker
-# would also need pinned hashes to match or the opt-in), but the
-# defensive validation matches the posture taken by F-26 / F-91 for
-# every other operator-supplied env var.
+# forever because it is part of the cache key. Defensive validation
+# matches the posture taken by F-26 / F-91 for every other
+# operator-supplied env var.
 _validate_model_repo() {
   # Empty is fine: the bundle falls back to the default repo.
   [ -z "$1" ] && return 0
@@ -177,6 +175,14 @@ _validate_model_revision() {
   return 0
 }
 
+# Accept only 'hf', 'local', 'both', or empty (defaults to hf in the bundle).
+_validate_model_source() {
+  case "$1" in
+    ''|hf|local|both) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 if ! _validate_model_repo "${VITE_MODEL_REPO:-}"; then
   echo "[entrypoint] ERROR: VITE_MODEL_REPO has an unsupported shape: ${VITE_MODEL_REPO}"
   echo "[entrypoint] Expected: owner/name (letters, digits, _ - . only)."
@@ -187,6 +193,11 @@ if ! _validate_model_revision "${VITE_MODEL_REVISION:-}"; then
   echo "[entrypoint] Expected: commit SHA or branch name (letters, digits, _ - . only)."
   exit 1
 fi
+if ! _validate_model_source "${VITE_MODEL_SOURCE:-}"; then
+  echo "[entrypoint] ERROR: VITE_MODEL_SOURCE has an unsupported value: ${VITE_MODEL_SOURCE}"
+  echo "[entrypoint] Expected one of: hf, local, both (or empty for default 'hf')."
+  exit 1
+fi
 
 echo "[entrypoint] === Environment variables ==="
 echo "[entrypoint] VITE_DEV_MODE=${VITE_DEV_MODE:-(not set)}"
@@ -195,8 +206,7 @@ echo "[entrypoint] VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID:-(not s
 echo "[entrypoint] VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-(not set)}"
 echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-(not set, uses models.js per-model pin)}"
-echo "[entrypoint] VITE_LOCAL_MODEL_FALLBACK=${VITE_LOCAL_MODEL_FALLBACK:-(not set)}"
-echo "[entrypoint] VITE_FORCE_LOCAL_MODEL_FALLBACK=${VITE_FORCE_LOCAL_MODEL_FALLBACK:-(not set)}"
+echo "[entrypoint] VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-(not set, defaults to 'hf')}"
 echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
@@ -226,19 +236,6 @@ else
     echo "[entrypoint]   hf download istupakov/parakeet-tdt-0.6b-v3-onnx \\"
     echo "[entrypoint]     --local-dir /some/host/path"
     exit 1
-  fi
-  # VITE_ALLOW_UNVERIFIED_MODEL=true with LOCAL_MODEL_PATH set is allowed:
-  # the operator has explicitly opted into trust-on-first-use for the
-  # bind-mounted weights. A host-side compromise that swaps the .onnx
-  # files will not be caught at runtime in this configuration, so this
-  # is only safe if the bind-mount source is treated as trusted (read-only
-  # mount, restricted host permissions, etc.). Log a clear warning so it
-  # shows up in `docker logs`.
-  if [ "${VITE_ALLOW_UNVERIFIED_MODEL:-}" = "true" ]; then
-    echo "[entrypoint] WARNING: VITE_ALLOW_UNVERIFIED_MODEL=true with LOCAL_MODEL_PATH."
-    echo "[entrypoint] The bind-mounted weights at ${LOCAL_MODEL_PATH} will be served"
-    echo "[entrypoint] without runtime hash verification. Ensure the host folder is"
-    echo "[entrypoint] trusted (ideally read-only) to mitigate poisoned-mount risk."
   fi
 fi
 
@@ -281,8 +278,8 @@ fi
 #
 # 1. HuggingFace connect-src list: the explicit subdomains HF currently
 #    redirects model files through. Default ON, but cleared entirely when
-#    VITE_FORCE_LOCAL_MODEL_FALLBACK=true, since the app never reaches HF
-#    in that mode and there is no reason to advertise those origins.
+#    VITE_MODEL_SOURCE=local, since the app never reaches HF in that mode
+#    and there is no reason to advertise those origins.
 # 2. Analytics origin: derived from VITE_ANALYTICS_URL (if set). Appended
 #    to both VITE_CSP_SCRIPT_HOSTS (umami script-src) and
 #    VITE_CSP_CONNECT_HOSTS (umami beacon connect-src), so the operator
@@ -292,9 +289,9 @@ fi
 #    allowlist as _validate_csp_hosts), so no unvalidated input reaches
 #    the CSP header.
 _HF_HOSTS_DEFAULT="https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co"
-if [ "${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}" = "true" ]; then
+if [ "${VITE_MODEL_SOURCE:-}" = "local" ]; then
   _CSP_HF_HOSTS=""
-  echo "[entrypoint] VITE_FORCE_LOCAL_MODEL_FALLBACK=true: dropping HF origins from CSP."
+  echo "[entrypoint] VITE_MODEL_SOURCE=local: dropping HF origins from CSP."
 else
   _CSP_HF_HOSTS="$_HF_HOSTS_DEFAULT"
 fi
@@ -376,24 +373,20 @@ VITE_DEV_MODE="${VITE_DEV_MODE:-false}" \
 VITE_DICTATION_DEVICE_SUPPORT="${VITE_DICTATION_DEVICE_SUPPORT:-true}" \
 VITE_MODEL_REPO="${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}" \
 VITE_MODEL_REVISION="${VITE_MODEL_REVISION:-}" \
-VITE_LOCAL_MODEL_FALLBACK="${VITE_LOCAL_MODEL_FALLBACK:-}" \
-VITE_FORCE_LOCAL_MODEL_FALLBACK="${VITE_FORCE_LOCAL_MODEL_FALLBACK:-}" \
+VITE_MODEL_SOURCE="${VITE_MODEL_SOURCE:-}" \
 VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
 VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
 VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
-VITE_ALLOW_UNVERIFIED_MODEL="${VITE_ALLOW_UNVERIFIED_MODEL:-}" \
 node -e '
   const keys = [
     "VITE_DEV_MODE",
     "VITE_DICTATION_DEVICE_SUPPORT",
     "VITE_MODEL_REPO",
     "VITE_MODEL_REVISION",
-    "VITE_LOCAL_MODEL_FALLBACK",
-    "VITE_FORCE_LOCAL_MODEL_FALLBACK",
+    "VITE_MODEL_SOURCE",
     "VITE_ANALYTICS_URL",
     "VITE_ANALYTICS_WEBSITE_ID",
     "VITE_ANALYTICS_SRI",
-    "VITE_ALLOW_UNVERIFIED_MODEL",
   ];
   const obj = {};
   for (const k of keys) obj[k] = process.env[k] ?? "";
@@ -408,11 +401,10 @@ node -e '
 # including the parakeet user the entrypoint and signaling sidecar run
 # as. An RCE in the externally-reachable signaling process (untrusted
 # phone client + npm-supply-chain risk on express et al) would
-# otherwise let an attacker overwrite /run/config/config.js to set
-# VITE_ALLOW_UNVERIFIED_MODEL=true (bypassing F-99), point
+# otherwise let an attacker overwrite /run/config/config.js to point
 # VITE_MODEL_REPO at an attacker-controlled HF repo, etc. The
-# entrypoint's startup validation of these env vars (F-99/F-101)
-# only runs ONCE; the served bytes are never re-validated. chmod 0400
+# entrypoint's startup validation of these env vars (F-101) only
+# runs ONCE; the served bytes are never re-validated. chmod 0400
 # means the runtime user must explicitly chmod +w before re-writing,
 # which is detectable by any process trace and breaks naive RCE
 # payloads. We also lock the directory to 0500 so a write attempt

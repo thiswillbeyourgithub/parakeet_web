@@ -334,13 +334,14 @@ function truncateFilename(filename, maxLength = 40) {
 export default function App() {
   const { t } = useI18n();
   const repoId = CONFIG.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
-  // Whether the instance can serve model weights locally (under /models/) as
-  // a fallback when HuggingFace is blocked or unreachable.
-  // When true, always serve weights locally and skip HuggingFace entirely.
-  // Useful for troubleshooting the local-fallback path without having to
-  // simulate a blocked HF. Implies localFallbackEnabled.
-  const forceLocalFallback = CONFIG.VITE_FORCE_LOCAL_MODEL_FALLBACK === 'true';
-  const localFallbackEnabled = forceLocalFallback || CONFIG.VITE_LOCAL_MODEL_FALLBACK === 'true';
+  // Where model weights are served from:
+  //   'hf'    : HuggingFace only (default)
+  //   'local' : instance-served /models/ only (skip HF entirely)
+  //   'both'  : HF first, silent fallback to /models/ if HF is unreachable
+  const rawModelSource = (CONFIG.VITE_MODEL_SOURCE || 'hf').toLowerCase();
+  const modelSource = (rawModelSource === 'local' || rawModelSource === 'both') ? rawModelSource : 'hf';
+  const forceLocalFallback = modelSource === 'local';
+  const localFallbackEnabled = modelSource === 'local' || modelSource === 'both';
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
@@ -1129,9 +1130,7 @@ export default function App() {
         progress: progressCallback,
       };
       // Operator-level override of the model revision pin. If unset, hub.js
-      // falls back to the per-model revision baked into models.js, which
-      // defaults to 'main' (with a loud warning) until the operator runs
-      // scripts/pin-model.sh to pin a commit SHA + per-file hashes.
+      // falls back to the per-model revision baked into models.js.
       if (CONFIG.VITE_MODEL_REVISION) {
         downloadOpts.revision = CONFIG.VITE_MODEL_REVISION;
       }

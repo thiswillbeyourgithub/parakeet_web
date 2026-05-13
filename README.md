@@ -139,15 +139,19 @@ volumes:
 LOCAL_MODEL_PATH=/models
 ```
 
-Caddy serves whatever is at `LOCAL_MODEL_PATH` under `/models/`. Setting
-`LOCAL_MODEL_PATH` automatically enables `VITE_LOCAL_MODEL_FALLBACK`. The
+Caddy serves whatever is at `LOCAL_MODEL_PATH` under `/models/`. The
 container crashes at startup if `vocab.txt` is missing, so
 misconfigurations are caught early.
 
-To troubleshoot the local-fallback path itself, set
-`VITE_FORCE_LOCAL_MODEL_FALLBACK=true` — the UI will skip HuggingFace
-entirely and load weights from `/models/` on first try. Implies
-`VITE_LOCAL_MODEL_FALLBACK=true`.
+Use `VITE_MODEL_SOURCE` to choose where the UI fetches weights from:
+
+- `hf` (default): HuggingFace only.
+- `local`: instance-served `/models/` only, HuggingFace is never contacted.
+- `both`: HuggingFace first, silent fallback to `/models/` if HF is
+  unreachable.
+
+When `LOCAL_MODEL_PATH` is set and `VITE_MODEL_SOURCE` is left unset, it
+is auto-promoted to `both`.
 
 The container runs as UID 1000. If your files end up unreadable to UID
 1000, run `chmod -R a+rX /host/path/to/onnx-files` (or
