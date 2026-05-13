@@ -31,6 +31,38 @@ const TURN_CREDENTIAL_TTL = parseInt(process.env.TURN_CREDENTIAL_TTL, 10) || 360
 const TURN_TIMEOUT = parseInt(process.env.TURN_TIMEOUT, 10) || 15;
 const TURNS_PORT = process.env.TURNS_PORT || '';
 
+// ============ HTTPS Relay Configuration ============
+// Last-resort fallback for peers whose network blocks both direct WebRTC
+// and TURN/TURNS (corporate proxies that strip UDP + the TURNS
+// CONNECT upgrade). Ported from WebSend's relay design. Audio chunks are
+// already AES-256-GCM encrypted at the application layer (remote-crypto.js)
+// so the relay only ever sees opaque ciphertext.
+const RELAY_ENABLE = (process.env.RELAY_ENABLE || 'true').toLowerCase() !== 'false';
+// 4 GiB hard cap per relay session, matched on both transport halves so a
+// hostile peer cannot pump bytes through a single direction without bound.
+const RELAY_MAX_TOTAL_SESSION_BYTES = parseInt(process.env.RELAY_MAX_TOTAL_SESSION_BYTES, 10) || 4 * 1024 * 1024 * 1024;
+// 16 KiB cap for non-binary frames. Real control messages (verify, ping,
+// stop) are <1 KiB; anything larger over a text frame is hostile.
+const RELAY_MAX_CONTROL_MSG_BYTES = parseInt(process.env.RELAY_MAX_CONTROL_MSG_BYTES, 10) || 16 * 1024;
+// LP /down hold time: long enough to amortise the TCP round-trip on slow
+// networks, short enough that an HTTP intermediary's idle-timeout doesn't
+// kill it (most corporate proxies allow 30s).
+const RELAY_LP_DOWN_TIMEOUT_MS = parseInt(process.env.RELAY_LP_DOWN_TIMEOUT_MS, 10) || 25_000;
+// Per-slot incoming queue cap. Oldest is dropped on overflow so a stuck
+// receiver cannot blow up the server's memory by silently buffering
+// audio chunks the sender keeps pushing.
+const RELAY_LP_QUEUE_MAX_FRAMES = parseInt(process.env.RELAY_LP_QUEUE_MAX_FRAMES, 10) || 32;
+const RELAY_LP_FRAME_BODY_LIMIT = process.env.RELAY_LP_FRAME_BODY_LIMIT || '256kb';
+// Reap an LP slot after this much silence. Slightly above the /down
+// hold timeout so a slow consumer that round-trips at the maximum
+// interval is still considered live.
+const RELAY_LP_SLOT_IDLE_TIMEOUT_MS = parseInt(process.env.RELAY_LP_SLOT_IDLE_TIMEOUT_MS, 10) || 60_000;
+const RELAY_WS_PING_INTERVAL_MS = parseInt(process.env.RELAY_WS_PING_INTERVAL_MS, 10) || 20_000;
+// 16-byte slot token, distinct from the 16-byte room secret. Compromising
+// one slot of a session does not compromise the other; both are scoped
+// to room.relay and torn down with the room.
+const RELAY_LP_SLOT_TOKEN_BYTES = 16;
+
 /**
  * Debug logging helper - only logs when DEV=1
  */
@@ -469,6 +501,20 @@ function cleanupRooms() {
                 for (const wake of room.answerWaiters) wake();
                 room.answerWaiters.clear();
             }
+            // Tear down any open relay slots so dangling WS or LP peers
+            // do not outlive the room entry they reference.
+            if (room.relay) {
+                for (const slotName of ['a', 'b']) {
+                    const s = room.relay[slotName];
+                    if (!s) continue;
+                    if (s.kind === 'lp') {
+                        closeLpSlot(s, 'Room expired');
+                    } else if (s.readyState !== s.CLOSED) {
+                        try { s.close(1001, 'Room expired'); } catch (_) { /* ignore */ }
+                    }
+                }
+                room.relay = null;
+            }
             rooms.delete(id);
             console.log(`Room ${id} expired and removed`);
         }
@@ -476,6 +522,97 @@ function cleanupRooms() {
 }
 
 setInterval(cleanupRooms, 60 * 1000);
+
+// ============ Relay Slot Helpers ============
+// Two slot kinds share the same room.relay[a|b] structure:
+//   - LP slot: { kind: 'lp', token, slotName, queue, waiters, closed,
+//                idleTimer, roomRef }
+//   - WS slot: the raw WebSocket object, augmented with kind='ws',
+//                isAlive (heartbeat), and slotName.
+// Helpers operate on either kind via the `kind` discriminator so the
+// pairing logic in /up, /down, and the WS upgrade handler stays uniform.
+
+// Global LP waiter caps. Mirrored from WebSend so a peer holding a valid
+// secret cannot pin many concurrent 25s polls (per-slot cap caps the
+// hostile peer, global cap caps the whole process).
+const RELAY_MAX_WAITERS_PER_SLOT = 4;
+const RELAY_MAX_TOTAL_WAITERS = 10_000;
+let _relayTotalWaiters = 0;
+
+// Set of live WS relay sockets that participate in the heartbeat sweep.
+// Populated by attachRelay, drained by close and the heartbeat itself.
+const _relayWsLive = new Set();
+
+function armLpIdleTimer(slot) {
+    if (slot.idleTimer) clearTimeout(slot.idleTimer);
+    slot.idleTimer = setTimeout(() => {
+        const room = slot.roomRef && slot.roomRef.deref && slot.roomRef.deref();
+        closeLpSlot(slot, 'idle');
+        if (room && room.relay && room.relay[slot.slotName] === slot) {
+            room.relay[slot.slotName] = null;
+            const peer = slot.slotName === 'a' ? room.relay.b : room.relay.a;
+            teardownPeer(peer, 'Peer idle');
+        }
+    }, RELAY_LP_SLOT_IDLE_TIMEOUT_MS);
+    // unref so a half-open slot does not keep the process alive at shutdown.
+    if (slot.idleTimer.unref) slot.idleTimer.unref();
+}
+
+function closeLpSlot(slot, reason) {
+    if (slot.closed) return;
+    slot.closed = true;
+    if (slot.idleTimer) { clearTimeout(slot.idleTimer); slot.idleTimer = null; }
+    // Drain pending waiters with a 410 Gone signal so the client knows
+    // the slot is dead and can stop polling.
+    const waiters = slot.waiters.splice(0);
+    for (const w of waiters) w.gone(reason);
+}
+
+function teardownPeer(peer, reason) {
+    if (!peer) return;
+    if (peer.kind === 'lp') {
+        closeLpSlot(peer, reason);
+        // Also null out the LP slot's room.relay reference so a fresh
+        // /relay/handshake can reclaim it immediately. Without this the
+        // closed LP slot lingers in room.relay until the idle timer
+        // fires, which makes the room appear "slots full" (409) and
+        // rejects up/down with 410 for up to a minute after a cross-kind
+        // disconnect (e.g. a WS half closing while its LP peer is still
+        // nominally present).
+        const room = peer.roomRef && peer.roomRef.deref && peer.roomRef.deref();
+        if (room && room.relay && peer.slotName && room.relay[peer.slotName] === peer) {
+            room.relay[peer.slotName] = null;
+        }
+    } else if (peer.readyState !== peer.CLOSED) {
+        try { peer.close(1000, reason); } catch (_) { /* ignore */ }
+    }
+}
+
+function deliverToPeer(peerSlot, data, isBinary) {
+    if (!peerSlot) return;
+    if (peerSlot.kind === 'lp') {
+        if (peerSlot.closed) return;
+        if (peerSlot.queue.length >= RELAY_LP_QUEUE_MAX_FRAMES) {
+            // Drop oldest under overflow so a stuck consumer cannot pin
+            // unbounded memory on the server. The protocol is interactive
+            // and dropped audio frames result in a perceptible glitch on
+            // the receiver, not a stuck session.
+            peerSlot.queue.shift();
+        }
+        peerSlot.queue.push({ data, isBinary });
+        const w = peerSlot.waiters.shift();
+        if (w) {
+            const next = peerSlot.queue.shift();
+            w.send(next);
+        }
+        return;
+    }
+    // WS slot: forward verbatim. ws.send is async but errors propagate
+    // via the 'error' event handler attached in attachRelay.
+    if (peerSlot.readyState === peerSlot.OPEN) {
+        try { peerSlot.send(data, { binary: isBinary }); } catch (_) { /* ignore */ }
+    }
+}
 
 // ============ TURN Credential Generation ============
 
@@ -597,7 +734,13 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
         iceCandidatesAnswer: [],
         // Pending long-poll responses waiting for an answer; cleared when
         // an answer arrives or the room is cleaned up.
-        answerWaiters: new Set()
+        answerWaiters: new Set(),
+        // Lazy-initialised relay state. When either peer claims a slot
+        // (LP handshake or WS upgrade) this becomes
+        //   { a: <slot|null>, b: <slot|null>, sessionBytes: <number> }
+        // sessionBytes is the running total of forwarded payload bytes,
+        // capped at RELAY_MAX_TOTAL_SESSION_BYTES.
+        relay: null
     });
 
     console.log(`Room ${roomId} created`);
@@ -761,6 +904,16 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`  TURN_CREDENTIAL_TTL: ${TURN_CREDENTIAL_TTL}`);
     console.log(`  TURNS_PORT: ${TURNS_PORT || '(none)'}`);
     console.log(`  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS.join(', ')}`);
+    console.log(`  RELAY_ENABLE: ${RELAY_ENABLE}`);
+    if (RELAY_ENABLE) {
+        console.log(`  RELAY_MAX_TOTAL_SESSION_BYTES: ${RELAY_MAX_TOTAL_SESSION_BYTES}`);
+        console.log(`  RELAY_MAX_CONTROL_MSG_BYTES: ${RELAY_MAX_CONTROL_MSG_BYTES}`);
+        console.log(`  RELAY_LP_DOWN_TIMEOUT_MS: ${RELAY_LP_DOWN_TIMEOUT_MS}`);
+        console.log(`  RELAY_LP_QUEUE_MAX_FRAMES: ${RELAY_LP_QUEUE_MAX_FRAMES}`);
+        console.log(`  RELAY_LP_FRAME_BODY_LIMIT: ${RELAY_LP_FRAME_BODY_LIMIT}`);
+        console.log(`  RELAY_LP_SLOT_IDLE_TIMEOUT_MS: ${RELAY_LP_SLOT_IDLE_TIMEOUT_MS}`);
+        console.log(`  RELAY_WS_PING_INTERVAL_MS: ${RELAY_WS_PING_INTERVAL_MS}`);
+    }
     console.log('-'.repeat(50));
     console.log(`  Listening on 0.0.0.0:${PORT}`);
 
