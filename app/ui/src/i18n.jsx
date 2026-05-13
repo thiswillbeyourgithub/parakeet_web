@@ -181,6 +181,9 @@ const translations = {
     devModeBanner: '\u26a0\ufe0f Development version \u2014 this instance is under active development. Expect bugs, instability, and frequent changes.',
     lowRamWarning: '\u26a0\ufe0f Your device may have limited memory',
     lowRamModelMayFail: '. The speech recognition model (~100\u2013200 MB) might fail to load.',
+    lowRamConfirmTitle: '\u26a0\ufe0f Low memory detected',
+    lowRamConfirmBody: 'Loading the speech recognition model on a low-memory device can crash this browser tab. Continue anyway?',
+    lowRamConfirmContinue: 'Load anyway',
     sharedArrayBufferWarning: '\u26a0\ufe0f Performance Note: SharedArrayBuffer is not available. WASM will run single-threaded. For better performance, serve over HTTPS with proper headers or use WebGPU.',
 
     // Fallback prompt
@@ -455,6 +458,9 @@ const translations = {
     devModeBanner: "\u26a0\ufe0f Version de d\u00e9veloppement \u2014 cette instance est en cours de d\u00e9veloppement actif. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents.",
     lowRamWarning: '\u26a0\ufe0f Votre appareil pourrait avoir une m\u00e9moire limit\u00e9e',
     lowRamModelMayFail: '. Le mod\u00e8le de reconnaissance vocale (~100\u2013200 Mo) pourrait ne pas se charger.',
+    lowRamConfirmTitle: '\u26a0\ufe0f M\u00e9moire faible d\u00e9tect\u00e9e',
+    lowRamConfirmBody: "Charger le mod\u00e8le de reconnaissance vocale sur un appareil \u00e0 faible m\u00e9moire peut faire planter cet onglet du navigateur. Continuer quand m\u00eame\u00a0?",
+    lowRamConfirmContinue: 'Charger quand m\u00eame',
     sharedArrayBufferWarning: "\u26a0\ufe0f Note de performance\u00a0: SharedArrayBuffer n'est pas disponible. WASM fonctionnera en mono-thread. Pour de meilleures performances, servez via HTTPS avec les bons en-t\u00eates ou utilisez WebGPU.",
 
     // Fallback prompt

@@ -2940,51 +2940,52 @@ export default function App() {
     return `rgba(239, 68, 68, ${opacity})`;
   }
 
-  // Low-RAM / mobile warning banner — dismissed per session via sessionStorage.
-  // Triggers when JS heap limit is below 3 GB (the model needs ~100-200 MB plus runtime overhead).
-  // Falls back to navigator.deviceMemory (Chrome/Edge) or mobile UA sniffing when heap info
-  // is unavailable. Stores detected RAM info for display in the banner text.
+  // Low-RAM / mobile detection. Triggers when JS heap limit is below 3 GB
+  // (the model needs ~100-200 MB plus runtime overhead). Falls back to
+  // navigator.deviceMemory (Chrome/Edge) or mobile UA sniffing when heap
+  // info is unavailable. When detected, clicking Load Model opens a
+  // confirmation popup warning that the tab may crash.
   const RAM_THRESHOLD_GB = 3;
   const RAM_THRESHOLD_BYTES = RAM_THRESHOLD_GB * 1024 * 1024 * 1024;
-  // Detection result computed once during the initial useState callback —
-  // stashed on a ref instead of useState because we cannot call another
-  // setter during a useState initializer.
-  const _lowRamDetectedRef = useRef(null);
+  const _lowRamInfoRef = useRef(null);
   const [lowRamInfo, setLowRamInfo] = useState(null); // { detectedGB, source }
-  const [showLowRamBanner, setShowLowRamBanner] = useState(() => {
-    if (typeof window !== 'undefined' && sessionStorage.getItem('parakeetweb_lowram_dismissed')) return false;
-    // Chrome exposes JS heap size limit — most reliable signal
+  const [isLowRam] = useState(() => {
     const heapLimit = performance?.memory?.jsHeapSizeLimit;
     if (heapLimit !== undefined) {
       const detectedGB = (heapLimit / 1024 / 1024 / 1024).toFixed(1);
-      _lowRamDetectedRef.current = { detectedGB, source: 'heap limit' };
+      _lowRamInfoRef.current = { detectedGB, source: 'heap limit' };
       return heapLimit < RAM_THRESHOLD_BYTES;
     }
-    // Chrome/Edge expose device RAM in GB
     const mem = navigator.deviceMemory;
     if (mem !== undefined) {
-      _lowRamDetectedRef.current = { detectedGB: String(mem), source: 'device memory' };
+      _lowRamInfoRef.current = { detectedGB: String(mem), source: 'device memory' };
       return mem < RAM_THRESHOLD_GB;
     }
-    // Fallback: assume mobile devices are memory-constrained
     if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      _lowRamDetectedRef.current = { detectedGB: '?', source: 'mobile device' };
+      _lowRamInfoRef.current = { detectedGB: '?', source: 'mobile device' };
       return true;
     }
     return false;
   });
 
-  // Promote the ref-stashed detection result into state once mounted.
   useEffect(() => {
-    if (_lowRamDetectedRef.current) {
-      setLowRamInfo(_lowRamDetectedRef.current);
-      _lowRamDetectedRef.current = null;
+    if (_lowRamInfoRef.current) {
+      setLowRamInfo(_lowRamInfoRef.current);
+      _lowRamInfoRef.current = null;
     }
   }, []);
 
-  const dismissLowRamBanner = () => {
-    sessionStorage.setItem('parakeetweb_lowram_dismissed', '1');
-    setShowLowRamBanner(false);
+  const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
+  const handleLoadModelClick = (opts) => {
+    if (isLowRam) {
+      setShowLowRamConfirm(true);
+      return;
+    }
+    loadModel(opts);
+  };
+  const confirmLowRamLoad = () => {
+    setShowLowRamConfirm(false);
+    loadModel();
   };
 
   return (
@@ -2994,11 +2995,18 @@ export default function App() {
           {t('devModeBanner')}
         </Banner>
       )}
-      {showLowRamBanner && (
-        <Banner tone="warning">
-          <span>{t('lowRamWarning')}{lowRamInfo ? ` (detected: ${lowRamInfo.detectedGB} GB ${lowRamInfo.source}, threshold: ${RAM_THRESHOLD_GB} GB)` : ''}{t('lowRamModelMayFail')}</span>
-          <button onClick={dismissLowRamBanner} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', marginLeft: 'auto', color: 'inherit' }} aria-label={t('dismiss')}>×</button>
-        </Banner>
+      {showLowRamConfirm && (
+        <Modal onClose={() => setShowLowRamConfirm(false)}>
+          <h3 style={{ marginTop: 0 }}>{t('lowRamConfirmTitle')}</h3>
+          <p>
+            {t('lowRamWarning')}{lowRamInfo ? ` (detected: ${lowRamInfo.detectedGB} GB ${lowRamInfo.source}, threshold: ${RAM_THRESHOLD_GB} GB)` : ''}{t('lowRamModelMayFail')}
+          </p>
+          <p style={{ fontWeight: 'bold' }}>{t('lowRamConfirmBody')}</p>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button onClick={() => setShowLowRamConfirm(false)}>{t('cancel')}</button>
+            <button onClick={confirmLowRamLoad} className="primary">{t('lowRamConfirmContinue')}</button>
+          </div>
+        </Modal>
       )}
       <div className="app-header">
         <div className="app-header__title-row">
@@ -3478,7 +3486,7 @@ export default function App() {
             {t('privacyEmphasis')}
           </p>
           <button
-            onClick={loadModel}
+            onClick={handleLoadModelClick}
             className="primary"
             style={{ marginBottom: '1rem', width: '100%' }}
             data-umami-event="load_model_button"
