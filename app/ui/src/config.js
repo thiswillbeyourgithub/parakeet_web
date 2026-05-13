@@ -16,4 +16,8 @@ export const CONFIG = {
   // (main.jsx, App.jsx, ...) silently receive `undefined` because this object
   // is the only export they see. Past omission: VITE_ANALYTICS_SRI (see F-22).
   VITE_ANALYTICS_SRI: runtime.VITE_ANALYTICS_SRI ?? import.meta.env.VITE_ANALYTICS_SRI,
+  // 'false' disables the HTTPS-relay fallback race in remote-webrtc.js
+  // (anything else, including unset, keeps it enabled). Server-side
+  // RELAY_ENABLE remains the master gate.
+  VITE_RELAY_ENABLE: runtime.VITE_RELAY_ENABLE ?? import.meta.env.VITE_RELAY_ENABLE,
 };

@@ -210,6 +210,8 @@ echo "[entrypoint] VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-(not set, defaults to 
 echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
+echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
+echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
 # F-142: surface the resolved HSTS / CSP override values so operators can
 # confirm at startup that their docker/.env overrides are actually in the
 # container. Empty values mean the Caddyfile's baked-in defaults apply.
@@ -377,6 +379,7 @@ VITE_MODEL_SOURCE="${VITE_MODEL_SOURCE:-}" \
 VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
 VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
 VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
+VITE_RELAY_ENABLE="${VITE_RELAY_ENABLE:-}" \
 node -e '
   const keys = [
     "VITE_DEV_MODE",
@@ -387,6 +390,7 @@ node -e '
     "VITE_ANALYTICS_URL",
     "VITE_ANALYTICS_WEBSITE_ID",
     "VITE_ANALYTICS_SRI",
+    "VITE_RELAY_ENABLE",
   ];
   const obj = {};
   for (const k of keys) obj[k] = process.env[k] ?? "";

@@ -85,6 +85,21 @@ services:
       - TURNS_PORT=${TURNS_PORT:-}
       - SIGNALING_PORT=${SIGNALING_PORT:-3001}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      # HTTPS relay fallback (WebSocket + long-poll) for networks that
+      # block direct WebRTC and TURN/TURNS. RELAY_ENABLE gates the
+      # signaling-server endpoints; VITE_RELAY_ENABLE gates the client
+      # race. Set either to "false" to disable. Tuning knobs
+      # (RELAY_MAX_*, RELAY_LP_*, RELAY_WS_*) accept their defaults
+      # unless explicitly set.
+      - RELAY_ENABLE=${RELAY_ENABLE:-}
+      - VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-}
+      - RELAY_MAX_TOTAL_SESSION_BYTES=${RELAY_MAX_TOTAL_SESSION_BYTES:-}
+      - RELAY_MAX_CONTROL_MSG_BYTES=${RELAY_MAX_CONTROL_MSG_BYTES:-}
+      - RELAY_LP_DOWN_TIMEOUT_MS=${RELAY_LP_DOWN_TIMEOUT_MS:-}
+      - RELAY_LP_QUEUE_MAX_FRAMES=${RELAY_LP_QUEUE_MAX_FRAMES:-}
+      - RELAY_LP_FRAME_BODY_LIMIT=${RELAY_LP_FRAME_BODY_LIMIT:-}
+      - RELAY_LP_SLOT_IDLE_TIMEOUT_MS=${RELAY_LP_SLOT_IDLE_TIMEOUT_MS:-}
+      - RELAY_WS_PING_INTERVAL_MS=${RELAY_WS_PING_INTERVAL_MS:-}
       # F-142: forward operator HSTS / CSP overrides so the Caddyfile's
       # {$VITE_HSTS_*} / {$VITE_CSP_*} substitutions resolve to non-empty
       # values when set in .env. Without these the documented overrides
