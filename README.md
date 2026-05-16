@@ -15,6 +15,7 @@
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Dictation Mode](#dictation-mode)
+- [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
 - [Live Transcription](#live-transcription)
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
@@ -72,6 +73,20 @@ This feature is very early and will improve rapidly.
 - **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on every container start.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Three display modes are available per transcription: **Raw**, **Confidence** (heatmap), and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
+
+## Dictation Devices (SpeechMike)
+
+Parakeet Web supports physical dictation devices (Philips SpeechMike and similar) via [GoogleChromeLabs/dictation_support](https://github.com/GoogleChromeLabs/dictation_support). The device's RECORD, PLAY/PAUSE and STOP buttons control the in-app recording lifecycle:
+
+- **RECORD**: start a new recording (ignored while already recording; use PLAY to pause/resume instead).
+- **PLAY**: pause or resume the current recording.
+- **STOP**: stop the recording (or start a new one when idle).
+
+Pair the device once via the **Connect Dictation Device** button in settings; on subsequent visits the page auto-reconnects with no extra click.
+
+> **Browser limitation:** this feature uses the [WebHID API](https://developer.mozilla.org/en-US/docs/Web/API/WebHID_API), which is currently only available in **Chromium-based browsers** (Chrome, Edge, Brave, Opera, Vivaldi, ...). Firefox and Safari do not implement WebHID, so the physical buttons cannot drive the app there. You can still use the device as a regular USB microphone in any browser, but you have to start and stop recording with the on-screen controls. On non-Chromium browsers Parakeet Web tries to detect a plugged-in SpeechMike from the audio-input device list and shows a hint pointing you to a compatible browser.
+
+This integration was wired up with [Claude Code](https://www.anthropic.com/claude-code).
 
 ## Live Transcription
 
