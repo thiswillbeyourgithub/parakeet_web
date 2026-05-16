@@ -700,6 +700,11 @@ export default function App() {
   // Dictation device (Philips SpeechMike) — WebHID connection state
   const [dictationDevice, setDictationDevice] = useState(null); // connected device name or null
   const dictationManagerRef = useRef(null);
+  // True when we detect a SpeechMike-like audio input device on a browser
+  // without WebHID support (e.g. Firefox, Safari). The user can still record
+  // with it as a plain mic, but the physical buttons won't work, so we
+  // surface a banner telling them to switch to a Chromium browser.
+  const [dictationSuspectedNoWebhid, setDictationSuspectedNoWebhid] = useState(false);
 
   // Dictation regex post-processing
   // Display mode: 'raw' = plain transcription, 'confidence' = with heatmap, 'dictation' = regex-cleaned
@@ -2150,6 +2155,41 @@ export default function App() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // On browsers without WebHID (Firefox, Safari, ...), we cannot pair a
+  // dictation device. We can still *guess* one is plugged in by looking at
+  // audio-input device labels: enumerateDevices() only returns populated
+  // labels once microphone permission has been granted (so this runs both
+  // on mount and after mic permission events), but if a label matches we
+  // surface a banner pointing the user at a Chromium browser.
+  useEffect(() => {
+    if (!dictationEnabled) return;
+    if (typeof navigator === 'undefined') return;
+    if (navigator.hid) return; // Chromium path is handled above
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+
+    const DICTATION_LABEL_RX = /speechmike|philips\s*(speech|dict)|olympus\s*(dict|rec)|grundig\s*dict|dictation/i;
+
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (cancelled) return;
+        const match = devices.some(d => d.kind === 'audioinput' && d.label && DICTATION_LABEL_RX.test(d.label));
+        setDictationSuspectedNoWebhid(match);
+      } catch (err) {
+        console.warn('[Dictation] enumerateDevices failed:', err);
+      }
+    };
+    check();
+    // Re-check when the device list changes (e.g. user plugs the mike in
+    // after page load, or grants mic permission which unmasks labels).
+    navigator.mediaDevices.addEventListener?.('devicechange', check);
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices.removeEventListener?.('devicechange', check);
+    };
+  }, [dictationEnabled]);
+
   // Helper function to resample audio to 16kHz mono and create a WAV blob for preview
   async function resampleToPreview(file) {
     console.log(`[Preview] Resampling "${file.name}" to 16kHz mono...`);
@@ -3409,12 +3449,19 @@ export default function App() {
             </div>
           </div>
         
-          {/* Dictation device (SpeechMike) connect button. Always rendered
-              when the feature is enabled: on Chromium it opens the WebHID
-              picker, on Firefox/Safari clicking it surfaces an alert
-              explaining the limitation (see connectDictationDevice). */}
+          {/* Dictation device (SpeechMike) connect button. The button itself
+              is always shown when the feature is enabled: on Chromium it opens
+              the WebHID picker; on Firefox/Safari clicking it shows an alert
+              explaining the limitation (see connectDictationDevice). When we
+              suspect a dictation device is plugged in on a non-WebHID browser
+              we additionally render a Banner above it. */}
           {dictationEnabled && (
             <div className="setting-row" style={{ marginTop: '1rem' }}>
+              {dictationSuspectedNoWebhid && (
+                <Banner tone="warning" style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                  {t('dictationSuspectedNoWebhid')}
+                </Banner>
+              )}
               <button
                 onClick={connectDictationDevice}
                 style={{ width: '100%' }}

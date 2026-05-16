@@ -223,6 +223,7 @@ const translations = {
     dictationDevice: 'Dictation device',
     dictationDeviceHint: 'RECORD = start/pause/resume \u00b7 STOP = stop recording',
     dictationWebhidUnsupported: 'Dictation-device buttons (Philips SpeechMike, etc.) use the WebHID API, which is only available in Chromium-based browsers (Chrome, Edge, Brave, Opera, Vivaldi). Your current browser does not support it, so the device cannot be paired. You can still record from it as a normal microphone, but the physical RECORD/PLAY/STOP buttons will not control the app.',
+    dictationSuspectedNoWebhid: 'A dictation device (Philips SpeechMike or similar) appears to be plugged in, but your browser does not support WebHID. Open this page in a Chromium-based browser (Chrome, Edge, Brave, Opera, Vivaldi) to use its physical buttons.',
 
     // Transcribing status
     transcribingFile: 'Transcribing',
@@ -493,6 +494,7 @@ const translations = {
     dictationDevice: 'Appareil de dict\u00e9e',
     dictationDeviceHint: 'RECORD = d\u00e9marrer/pause/reprendre \u00b7 STOP = arr\u00eater',
     dictationWebhidUnsupported: 'Les boutons des appareils de dict\u00e9e (Philips SpeechMike, etc.) utilisent l\u2019API WebHID, disponible uniquement dans les navigateurs bas\u00e9s sur Chromium (Chrome, Edge, Brave, Opera, Vivaldi). Votre navigateur ne la prend pas en charge, l\u2019appareil ne peut donc pas \u00eatre appair\u00e9. Vous pouvez toujours enregistrer avec lui comme microphone classique, mais les boutons physiques RECORD/PLAY/STOP ne contr\u00f4leront pas l\u2019application.',
+    dictationSuspectedNoWebhid: 'Un appareil de dict\u00e9e (Philips SpeechMike ou similaire) semble branch\u00e9, mais votre navigateur ne prend pas en charge WebHID. Ouvrez cette page dans un navigateur bas\u00e9 sur Chromium (Chrome, Edge, Brave, Opera, Vivaldi) pour utiliser ses boutons physiques.',
 
     // Transcribing status
     transcribingFile: 'Transcription de',
