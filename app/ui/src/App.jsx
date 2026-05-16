@@ -2117,8 +2117,14 @@ export default function App() {
     return manager;
   }
 
-  // User-triggered: opens the WebHID picker to pair a new device
+  // User-triggered: opens the WebHID picker to pair a new device.
+  // If WebHID is unavailable (non-Chromium browser), show an explanatory
+  // alert instead of silently doing nothing.
   async function connectDictationDevice() {
+    if (typeof navigator === 'undefined' || !navigator.hid) {
+      alert(t('dictationWebhidUnsupported'));
+      return;
+    }
     try {
       const manager = dictationManagerRef.current || await initDictationManager(false);
       if (!manager) return;
@@ -3403,9 +3409,11 @@ export default function App() {
             </div>
           </div>
         
-          {/* Dictation device (SpeechMike) connect button — only shown when
-              the feature is enabled and WebHID is available in this browser. */}
-          {dictationEnabled && typeof navigator !== 'undefined' && navigator.hid && (
+          {/* Dictation device (SpeechMike) connect button. Always rendered
+              when the feature is enabled: on Chromium it opens the WebHID
+              picker, on Firefox/Safari clicking it surfaces an alert
+              explaining the limitation (see connectDictationDevice). */}
+          {dictationEnabled && (
             <div className="setting-row" style={{ marginTop: '1rem' }}>
               <button
                 onClick={connectDictationDevice}
