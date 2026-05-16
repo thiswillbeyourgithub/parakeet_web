@@ -507,7 +507,7 @@ export default function App() {
   // the UI never appears to freeze while audio is being assembled / decoded
   // and the model is running its canonical pass.
   const [awaitingFinal, setAwaitingFinal] = useState(false);
-  const [noiseSuppression, setNoiseSuppression] = useState(false);
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
   const [echoCancellation, setEchoCancellation] = useState(false);
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
@@ -752,7 +752,7 @@ export default function App() {
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
-          loadSetting('noiseSuppression', false),
+          loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', true),
           loadSetting('showConfidenceHeatmap', false),
