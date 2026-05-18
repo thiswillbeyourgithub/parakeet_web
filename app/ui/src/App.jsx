@@ -558,6 +558,17 @@ export default function App() {
   // arrival). Cleared on every handshake start/teardown via
   // resolveRemoteMicPeerAck so a fresh re-pair never inherits stale state.
   const remoteMicEarlyPeerVerifyRef = useRef(null);
+  // F-137: synchronous handshake-in-progress flag. The duplicate-handshake
+  // guard at the top of the 'sender-public-key' branch checks
+  // remoteMicKeyRef / remoteMicVerifyResolveRef, but those refs are only
+  // populated AFTER several awaits (importPublicKey, deriveSharedKey,
+  // getAdaptiveFingerprintLength, computePairFingerprintForRole). A
+  // malicious phone that sends two sender-public-key messages back-to-back
+  // would see both pass the guard, both compute fingerprints, and the
+  // second assignment to verifyResolveRef.current would clobber the first
+  // resolver, orphaning the first ECDH closure. Setting this ref to true
+  // synchronously before the first await closes that multi-await window.
+  const remoteMicHandshakeInProgressRef = useRef(false);
   // Resolve any in-flight fingerprint verify and null the ref. Every teardown
   // path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
   // disconnectRemoteMic) must call this so the awaiting Promise inside
@@ -575,6 +586,11 @@ export default function App() {
       remoteMicPeerAckResolveRef.current = null;
     }
     remoteMicEarlyPeerVerifyRef.current = null;
+    // F-137: every teardown path funnels through here (onDisconnected,
+    // cancelRemoteMic, regenerateRemoteMicQr, disconnectRemoteMic), so
+    // clearing the handshake-in-progress flag here lets a re-pair claim
+    // a fresh slot. The success path clears it explicitly after binding.
+    remoteMicHandshakeInProgressRef.current = false;
   }, []);
 
   // Tiny helpers so the elapsed-timer setup/teardown is in one place — used to
@@ -1591,10 +1607,18 @@ export default function App() {
               // remoteMicKeyRef.current mid-stream (silent key swap on the
               // victim) or orphan the previous verify resolver, pinning
               // the original ECDH private key in a dead closure.
-              if (remoteMicKeyRef.current || remoteMicVerifyResolveRef.current) {
+              //
+              // F-137: include the synchronous in-progress flag. The two
+              // other refs are only populated after several awaits below
+              // (importPublicKey, deriveSharedKey, stats fetch, fingerprint
+              // hash), and a flood of sender-public-key messages would
+              // otherwise all pass this guard before any of them reaches
+              // the verifyResolveRef assignment.
+              if (remoteMicKeyRef.current || remoteMicVerifyResolveRef.current || remoteMicHandshakeInProgressRef.current) {
                 console.warn('[RemoteMic] Ignoring duplicate sender-public-key — handshake already bound or in-flight');
                 return;
               }
+              remoteMicHandshakeInProgressRef.current = true;
               // Derive shared key from phone's public key
               const theirKey = await importPublicKey(msg.key);
               const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
@@ -1663,6 +1687,9 @@ export default function App() {
               }
 
               remoteMicKeyRef.current = sharedKey;
+              // F-137: handshake is now bound, future sender-public-key
+              // messages are caught by the remoteMicKeyRef guard.
+              remoteMicHandshakeInProgressRef.current = false;
               setRemoteMicVerifiedAt(Date.now());
               setRemoteMicStatus('connected');
               setRemoteMicModal(false); // close setup modal; use main UI from here
