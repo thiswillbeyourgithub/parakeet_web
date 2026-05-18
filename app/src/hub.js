@@ -30,6 +30,8 @@ const STORE_NAME = 'file-store';
 // FLUSH_INTERVAL bytes so a tab close or network drop only loses up to that
 // much progress. MAX_RETRIES with exponential backoff handles transient
 // drops; persistent failures (CORS, 404, hard offline) still surface.
+// Callers can override MAX_RETRIES per-call (HF download caps at 1 retry
+// so we fall back to the local mirror quickly).
 const FLUSH_INTERVAL = 8 * 1024 * 1024;
 const MAX_RETRIES = 6;
 const PARTIAL_PREFIX = 'partial-';
@@ -173,9 +175,11 @@ export async function clearCache() {
  * @param {string} filename - Friendly name for logs and progress events
  * @param {Function|undefined} progress - Optional progress callback
  * @param {string} logTag - Log prefix, e.g. '[Hub]' or '[Hub:local]'
+ * @param {number} [maxRetries=MAX_RETRIES] - Number of retries after the initial
+ *   attempt before giving up. Total HTTP attempts = maxRetries + 1.
  * @returns {Promise<string>} Blob URL
  */
-async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
+async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRetries = MAX_RETRIES) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
 
@@ -271,6 +275,9 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
 
   let attempt = 0;
   while (!alreadyComplete) {
+    // Surface the attempt number so the UI can render "Retry N/total" before
+    // any bytes flow. Distinct from a byte-progress event (loaded/total).
+    if (progress) progress({ attempt: attempt + 1, maxAttempts: maxRetries + 1, file: filename });
     try {
       const headers = {};
       if (received > 0) {
@@ -343,9 +350,9 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag) {
       break;
     } catch (err) {
       await flushTail();
-      if (attempt >= MAX_RETRIES) throw err;
+      if (attempt >= maxRetries) throw err;
       const delay = Math.min(30000, 1000 * 2 ** attempt);
-      console.warn(`${logTag} Download error for ${filename} at ${received}/${total || '?'}, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES}):`, err.message || err);
+      console.warn(`${logTag} Download error for ${filename} at ${received}/${total || '?'}, retrying in ${delay}ms (${attempt + 1}/${maxRetries}):`, err.message || err);
       await new Promise(r => setTimeout(r, delay));
       attempt += 1;
     }
@@ -406,10 +413,13 @@ export async function getModelFile(repoId, filename, options = {}) {
     }
   }
 
-  // Download from HF (resumable + retrying internally)
+  // Download from HF (resumable + retrying internally). Cap at 1 retry so a
+  // genuinely-blocked HF (firewall, region block) falls back to the local
+  // mirror within seconds rather than ~60 s of backoff. Local fallback keeps
+  // the default retry count.
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
-    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]');
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', 1);
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).

@@ -1132,7 +1132,20 @@ export default function App() {
     console.time('LoadModel');
 
     try {
-      const progressCallback = ({ loaded, total, file, resumed }) => {
+      const progressCallback = ({ loaded, total, file, resumed, attempt, maxAttempts }) => {
+        // Attempt-tracking events fire before any bytes flow so the user sees
+        // "Retry N/M" even on a stalled connection. Distinct from byte events.
+        if (attempt !== undefined) {
+          if (maxAttempts > 1) {
+            const msg = t('retryingDownload')
+              .replace('{n}', attempt)
+              .replace('{total}', maxAttempts)
+              .replace('{file}', file);
+            setProgressText(msg);
+            if (attempt === 1) setProgressPct(0);
+          }
+          return;
+        }
         const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
         const prefix = resumed ? `${t('resuming')} ` : '';
         const sizes = total > 0 ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
