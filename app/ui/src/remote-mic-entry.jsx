@@ -116,6 +116,16 @@ function RemoteMicSender() {
     // timeout for a message that already arrived. Mirrors the desktop's
     // remoteMicEarlyPeerVerifyRef. Cleared on every cleanup path.
     const earlyPeerVerifyRef = useRef(null);
+    // F-137: synchronous handshake-in-progress flag. The duplicate-handshake
+    // guard at the top of the 'public-key' branch checks sharedKeyRef /
+    // verifyResolveRef / peerAckResolveRef, but those refs are only
+    // populated AFTER several awaits (generateKeyPair, importPublicKey,
+    // deriveSharedKey, exportPublicKey, getAdaptiveFingerprintLength,
+    // computePairFingerprintForRole). A hostile receiver that sends two
+    // public-key messages back-to-back would otherwise see both pass the
+    // guard and clobber the resolver. Set true synchronously before the
+    // first await to close the multi-await window.
+    const handshakeInProgressRef = useRef(false);
     const logsEndRef = useRef(null);
 
     const rtcRef = useRef(null);
@@ -172,6 +182,10 @@ function RemoteMicSender() {
             peerAckResolveRef.current = null;
         }
         earlyPeerVerifyRef.current = null;
+        // F-137: cleanupAll is the funnel for every teardown path; reset the
+        // synchronous handshake-in-progress flag so a re-pair can claim a
+        // fresh slot. The success path clears it explicitly after binding.
+        handshakeInProgressRef.current = false;
     }, [cleanupAudio]);
 
     useEffect(() => {
@@ -299,10 +313,17 @@ function RemoteMicSender() {
                             // hostile peer can re-send public-key mid-modal,
                             // swap the displayed fingerprint under the user's
                             // eyes, and orphan the prior ECDH private key.
-                            if (sharedKeyRef.current || verifyResolveRef.current || peerAckResolveRef.current) {
+                            //
+                            // F-137: include the synchronous in-progress flag.
+                            // The other refs are only populated after several
+                            // awaits below, so a flood of public-key messages
+                            // would all pass this guard before any of them
+                            // reached the verifyResolveRef assignment.
+                            if (sharedKeyRef.current || verifyResolveRef.current || peerAckResolveRef.current || handshakeInProgressRef.current) {
                                 console.warn('[RemoteMic] Ignoring duplicate public-key — handshake already bound or in-flight');
                                 return;
                             }
+                            handshakeInProgressRef.current = true;
                             clearTimeout(keyTimeout);
                             // Computer sent its public key, derive shared key
                             setStatus(STATUS.WAITING_KEY);
@@ -374,6 +395,9 @@ function RemoteMicSender() {
                                 return;
                             }
                             sharedKeyRef.current = sharedKey;
+                            // F-137: handshake is now bound, future public-key
+                            // messages are caught by the sharedKeyRef guard.
+                            handshakeInProgressRef.current = false;
 
                             // Phone is connected, let the user tap Start Recording when ready
                             setStatus(STATUS.READY);
