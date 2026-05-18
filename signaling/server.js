@@ -914,7 +914,16 @@ app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoo
     res.json({ success: true });
 });
 
-app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('roomLookup'), validateRoomSecret, (req, res) => {
+// Polled at ~1 Hz by remote-webrtc.js during ICE negotiation. The
+// `roomLookup` bucket (30/min) is too tight for that cadence,
+// especially when the phone and desktop share a NAT IP and both
+// peers consume the same per-IP counter — a single connect attempt
+// can saturate it within 15 s and 429-block any retry for a full
+// minute. The sibling POST already uses `general` (100/min); the GET
+// is also gated by validateRoomSecret so it is not an enumeration
+// oracle, and matching its limit keeps the trickle-ICE round-trip
+// inside one consistent bucket.
+app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
     res.json({ candidates: req.room.iceCandidatesOffer });
 });
 
@@ -934,7 +943,9 @@ app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRo
     res.json({ success: true });
 });
 
-app.get('/api/rooms/:id/ice/answer', rateLimitMiddleware('roomLookup'), validateRoomSecret, (req, res) => {
+// Same rationale as /ice/offer above: moved to `general` to match
+// the 1 Hz client polling and avoid 429 storms under shared-NAT.
+app.get('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
     res.json({ candidates: req.room.iceCandidatesAnswer });
 });
 
