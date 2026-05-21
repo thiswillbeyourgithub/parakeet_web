@@ -1095,6 +1095,25 @@ export default function App() {
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
+
+  // Keep the phone's getUserMedia constraints in sync with the desktop
+  // toggles. Fires on first bind (isRemoteMic flips to true) and on any
+  // subsequent change. The phone applies the new values on its next
+  // startMicCapture, so changes made mid-recording take effect on the
+  // following recording.
+  useEffect(() => {
+    if (!isRemoteMic) return;
+    const rtc = remoteMicRtcRef.current;
+    if (!rtc) return;
+    try {
+      rtc.sendMessage({
+        type: 'audio-settings',
+        noiseSuppression,
+        echoCancellation,
+        autoGainControl,
+      });
+    } catch (_) { /* channel may be closing */ }
+  }, [isRemoteMic, noiseSuppression, echoCancellation, autoGainControl]);
   usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
   usePersistedSetting('autoTranscribe', autoTranscribe, settingsLoaded);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);

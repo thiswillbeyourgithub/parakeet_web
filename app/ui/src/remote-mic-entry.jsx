@@ -140,6 +140,15 @@ function RemoteMicSender() {
     // fresh level monitor to the same MediaStreamSource.
     const sourceRef = useRef(null);
     const keepaliveHeldRef = useRef(false);
+    // Audio capture settings pushed from the desktop. Defaults match the
+    // historical hardcoded values; overwritten when the desktop sends an
+    // `audio-settings` control message. Read inside startMicCapture so
+    // each new recording picks up the latest values.
+    const audioSettingsRef = useRef({
+        noiseSuppression: true,
+        echoCancellation: false,
+        autoGainControl: true,
+    });
 
     // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
@@ -456,6 +465,21 @@ function RemoteMicSender() {
                         } else if (msg.type === 'resume') {
                             // Computer requested resume
                             resumeRecording();
+                        } else if (msg.type === 'audio-settings') {
+                            // Desktop is pushing the user's audio toggles.
+                            // Store them; getUserMedia constraints are
+                            // applied on the next startMicCapture call
+                            // (mid-recording changes don't retroactively
+                            // mutate an active track).
+                            if (typeof msg.noiseSuppression === 'boolean') {
+                                audioSettingsRef.current.noiseSuppression = msg.noiseSuppression;
+                            }
+                            if (typeof msg.echoCancellation === 'boolean') {
+                                audioSettingsRef.current.echoCancellation = msg.echoCancellation;
+                            }
+                            if (typeof msg.autoGainControl === 'boolean') {
+                                audioSettingsRef.current.autoGainControl = msg.autoGainControl;
+                            }
                         }
                     } catch (e) {
                         console.error('[RemoteMic] Error handling message:', e);
@@ -476,14 +500,17 @@ function RemoteMicSender() {
 
     const startMicCapture = useCallback(async () => {
         try {
-            // Request microphone access
+            // Request microphone access. Toggles come from the desktop
+            // (audio-settings message) so the phone honours the same user
+            // preferences as the local mic path.
+            const { noiseSuppression, echoCancellation, autoGainControl } = audioSettingsRef.current;
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
                     sampleRate: { ideal: 16000 },
-                    noiseSuppression: true,
-                    echoCancellation: false,
-                    autoGainControl: true,
+                    noiseSuppression,
+                    echoCancellation,
+                    autoGainControl,
                 }
             });
             streamRef.current = stream;
