@@ -510,6 +510,11 @@ export default function App() {
   const [noiseSuppression, setNoiseSuppression] = useState(true);
   const [echoCancellation, setEchoCancellation] = useState(false);
   const [autoGainControl, setAutoGainControl] = useState(true);
+  // Linear gain multiplier applied on the phone before audio leaves the
+  // device. Only affects the remote mic path; the local mic doesn't use
+  // it. Default 2.0 because phones tend to under-amplify voice once
+  // their AGC kicks in.
+  const [remoteMicGain, setRemoteMicGain] = useState(2.0);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState(null);
 
@@ -756,6 +761,7 @@ export default function App() {
           savedNoiseSuppression,
           savedEchoCancellation,
           savedAutoGainControl,
+          savedRemoteMicGain,
           savedShowConfidenceHeatmap,
           savedAutoTranscribe,
           savedAutoCopyToClipboard,
@@ -776,6 +782,7 @@ export default function App() {
           loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', true),
+          loadSetting('remoteMicGain', 2.0),
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
           loadSetting('autoCopyToClipboard', false),
@@ -801,6 +808,7 @@ export default function App() {
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
         setAutoGainControl(savedAutoGainControl);
+        setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
         setAutoTranscribe(savedAutoTranscribe);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
@@ -1095,12 +1103,14 @@ export default function App() {
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
+  usePersistedSetting('remoteMicGain', remoteMicGain, settingsLoaded);
 
-  // Keep the phone's getUserMedia constraints in sync with the desktop
-  // toggles. Fires on first bind (isRemoteMic flips to true) and on any
-  // subsequent change. The phone applies the new values on its next
-  // startMicCapture, so changes made mid-recording take effect on the
-  // following recording.
+  // Keep the phone's getUserMedia constraints + gain in sync with the
+  // desktop. Fires on first bind (isRemoteMic flips to true) and on any
+  // subsequent change. The phone applies the toggles on its next
+  // startMicCapture (active tracks aren't retroactively mutated); the
+  // gain is applied live on its GainNode so the slider gives immediate
+  // feedback mid-recording.
   useEffect(() => {
     if (!isRemoteMic) return;
     const rtc = remoteMicRtcRef.current;
@@ -1111,9 +1121,10 @@ export default function App() {
         noiseSuppression,
         echoCancellation,
         autoGainControl,
+        gain: remoteMicGain,
       });
     } catch (_) { /* channel may be closing */ }
-  }, [isRemoteMic, noiseSuppression, echoCancellation, autoGainControl]);
+  }, [isRemoteMic, noiseSuppression, echoCancellation, autoGainControl, remoteMicGain]);
   usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
   usePersistedSetting('autoTranscribe', autoTranscribe, settingsLoaded);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
@@ -3292,6 +3303,26 @@ export default function App() {
                   <InfoTooltip text={t('tooltipAutoGainControl')} />
                 </label>
               </div>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('remoteMicGain')}:
+                <InfoTooltip text={t('tooltipRemoteMicGain')} />
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0.5"
+                max="5"
+                step="0.1"
+                value={remoteMicGain}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setRemoteMicGain(Math.max(0.5, Math.min(5, v)));
+                }}
+                style={{ width: '5rem' }}
+              />
             </div>
 
             <div className="setting-row">

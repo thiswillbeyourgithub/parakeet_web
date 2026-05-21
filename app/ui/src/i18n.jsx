@@ -108,6 +108,7 @@ const translations = {
     noiseSuppression: 'Noise Suppression',
     echoCancellation: 'Echo Cancellation',
     autoGainControl: 'Auto Gain Control',
+    remoteMicGain: 'Remote mic gain (phone only)',
     liveTranscription: 'Live transcription',
     liveContextWindow: 'Context window',
     liveContextAuto: 'Auto',
@@ -137,6 +138,7 @@ const translations = {
     tooltipNoiseSuppression: 'Reduces background noise for clearer voice. Disable for music or when maximum audio fidelity is needed. Default: on.',
     tooltipEchoCancellation: 'Removes echo and feedback. Disable for music recording or if you experience audio quality issues. Default: off.',
     tooltipAutoGainControl: 'Automatically adjusts volume levels. Disable for music or when you want consistent volume. Default: on.',
+    tooltipRemoteMicGain: 'Software gain multiplier applied on the phone before the audio is sent. Use values above 1 if the remote mic sounds too quiet, below 1 if it clips. Only affects the remote mic; the local mic ignores it. Default: 2.0.',
     tooltipLiveTranscription: 'Stream transcription as you speak. The model re-runs every few seconds on a sliding window of recent audio (no global context, so live text may differ from the final result). After you stop, the full audio is always re-transcribed in one pass; that final pass is the canonical transcript, so live is extra compute on top of it. Applies to microphone recordings only — uploaded audio files are always processed in a single pass and do not show a live preview. Default: off.',
     tooltipLiveContextWindow: 'How many seconds of recent audio the encoder sees on each live update. More context = better accuracy but more compute. Auto adapts the size to your machine’s speed (10–60s). Default: Auto.',
 
@@ -380,6 +382,7 @@ const translations = {
     noiseSuppression: 'Suppression du bruit',
     echoCancellation: "\u00c9limination de l'\u00e9cho",
     autoGainControl: 'Contr\u00f4le automatique du gain',
+    remoteMicGain: 'Gain micro distant (t\u00e9l\u00e9phone uniquement)',
     liveTranscription: 'Transcription en direct',
     liveContextWindow: 'Fen\u00eatre de contexte',
     liveContextAuto: 'Auto',
@@ -409,6 +412,7 @@ const translations = {
     tooltipNoiseSuppression: "R\u00e9duit le bruit de fond pour une voix plus claire. D\u00e9sactivez pour la musique ou pour une fid\u00e9lit\u00e9 audio maximale. D\u00e9faut : activ\u00e9.",
     tooltipEchoCancellation: "Supprime l'\u00e9cho et le retour audio. D\u00e9sactivez pour l'enregistrement musical ou en cas de probl\u00e8mes de qualit\u00e9. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipAutoGainControl: "Ajuste automatiquement les niveaux de volume. D\u00e9sactivez pour la musique ou quand vous voulez un volume constant. Défaut : activé.",
+    tooltipRemoteMicGain: "Multiplicateur de gain logiciel appliqué sur le téléphone avant l'envoi de l'audio. Utilisez une valeur supérieure à 1 si le micro distant sonne trop bas, inférieure à 1 s'il sature. N'affecte que le micro distant ; le micro local l'ignore. Défaut : 2.0.",
     tooltipLiveTranscription: "Transcription en flux pendant que vous parlez. Le mod\u00e8le est relanc\u00e9 toutes les quelques secondes sur une fen\u00eatre glissante (sans contexte global, donc le texte en direct peut diff\u00e9rer du r\u00e9sultat final). Apr\u00e8s l'arr\u00eat, l'audio complet est syst\u00e9matiquement retranscrit en une seule passe ; cette passe finale est la transcription canonique, donc le mode direct est du calcul suppl\u00e9mentaire. S'applique uniquement aux enregistrements micro : les fichiers audio import\u00e9s sont toujours trait\u00e9s en une seule passe et n'affichent pas d'aper\u00e7u en direct. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipLiveContextWindow: "Nombre de secondes d'audio r\u00e9cent vues par l'encodeur \u00e0 chaque mise \u00e0 jour. Plus de contexte = meilleure pr\u00e9cision mais plus de calcul. Auto adapte la taille \u00e0 la vitesse de votre machine (10\u201360s). D\u00e9faut : Auto.",
 

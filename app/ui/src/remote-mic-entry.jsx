@@ -142,13 +142,17 @@ function RemoteMicSender() {
     const keepaliveHeldRef = useRef(false);
     // Audio capture settings pushed from the desktop. Defaults match the
     // historical hardcoded values; overwritten when the desktop sends an
-    // `audio-settings` control message. Read inside startMicCapture so
-    // each new recording picks up the latest values.
+    // `audio-settings` control message. Toggles are read inside
+    // startMicCapture so each new recording picks up the latest values;
+    // `gain` is also pushed live onto gainNodeRef so the slider gives
+    // immediate feedback mid-recording.
     const audioSettingsRef = useRef({
         noiseSuppression: true,
         echoCancellation: false,
         autoGainControl: true,
+        gain: 2.0,
     });
+    const gainNodeRef = useRef(null);
 
     // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
@@ -168,6 +172,7 @@ function RemoteMicSender() {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (levelMonitorRef.current) { levelMonitorRef.current.stop(); levelMonitorRef.current = null; }
         if (workletRef.current) { workletRef.current.disconnect(); workletRef.current = null; }
+        if (gainNodeRef.current) { try { gainNodeRef.current.disconnect(); } catch (_) {} gainNodeRef.current = null; }
         if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
         if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
         sourceRef.current = null;
@@ -467,10 +472,12 @@ function RemoteMicSender() {
                             resumeRecording();
                         } else if (msg.type === 'audio-settings') {
                             // Desktop is pushing the user's audio toggles.
-                            // Store them; getUserMedia constraints are
-                            // applied on the next startMicCapture call
+                            // Toggles are stored; getUserMedia constraints
+                            // are applied on the next startMicCapture
                             // (mid-recording changes don't retroactively
-                            // mutate an active track).
+                            // mutate an active track). Gain is also pushed
+                            // live onto the active GainNode so the slider
+                            // moves the volume in real time.
                             if (typeof msg.noiseSuppression === 'boolean') {
                                 audioSettingsRef.current.noiseSuppression = msg.noiseSuppression;
                             }
@@ -479,6 +486,22 @@ function RemoteMicSender() {
                             }
                             if (typeof msg.autoGainControl === 'boolean') {
                                 audioSettingsRef.current.autoGainControl = msg.autoGainControl;
+                            }
+                            if (typeof msg.gain === 'number' && Number.isFinite(msg.gain) && msg.gain >= 0) {
+                                audioSettingsRef.current.gain = msg.gain;
+                                if (gainNodeRef.current && audioCtxRef.current) {
+                                    // Ramp instead of step to avoid an
+                                    // audible click when the slider moves.
+                                    try {
+                                        gainNodeRef.current.gain.setTargetAtTime(
+                                            msg.gain,
+                                            audioCtxRef.current.currentTime,
+                                            0.02,
+                                        );
+                                    } catch (e) {
+                                        gainNodeRef.current.gain.value = msg.gain;
+                                    }
+                                }
                             }
                         }
                     } catch (e) {
@@ -536,7 +559,18 @@ function RemoteMicSender() {
             const source = audioCtx.createMediaStreamSource(stream);
             sourceRef.current = source;
 
-            levelMonitorRef.current = createLevelMonitor(audioCtx, source, setAudioLevel);
+            // GainNode between source and worklet so the desktop's
+            // remoteMicGain slider boosts (or attenuates) the signal
+            // before it's encoded and sent. Default 2.0 because phone
+            // AGC tends to under-amplify a close voice.
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.value = audioSettingsRef.current.gain;
+            gainNodeRef.current = gainNode;
+
+            // Level monitor reads post-gain so the bar reflects what's
+            // actually being sent. createLevelMonitor connects its own
+            // analyser to whatever node we pass in.
+            levelMonitorRef.current = createLevelMonitor(audioCtx, gainNode, setAudioLevel);
 
             // PCM capture via AudioWorklet (same worklet as main app)
             await verifiedAddModule(audioCtx.audioWorklet, '/pcm-recorder-worklet.js');
@@ -562,7 +596,8 @@ function RemoteMicSender() {
                 }
             };
 
-            source.connect(worklet);
+            source.connect(gainNode);
+            gainNode.connect(worklet);
             // AudioWorklet needs a destination to process (even if silent)
             worklet.connect(audioCtx.destination);
 
@@ -618,9 +653,11 @@ function RemoteMicSender() {
         if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
             await audioCtxRef.current.resume().catch(() => {});
         }
-        // Re-attach level monitor to the same source created in startMicCapture.
-        if (audioCtxRef.current && sourceRef.current) {
-            levelMonitorRef.current = createLevelMonitor(audioCtxRef.current, sourceRef.current, setAudioLevel);
+        // Re-attach level monitor to the post-gain node so the bar
+        // reflects the boosted signal that's actually being sent.
+        if (audioCtxRef.current && (gainNodeRef.current || sourceRef.current)) {
+            const tap = gainNodeRef.current || sourceRef.current;
+            levelMonitorRef.current = createLevelMonitor(audioCtxRef.current, tap, setAudioLevel);
         }
         // Resume timer (adjust startRef so elapsed continues from where it left off)
         timerStartRef.current = Date.now() - elapsed * 1000;
