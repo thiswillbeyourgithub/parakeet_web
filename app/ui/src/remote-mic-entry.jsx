@@ -154,6 +154,20 @@ function RemoteMicSender() {
     });
     const gainNodeRef = useRef(null);
 
+    // AudioWorklet emits one 128-sample Float32 chunk per render quantum
+    // (~125 chunks/sec at 16 kHz, ~375/sec at 48 kHz). The WebRTC data
+    // channel and the WS relay both swallow that rate fine, but the HTTP
+    // relay fallback POSTs one chunk per binary frame and a cellular link
+    // can only push ~10-20 POSTs/sec serially; the 200-frame send queue
+    // overflows in seconds and silently drops the rest of the recording.
+    // Coalesce worklet quanta into ~500 ms batches so the POST rate drops
+    // to ~2/sec, well within the slowest path's headroom. WebRTC/WS pay a
+    // ~500 ms minimum latency, which is invisible for batch transcription
+    // and acceptable for the live transcriber's 1-2 s windows.
+    const SEND_BATCH_MS = 500;
+    const pendingBatchRef = useRef({ buf: null, len: 0 });
+    const batchTargetSamplesRef = useRef(0);
+
     // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
         if (keepaliveHeldRef.current) return;
@@ -176,8 +190,34 @@ function RemoteMicSender() {
         if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
         if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
         sourceRef.current = null;
+        pendingBatchRef.current = { buf: null, len: 0 };
         releaseWakeLock();
     }, [releaseWakeLock]);
+
+    // Flush whatever partial batch is pending so the trailing fragment of
+    // a recording reaches the desktop. Detaches the worklet port first so
+    // no new quanta race the snapshot. Safe to call multiple times.
+    const flushPendingBatch = useCallback(async () => {
+        if (workletRef.current) {
+            try { workletRef.current.port.onmessage = null; } catch (_) { /* ignore */ }
+        }
+        const p = pendingBatchRef.current;
+        if (!p.buf || p.len === 0) return;
+        if (!sharedKeyRef.current || !rtcRef.current) {
+            pendingBatchRef.current = { buf: null, len: 0 };
+            return;
+        }
+        const out = new Float32Array(p.len);
+        out.set(p.buf.subarray(0, p.len));
+        pendingBatchRef.current = { buf: null, len: 0 };
+        try {
+            const encrypted = await encrypt(out.buffer, sharedKeyRef.current);
+            await rtcRef.current.sendBinary(encrypted);
+        } catch (err) {
+            console.warn('[RemoteMic] Flush encrypt/send error:', err.message);
+            setSendErrorCount((n) => n + 1);
+        }
+    }, []);
 
     // --- Full cleanup (audio + RTC) ---
     const cleanupAll = useCallback(() => {
@@ -577,6 +617,15 @@ function RemoteMicSender() {
             const worklet = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
             workletRef.current = worklet;
 
+            // Reset the batch buffer for this recording. Size it to one full
+            // batch plus a quantum of headroom; the worklet appends in
+            // 128-sample increments, so this never grows in practice.
+            batchTargetSamplesRef.current = Math.max(128, Math.round(actualRate * SEND_BATCH_MS / 1000));
+            pendingBatchRef.current = {
+                buf: new Float32Array(batchTargetSamplesRef.current + 128),
+                len: 0,
+            };
+
             worklet.port.onmessage = async (e) => {
                 const pcmChunk = e.data; // Float32Array
                 if (!sharedKeyRef.current || !rtcRef.current) return;
@@ -587,8 +636,29 @@ function RemoteMicSender() {
                     return;
                 }
 
+                const p = pendingBatchRef.current;
+                if (!p.buf) return; // recording torn down mid-flight
+                if (p.len + pcmChunk.length > p.buf.length) {
+                    // Defensive grow: shouldn't fire with 128-sample quanta and
+                    // the +128 headroom above, but keeps a misbehaving worklet
+                    // from corrupting memory.
+                    const grown = new Float32Array(p.buf.length * 2);
+                    grown.set(p.buf.subarray(0, p.len));
+                    p.buf = grown;
+                }
+                p.buf.set(pcmChunk, p.len);
+                p.len += pcmChunk.length;
+                if (p.len < batchTargetSamplesRef.current) return;
+
+                // Snapshot and reset synchronously so concurrent worklet
+                // messages racing the await below append into a fresh batch
+                // instead of clobbering the one being sent.
+                const out = new Float32Array(p.len);
+                out.set(p.buf.subarray(0, p.len));
+                p.len = 0;
+
                 try {
-                    const encrypted = await encrypt(pcmChunk.buffer, sharedKeyRef.current);
+                    const encrypted = await encrypt(out.buffer, sharedKeyRef.current);
                     await rtcRef.current.sendBinary(encrypted);
                 } catch (err) {
                     console.warn('[RemoteMic] Encrypt/send error:', err.message);
@@ -626,14 +696,19 @@ function RemoteMicSender() {
     }, [acquireWakeLock, t]);
 
     // Stop current recording but keep RTC alive for next recording
-    const stopRecording = useCallback(() => {
+    const stopRecording = useCallback(async () => {
+        // Flush before audio-end so the trailing <500 ms of audio that
+        // hasn't filled a batch yet still reaches the desktop. Both
+        // frames enqueue in order on the transport, so audio-end stays
+        // the last thing the receiver sees for this recording.
+        await flushPendingBatch();
         if (rtcRef.current) {
             rtcRef.current.sendMessage({ type: 'audio-end' });
         }
         cleanupAudio();
         setAudioLevel(0);
         setStatus(STATUS.READY);
-    }, [cleanupAudio]);
+    }, [cleanupAudio, flushPendingBatch]);
 
     // Pause: suspend AudioContext (no data sent, timer paused)
     const pauseRecording = useCallback(() => {
@@ -670,14 +745,15 @@ function RemoteMicSender() {
     }, [elapsed, acquireWakeLock]);
 
     // Full disconnect — close RTC, show goodbye screen
-    const stopAndDisconnect = useCallback(() => {
+    const stopAndDisconnect = useCallback(async () => {
+        await flushPendingBatch();
         if (rtcRef.current) {
             try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) {}
         }
         cleanupAll();
         setAudioLevel(0);
         setStatus(STATUS.STOPPED);
-    }, [cleanupAll]);
+    }, [cleanupAll, flushPendingBatch]);
 
     // Auto-start on mount
     useEffect(() => {
