@@ -188,7 +188,23 @@ function validateOrigin(req, res, next) {
 // socket write. The cap is well above legitimate peak (a fresh
 // browser session triggers <10 /api/* requests in the first minute)
 // so real users never hit it.
-app.use('/api', rateLimitMiddleware('preflight'));
+//
+// The relay data plane (/relay/up, /relay/down) carries one HTTP
+// request per ~8 ms audio frame and would saturate the tight preflight
+// cap within the first second of a fallback session, dropping audio
+// chunks and the audio-end control message alike. Route those paths to
+// the dedicated relayData bucket instead so legitimate audio traffic
+// is not rate-killed; non-data /relay endpoints (handshake, close)
+// stay on the tight preflight cap.
+const _PREFLIGHT_RELAY_DATA_RE = /^\/rooms\/[A-Z0-9]{6}\/relay\/(up|down)$/;
+const _preflightDefault = rateLimitMiddleware('preflight');
+const _preflightRelayData = rateLimitMiddleware('relayData');
+app.use('/api', (req, res, next) => {
+    if (_PREFLIGHT_RELAY_DATA_RE.test(req.path)) {
+        return _preflightRelayData(req, res, next);
+    }
+    return _preflightDefault(req, res, next);
+});
 app.use('/api', validateOrigin);
 
 // F-119: parse JSON bodies AFTER validateOrigin + preflight rate
@@ -224,7 +240,20 @@ const RATE_LIMIT_CONFIG = {
     // operator's TURN server into an open relay. The cap is intentionally
     // well below roomCreation to make harvesting visibly noisier than
     // legitimate use.
-    iceConfig: { windowMs: 60 * 1000, maxRequests: 10 }
+    iceConfig: { windowMs: 60 * 1000, maxRequests: 10 },
+    // relayData covers /relay/up and /relay/down, which carry the
+    // audio stream when WebRTC and the WebSocket relay both fail.
+    // The PCM worklet emits one frame per render quantum (128 samples
+    // at 16 kHz = ~125 frames/sec), so each direction needs a budget
+    // well above the per-IP audio rate. 15000/min (~250/sec) is 2x
+    // the steady-state rate, leaves headroom for the down-poll's
+    // re-poll burst when a queued frame is drained, and is still
+    // small relative to what a single keep-alive HTTPS connection
+    // sustains. The session-byte cap (4 GiB) and per-frame body
+    // limit (256 KiB) remain the meaningful upper bounds on abuse;
+    // this bucket only exists so a legitimate audio stream is not
+    // rate-killed by buckets sized for control-plane traffic.
+    relayData: { windowMs: 60 * 1000, maxRequests: 15000 }
 };
 
 function getClientIp(req) {
@@ -1003,7 +1032,7 @@ function _findLpSlotByToken(r, providedToken) {
 // Send a frame to the peer slot.
 app.post(
     '/api/rooms/:id/relay/up',
-    rateLimitMiddleware('general'),
+    rateLimitMiddleware('relayData'),
     validateRoomSecret,
     express.raw({ type: '*/*', limit: RELAY_LP_FRAME_BODY_LIMIT }),
     (req, res) => {
@@ -1046,7 +1075,7 @@ app.post(
 );
 
 // Long-poll for incoming frames.
-app.get('/api/rooms/:id/relay/down', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/relay/down', rateLimitMiddleware('relayData'), validateRoomSecret, (req, res) => {
     if (!RELAY_ENABLE) return res.status(404).json({ error: 'Relay disabled' });
     const room = req.room;
     const r = room.relay;
