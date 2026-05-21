@@ -3305,25 +3305,27 @@ export default function App() {
               </div>
             </div>
 
-            <div className="setting-row">
-              <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                {t('remoteMicGain')}:
-                <InfoTooltip text={t('tooltipRemoteMicGain')} />
-              </span>
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0.5"
-                max="5"
-                step="0.1"
-                value={remoteMicGain}
-                onChange={e => {
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setRemoteMicGain(Math.max(0.5, Math.min(5, v)));
-                }}
-                style={{ width: '5rem' }}
-              />
-            </div>
+            {isRemoteMic && (
+              <div className="setting-row">
+                <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                  {t('remoteMicGain')}:
+                  <InfoTooltip text={t('tooltipRemoteMicGain')} />
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0.5"
+                  max="5"
+                  step="0.1"
+                  value={remoteMicGain}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v)) setRemoteMicGain(Math.max(0.5, Math.min(5, v)));
+                  }}
+                  style={{ width: '5rem' }}
+                />
+              </div>
+            )}
 
             <div className="setting-row">
               <label>
