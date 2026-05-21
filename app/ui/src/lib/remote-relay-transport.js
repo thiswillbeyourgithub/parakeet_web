@@ -186,6 +186,28 @@ export class RelayHttpTransport {
         this._downAbort = null;
         this._downLoopPromise = null;
 
+        // In-order send queue with retry. Each audio frame and each
+        // control message becomes one POST to /relay/up. Without this
+        // queue a transient 429 / 5xx / network error dropped the
+        // chunk silently; with the queue the worker re-POSTs the same
+        // bytes up to _SEND_MAX_ATTEMPTS times before giving up, and
+        // every send is serialised so the receiver sees the same
+        // order the caller submitted.
+        //
+        // Binary frames are bounded by _SEND_QUEUE_MAX_BINARY_FRAMES
+        // (~1.6 s of audio at 125 fps). New binary frames are dropped
+        // when the cap is reached so a stuck upload cannot pile up
+        // unbounded memory. Control messages are NEVER dropped here:
+        // there are very few per session (handshake, audio-config,
+        // verify-*, paused/resumed, audio-end) and losing audio-end
+        // is exactly the failure this whole queue is meant to fix.
+        this._sendQueue = [];
+        this._sendQueueBinaryCount = 0;
+        this._sendWorkerRunning = false;
+        this._SEND_QUEUE_MAX_BINARY_FRAMES = 200;
+        this._SEND_MAX_ATTEMPTS = 5;
+        this._SEND_RETRY_BACKOFF_MAX_MS = 5000;
+
         this.onConnected = null;
         this.onDisconnected = null;
         this.onMessage = null;
@@ -320,22 +342,10 @@ export class RelayHttpTransport {
             if (this.onSendError) this.onSendError('message', 'not connected');
             return false;
         }
-        const body = JSON.stringify(message);
-        // Fire and forget. The fetch is async but the upstream caller
-        // treats sendMessage as synchronous (boolean return). Errors
-        // surface via onSendError on the next event-loop turn.
-        fetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/up`, {
-            method: 'POST',
-            headers: this._authHeaders({ 'Content-Type': 'text/plain; charset=utf-8' }),
-            body,
-        }).then((response) => {
-            if (!response.ok) {
-                console.warn(`[RelayHttp] sendMessage HTTP ${response.status}`);
-                if (this.onSendError) this.onSendError('message', `HTTP ${response.status}`);
-            }
-        }).catch((e) => {
-            console.warn('[RelayHttp] sendMessage threw:', e.message);
-            if (this.onSendError) this.onSendError('message', e.message);
+        this._enqueueSend({
+            stage: 'message',
+            contentType: 'text/plain; charset=utf-8',
+            body: JSON.stringify(message),
         });
         return true;
     }
@@ -346,29 +356,127 @@ export class RelayHttpTransport {
             if (this.onSendError) this.onSendError('binary', 'not connected');
             return false;
         }
-        try {
-            const response = await fetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/up`, {
-                method: 'POST',
-                headers: this._authHeaders({ 'Content-Type': 'application/octet-stream' }),
-                body: data,
-            });
-            if (!response.ok) {
-                console.warn(`[RelayHttp] sendBinary HTTP ${response.status}`);
-                if (this.onSendError) this.onSendError('binary', `HTTP ${response.status}`);
-                return false;
-            }
-            return true;
-        } catch (e) {
-            console.warn('[RelayHttp] sendBinary threw:', e.message);
-            if (this.onSendError) this.onSendError('binary', e.message);
+        const accepted = this._enqueueSend({
+            stage: 'binary',
+            contentType: 'application/octet-stream',
+            body: data,
+        });
+        return accepted;
+    }
+
+    _enqueueSend(item) {
+        // Binary cap only: control messages are too few and too
+        // important (audio-end, verify-*) to drop here.
+        if (item.stage === 'binary' && this._sendQueueBinaryCount >= this._SEND_QUEUE_MAX_BINARY_FRAMES) {
+            console.warn('[RelayHttp] sendBinary dropped — send queue full');
+            if (this.onSendError) this.onSendError('binary', 'send queue full');
             return false;
         }
+        this._sendQueue.push(item);
+        if (item.stage === 'binary') this._sendQueueBinaryCount++;
+        if (!this._sendWorkerRunning) this._runSendWorker();
+        return true;
+    }
+
+    async _runSendWorker() {
+        this._sendWorkerRunning = true;
+        try {
+            while (this._sendQueue.length > 0 && !this.closed) {
+                const item = this._sendQueue.shift();
+                if (item.stage === 'binary') this._sendQueueBinaryCount--;
+                await this._postWithRetry(item);
+            }
+        } finally {
+            this._sendWorkerRunning = false;
+        }
+    }
+
+    async _postWithRetry(item) {
+        const url = `${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/up`;
+        let attempt = 0;
+        while (attempt < this._SEND_MAX_ATTEMPTS && !this.closed) {
+            let response;
+            try {
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers: this._authHeaders({ 'Content-Type': item.contentType }),
+                    body: item.body,
+                });
+            } catch (e) {
+                attempt += 1;
+                if (attempt >= this._SEND_MAX_ATTEMPTS) {
+                    console.warn(`[RelayHttp] ${item.stage} send failed after ${this._SEND_MAX_ATTEMPTS} attempts:`, e.message);
+                    if (this.onSendError) this.onSendError(item.stage, e.message);
+                    return;
+                }
+                await this._sleep(this._backoffMs(attempt));
+                continue;
+            }
+            if (response.ok) return;
+
+            // 429 / 503: honour Retry-After (capped). The server resets the
+            // window every 60 s; backing off shorter and burning a retry
+            // is cheaper than sleeping a full minute and losing audio.
+            if (response.status === 429 || response.status === 503) {
+                attempt += 1;
+                if (attempt >= this._SEND_MAX_ATTEMPTS) {
+                    console.warn(`[RelayHttp] ${item.stage} send dropped after ${this._SEND_MAX_ATTEMPTS} attempts (HTTP ${response.status})`);
+                    if (this.onSendError) this.onSendError(item.stage, `HTTP ${response.status}`);
+                    return;
+                }
+                const retryAfterHeader = parseInt(response.headers.get('retry-after') || '0', 10);
+                const retryAfterMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+                    ? retryAfterHeader * 1000
+                    : this._backoffMs(attempt);
+                await this._sleep(Math.min(retryAfterMs, this._SEND_RETRY_BACKOFF_MAX_MS));
+                continue;
+            }
+
+            // 5xx: transient server error; retry with backoff.
+            if (response.status >= 500) {
+                attempt += 1;
+                if (attempt >= this._SEND_MAX_ATTEMPTS) {
+                    console.warn(`[RelayHttp] ${item.stage} send dropped after ${this._SEND_MAX_ATTEMPTS} attempts (HTTP ${response.status})`);
+                    if (this.onSendError) this.onSendError(item.stage, `HTTP ${response.status}`);
+                    return;
+                }
+                await this._sleep(this._backoffMs(attempt));
+                continue;
+            }
+
+            // 4xx other than 429: fatal (401 = bad token, 410 = slot
+            // closed, 413 = oversize). Retrying won't help; surface
+            // the error and let the slot-close path take over.
+            console.warn(`[RelayHttp] ${item.stage} send fatal HTTP ${response.status}`);
+            if (this.onSendError) this.onSendError(item.stage, `HTTP ${response.status}`);
+            if (response.status === 401 || response.status === 410) {
+                this._fail(`send HTTP ${response.status}`);
+            }
+            return;
+        }
+    }
+
+    _backoffMs(attempt) {
+        // attempt is 1-indexed at this point (incremented before the
+        // sleep). 200 ms, 400, 800, 1600, capped at _SEND_RETRY_BACKOFF_MAX_MS.
+        return Math.min(200 * Math.pow(2, attempt - 1), this._SEND_RETRY_BACKOFF_MAX_MS);
+    }
+
+    _sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     close() {
         if (this.closed) return;
         this.closed = true;
         this.connected = false;
+        // Drop any frames still queued: they will never be flushed
+        // because the worker checks this.closed on every iteration.
+        // Reset the binary counter so a re-used instance (not the
+        // current pattern, but cheap insurance) doesn't carry stale
+        // accounting.
+        this._sendQueue.length = 0;
+        this._sendQueueBinaryCount = 0;
         if (this._downAbort) {
             try { this._downAbort.abort(); } catch (_) { /* ignore */ }
             this._downAbort = null;
