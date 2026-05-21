@@ -14,11 +14,38 @@
 let refCount = 0;
 let wakeLock = null;
 let audioEl = null;
+let silentWavUrl = null;
 let visibilityHandlerInstalled = false;
 
-// 1-second silent WAV (mono, 8kHz, 8-bit PCM = 128 = silence). Tiny.
-const SILENT_WAV =
-    'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+// Build a real silent WAV (mono, 8 kHz, 8-bit PCM, samples = 0x80) at runtime.
+// Firefox rejects a zero-length data chunk with NS_ERROR_DOM_MEDIA_METADATA_ERR,
+// so the clip must contain actual samples. 0.1 s is plenty when looped.
+function buildSilentWavUrl() {
+    if (silentWavUrl) return silentWavUrl;
+    const sampleRate = 8000;
+    const numSamples = 800; // 0.1 s
+    const dataSize = numSamples; // 8-bit mono
+    const buf = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buf);
+    const bytes = new Uint8Array(buf);
+    const writeAscii = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+    writeAscii(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeAscii(8, 'WAVE');
+    writeAscii(12, 'fmt ');
+    view.setUint32(16, 16, true);          // PCM fmt chunk size
+    view.setUint16(20, 1, true);           // PCM format
+    view.setUint16(22, 1, true);           // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate, true);  // byte rate
+    view.setUint16(32, 1, true);           // block align
+    view.setUint16(34, 8, true);           // bits per sample
+    writeAscii(36, 'data');
+    view.setUint32(40, dataSize, true);
+    bytes.fill(0x80, 44);                  // 8-bit unsigned PCM silence = 128
+    silentWavUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    return silentWavUrl;
+}
 
 async function acquireWakeLock() {
     if (!('wakeLock' in navigator)) return;
@@ -37,7 +64,7 @@ async function acquireWakeLock() {
 function startSilentAudio() {
     if (audioEl) return;
     try {
-        audioEl = new Audio(SILENT_WAV);
+        audioEl = new Audio(buildSilentWavUrl());
         audioEl.loop = true;
         audioEl.volume = 0;
         audioEl.muted = false; // muted audio doesn't count as "playing audio"
