@@ -532,6 +532,11 @@ export default function App() {
   const remoteMicRtcRef = useRef(null);
   const remoteMicKeyRef = useRef(null);
   const remoteMicSampleRateRef = useRef(16000);
+  // Wire format of incoming binary chunks for the current recording. Set
+  // from the audio-config message: 'pcm-s16' (Int16, ~v5.4.6+ phone) or
+  // 'pcm-f32' (legacy Float32). Defaults to 'pcm-f32' so a phone running
+  // an older bundle still works after this desktop upgrade.
+  const remoteMicFormatRef = useRef('pcm-f32');
   const remoteMicTimerRef = useRef(null);
   const remoteMicQrRef = useRef(null); // DOM ref for QR code container
   // Fingerprint compare modal: shown after both ECDH public keys are exchanged
@@ -1567,6 +1572,7 @@ export default function App() {
     setRemoteMicElapsed(0);
     clearPcmChunks();
     remoteMicSampleRateRef.current = 16000;
+    remoteMicFormatRef.current = 'pcm-f32';
 
     try {
       const rtc = new RemoteMicRTC('/api/signal');
@@ -1796,9 +1802,27 @@ export default function App() {
                 rtc.close();
                 return;
               }
+              // F-138: validate the optional format hint. An unknown
+              // format string would silently land us in the f32 branch
+              // and decode Int16 bytes as Float32 (or vice versa),
+              // producing a buffer of NaN-or-near-zero noise without any
+              // user-visible error. Fall back to 'pcm-f32' for legacy
+              // phones that don't send the field, refuse anything else.
+              let format = 'pcm-f32';
+              if (msg.format !== undefined) {
+                if (msg.format !== 'pcm-f32' && msg.format !== 'pcm-s16') {
+                  console.error('[RemoteMic] Invalid audio-config format:', msg.format);
+                  setRemoteMicError(t('remoteMicInvalidConfig'));
+                  setRemoteMicStatus('error');
+                  rtc.close();
+                  return;
+                }
+                format = msg.format;
+              }
               remoteMicAudioConfiguredRef.current = true;
               remoteMicSampleRateRef.current = sr;
-              console.log(`[RemoteMic] Phone sample rate: ${sr}Hz`);
+              remoteMicFormatRef.current = format;
+              console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${format}`);
               setRemoteMicRecording(true);
               startRemoteMicTimer();
               // Phone audio is buffered into the same pcmChunksRef the local
@@ -1892,23 +1916,54 @@ export default function App() {
           }
           try {
             const decrypted = await decrypt(data, remoteMicKeyRef.current);
-            const float32 = new Float32Array(decrypted);
-            // Single pass: validate finiteness and accumulate the RMS. AES-GCM
-            // authenticates the bytes but a peer holding the legitimate key
-            // can still encrypt arbitrary 4-byte patterns; NaN/Infinity would
-            // otherwise propagate into the level meter, the resampler, and
-            // the model input, silently corrupting the user's transcript.
+            // Dispatch on the per-session format. 'pcm-s16' phones send
+            // little-endian Int16 (~v5.4.6+, halves the wire size);
+            // 'pcm-f32' phones send native-endian Float32 (legacy). Both
+            // sides run on little-endian hardware in practice, so the
+            // bare typed-array view is byte-order-correct without a
+            // DataView pass. The format ref is set from audio-config and
+            // is validated there; an unknown value can't reach this code.
+            let float32;
             let sum = 0;
-            let finite = true;
-            for (let i = 0; i < float32.length; i++) {
-              const s = float32[i];
-              if (!Number.isFinite(s)) { finite = false; break; }
-              sum += s * s;
-            }
-            if (!finite) {
-              console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
-              setRemoteMicDecryptErrors((n) => n + 1);
-              return;
+            const fmt = remoteMicFormatRef.current;
+            if (fmt === 'pcm-s16') {
+              if (decrypted.byteLength % 2 !== 0) {
+                console.warn('[RemoteMic] Dropped pcm-s16 chunk: byteLength not a multiple of 2');
+                setRemoteMicDecryptErrors((n) => n + 1);
+                return;
+              }
+              const int16 = new Int16Array(decrypted);
+              float32 = new Float32Array(int16.length);
+              for (let i = 0; i < int16.length; i++) {
+                const s = int16[i] / 0x8000;
+                float32[i] = s;
+                sum += s * s;
+              }
+            } else {
+              if (decrypted.byteLength % 4 !== 0) {
+                console.warn('[RemoteMic] Dropped pcm-f32 chunk: byteLength not a multiple of 4');
+                setRemoteMicDecryptErrors((n) => n + 1);
+                return;
+              }
+              float32 = new Float32Array(decrypted);
+              // AES-GCM authenticates the bytes but a peer holding the
+              // legitimate key can still encrypt arbitrary 4-byte
+              // patterns; NaN/Infinity would otherwise propagate into the
+              // level meter, the resampler, and the model input,
+              // silently corrupting the user's transcript. (No equivalent
+              // check needed for pcm-s16: every 16-bit integer maps to a
+              // finite float on the / 0x8000 line above.)
+              let finite = true;
+              for (let i = 0; i < float32.length; i++) {
+                const s = float32[i];
+                if (!Number.isFinite(s)) { finite = false; break; }
+                sum += s * s;
+              }
+              if (!finite) {
+                console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
+                setRemoteMicDecryptErrors((n) => n + 1);
+                return;
+              }
             }
             // Drop chunks once the per-session sample cap is reached. The
             // first overflow surfaces an error; later chunks short-circuit

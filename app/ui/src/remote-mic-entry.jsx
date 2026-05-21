@@ -194,6 +194,20 @@ function RemoteMicSender() {
         releaseWakeLock();
     }, [releaseWakeLock]);
 
+    // Quantise Float32 PCM (range [-1, 1]) to little-endian Int16.
+    // Lossless for our pipeline because the desktop writes the WAV at
+    // 16-bit anyway (App.jsx createWavBlob), so the Float32 precision
+    // is thrown away on arrival. Halves the wire size, which matters
+    // on cellular and on the HTTP relay's per-POST overhead.
+    function _quantiseFloat32ToInt16(float32) {
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+            const s = float32[i] < -1 ? -1 : float32[i] > 1 ? 1 : float32[i];
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return int16;
+    }
+
     // Flush whatever partial batch is pending so the trailing fragment of
     // a recording reaches the desktop. Detaches the worklet port first so
     // no new quanta race the snapshot. Safe to call multiple times.
@@ -207,11 +221,10 @@ function RemoteMicSender() {
             pendingBatchRef.current = { buf: null, len: 0 };
             return;
         }
-        const out = new Float32Array(p.len);
-        out.set(p.buf.subarray(0, p.len));
+        const int16 = _quantiseFloat32ToInt16(p.buf.subarray(0, p.len));
         pendingBatchRef.current = { buf: null, len: 0 };
         try {
-            const encrypted = await encrypt(out.buffer, sharedKeyRef.current);
+            const encrypted = await encrypt(int16.buffer, sharedKeyRef.current);
             await rtcRef.current.sendBinary(encrypted);
         } catch (err) {
             console.warn('[RemoteMic] Flush encrypt/send error:', err.message);
@@ -591,9 +604,14 @@ function RemoteMicSender() {
             const actualRate = audioCtx.sampleRate;
             console.log(`[RemoteMic] AudioContext sample rate: ${actualRate}`);
 
-            // Always tell computer the sample rate (also serves as "new recording started" signal)
+            // Always tell computer the sample rate (also serves as "new recording started" signal).
+            // `format: 'pcm-s16'` opts us in to Int16 wire encoding (-50% bytes vs Float32, no
+            // quality loss because the desktop quantises to Int16 anyway when writing the WAV).
+            // Older desktops missing this awareness default to 'pcm-f32' on receive, so omitting
+            // the field is the backwards-compatible signal — but we always send it from this
+            // build so the format is observable in logs.
             if (rtcRef.current) {
-                rtcRef.current.sendMessage({ type: 'audio-config', sampleRate: actualRate });
+                rtcRef.current.sendMessage({ type: 'audio-config', sampleRate: actualRate, format: 'pcm-s16' });
             }
 
             const source = audioCtx.createMediaStreamSource(stream);
@@ -650,15 +668,14 @@ function RemoteMicSender() {
                 p.len += pcmChunk.length;
                 if (p.len < batchTargetSamplesRef.current) return;
 
-                // Snapshot and reset synchronously so concurrent worklet
-                // messages racing the await below append into a fresh batch
-                // instead of clobbering the one being sent.
-                const out = new Float32Array(p.len);
-                out.set(p.buf.subarray(0, p.len));
+                // Snapshot, quantise, and reset synchronously so concurrent
+                // worklet messages racing the await below append into a
+                // fresh batch instead of clobbering the one being sent.
+                const int16 = _quantiseFloat32ToInt16(p.buf.subarray(0, p.len));
                 p.len = 0;
 
                 try {
-                    const encrypted = await encrypt(out.buffer, sharedKeyRef.current);
+                    const encrypted = await encrypt(int16.buffer, sharedKeyRef.current);
                     await rtcRef.current.sendBinary(encrypted);
                 } catch (err) {
                     console.warn('[RemoteMic] Encrypt/send error:', err.message);
