@@ -85,10 +85,6 @@ const translations = {
     backend: 'Backend',
     wasmCpu: 'WASM (CPU)',
     webgpu: 'WebGPU',
-    encoderQuantization: 'Encoder Quantization',
-    decoderQuantization: 'Decoder Quantization',
-    int8Faster: 'int8 (faster)',
-    fp32HigherQuality: 'fp32 (higher quality)',
     frameStride: 'Frame Stride',
     cpuThreads: 'CPU Threads',
     temperature: 'Temperature',
@@ -124,7 +120,6 @@ const translations = {
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
-    tooltipQuantization: 'int8 uses 8-bit integers for faster processing with slightly reduced quality. fp32 uses 32-bit floats for highest quality but slower.',
     tooltipFrameStride: 'Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed. Default: 1.',
     tooltipCpuThreads: 'Number of CPU threads to use for processing. More threads = faster, but limited by your CPU cores. Recommended: leave 1-2 cores free for the browser. Default: hardware cores minus 2.',
     tooltipTemperature: 'Decoder softmax temperature. Lower values (0.0-1.0) produce more confident/greedy output. Higher values (1.2-2.0) allow more diversity. Default: 0.0',
@@ -359,10 +354,6 @@ const translations = {
     backend: 'Moteur',
     wasmCpu: 'WASM (CPU)',
     webgpu: 'WebGPU',
-    encoderQuantization: "Quantification de l'encodeur",
-    decoderQuantization: 'Quantification du d\u00e9codeur',
-    int8Faster: 'int8 (plus rapide)',
-    fp32HigherQuality: 'fp32 (meilleure qualit\u00e9)',
     frameStride: 'Pas de trame',
     cpuThreads: 'Threads CPU',
     temperature: 'Temp\u00e9rature',
@@ -398,7 +389,6 @@ const translations = {
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
-    tooltipQuantization: 'int8 utilise des entiers 8 bits pour un traitement plus rapide avec une qualit\u00e9 l\u00e9g\u00e8rement r\u00e9duite. fp32 utilise des flottants 32 bits pour la meilleure qualit\u00e9 mais plus lent.',
     tooltipFrameStride: "Nombre de trames \u00e0 sauter pendant le d\u00e9codage. Des valeurs plus \u00e9lev\u00e9es sont plus rapides mais peuvent r\u00e9duire la pr\u00e9cision. Recommand\u00e9\u00a0: 1-2 pour la qualit\u00e9, 3-4 pour la vitesse. Défaut : 1.",
     tooltipCpuThreads: "Nombre de threads CPU \u00e0 utiliser. Plus de threads = plus rapide, mais limit\u00e9 par vos c\u0153urs CPU. Recommand\u00e9\u00a0: laisser 1-2 c\u0153urs libres pour le navigateur. Défaut : nombre de cœurs matériels moins 2.",
     tooltipTemperature: "Temp\u00e9rature softmax du d\u00e9codeur. Des valeurs basses (0.0-1.0) produisent une sortie plus s\u00fbre. Des valeurs hautes (1.2-2.0) permettent plus de diversit\u00e9. D\u00e9faut\u00a0: 0.0",
