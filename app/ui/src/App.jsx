@@ -871,6 +871,14 @@ export default function App() {
     // pageshow event with event.persisted=true, force a full reload so
     // every visit re-asks for mic permission and starts from a blank UI.
     const handlePageHide = (e) => {
+      // Belt-and-suspenders: proactively drop the keepalive (screen wake lock +
+      // silent-audio anti-throttle) so a page frozen into the back-forward cache
+      // can't keep the machine awake or running inference in the background. On a
+      // real unload the renderer is torn down anyway and the OS reclaims the mic,
+      // AudioContext and GPU session; this just makes the power side explicit and
+      // covers the parked-in-bfcache case. releaseKeepalive is ref-count guarded,
+      // so it is a harmless no-op when nothing is recording or transcribing.
+      releaseKeepalive();
       if (e.persisted) {
         setAudioPreviewUrl(null);
       }
