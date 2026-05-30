@@ -41,7 +41,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
 | 🕐 **Word Timestamps** | Per-word timestamps and confidence score heatmap |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
-| 📦 **Quantization** | Choose between fp32 (accurate) and int8 (faster/smaller) model variants |
+| 📦 **Automatic Quantization** | Encoder precision follows the backend automatically: fp32 on WebGPU (accurate), int8 on WASM (smaller, required by the browser's blob-fetch limit); the decoder always runs int8 |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
 
 
