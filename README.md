@@ -44,7 +44,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 📦 **Automatic Quantization** | Encoder precision follows the backend automatically: fp32 on WebGPU (accurate), int8 on WASM (smaller, required by the browser's blob-fetch limit); the decoder always runs int8 |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
 
-
+> **Planned:** as it matures, I want to eventually add support for [WEBCAT](https://github.com/freedomofpress/webcat/) (Web-based Code Assurance and Transparency) for even stronger security guarantees, so you can cryptographically verify that the code running in your browser is the code that was actually published.
 
 ## Quick Start
 
