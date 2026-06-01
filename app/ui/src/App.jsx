@@ -392,6 +392,7 @@ export default function App() {
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
+  const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
   const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
   const boostStrengthRef = useRef(1);
   // Cached BPE encoder, tied to the tokenizer it was built from so a model
@@ -1211,6 +1212,7 @@ export default function App() {
       const tokenizer = modelRef.current?.tokenizer;
       if (!entries.length || !tokenizer) {
         phraseBoostRef.current = null;
+        if (!cancelled) setBoostUnkWarnings([]);
         return;
       }
       try {
@@ -1223,6 +1225,9 @@ export default function App() {
           strength: boostStrengthRef.current,
         });
         if (cancelled) return;
+        // Phrases with characters the model vocab cannot represent (e.g. CJK)
+        // were dropped during build; surface them so the user knows why.
+        setBoostUnkWarnings(trie.skipped);
         phraseBoostRef.current = trie.isEmpty ? null : trie;
       } catch (e) {
         console.warn('[Boost] failed to build boosting trie:', e);
@@ -3677,6 +3682,12 @@ export default function App() {
                 <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
                   {t('boostWeightWarning').replace('{max}', MAX_PHRASE_WEIGHT)}{' '}
                   {boostWarnings.map(w => w.phrase).join(', ')}
+                </p>
+              )}
+              {boostUnkWarnings.length > 0 && (
+                <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
+                  {t('boostUnkWarning')}{' '}
+                  {boostUnkWarnings.join(', ')}
                 </p>
               )}
               {boostPhrases.trim() && (

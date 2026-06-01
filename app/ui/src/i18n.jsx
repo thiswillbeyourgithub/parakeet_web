@@ -124,6 +124,7 @@ const translations = {
     boostPhrasesPlaceholder: 'One phrase per line.\nOptional weight, e.g. acetaminophen:2.5',
     boostStrength: 'Boost strength',
     boostWeightWarning: 'Out-of-range weight (must be >0 and ≤{max}); using 1 for:',
+    boostUnkWarning: 'Skipped (the model has no tokens for these characters, e.g. Chinese/Japanese/Korean):',
     boostPhrasesLoaded: '{n} phrase(s) active',
 
     // Tooltips
@@ -402,6 +403,7 @@ const translations = {
     boostPhrasesPlaceholder: 'Une phrase par ligne.\nPoids optionnel, ex.\u00a0: paracetamol:2.5',
     boostStrength: 'Intensit\u00e9 du renforcement',
     boostWeightWarning: 'Poids hors limites (doit \u00eatre >0 et \u2264{max})\u00a0; valeur 1 utilis\u00e9e pour\u00a0:',
+    boostUnkWarning: 'Ignor\u00e9es (le mod\u00e8le n\u2019a pas de jetons pour ces caract\u00e8res, ex.\u00a0: chinois/japonais/cor\u00e9en)\u00a0:',
     boostPhrasesLoaded: '{n} phrase(s) active(s)',
 
     // Tooltips
