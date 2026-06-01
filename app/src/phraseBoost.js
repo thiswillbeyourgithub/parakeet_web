@@ -79,22 +79,40 @@ export class BoostingTrie {
     this.strength = opts.strength ?? 1;
     this.depthScaling = opts.depthScaling ?? DEFAULT_DEPTH_SCALING;
     this.size = 0; // number of distinct phrases inserted (for UI/diagnostics)
+    /**
+     * Phrases that {@link BoostingTrie.buildFromPhrases} dropped because they
+     * encode to an out-of-vocabulary `<unk>` token (e.g. CJK / scripts absent
+     * from the model vocab), so they cannot be matched during decoding. Surfaced
+     * to the UI as a warning; empty when every phrase encoded cleanly.
+     * @type {string[]}
+     */
+    this.skipped = [];
     /** Active trie nodes for the current decode position; root is always active. */
     this.active = [this.root];
   }
 
   /**
-   * Build a trie from parsed phrase entries using a text->id encoder.
+   * Build a trie from parsed phrase entries using a text->id encoder. A phrase
+   * whose encoding contains the encoder's `<unk>` id (a character with no vocab
+   * token, e.g. CJK) is dropped rather than inserted, since the decoder never
+   * emits `<unk>` so the phrase could never match; such phrases are collected on
+   * the returned trie's `skipped` array for the UI to warn about.
    * @param {Array<{phrase: string, weight: number}>} entries
-   * @param {{encode: (text: string) => number[]}} encoder A BpeEncoder.
+   * @param {{encode: (text: string) => number[], unkId?: number}} encoder A BpeEncoder.
    * @param {Object} [opts] Forwarded to the constructor.
    * @returns {BoostingTrie}
    */
   static buildFromPhrases(entries, encoder, opts = {}) {
     const trie = new BoostingTrie(opts);
+    const unkId = encoder.unkId;
     for (const { phrase, weight } of entries) {
       const ids = encoder.encode(phrase);
-      if (ids.length) trie.insert(ids, weight ?? 1);
+      if (!ids.length) continue;
+      if (unkId !== undefined && ids.includes(unkId)) {
+        trie.skipped.push(phrase);
+        continue;
+      }
+      trie.insert(ids, weight ?? 1);
     }
     return trie;
   }

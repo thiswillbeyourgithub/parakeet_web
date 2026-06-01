@@ -85,5 +85,16 @@ check('argmax back to token 5 after restore', argmaxOf(logits) === 5);
 trie.strength = 0;
 check('strength 0 => applyBoost is a no-op', trie.applyBoost(logits) === null);
 
+// --- OOV (<unk>) phrases are skipped, not inserted -----------------------
+console.log('skip <unk> phrases:');
+check('東京 encodes to <unk>', encoder.encode('東京').includes(encoder.unkId));
+const mixedTrie = BoostingTrie.buildFromPhrases(
+  [{ phrase: 'acetaminophen', weight: 1 }, { phrase: '東京', weight: 1 }, { phrase: 'sœur', weight: 1 }],
+  encoder,
+);
+check('clean Latin phrases inserted (accents + œ ligature)', mixedTrie.size === 2);
+check('CJK phrase recorded as skipped', eqArr(mixedTrie.skipped, ['東京']));
+check('skipped phrase is not boostable', !mixedTrie.root.children.has(encoder.unkId));
+
 console.log(`\n${failures === 0 ? 'PASS' : failures + ' FAILED'}`);
 process.exit(failures ? 1 : 0);
