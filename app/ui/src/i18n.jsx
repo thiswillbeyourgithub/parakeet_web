@@ -116,7 +116,15 @@ const translations = {
     preparingAudioPreview: 'Preparing audio preview…',
     preparingAudioHint: 'The audio will appear in the player as soon as it has been received and decoded.',
     settingsGroupAdvanced: 'Advanced',
+    settingsGroupBoosting: 'Phrase boosting',
     settingsGroupDebug: 'Debug',
+
+    // Phrase boosting
+    boostPhrases: 'Boost phrases',
+    boostPhrasesPlaceholder: 'One phrase per line.\nOptional weight, e.g. acetaminophen:2.5',
+    boostStrength: 'Boost strength',
+    boostWeightWarning: 'Out-of-range weight (must be >0 and ≤{max}); using 1 for:',
+    boostPhrasesLoaded: '{n} phrase(s) active',
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
@@ -136,6 +144,7 @@ const translations = {
     tooltipRemoteMicGain: 'Software gain multiplier applied on the phone before the audio is sent. Use values above 1 if the remote mic sounds too quiet, below 1 if it clips. Only affects the remote mic; the local mic ignores it. Default: 2.0.',
     tooltipLiveTranscription: 'Stream transcription as you speak. The model re-runs every few seconds on a sliding window of recent audio (no global context, so live text may differ from the final result). After you stop, the full audio is always re-transcribed in one pass; that final pass is the canonical transcript, so live is extra compute on top of it. Applies to microphone recordings only — uploaded audio files are always processed in a single pass and do not show a live preview. Default: off.',
     tooltipLiveContextWindow: 'How many seconds of recent audio the encoder sees on each live update. More context = better accuracy but more compute. Auto adapts the size to your machine’s speed (10–60s). Default: Auto.',
+    tooltipBoost: 'Bias transcription toward words or phrases you list here (names, jargon, drug names, acronyms). One phrase per line; add an optional per-phrase weight after a colon, e.g. "acetaminophen:2.5". The strength slider scales every phrase (0 disables boosting). Runs 100% on your device. Because decoding is greedy, this is best-effort: it nudges each step toward your phrases but cannot always recover a word the decoder already discarded. Default: empty, strength 1.',
 
     // About / info section
     about: 'About',
@@ -385,7 +394,15 @@ const translations = {
     preparingAudioPreview: "Pr\u00e9paration de l'aper\u00e7u audio\u2026",
     preparingAudioHint: "L'audio appara\u00eetra dans le lecteur d\u00e8s qu'il aura \u00e9t\u00e9 re\u00e7u et d\u00e9cod\u00e9.",
     settingsGroupAdvanced: 'Avanc\u00e9',
+    settingsGroupBoosting: 'Renforcement de phrases',
     settingsGroupDebug: 'D\u00e9bogage',
+
+    // Renforcement de phrases
+    boostPhrases: 'Phrases \u00e0 renforcer',
+    boostPhrasesPlaceholder: 'Une phrase par ligne.\nPoids optionnel, ex.\u00a0: paracetamol:2.5',
+    boostStrength: 'Intensit\u00e9 du renforcement',
+    boostWeightWarning: 'Poids hors limites (doit \u00eatre >0 et \u2264{max})\u00a0; valeur 1 utilis\u00e9e pour\u00a0:',
+    boostPhrasesLoaded: '{n} phrase(s) active(s)',
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
@@ -405,6 +422,7 @@ const translations = {
     tooltipRemoteMicGain: "Multiplicateur de gain logiciel appliqué sur le téléphone avant l'envoi de l'audio. Utilisez une valeur supérieure à 1 si le micro distant sonne trop bas, inférieure à 1 s'il sature. N'affecte que le micro distant ; le micro local l'ignore. Défaut : 2.0.",
     tooltipLiveTranscription: "Transcription en flux pendant que vous parlez. Le mod\u00e8le est relanc\u00e9 toutes les quelques secondes sur une fen\u00eatre glissante (sans contexte global, donc le texte en direct peut diff\u00e9rer du r\u00e9sultat final). Apr\u00e8s l'arr\u00eat, l'audio complet est syst\u00e9matiquement retranscrit en une seule passe ; cette passe finale est la transcription canonique, donc le mode direct est du calcul suppl\u00e9mentaire. S'applique uniquement aux enregistrements micro : les fichiers audio import\u00e9s sont toujours trait\u00e9s en une seule passe et n'affichent pas d'aper\u00e7u en direct. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipLiveContextWindow: "Nombre de secondes d'audio r\u00e9cent vues par l'encodeur \u00e0 chaque mise \u00e0 jour. Plus de contexte = meilleure pr\u00e9cision mais plus de calcul. Auto adapte la taille \u00e0 la vitesse de votre machine (10\u201360s). D\u00e9faut : Auto.",
+    tooltipBoost: "Oriente la transcription vers les mots ou phrases list\u00e9s ici (noms, jargon, m\u00e9dicaments, acronymes). Une phrase par ligne ; ajoutez un poids optionnel apr\u00e8s deux-points, ex. : \"paracetamol:2.5\". Le curseur d'intensit\u00e9 multiplie chaque phrase (0 d\u00e9sactive le renforcement). Fonctionne 100\u00a0% sur votre appareil. Le d\u00e9codage \u00e9tant glouton, c'est un effet \"au mieux\"\u00a0: il oriente chaque \u00e9tape vers vos phrases mais ne peut pas toujours r\u00e9cup\u00e9rer un mot d\u00e9j\u00e0 \u00e9cart\u00e9 par le d\u00e9codeur. D\u00e9faut\u00a0: vide, intensit\u00e9 1.",
 
     // About / info section
     about: '\u00c0 propos',
