@@ -75,10 +75,12 @@ export const MODELS = {
 };
 
 /**
- * Default model to use when none specified.
+ * Default model to use when none specified. Matches the web app's own default
+ * repo (App.jsx pins istupakov/parakeet-tdt-0.6b-v3-onnx), so the CLI and the
+ * browser default to the same multilingual v3 model.
  * @type {string}
  */
-export const DEFAULT_MODEL = 'parakeet-tdt-0.6b-v2';
+export const DEFAULT_MODEL = 'parakeet-tdt-0.6b-v3';
 
 /**
  * Get model configuration by model key or repo ID.
