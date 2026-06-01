@@ -233,6 +233,8 @@
 	header @stable_static Cache-Control "public, max-age=300, must-revalidate"
 	@dictation_regex path /dictation-regex/*
 	header @dictation_regex Cache-Control "no-cache, must-revalidate"
+	@boost_phrases path /boost-phrases/*
+	header @boost_phrases Cache-Control "no-cache, must-revalidate"
 	@local_models path /models/*
 	header @local_models Cache-Control "public, max-age=86400, must-revalidate"
 
@@ -298,6 +300,12 @@
 	# Dictation regex CSVs (entrypoint populates /var/regex from URL or local folder).
 	handle_path /dictation-regex/* {
 		root * /var/regex
+		file_server
+	}
+
+	# Boost phrase lists (entrypoint populates /var/boost from URL or local folder).
+	handle_path /boost-phrases/* {
+		root * /var/boost
 		file_server
 	}
 

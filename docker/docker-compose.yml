@@ -75,6 +75,8 @@ services:
       - LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
+      # Optional phrase-boosting lists: folder of .txt files or https URL to one .txt
+      - BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}

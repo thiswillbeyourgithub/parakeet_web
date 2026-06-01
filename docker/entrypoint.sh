@@ -36,16 +36,17 @@ _fetch() {
   fi
 }
 
-# F-102: byte-level DoS protection. The dictation CSV is fetched at
-# container start from a third-party Git host. A poisoned upstream
-# (account takeover, one-shot MITM during container boot, malicious
-# fork in a misconfigured DICTATION_REGEX_SOURCE) can serve a multi-GB
+# F-102: byte-level DoS protection. The dictation CSV (and the boost
+# phrase lists) are fetched at container start from a third-party Git
+# host or an operator folder. A poisoned upstream (account takeover,
+# one-shot MITM during container boot, malicious fork in a misconfigured
+# DICTATION_REGEX_SOURCE / BOOST_PHRASES_SOURCE) can serve a multi-GB
 # body; Caddy then file_servers that body to every visitor, who calls
 # .text() on the response with no cap and OOMs the tab. Legitimate
 # Murmure CSV is ~30 KB; the cap below is two orders of magnitude
 # headroom. Refuse to start with a missing file rather than a giant
 # one so the operator notices.
-_REGEX_MAX_BYTES=5242880
+_SERVED_MAX_BYTES=5242880
 _enforce_size_cap() {
   # $1: file path, $2: max bytes
   [ -f "$1" ] || return 0
@@ -58,12 +59,28 @@ _enforce_size_cap() {
   return 0
 }
 
-# F-26: Validate DICTATION_REGEX_SOURCE early. Accept only:
+# Shared finalizer for a served directory of operator-supplied files
+# (dictation-regex CSVs, boost-phrase TXTs). Enforces the byte cap on
+# every matching file (a local-folder typo could still point at /etc or
+# a giant log) and (re)writes the manifest.txt that the browser fetches
+# to discover which files exist. Centralised here so the regex and boost
+# paths cannot drift apart.
+_finalize_served_dir() {
+  # $1: directory, $2: file extension without dot (e.g. csv, txt)
+  for f in "$1"/*."$2"; do
+    [ -f "$f" ] || continue
+    _enforce_size_cap "$f" "$_SERVED_MAX_BYTES" || true
+  done
+  ls "$1"/*."$2" 2>/dev/null | xargs -n1 basename > "$1/manifest.txt" 2>/dev/null || true
+}
+
+# F-26: Validate DICTATION_REGEX_SOURCE / BOOST_PHRASES_SOURCE early.
+# Accept only:
 #   - absolute or ./relative local folder path
 #   - https://<host>/<path> URL (no leading whitespace, no scheme other
 #     than https). file://, http://, gopher://, etc. would otherwise be
 #     interpolated straight into the wget/curl invocation.
-_validate_regex_source() {
+_validate_source() {
   # Allowlist of characters acceptable in either a local path or an https
   # URL. POSIX `case` glob, so portable across busybox ash / dash / bash.
   # Rejects whitespace, $, `, ;, &, |, <, >, quotes, etc., any of which
@@ -209,6 +226,7 @@ echo "[entrypoint] VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-(not set, uses mod
 echo "[entrypoint] VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-(not set, defaults to 'hf')}"
 echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
+echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boost lists served)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
 echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
@@ -250,7 +268,7 @@ REGEX_DIR="/var/regex"
 DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure-regex"
 REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_MURMURE_URL}"
 
-if ! _validate_regex_source "$REGEX_SOURCE"; then
+if ! _validate_source "$REGEX_SOURCE"; then
   echo "[entrypoint] ERROR: DICTATION_REGEX_SOURCE has an unsupported shape: $REGEX_SOURCE"
   echo "[entrypoint] Allowed values: '/abs/path', './rel/path', or 'https://host/path'."
   echo "[entrypoint] Refusing to start so an operator typo cannot silently leak"
@@ -333,7 +351,7 @@ case "$REGEX_SOURCE" in
     MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads"
     echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
     if _fetch "$REGEX_DIR/regex.csv" "$MURMURE_RAW"; then
-      if _enforce_size_cap "$REGEX_DIR/regex.csv" "$_REGEX_MAX_BYTES"; then
+      if _enforce_size_cap "$REGEX_DIR/regex.csv" "$_SERVED_MAX_BYTES"; then
         echo "[entrypoint] Downloaded regex.csv"
       else
         echo "[entrypoint] WARNING: regex.csv exceeded size cap, dropped"
@@ -344,15 +362,60 @@ case "$REGEX_SOURCE" in
     ;;
 esac
 
-# F-102: enforce the same cap on any CSV that came from a local folder
-# (operator-controlled, but a typo could still point at /etc or /var/log).
-for f in "$REGEX_DIR"/*.csv; do
-  [ -f "$f" ] || continue
-  _enforce_size_cap "$f" "$_REGEX_MAX_BYTES" || true
-done
-
-ls "$REGEX_DIR"/*.csv 2>/dev/null | xargs -n1 basename > "$REGEX_DIR/manifest.txt" 2>/dev/null || true
+# Enforce the byte cap on every CSV (even local-folder ones, F-102) and
+# write the manifest the browser reads.
+_finalize_served_dir "$REGEX_DIR" csv
 echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
+
+# ---------- Phrase-boosting lists ------------------------------------------
+# BOOST_PHRASES_SOURCE (optional) supplies one or more phrase lists used to
+# pre-fill the in-app phrase-boosting box. Unlike the dictation regex it has
+# NO default: when unset, no manifest is written and the UI shows no file
+# selector (the user just types their own phrases as before).
+# - If it starts with '/' or './', it's a local folder of .txt files; every
+#   .txt is served at /boost-phrases/<name>.txt.
+# - Otherwise it's an https:// URL to a single .txt file.
+# Each file is one phrase per line (optionally "phrase:WEIGHT"), exactly the
+# format the boost textarea accepts.
+BOOST_DIR="/var/boost"
+mkdir -p "$BOOST_DIR"
+rm -f "$BOOST_DIR"/*.txt "$BOOST_DIR/manifest.txt" 2>/dev/null || true
+
+if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
+  if ! _validate_source "$BOOST_PHRASES_SOURCE"; then
+    echo "[entrypoint] ERROR: BOOST_PHRASES_SOURCE has an unsupported shape: $BOOST_PHRASES_SOURCE"
+    echo "[entrypoint] Allowed values: '/abs/path', './rel/path', or 'https://host/path'."
+    echo "[entrypoint] Refusing to start so an operator typo cannot silently leak"
+    echo "[entrypoint] container files or follow a redirect to internal endpoints."
+    exit 1
+  fi
+  case "$BOOST_PHRASES_SOURCE" in
+    /*|./*)
+      echo "[entrypoint] Using local boost-phrases folder: $BOOST_PHRASES_SOURCE"
+      if [ -d "$BOOST_PHRASES_SOURCE" ]; then
+        cp "$BOOST_PHRASES_SOURCE"/*.txt "$BOOST_DIR/" 2>/dev/null || true
+      else
+        echo "[entrypoint] WARNING: Local boost-phrases folder not found: $BOOST_PHRASES_SOURCE"
+      fi
+      ;;
+    *)
+      echo "[entrypoint] Downloading boost phrases from ${BOOST_PHRASES_SOURCE}..."
+      if _fetch "$BOOST_DIR/boost.txt" "$BOOST_PHRASES_SOURCE"; then
+        if _enforce_size_cap "$BOOST_DIR/boost.txt" "$_SERVED_MAX_BYTES"; then
+          echo "[entrypoint] Downloaded boost.txt"
+        else
+          echo "[entrypoint] WARNING: boost.txt exceeded size cap, dropped"
+        fi
+      else
+        echo "[entrypoint] WARNING: Failed to download boost.txt"
+      fi
+      ;;
+  esac
+  _finalize_served_dir "$BOOST_DIR" txt
+  echo "[entrypoint] Boost phrase lists ready in $BOOST_DIR"
+else
+  echo "[entrypoint] BOOST_PHRASES_SOURCE not set — no boost phrase lists served."
+fi
 
 # ---------- Runtime VITE_* config injection --------------------------------
 # /srv is read-only at runtime, so config.js lives on a tmpfs at /run/config
