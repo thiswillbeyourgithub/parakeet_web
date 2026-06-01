@@ -3,29 +3,39 @@
 // Ports the *concept* of NeMo's GPU-Accelerated Phrase-Boosting (PR #14277) to
 // this app's browser greedy decoder: a token-level boosting trie that injects an
 // additive, logit-space reward (shallow fusion) for tokens that continue or
-// start a user-supplied boost phrase, biasing the per-step argmax toward those
-// phrases. Because decoding is greedy (no beam search), boosting is best-effort:
-// it nudges each step, but cannot recover a phrase greedy already pruned. The
-// scoring is exposed as a pure "boost these candidate logits" call so a future
-// beam decoder can reuse the same trie (see PLAN.md Q1).
+// start a user-supplied phrase, biasing the per-step argmax toward (positive
+// weight) or away from (negative weight) those phrases. Because decoding is
+// greedy (no beam search), boosting is best-effort: it nudges each step, but
+// cannot recover a phrase greedy already pruned. The scoring is exposed as a
+// pure "boost these candidate logits" call so a future beam decoder can reuse
+// the same trie (see PLAN.md Q1).
 //
 // Reward model (PLAN.md section 3): each trie node at depth d carries
-//   nodeBonus = maxPhraseWeight * (1 + DEPTH_SCALING * (d - 1))
+//   nodeBonus = phraseWeight * (1 + DEPTH_SCALING * (d - 1))
 // and the applied bonus is `globalStrength * nodeBonus`. Depth scaling rewards
 // deeper (more committed) matches more, encouraging phrase completion; it is
-// linear and bounded so long phrases cannot blow up the logits.
+// linear and bounded so long phrases cannot blow up the logits. A negative
+// per-phrase weight flips the sign so the phrase is penalised instead of
+// boosted; a negative global strength inverts every phrase at once.
 
 /** Internal: default linear depth-scaling factor (PLAN.md section 3). */
 const DEFAULT_DEPTH_SCALING = 0.5;
 
-/** Maximum accepted per-phrase weight (UI input is clamped/validated to this). */
+/**
+ * Per-phrase weight bounds (UI input is validated to this range). The accepted
+ * range is the closed interval `[-MAX_PHRASE_WEIGHT, MAX_PHRASE_WEIGHT]` minus
+ * zero: a positive weight boosts the phrase, a negative weight penalises it, and
+ * zero (no effect) is rejected back to the default of 1.
+ */
 export const MAX_PHRASE_WEIGHT = 10;
 
 /**
  * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase, with an
- * optional trailing `:WEIGHT` (e.g. `acetaminophen:2.5`). A weight is only
- * recognised when the text after the LAST colon parses as a number, so phrases
- * containing colons (e.g. `ratio 3:1`) keep working unless they end in `:num`.
+ * optional trailing `:WEIGHT` (e.g. `acetaminophen:2.5` to boost, `um:-3` to
+ * penalise). A weight is only recognised when the text after the LAST colon
+ * parses as a number, so phrases containing colons (e.g. `ratio 3:1`) keep
+ * working unless they end in `:num`. Note a negative weight is written with the
+ * minus sign after the colon (`phrase:-3`).
  * @param {string} raw
  * @returns {Array<{phrase: string, weight: number, warning?: string}>}
  */
@@ -46,8 +56,8 @@ export function parseBoostPhrases(raw) {
         const candidate = trimmed.slice(0, colon).trim();
         if (candidate) {
           phrase = candidate;
-          if (parsed <= 0 || parsed > MAX_PHRASE_WEIGHT) {
-            warning = `weight ${parsed} out of range (0, ${MAX_PHRASE_WEIGHT}]; using 1`;
+          if (parsed === 0 || parsed < -MAX_PHRASE_WEIGHT || parsed > MAX_PHRASE_WEIGHT) {
+            warning = `weight ${parsed} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`;
             weight = 1;
           } else {
             weight = parsed;
@@ -118,9 +128,10 @@ export class BoostingTrie {
   }
 
   /**
-   * Insert one token-id sequence with a per-phrase weight. Each node keeps the
-   * max weight of phrases passing through it, so shared prefixes get the
-   * strongest applicable bonus.
+   * Insert one token-id sequence with a per-phrase weight (negative to
+   * penalise). Each node keeps the strongest-magnitude bonus of the phrases
+   * passing through it, so shared prefixes get the most committed applicable
+   * bonus regardless of sign.
    * @param {number[]} tokenIds
    * @param {number} [weight=1]
    */
@@ -133,7 +144,7 @@ export class BoostingTrie {
         node.children.set(id, child);
       }
       const bonus = weight * (1 + this.depthScaling * (child.depth - 1));
-      if (bonus > child.bonus) child.bonus = bonus;
+      if (Math.abs(bonus) > Math.abs(child.bonus)) child.bonus = bonus;
       node = child;
     }
     this.size += 1;
@@ -152,7 +163,8 @@ export class BoostingTrie {
   /**
    * Token-id -> bonus map for the current active set (per-phrase weight x depth
    * scaling, before the global strength multiplier). If two active nodes propose
-   * the same token, the larger bonus wins.
+   * the same token, the larger-magnitude bonus wins (so a penalty is not masked
+   * by a weaker boost on a shared token, or vice versa).
    * @returns {Map<number, number>}
    */
   activeChildBoosts() {
@@ -160,7 +172,7 @@ export class BoostingTrie {
     for (const node of this.active) {
       for (const [id, child] of node.children) {
         const prev = boosts.get(id);
-        if (prev === undefined || child.bonus > prev) boosts.set(id, child.bonus);
+        if (prev === undefined || Math.abs(child.bonus) > Math.abs(prev)) boosts.set(id, child.bonus);
       }
     }
     return boosts;

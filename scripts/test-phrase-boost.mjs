@@ -44,6 +44,12 @@ check('empty phrase before colon keeps whole line', parsed[5].phrase === ':0.5')
 check('non-numeric tail is not a weight', parsed[6].phrase === 'bad:abc' && parsed[6].weight === 1);
 check('skips blank lines', parsed.length === 7);
 
+// negative weights penalise (within range); zero / under-range warn back to 1
+const signed = parseBoostPhrases('um:-3\nover:-99\nzero:0');
+check('negative weight in range kept', signed[0].phrase === 'um' && signed[0].weight === -3 && !signed[0].warning);
+check('under-range negative weight clamped + warning', signed[1].phrase === 'over' && signed[1].weight === 1 && !!signed[1].warning);
+check('zero weight rejected + warning', signed[2].phrase === 'zero' && signed[2].weight === 1 && !!signed[2].warning);
+
 // --- trie build + advance + bonus map ------------------------------------
 console.log('BoostingTrie:');
 const ids = encoder.encode('acetaminophen'); // [691,291,316,281,669,1722]
@@ -84,6 +90,21 @@ check('argmax back to token 5 after restore', argmaxOf(logits) === 5);
 // strength 0 disables boosting entirely
 trie.strength = 0;
 check('strength 0 => applyBoost is a no-op', trie.applyBoost(logits) === null);
+
+// --- negative weights penalise (flip the argmax away) --------------------
+console.log('penalise (negative weight):');
+const penTrie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: -2 }], encoder, { strength: 1, depthScaling: 0.5 });
+penTrie.reset();
+const penBoosts = penTrie.activeChildBoosts();
+check('negative bonus is stored, not lost against 0', penBoosts.get(ids[0]) === -2);
+const penLogits = new Float32Array(V);
+penLogits[ids[0]] = 1.0;      // the phrase token would otherwise win
+penLogits[5] = 0.5;           // runner-up
+check('unpenalised argmax is the phrase token', argmaxOf(penLogits) === ids[0]);
+const penSaved = penTrie.applyBoost(penLogits); // logits[ids[0]] += 1 * -2 => -1.0
+check('penalty pushed the phrase token below the runner-up', argmaxOf(penLogits) === 5);
+penTrie.restore(penLogits, penSaved);
+check('restore brings the phrase token back', penLogits[ids[0]] === 1.0);
 
 // --- OOV (<unk>) phrases are skipped, not inserted -----------------------
 console.log('skip <unk> phrases:');
