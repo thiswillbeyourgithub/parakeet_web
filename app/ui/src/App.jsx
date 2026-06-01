@@ -19,7 +19,7 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
-import { loadBpeEncoder, BPE_ASSET_URL } from '../../src/bpeEncoder.js';
+import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
 import { BoostingTrie, parseBoostPhrases, encodePhrases, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes } from './lib/format.js';
@@ -322,6 +322,11 @@ const BOOST_REBUILD_DEBOUNCE_MS = 300;
 // only flicker; above it the user benefits from knowing to wait.
 const BOOST_SPINNER_MIN_PHRASES = 500;
 
+// Byte cap for a server-prebuilt boost encoding (token ids). Larger than the
+// 5 MB text cap because the encoded JSON of a 100k-phrase list is bigger than
+// its source text; oversize just falls back to encoding the .txt in-browser.
+const BOOST_PREBUILT_MAX_BYTES = 64 * 1024 * 1024;
+
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
 // non-2xx response, or {ok:false, oversize:true, declared} when the body is
@@ -478,6 +483,11 @@ export default function App() {
   const [boostSource, setBoostSource] = useState(BOOST_SOURCE_CUSTOM);
   const [boostCustomText, setBoostCustomText] = useState('');
   const boostCustomTextRef = useRef('');
+  // Server-prebuilt encoding for the currently selected bundled list, or null.
+  // { text, vocabSig, encoded, skipped }: `text` is the exact list text it was
+  // built from, so the rebuild effect only trusts it while the textarea is
+  // unedited and `vocabSig` matches the loaded tokenizer (else it re-encodes).
+  const prebuiltBoostRef = useRef(null);
   // Cached BPE encoder, tied to the tokenizer it was built from so a model
   // swap (different vocab) rebuilds it. { tokenizer, encoder } | null. Only used
   // by the main-thread fallback when the encode worker is unavailable.
@@ -1350,16 +1360,48 @@ export default function App() {
   async function applyBoostSource(src) {
     setBoostSource(src);
     if (src === BOOST_SOURCE_CUSTOM) {
+      prebuiltBoostRef.current = null; // user text is never server-prebuilt
       setBoostPhrases(boostCustomTextRef.current);
       return;
     }
-    const r = await fetchTextCapped(`/boost-phrases/${encodeURIComponent(src)}`);
-    if (r.ok) {
-      setBoostPhrases(r.text);
-    } else {
+    // Fetch the list text (for display/editing) and its server-prebuilt
+    // encoding (token ids) in parallel. The prebuilt JSON lets the trie build
+    // skip BPE; it is absent on pure-HF deploys or empty lists, in which case
+    // the browser encodes the text itself (prebuiltBoostRef stays null).
+    const jsonName = src.replace(/\.txt$/, '.json');
+    const [r, pj] = await Promise.all([
+      fetchTextCapped(`/boost-phrases/${encodeURIComponent(src)}`),
+      // A prebuilt-JSON failure must never break the text load, so swallow it
+      // to a soft miss (the browser then encodes the text itself).
+      fetchTextCapped(`/boost-phrases/${encodeURIComponent(jsonName)}`, BOOST_PREBUILT_MAX_BYTES)
+        .catch(() => ({ ok: false })),
+    ]);
+    if (!r.ok) {
       console.warn(`[Boost] could not load phrase list "${src}":`,
         r.oversize ? `oversize ${r.declared} bytes` : `status ${r.status}`);
+      prebuiltBoostRef.current = null;
+      return;
     }
+    // Tag the prebuilt encoding with the exact text it corresponds to, so the
+    // rebuild effect only trusts it while the textarea is unedited.
+    let pre = null;
+    if (pj.ok) {
+      try {
+        const parsed = JSON.parse(pj.text);
+        if (parsed && Array.isArray(parsed.encoded) && typeof parsed.vocabSig === 'string') {
+          pre = {
+            text: r.text,
+            vocabSig: parsed.vocabSig,
+            encoded: parsed.encoded,
+            skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
+          };
+        }
+      } catch (e) {
+        console.warn(`[Boost] prebuilt encoding for "${src}" was unparseable; will encode in-browser.`, e);
+      }
+    }
+    prebuiltBoostRef.current = pre;
+    setBoostPhrases(r.text);
   }
 
   // One-shot: once both settings and the manifest have loaded, resolve the
@@ -1455,17 +1497,27 @@ export default function App() {
       return;
     }
     let cancelled = false;
+    // Use the server-prebuilt encoding when it matches the current text exactly
+    // (unedited) and the vocab it was built for matches the loaded tokenizer;
+    // that skips the BPE encode (the slow part) entirely.
+    const pre = prebuiltBoostRef.current;
+    const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
+    const usePrebuilt = !!pre && pre.text === boostPhrases && pre.vocabSig === sig;
     // Long lists take long enough to encode+build that the user should see the
-    // app is busy; small ones rebuild in a few ms so a spinner would only flash.
-    const showSpinner = entries.length >= BOOST_SPINNER_MIN_PHRASES;
+    // app is busy; small ones (or prebuilt ones, which only insert) rebuild in
+    // a few ms, so a spinner would only flash.
+    const showSpinner = !usePrebuilt && entries.length >= BOOST_SPINNER_MIN_PHRASES;
     const timer = setTimeout(async () => {
       if (showSpinner) setBoostRebuilding(true);
       const t0 = performance.now();
       if (verboseLogRef.current) {
-        console.log(`[Boost] rebuilding trie for ${entries.length} phrase(s)...`);
+        console.log(`[Boost] rebuilding trie for ${entries.length} phrase(s)`
+          + `${usePrebuilt ? ' (server-prebuilt encoding, skipping BPE)' : ''}...`);
       }
       try {
-        const { encoded, skipped } = await encodeBoostPhrases(entries, tokenizer);
+        const { encoded, skipped } = usePrebuilt
+          ? { encoded: pre.encoded, skipped: pre.skipped }
+          : await encodeBoostPhrases(entries, tokenizer);
         if (cancelled) return;
         const trie = BoostingTrie.buildFromEncoded(encoded, { strength: boostStrengthRef.current });
         trie.skipped = skipped;
@@ -1478,7 +1530,8 @@ export default function App() {
           const perLine = entries.length ? ms / entries.length : 0;
           console.log(
             `[Boost] trie rebuilt in ${ms.toFixed(1)}ms for ${entries.length} phrase(s) `
-            + `(avg ${perLine.toFixed(3)}ms/line, ${trie.size} inserted, ${skipped.length} skipped).`
+            + `(avg ${perLine.toFixed(3)}ms/line, ${trie.size} inserted, ${skipped.length} skipped`
+            + `${usePrebuilt ? ', prebuilt' : ''}).`
           );
         }
       } catch (e) {
