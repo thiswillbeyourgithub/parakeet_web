@@ -414,6 +414,11 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [verboseLog, setVerboseLog] = useState(false);
   const [frameStride, setFrameStride] = useState(1);
+  // Beam search width. 1 = greedy (default, fastest, behavior unchanged). Higher
+  // widths explore alternative hypotheses (~Nx decode cost) and let phrase
+  // boosting recover phrases greedy would prune. Full-file only: the streaming
+  // path forces width 1 in the decoder.
+  const [beamWidth, setBeamWidth] = useState(1);
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident.
   // Kept tunable in code (still wired through to the backend) but hidden from the
   // sidebar and never loaded from persisted settings: this param is extremely
@@ -842,6 +847,7 @@ export default function App() {
           savedTranscriptions,
           savedVerboseLog,
           savedFrameStride,
+          savedBeamWidth,
           savedCpuThreads,
           savedNoiseSuppression,
           savedEchoCancellation,
@@ -867,6 +873,7 @@ export default function App() {
           loadPersistedTranscripts(),
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
+          loadSetting('beamWidth', 1),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),
@@ -897,6 +904,7 @@ export default function App() {
         setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
+        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? savedBeamWidth : 1);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
@@ -1212,6 +1220,7 @@ export default function App() {
   usePersistedSetting('preprocessor', preprocessor, settingsLoaded);
   usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
+  usePersistedSetting('beamWidth', beamWidth, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
@@ -2778,6 +2787,7 @@ export default function App() {
             returnConfidences: true,
             frameStride,
             temperature,
+            beamWidth,
             phraseBoost: phraseBoostRef.current,
           });
           console.timeEnd(`Transcribe-chunk-${chunkNum}`);
@@ -2878,6 +2888,7 @@ export default function App() {
           returnTimestamps: true,
           returnConfidences: true,
           frameStride,
+          beamWidth,
           phraseBoost: phraseBoostRef.current,
         });
         console.timeEnd(`Transcribe-${file.name}`);
@@ -3750,6 +3761,25 @@ export default function App() {
                 onChange={e=>{
                   const v = Number(e.target.value);
                   if (Number.isFinite(v)) setFrameStride(Math.max(1, Math.min(4, v)));
+                }}
+                style={{ width: '4.5rem' }}
+              />
+            </div>
+
+            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('beamWidth')} (1-8):
+                <InfoTooltip text={t('tooltipBeamWidth')} />
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="8"
+                value={beamWidth}
+                onChange={e=>{
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(8, Math.round(v))));
                 }}
                 style={{ width: '4.5rem' }}
               />

@@ -86,6 +86,7 @@ const translations = {
     wasmCpu: 'WASM (CPU)',
     webgpu: 'WebGPU',
     frameStride: 'Frame Stride',
+    beamWidth: 'Beam Width',
     cpuThreads: 'CPU Threads',
     temperature: 'Temperature',
     chunkLongAudio: 'Chunk long audio',
@@ -131,6 +132,7 @@ const translations = {
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
     tooltipFrameStride: 'Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed. Default: 1.',
+    tooltipBeamWidth: 'Beam search width. 1 = greedy (default, fastest). Higher values explore alternative hypotheses and let phrase boosting recover words greedy would discard, at roughly Nx the decode time. Applies to file transcription only (live transcription always uses width 1). Default: 1.',
     tooltipCpuThreads: 'Number of CPU threads to use for processing. More threads = faster, but limited by your CPU cores. Recommended: leave 1-2 cores free for the browser. Default: hardware cores minus 2.',
     tooltipTemperature: 'Decoder softmax temperature. Lower values (0.0-1.0) produce more confident/greedy output. Higher values (1.2-2.0) allow more diversity. Default: 0.0',
     tooltipChunking: 'Split audio longer than the chunk duration into overlapping segments before transcribing. Disable to send the full audio to the model in one pass (may use more memory but avoids chunk boundary issues). Default: enabled, 60 s chunk duration.',
@@ -366,6 +368,7 @@ const translations = {
     wasmCpu: 'WASM (CPU)',
     webgpu: 'WebGPU',
     frameStride: 'Pas de trame',
+    beamWidth: 'Largeur de faisceau',
     cpuThreads: 'Threads CPU',
     temperature: 'Temp\u00e9rature',
     chunkLongAudio: "D\u00e9couper l'audio long",
@@ -411,6 +414,7 @@ const translations = {
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
     tooltipFrameStride: "Nombre de trames \u00e0 sauter pendant le d\u00e9codage. Des valeurs plus \u00e9lev\u00e9es sont plus rapides mais peuvent r\u00e9duire la pr\u00e9cision. Recommand\u00e9\u00a0: 1-2 pour la qualit\u00e9, 3-4 pour la vitesse. Défaut : 1.",
+    tooltipBeamWidth: "Largeur de la recherche en faisceau. 1 = glouton (par défaut, le plus rapide). Des valeurs plus élevées explorent des hypothèses alternatives et permettent au renforcement de phrases de récupérer des mots que le mode glouton écarterait, pour environ N fois le temps de décodage. S'applique uniquement à la transcription de fichiers (la transcription en direct utilise toujours une largeur de 1). Défaut : 1.",
     tooltipCpuThreads: "Nombre de threads CPU \u00e0 utiliser. Plus de threads = plus rapide, mais limit\u00e9 par vos c\u0153urs CPU. Recommand\u00e9\u00a0: laisser 1-2 c\u0153urs libres pour le navigateur. Défaut : nombre de cœurs matériels moins 2.",
     tooltipTemperature: "Temp\u00e9rature softmax du d\u00e9codeur. Des valeurs basses (0.0-1.0) produisent une sortie plus s\u00fbre. Des valeurs hautes (1.2-2.0) permettent plus de diversit\u00e9. D\u00e9faut\u00a0: 0.0",
     tooltipChunking: "D\u00e9coupe l'audio plus long que la dur\u00e9e du segment en morceaux chevauchants avant la transcription. D\u00e9sactivez pour envoyer l'audio complet au mod\u00e8le en une passe. D\u00e9faut : activ\u00e9, 60 s par segment.",
