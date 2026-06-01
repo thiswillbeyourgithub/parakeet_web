@@ -19,8 +19,8 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
-import { loadBpeEncoder } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
+import { loadBpeEncoder, BPE_ASSET_URL } from '../../src/bpeEncoder.js';
+import { BoostingTrie, parseBoostPhrases, encodePhrases, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes } from './lib/format.js';
 
@@ -312,6 +312,11 @@ const SERVED_FILE_MAX_BYTES = 5 * 1024 * 1024;
 // valid manifest entry (those all end in .txt), so it can never collide.
 const BOOST_SOURCE_CUSTOM = '__custom__';
 
+// Debounce (ms) before rebuilding the boosting trie after the phrase text
+// changes. Pasting or fast-typing a large list (10k-100k phrases) would
+// otherwise trigger an encode per keystroke; we wait for the input to settle.
+const BOOST_REBUILD_DEBOUNCE_MS = 300;
+
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
 // non-2xx response, or {ok:false, oversize:true, declared} when the body is
@@ -469,8 +474,15 @@ export default function App() {
   const [boostCustomText, setBoostCustomText] = useState('');
   const boostCustomTextRef = useRef('');
   // Cached BPE encoder, tied to the tokenizer it was built from so a model
-  // swap (different vocab) rebuilds it. { tokenizer, encoder } | null.
+  // swap (different vocab) rebuilds it. { tokenizer, encoder } | null. Only used
+  // by the main-thread fallback when the encode worker is unavailable.
   const bpeEncoderRef = useRef(null);
+  // Encode worker (lazy): offloads the heavy BPE tokenization of the boost
+  // phrase list off the main thread. `undefined` = not yet created, `null` =
+  // creation failed (fall back to main-thread encode). `boostReqIdRef` tags each
+  // request so a superseded reply (after a debounce/model-swap race) is ignored.
+  const boostWorkerRef = useRef(undefined);
+  const boostReqIdRef = useRef(0);
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -1364,47 +1376,98 @@ export default function App() {
     }
   }, [settingsLoaded, boostFilesLoaded]);
 
-  // Phrase boosting: rebuild the trie when the phrase text changes or the model
-  // becomes ready (the encoder needs the loaded tokenizer's vocab). The BPE
-  // asset is fetched lazily here, so it only downloads once the user actually
-  // enters boost phrases (PLAN.md Phase 1 "gate asset download" / Phase 3).
-  // Strength is applied separately (below) so moving the slider does not force
-  // a re-encode. We rebuild on `status` so a model load/swap refreshes the trie.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const parsed = parseBoostPhrases(boostPhrases);
-      if (!cancelled) {
-        setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
-      }
-      const entries = parsed.filter(p => p.phrase);
-      const tokenizer = modelRef.current?.tokenizer;
-      if (!entries.length || !tokenizer) {
-        phraseBoostRef.current = null;
-        if (!cancelled) setBoostUnkWarnings([]);
-        return;
-      }
-      try {
+  // Lazily create the encode worker. Returns null when Workers are unavailable
+  // (e.g. an exotic environment), so the caller can fall back to the main
+  // thread. The BPE asset only downloads once the worker is first used, i.e.
+  // when the user actually enters boost phrases (PLAN.md Phase 1 "gate asset
+  // download" / Phase 3).
+  const getBoostWorker = useCallback(() => {
+    if (boostWorkerRef.current !== undefined) return boostWorkerRef.current;
+    try {
+      boostWorkerRef.current = new Worker(
+        new URL('./phraseBoost.worker.js', import.meta.url),
+        { type: 'module' }
+      );
+    } catch (e) {
+      console.warn('[Boost] encode worker unavailable, using main thread:', e);
+      boostWorkerRef.current = null;
+    }
+    return boostWorkerRef.current;
+  }, []);
+
+  // Encode parsed phrase entries to token-id sequences, off the main thread via
+  // the worker when available, otherwise on a main-thread encoder cached per
+  // tokenizer (model swap rebuilds it). Resolves { encoded, skipped }.
+  const encodeBoostPhrases = useCallback((entries, tokenizer) => {
+    const worker = getBoostWorker();
+    if (!worker) {
+      return (async () => {
         if (!bpeEncoderRef.current || bpeEncoderRef.current.tokenizer !== tokenizer) {
           const encoder = await loadBpeEncoder(tokenizer);
-          if (cancelled) return;
           bpeEncoderRef.current = { tokenizer, encoder };
         }
-        const trie = BoostingTrie.buildFromPhrases(entries, bpeEncoderRef.current.encoder, {
-          strength: boostStrengthRef.current,
-        });
+        return encodePhrases(entries, bpeEncoderRef.current.encoder);
+      })();
+    }
+    return new Promise((resolve, reject) => {
+      const reqId = ++boostReqIdRef.current;
+      const onMsg = (ev) => {
+        if (ev.data.id !== reqId) return; // a different (e.g. older) request's reply
+        worker.removeEventListener('message', onMsg);
+        if (ev.data.ok) resolve({ encoded: ev.data.encoded, skipped: ev.data.skipped });
+        else reject(new Error(ev.data.error));
+      };
+      worker.addEventListener('message', onMsg);
+      worker.postMessage({
+        id: reqId,
+        entries,
+        id2token: tokenizer.id2token,
+        assetUrl: BPE_ASSET_URL,
+      });
+    });
+  }, [getBoostWorker]);
+
+  // Terminate the encode worker on unmount so it does not outlive the app.
+  useEffect(() => () => {
+    if (boostWorkerRef.current) boostWorkerRef.current.terminate();
+  }, []);
+
+  // Phrase boosting: rebuild the trie when the phrase text changes or the model
+  // becomes ready (the encoder needs the loaded tokenizer's vocab). The rebuild
+  // is debounced (a large paste shouldn't re-encode per keystroke) and the
+  // encode runs in the worker, so the main thread never blocks on tokenizing a
+  // big list; only the cheap trie insert happens here. Strength is applied
+  // separately (below) so moving the slider does not force a re-encode. We
+  // rebuild on `status` so a model load/swap refreshes the trie.
+  useEffect(() => {
+    const parsed = parseBoostPhrases(boostPhrases);
+    setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
+    const entries = parsed.filter(p => p.phrase);
+    const tokenizer = modelRef.current?.tokenizer;
+    if (!entries.length || !tokenizer) {
+      phraseBoostRef.current = null;
+      setBoostUnkWarnings([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const { encoded, skipped } = await encodeBoostPhrases(entries, tokenizer);
         if (cancelled) return;
+        const trie = BoostingTrie.buildFromEncoded(encoded, { strength: boostStrengthRef.current });
+        trie.skipped = skipped;
         // Phrases with characters the model vocab cannot represent (e.g. CJK)
-        // were dropped during build; surface them so the user knows why.
-        setBoostUnkWarnings(trie.skipped);
+        // were dropped during encode; surface them so the user knows why.
+        setBoostUnkWarnings(skipped);
         phraseBoostRef.current = trie.isEmpty ? null : trie;
       } catch (e) {
+        if (cancelled) return;
         console.warn('[Boost] failed to build boosting trie:', e);
         phraseBoostRef.current = null;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [boostPhrases, status]);
+    }, BOOST_REBUILD_DEBOUNCE_MS);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [boostPhrases, status, encodeBoostPhrases]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {
