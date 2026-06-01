@@ -313,17 +313,25 @@ encoder; a prior session did that by mistake and the files were deleted.
 - [x] Commit (live plumbing landed with Phase 3 as 0bb0b3d).
 
 ### Phase 5: Verify, document, screenshot
-- [ ] Manual verification with the `/verify` or `/run` skill: load model, enable
-      a boost phrase that the model otherwise mis-transcribes, confirm it now
-      appears. Capture before/after.
-- [ ] Update `README.md` features table + a short "Phrase Boosting" section.
-      Mention it was built with Claude Code (per user's global doc rule) and
-      note the greedy-decoding best-effort limitation.
-- [ ] Refresh README screenshot only if UI visibly changed (see CLAUDE.md
-      shot-scraper recipe). Ask the user before refreshing.
-- [ ] Bump version: edit `app/package.json` only, in its own commit, after all
-      other changes are committed (per CLAUDE.md).
-- [ ] Remove the "implement phrase boosting" line from `TODO.md` once shipped.
+- [ ] Manual verification: load model, enable a boost phrase that the model
+      otherwise mis-transcribes, confirm it now appears. Capture before/after.
+      PENDING ON USER: needs a browser + real audio (cannot be done headlessly /
+      without a mic). Everything else in Phase 5 is done; this is the last gate
+      before the feature is "verified shipped".
+- [x] Update `README.md` features table + a short "Phrase Boosting" section.
+      DONE (commit 10756d2): Features row + "Phrase Boosting" section (UI usage,
+      per-phrase weights, local-only persistence, NeMo PR/issue references,
+      greedy best-effort + CJK-token limitation). Mentions Claude Code.
+- [x] Refresh README screenshot only if UI visibly changed. DECISION (user,
+      2026-06-01): SKIP. The default `image.png` shows the post-load main view;
+      the phrase-boosting UI lives inside the settings panel (behind the gear)
+      and is not visible in that shot, so the screenshot still matches.
+- [x] Bump version: edit `app/package.json` only, in its own commit, after all
+      other changes are committed. DONE: 5.4.6 -> 5.5.0 (minor; new feature),
+      user-chosen, committed last and alone per CLAUDE.md.
+- [x] Remove the "implement phrase boosting" line from `TODO.md`. DONE locally;
+      NOTE: `TODO.md` is gitignored, so the removal is a local-only edit and is
+      intentionally not committed (nothing to commit for it).
 
 ## 5. Constraints / project rules to respect (from CLAUDE.md + global prefs)
 - **No code duplication.** Factor shared logic; flag any duplication to the user.
@@ -438,3 +446,18 @@ encoder; a prior session did that by mistake and the files were deleted.
   ask the user before refreshing the screenshot, bump the version
   (`app/package.json` only, separate last commit), and drop the
   "implement phrase boosting" line from TODO.md.
+- 2026-06-01, Session 2 (cont). **Phase 5 docs + version DONE; feature code
+  COMPLETE.** Updated README (Features row + "Phrase Boosting" section: UI,
+  per-phrase weights, local-only persistence, NeMo PR/issue links, greedy
+  best-effort + CJK limitation, built with Claude Code; commit 10756d2).
+  Removed the "implement phrase boosting" line from TODO.md (local-only edit;
+  TODO.md is gitignored so not committed). User chose to SKIP the screenshot
+  refresh (boosting UI lives in the settings panel, not in the default shot)
+  and a MINOR version bump 5.4.6 -> 5.5.0 (committed last and alone per
+  CLAUDE.md). **ONLY REMAINING ITEM:** Phase 5 manual in-browser verification
+  (load the model, add a boost phrase the model normally mis-transcribes, set a
+  modest strength, confirm the phrase now appears; try strength 0 to confirm it
+  reverts). This needs a real browser + audio and is the user's to run. All
+  code, tests, docs, and the version bump are committed; the feature is
+  implemented and build-verified. If verification surfaces tuning needs (e.g.
+  default strength, depth-scaling), adjust `phraseBoost.js` / the slider range.
