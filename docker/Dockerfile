@@ -147,6 +147,14 @@ COPY --from=builder --chown=parakeet:parakeet /build/app/ui/dist /srv
 # Signaling server source + its production node_modules
 COPY --from=builder --chown=parakeet:parakeet /build/signaling /signaling
 
+# Boost prebuild: the shared encoder/tokenizer modules plus the prebuild
+# script, laid out so the script's `../app/src` imports resolve (script at
+# /opt/parakeet/docker/, modules at /opt/parakeet/app/src/). Run at container
+# boot by entrypoint.sh to pre-encode operator boost lists when the model vocab
+# is on disk (local-model deployments); see docker/prebuild-boost.mjs.
+COPY --from=builder --chown=parakeet:parakeet /build/app/src /opt/parakeet/app/src
+COPY --chown=parakeet:parakeet docker/prebuild-boost.mjs /opt/parakeet/docker/prebuild-boost.mjs
+
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

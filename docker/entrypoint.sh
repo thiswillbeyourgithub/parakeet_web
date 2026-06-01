@@ -413,6 +413,19 @@ if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
   esac
   _finalize_served_dir "$BOOST_DIR" txt
   echo "[entrypoint] Boost phrase lists ready in $BOOST_DIR"
+
+  # Pre-encode each list to token ids using the local model vocab + the bundled
+  # BPE merges, so the browser builds the trie without re-encoding (the heavy
+  # part for 10k-100k lists). No-op without a local vocab (pure-HF deploy): the
+  # browser then encodes the .txt itself, as before. Failure is non-fatal.
+  _MERGES="/srv/tokenizer/bpe-merges.json"
+  if [ -n "${LOCAL_MODEL_PATH:-}" ] && [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
+    echo "[entrypoint] Pre-encoding boost lists with local vocab (${LOCAL_MODEL_PATH}/vocab.txt)..."
+    node /opt/parakeet/docker/prebuild-boost.mjs "$BOOST_DIR" "${LOCAL_MODEL_PATH}/vocab.txt" "$_MERGES" \
+      || echo "[entrypoint] WARNING: boost prebuild failed; browser will encode lists itself."
+  else
+    echo "[entrypoint] No local vocab — skipping boost prebuild (browser will encode lists)."
+  fi
 else
   echo "[entrypoint] BOOST_PHRASES_SOURCE not set — no boost phrase lists served."
 fi
