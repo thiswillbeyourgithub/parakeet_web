@@ -3797,18 +3797,36 @@ export default function App() {
                 {t('boostPhrases')}:
                 <InfoTooltip text={t('tooltipBoost')} />
               </span>
-              {boostFiles.length > 0 && (
-                <select
-                  value={boostSource}
-                  onChange={e => applyBoostSource(e.target.value)}
-                  style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
-                >
-                  <option value={BOOST_SOURCE_CUSTOM}>{t('boostSourceCustom')}</option>
-                  {boostFiles.map(f => (
-                    <option key={f} value={f}>{f.replace(/\.txt$/, '')}</option>
-                  ))}
-                </select>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                {boostFiles.length > 0 && (
+                  <select
+                    value={boostSource}
+                    onChange={e => applyBoostSource(e.target.value)}
+                    style={{ flex: '1 1 auto', minWidth: 0, padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                  >
+                    <option value={BOOST_SOURCE_CUSTOM}>{t('boostSourceCustom')}</option>
+                    {boostFiles.map(f => (
+                      <option key={f} value={f}>{f.replace(/\.txt$/, '')}</option>
+                    ))}
+                  </select>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap', marginLeft: boostFiles.length > 0 ? 0 : 'auto' }}>
+                  {t('boostStrength')}:
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="-10"
+                    max="10"
+                    step="0.5"
+                    value={boostStrength}
+                    onChange={e => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setBoostStrength(Math.max(-10, Math.min(10, v)));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </label>
+              </div>
               <textarea
                 value={boostPhrases}
                 onChange={e => {
@@ -3849,21 +3867,6 @@ export default function App() {
                   )}
                 </p>
               )}
-            </div>
-
-            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-              <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                {t('boostStrength')}: {boostStrength.toFixed(1)}
-              </span>
-              <input
-                type="range"
-                min="-10"
-                max="10"
-                step="0.5"
-                value={boostStrength}
-                onChange={e => setBoostStrength(Number(e.target.value))}
-                style={{ flex: '1 1 auto' }}
-              />
             </div>
 
             <div className="settings-group-header">{t('settingsGroupDebug')}</div>
