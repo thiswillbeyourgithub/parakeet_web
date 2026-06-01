@@ -927,7 +927,7 @@ export default function App() {
         setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
-        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? savedBeamWidth : 1);
+        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(25, savedBeamWidth) : 1);
         setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 2);
         setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 2);
         setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 2.3);
