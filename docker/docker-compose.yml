@@ -32,6 +32,7 @@ services:
       # after generating config.js (chmod requires ownership, not just write).
       # Caddy also runs as UID 1000 and writes into /config/caddy + /data/caddy.
       - /var/regex:uid=1000,gid=1000,mode=0700
+      - /var/boost:uid=1000,gid=1000,mode=0700
       - /run/config:uid=1000,gid=1000,mode=0700
       - /config/caddy:uid=1000,gid=1000,mode=0700
       - /data/caddy:uid=1000,gid=1000,mode=0700
