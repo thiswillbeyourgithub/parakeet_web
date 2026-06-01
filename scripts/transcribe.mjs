@@ -240,8 +240,10 @@ function expandBoostSpec(spec) {
 // identical. The deliberate differences: this CLI also accepts comma separators
 // and does NOT clamp the weight, so negative / >10 values can be probed here
 // (the web app clamps to a nonzero [-10, 10]). top-k must still be a positive
-// integer for the trie's gate, so it is validated. Per-phrase `:i` expands that
-// phrase to all casings (the CLI default is case-sensitive, i.e. no expansion).
+// integer for the trie's gate, so it is validated. Returns the phrases AS TYPED
+// (one entry per line, `:i` flag preserved but not yet applied); the caller runs
+// expandCasingVariants to turn each `:i` phrase into its casing branches for the
+// trie, while keeping these typed phrases for display.
 function parseCliBoosts(specs) {
   const entries = [];
   for (const spec of specs.map(expandBoostSpec)) {
@@ -260,8 +262,7 @@ function parseCliBoosts(specs) {
       }
     }
   }
-  // Honour any per-phrase `:i` flag; default case-sensitive (no expansion).
-  return expandCasingVariants(entries, false);
+  return entries;
 }
 
 // --- model file resolution ------------------------------------------------
@@ -407,7 +408,11 @@ async function main() {
   let phraseBoost = null;
   const pwcSpecs = args.boosts.filter(isPwcPath);
   const textSpecs = args.boosts.filter((s) => !isPwcPath(s));
-  const entries = parseCliBoosts(textSpecs);
+  // `typedBoosts` are the phrases exactly as written (for display); `entries` is
+  // the casing-expanded set actually inserted into the trie (an `:i` phrase
+  // becomes its lower/UPPER/Title branches). CLI default is case-sensitive.
+  const typedBoosts = parseCliBoosts(textSpecs);
+  const entries = expandCasingVariants(typedBoosts, false);
   if (entries.length || pwcSpecs.length) {
     // The encoder is only needed to encode text/inline phrases; when every spec
     // is a precompiled .pwc we skip loading it and start from an empty trie.
@@ -445,16 +450,17 @@ async function main() {
     }
 
     console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${args.strength}`);
-    // Per-phrase encoding listing is useful for a handful of inline probes but
-    // floods the terminal for a list of thousands; cap it unless --verbose. Only
-    // text/inline entries are listed here (.pwc ids are already summarised above).
+    // List the phrases AS TYPED, not their generated casing variants, and cap
+    // the listing: it is handy for a handful of inline probes but floods the
+    // terminal for a list of thousands. --verbose lifts the cap. (.pwc ids are
+    // already summarised above.)
     const PHRASE_LIST_CAP = 20;
-    const showAll = args.verbose || entries.length <= PHRASE_LIST_CAP;
-    for (const { phrase, weight, topk } of (showAll ? entries : entries.slice(0, PHRASE_LIST_CAP))) {
+    const showAll = args.verbose || typedBoosts.length <= PHRASE_LIST_CAP;
+    for (const { phrase, weight, topk } of (showAll ? typedBoosts : typedBoosts.slice(0, PHRASE_LIST_CAP))) {
       console.error(`             - "${phrase}" (weight ${weight}, top-k ${topk})  -> [${encoder.encode(phrase).join(', ')}]`);
     }
     if (!showAll) {
-      console.error(`             ... and ${entries.length - PHRASE_LIST_CAP} more (pass --verbose to list all)`);
+      console.error(`             ... and ${typedBoosts.length - PHRASE_LIST_CAP} more (pass --verbose to list all)`);
     }
     if (phraseBoost.skipped.length) {
       console.error(`[transcribe] skipped (out-of-vocab, cannot be matched): ${phraseBoost.skipped.join(', ')}`);
