@@ -121,6 +121,7 @@ const translations = {
 
     // Phrase boosting
     boostPhrases: 'Boost phrases',
+    boostSourceCustom: 'Custom (type your own)',
     boostPhrasesPlaceholder: 'One phrase per line.\nOptional weight, e.g. acetaminophen:2.5\nNegative weight penalises, e.g. um:-3',
     boostStrength: 'Boost strength',
     boostWeightWarning: 'Out-of-range weight (must be nonzero, between -{max} and {max}); using 1 for:',
@@ -400,6 +401,7 @@ const translations = {
 
     // Renforcement de phrases
     boostPhrases: 'Phrases \u00e0 renforcer',
+    boostSourceCustom: 'Personnalis\u00e9 (saisie libre)',
     boostPhrasesPlaceholder: 'Une phrase par ligne.\nPoids optionnel, ex.\u00a0: paracetamol:2.5\nPoids n\u00e9gatif pour p\u00e9naliser, ex.\u00a0: euh:-3',
     boostStrength: 'Intensit\u00e9 du renforcement',
     boostWeightWarning: 'Poids hors limites (doit \u00eatre non nul, entre -{max} et {max})\u00a0; valeur 1 utilis\u00e9e pour\u00a0:',

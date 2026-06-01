@@ -299,6 +299,58 @@ function sanitizeClipboardText(s) {
   );
 }
 
+// Cap for any operator-supplied file fetched from a same-origin served
+// directory (dictation-regex CSVs, boost-phrase TXTs). F-102: a poisoned
+// upstream that fed the entrypoint a multi-GB body would otherwise OOM the
+// tab when we call .text() with no cap. The entrypoint enforces the same
+// cap server-side (defense in depth); this re-enforces it client-side
+// because a host-side write to /var/regex or /var/boost can bypass that.
+const SERVED_FILE_MAX_BYTES = 5 * 1024 * 1024;
+
+// Sentinel for the boost-phrase source selector meaning "the user's own
+// manually-typed text" rather than one of the operator-supplied files. Not a
+// valid manifest entry (those all end in .txt), so it can never collide.
+const BOOST_SOURCE_CUSTOM = '__custom__';
+
+// Fetch text from `url`, streaming and aborting if the body exceeds
+// `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
+// non-2xx response, or {ok:false, oversize:true, declared} when the body is
+// too large (declared = the byte count that tripped the cap). Shared by the
+// dictation-regex and boost-phrase loaders.
+async function fetchTextCapped(url, maxBytes = SERVED_FILE_MAX_BYTES) {
+  const res = await fetch(url);
+  if (!res.ok) return { ok: false, status: res.status };
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    try { res.body?.cancel(); } catch (_) { /* noop */ }
+    return { ok: false, oversize: true, declared };
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const text = await res.text();
+    if (text.length > maxBytes) {
+      return { ok: false, oversize: true, declared: text.length };
+    }
+    return { ok: true, text };
+  }
+  let total = 0;
+  const chunks = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { reader.cancel(); } catch (_) { /* noop */ }
+      return { ok: false, oversize: true, declared: total };
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
+  return { ok: true, text: new TextDecoder('utf-8').decode(merged) };
+}
+
 // Sanitise an arbitrary device-supplied string before rendering it in
 // the UI. WebHID productName comes from the USB descriptor and is
 // trivially spoofable by a hostile USB device or a Bad-USB tool. A
@@ -395,6 +447,17 @@ export default function App() {
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
   const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
   const boostStrengthRef = useRef(1);
+  // Operator-supplied phrase lists (BOOST_PHRASES_SOURCE -> /boost-phrases/).
+  // `boostFiles` is the manifest filenames; when non-empty the UI shows a
+  // selector. `boostSource` is the current choice: the BOOST_SOURCE_CUSTOM
+  // sentinel (user-typed text) or one of the filenames. `boostCustomText`
+  // preserves the user's own text so switching to a file and back never
+  // loses it; it is persisted across sessions.
+  const [boostFiles, setBoostFiles] = useState([]);
+  const [boostFilesLoaded, setBoostFilesLoaded] = useState(false);
+  const [boostSource, setBoostSource] = useState(BOOST_SOURCE_CUSTOM);
+  const [boostCustomText, setBoostCustomText] = useState('');
+  const boostCustomTextRef = useRef('');
   // Cached BPE encoder, tied to the tokenizer it was built from so a model
   // swap (different vocab) rebuilds it. { tokenizer, encoder } | null.
   const bpeEncoderRef = useRef(null);
@@ -796,6 +859,8 @@ export default function App() {
           savedLiveContextWindow,
           savedBoostPhrases,
           savedBoostStrength,
+          savedBoostSource,
+          savedBoostCustomText,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('preprocessor', 'nemo128'),
@@ -823,6 +888,8 @@ export default function App() {
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
           loadSetting('boostStrength', 1),
+          loadSetting('boostSource', BOOST_SOURCE_CUSTOM),
+          loadSetting('boostCustomText', ''),
         ]);
 
         setBackend(savedBackend);
@@ -856,6 +923,16 @@ export default function App() {
         setLiveContextWindow(savedLiveContextWindow);
         setBoostPhrases(typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
+        {
+          const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
+          // Migration: pre-feature profiles have no boostCustomText but may
+          // hold a boostPhrases the user typed. Seed custom text from it so
+          // selecting "Custom" later restores their words rather than blank.
+          const seedCustom = customText || (typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
+          setBoostCustomText(seedCustom);
+          boostCustomTextRef.current = seedCustom;
+          setBoostSource(typeof savedBoostSource === 'string' ? savedBoostSource : BOOST_SOURCE_CUSTOM);
+        }
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -1172,6 +1249,8 @@ export default function App() {
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
   usePersistedSetting('boostStrength', boostStrength, settingsLoaded);
+  usePersistedSetting('boostSource', boostSource, settingsLoaded);
+  usePersistedSetting('boostCustomText', boostCustomText, settingsLoaded);
   // F-128: transcripts persist to a dedicated DB (parakeetweb-transcripts-db).
   // When the array shrinks (per-entry delete, clear-all), wipe the whole DB
   // before re-persisting so LevelDB drops the SST/log files that still hold
@@ -1194,6 +1273,70 @@ export default function App() {
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
   useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
+
+  // Keep a ref of the user's custom boost text so async callbacks (switching
+  // between a file and Custom) always read the latest value.
+  useEffect(() => { boostCustomTextRef.current = boostCustomText; }, [boostCustomText]);
+
+  // Discover operator-supplied boost lists served at /boost-phrases/. No
+  // manifest (BOOST_PHRASES_SOURCE unset) just means no selector is shown and
+  // the box stays in manual-entry mode.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const manifest = await fetchTextCapped('/boost-phrases/manifest.txt');
+        if (!cancelled && manifest.ok) {
+          const files = manifest.text.trim().split('\n')
+            .map(f => f.trim())
+            .filter(f => f.endsWith('.txt'));
+          setBoostFiles(files);
+        }
+      } catch (e) {
+        console.warn('[Boost] failed to load phrase-list manifest:', e);
+      } finally {
+        if (!cancelled) setBoostFilesLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Apply a boost-source selection: fill the textarea from the chosen file, or
+  // restore the user's own text for the Custom sentinel. Shared by the selector
+  // onChange and the one-shot init resolution below.
+  async function applyBoostSource(src) {
+    setBoostSource(src);
+    if (src === BOOST_SOURCE_CUSTOM) {
+      setBoostPhrases(boostCustomTextRef.current);
+      return;
+    }
+    const r = await fetchTextCapped(`/boost-phrases/${encodeURIComponent(src)}`);
+    if (r.ok) {
+      setBoostPhrases(r.text);
+    } else {
+      console.warn(`[Boost] could not load phrase list "${src}":`,
+        r.oversize ? `oversize ${r.declared} bytes` : `status ${r.status}`);
+    }
+  }
+
+  // One-shot: once both settings and the manifest have loaded, resolve the
+  // persisted source. A filename that still exists is (re)fetched so the box
+  // shows the canonical list; a filename the operator has since removed falls
+  // back to Custom so the user is never stuck on a dead entry. Custom needs
+  // nothing (boostPhrases was already seeded from the saved custom text).
+  const boostInitRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || !boostFilesLoaded || boostInitRef.current) return;
+    boostInitRef.current = true;
+    if (boostSource !== BOOST_SOURCE_CUSTOM) {
+      if (boostFiles.includes(boostSource)) {
+        applyBoostSource(boostSource);
+      } else {
+        setBoostSource(BOOST_SOURCE_CUSTOM);
+        setBoostPhrases(boostCustomTextRef.current);
+      }
+    }
+  }, [settingsLoaded, boostFilesLoaded]);
 
   // Phrase boosting: rebuild the trie when the phrase text changes or the model
   // becomes ready (the encoder needs the loaded tokenizer's vocab). The BPE
@@ -2967,46 +3110,6 @@ export default function App() {
 
   // Load dictation regex rules from CSV files served at /dictation-regex/
   useEffect(() => {
-    // F-102: cap dictation file size so a poisoned upstream that fed the
-    // entrypoint a multi-GB body cannot OOM the tab via .text(). The
-    // entrypoint applies the same cap server-side (defense in depth);
-    // this enforces it again client-side because the entrypoint cap can
-    // be bypassed by a host-side write to /var/regex/. Cap is two orders
-    // of magnitude above the legitimate ~30 KB Murmure CSV.
-    const DICTATION_MAX_BYTES = 5 * 1024 * 1024;
-    async function fetchTextCapped(url) {
-      const res = await fetch(url);
-      if (!res.ok) return { ok: false, status: res.status };
-      const declared = Number(res.headers.get('content-length'));
-      if (Number.isFinite(declared) && declared > DICTATION_MAX_BYTES) {
-        try { res.body?.cancel(); } catch (_) { /* noop */ }
-        return { ok: false, oversize: true, declared };
-      }
-      const reader = res.body?.getReader();
-      if (!reader) {
-        const text = await res.text();
-        if (text.length > DICTATION_MAX_BYTES) {
-          return { ok: false, oversize: true, declared: text.length };
-        }
-        return { ok: true, text };
-      }
-      let total = 0;
-      const chunks = [];
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        if (total > DICTATION_MAX_BYTES) {
-          try { reader.cancel(); } catch (_) { /* noop */ }
-          return { ok: false, oversize: true, declared: total };
-        }
-        chunks.push(value);
-      }
-      const merged = new Uint8Array(total);
-      let off = 0;
-      for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
-      return { ok: true, text: new TextDecoder('utf-8').decode(merged) };
-    }
     async function loadDictationRegex() {
       try {
         // Try to fetch the manifest first
@@ -3664,9 +3767,27 @@ export default function App() {
                 {t('boostPhrases')}:
                 <InfoTooltip text={t('tooltipBoost')} />
               </span>
+              {boostFiles.length > 0 && (
+                <select
+                  value={boostSource}
+                  onChange={e => applyBoostSource(e.target.value)}
+                  style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                >
+                  <option value={BOOST_SOURCE_CUSTOM}>{t('boostSourceCustom')}</option>
+                  {boostFiles.map(f => (
+                    <option key={f} value={f}>{f.replace(/\.txt$/, '')}</option>
+                  ))}
+                </select>
+              )}
               <textarea
                 value={boostPhrases}
-                onChange={e => setBoostPhrases(e.target.value)}
+                onChange={e => {
+                  const v = e.target.value;
+                  setBoostPhrases(v);
+                  // Only the Custom slot is the user's own; edits while a file
+                  // is selected stay in this session and aren't saved as custom.
+                  if (boostSource === BOOST_SOURCE_CUSTOM) setBoostCustomText(v);
+                }}
                 placeholder={t('boostPhrasesPlaceholder')}
                 rows={4}
                 spellCheck={false}
