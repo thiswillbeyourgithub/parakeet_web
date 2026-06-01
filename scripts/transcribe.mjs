@@ -16,6 +16,7 @@
 // without phrase boosting, e.g.:
 //   node scripts/transcribe.mjs tricky.mp3 --phrase-boost="venlafaxine:5,truc:-5"
 //   node scripts/transcribe.mjs tricky.mp3 --phrase-boost=./phrases.txt --beam-width=4
+//   node scripts/transcribe.mjs tricky.mp3 --phrase-boost=./phrases.pwc  # precompiled
 //   node scripts/transcribe.mjs tricky.mp3 --beam-width=8 --maes-expansion-gamma=3.0
 //
 // Built with Claude Code.
@@ -31,8 +32,9 @@ import * as ortmod from '../app/ui/vendor/onnxruntime-web/dist/ort.node.min.mjs'
 import { ParakeetModel } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
-import { loadBpeEncoder } from '../app/src/bpeEncoder.js';
+import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
 import { BoostingTrie, parseBoostFields, expandCasingVariants, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { artifactMatchesVocab } from '../app/src/boostCompile.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
@@ -153,9 +155,14 @@ Options:
                            integer, default ${DEFAULT_BOOST_TOPK}). FLAG is "s"
                            (case-sensitive, default) or "i" (case-insensitive:
                            also boost the phrase's lower/UPPER/Title casings).
+                           A path ending in .pwc is a precompiled list (see
+                           scripts/compile-boost.mjs): its pre-encoded token ids
+                           are reused with no re-encode, provided it was compiled
+                           for this model (vocab signature must match).
                            Example: --phrase-boost="venlafaxine:5,truc:-5"
                            Example: --phrase-boost="venlafaxine:5:50:i"
                            Example: --phrase-boost=./phrases.txt
+                           Example: --phrase-boost=./phrases.pwc
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
   -w, --beam-width N       Beam search width (integer in [1, 25]). 1 = greedy (default,
@@ -200,9 +207,26 @@ Options:
 }
 
 // --- phrase-boost parsing -------------------------------------------------
-// A spec is either inline phrases or a path to a text file of phrases. When the
-// (trimmed) spec resolves to an existing file we read it and treat its contents
-// as the phrase text; otherwise the spec itself is the phrase text.
+// A --phrase-boost spec is one of three things:
+//   - a path to a precompiled .pwc artifact (scripts/compile-boost.mjs output):
+//     pre-encoded token ids reused verbatim, no re-encode, once its vocab
+//     signature is confirmed to match the loaded model (see main());
+//   - a path to a .txt list of phrases; or
+//   - inline phrase text.
+// The .pwc case is detected by {@link isPwcPath} and handled separately in
+// main(); the other two flow through {@link expandBoostSpec} + parseCliBoosts.
+
+// True when the (trimmed) spec is an existing .pwc file. Kept narrow (extension
+// + real file) so an inline phrase that merely ends in ".pwc" is not mistaken
+// for an artifact path.
+function isPwcPath(spec) {
+  const t = spec.trim();
+  return /\.pwc$/i.test(t) && existsSync(t) && statSync(t).isFile();
+}
+
+// A non-.pwc spec is either inline phrases or a path to a text file of phrases.
+// When the (trimmed) spec resolves to an existing file we read it and treat its
+// contents as the phrase text; otherwise the spec itself is the phrase text.
 function expandBoostSpec(spec) {
   const trimmed = spec.trim();
   if (trimmed && existsSync(trimmed) && statSync(trimmed).isFile()) {
@@ -377,13 +401,49 @@ async function main() {
     verbose: args.verbose,
   });
 
-  // Build the phrase-boosting trie (inert when no phrases were given).
+  // Build the phrase-boosting trie (inert when no phrases were given). Text /
+  // inline specs are encoded here; precompiled .pwc specs contribute their
+  // pre-encoded ids with no re-encode (once their vocab signature matches).
   let phraseBoost = null;
-  const entries = parseCliBoosts(args.boosts);
-  if (entries.length) {
-    const encoder = await loadBpeEncoder(tokenizer, BPE_MERGES);
-    phraseBoost = BoostingTrie.buildFromPhrases(entries, encoder, { strength: args.strength });
+  const pwcSpecs = args.boosts.filter(isPwcPath);
+  const textSpecs = args.boosts.filter((s) => !isPwcPath(s));
+  const entries = parseCliBoosts(textSpecs);
+  if (entries.length || pwcSpecs.length) {
+    // The encoder is only needed to encode text/inline phrases; when every spec
+    // is a precompiled .pwc we skip loading it and start from an empty trie.
+    const encoder = entries.length ? await loadBpeEncoder(tokenizer, BPE_MERGES) : null;
+    phraseBoost = entries.length
+      ? BoostingTrie.buildFromPhrases(entries, encoder, { strength: args.strength })
+      : new BoostingTrie({ strength: args.strength });
     phraseBoost.strength = args.strength;
+
+    // Precompiled .pwc lists: confirm the vocab signature matches the loaded
+    // model (its ids would otherwise index a different vocab and be meaningless),
+    // then insert the pre-encoded ids straight into the same trie.
+    const sig = vocabSignature(tokenizer.id2token);
+    for (const spec of pwcSpecs) {
+      const path = spec.trim();
+      let artifact;
+      try {
+        artifact = JSON.parse(readFileSync(path, 'utf-8'));
+      } catch (e) {
+        throw new Error(`failed to read .pwc ${path}: ${e.message}`);
+      }
+      if (!artifactMatchesVocab(artifact, sig)) {
+        throw new Error(
+          `.pwc ${path} was not compiled for this model (vocab signature mismatch); its token `
+          + `ids would be meaningless. Recompile it: node scripts/compile-boost.mjs <list>.txt --model-dir <dir>`,
+        );
+      }
+      for (const { ids, weight, topk } of artifact.encoded) {
+        phraseBoost.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
+      }
+      if (Array.isArray(artifact.skipped) && artifact.skipped.length) {
+        phraseBoost.skipped = phraseBoost.skipped.concat(artifact.skipped);
+      }
+      console.error(`[transcribe] reused precompiled ${path}: ${artifact.encoded.length} encoded phrase(s)`);
+    }
+
     console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${args.strength}`);
     for (const { phrase, weight, topk } of entries) {
       console.error(`             - "${phrase}" (weight ${weight}, top-k ${topk})  -> [${encoder.encode(phrase).join(', ')}]`);

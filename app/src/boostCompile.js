@@ -83,20 +83,37 @@ export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
 }
 
 /**
+ * Whether a parsed artifact's token ids are valid for the given vocab: the
+ * format version is current, the vocab signature matches, and `encoded` is an
+ * array. This is the minimum needed before trusting the pre-encoded ids (a
+ * mismatch means the ids index a different vocab and would be meaningless).
+ * Casing is NOT considered here, since a consumer that reuses the ids as-is
+ * (e.g. scripts/transcribe.mjs) accepts whatever casing expansion the artifact
+ * was baked at; the browser-toggle reuse adds that check via
+ * {@link isReusableArtifact}.
+ * @param {any} artifact Parsed .pwc / .json object.
+ * @param {string} vocabSig Signature of the currently loaded vocab.
+ * @returns {boolean}
+ */
+export function artifactMatchesVocab(artifact, vocabSig) {
+  return !!artifact
+    && artifact.version === BOOST_ARTIFACT_VERSION
+    && artifact.vocabSig === vocabSig
+    && Array.isArray(artifact.encoded);
+}
+
+/**
  * Whether a parsed artifact can be reused as-is for the given vocab + casing
- * default, letting the boot prebuild skip the encode. Checks the format version,
- * the vocab signature and the casing default; any mismatch (different model,
- * stale format, list edited after the .pwc was built but the user flipped the
- * global casing toggle) returns false so the caller re-encodes the .txt.
+ * default, letting the boot prebuild skip the encode. Builds on
+ * {@link artifactMatchesVocab} and additionally requires the casing default to
+ * match, since the browser only reuses the ids when its global casing toggle
+ * still agrees with how the artifact was expanded.
  * @param {any} artifact Parsed .pwc / .json object.
  * @param {string} vocabSig Signature of the currently loaded vocab.
  * @param {boolean} [caseDefault=CASE_DEFAULT]
  * @returns {boolean}
  */
 export function isReusableArtifact(artifact, vocabSig, caseDefault = CASE_DEFAULT) {
-  return !!artifact
-    && artifact.version === BOOST_ARTIFACT_VERSION
-    && artifact.vocabSig === vocabSig
-    && (artifact.caseDefault === true) === (caseDefault === true)
-    && Array.isArray(artifact.encoded);
+  return artifactMatchesVocab(artifact, vocabSig)
+    && (artifact.caseDefault === true) === (caseDefault === true);
 }
