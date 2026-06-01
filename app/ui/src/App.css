@@ -156,6 +156,13 @@ body {
   color: var(--text-subtle);
 }
 
+/* Secondary note appended to the status line (e.g. boost-list rebuild). */
+.app-header__status-note {
+  margin-left: 0.6rem;
+  font-style: italic;
+  opacity: 0.85;
+}
+
 .app-header h2 {
   margin: 0;
   font-size: 1.6rem;

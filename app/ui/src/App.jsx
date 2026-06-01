@@ -317,6 +317,11 @@ const BOOST_SOURCE_CUSTOM = '__custom__';
 // otherwise trigger an encode per keystroke; we wait for the input to settle.
 const BOOST_REBUILD_DEBOUNCE_MS = 300;
 
+// Phrase count past which a rebuild is slow enough to warrant the header
+// spinner. Lists below this encode in a few ms, so showing a spinner would
+// only flicker; above it the user benefits from knowing to wait.
+const BOOST_SPINNER_MIN_PHRASES = 500;
+
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
 // non-2xx response, or {ok:false, oversize:true, declared} when the body is
@@ -460,8 +465,15 @@ export default function App() {
   const [boostStrength, setBoostStrength] = useState(1);
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
+  // True while a long phrase list is (re)encoding+building so the header status
+  // shows a spinner; only set for lists past BOOST_SPINNER_MIN_PHRASES so a
+  // small edit never flashes it (small lists rebuild in a few ms).
+  const [boostRebuilding, setBoostRebuilding] = useState(false);
   const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
   const boostStrengthRef = useRef(1);
+  // Current verbose-logging flag for use inside the debounced rebuild closure
+  // (which captures a stale `verboseLog`); synced by the effect below.
+  const verboseLogRef = useRef(false);
   // Operator-supplied phrase lists (BOOST_PHRASES_SOURCE -> /boost-phrases/).
   // `boostFiles` is the manifest filenames; when non-empty the UI shows a
   // selector. `boostSource` is the current choice: the BOOST_SOURCE_CUSTOM
@@ -1450,7 +1462,15 @@ export default function App() {
       return;
     }
     let cancelled = false;
+    // Long lists take long enough to encode+build that the user should see the
+    // app is busy; small ones rebuild in a few ms so a spinner would only flash.
+    const showSpinner = entries.length >= BOOST_SPINNER_MIN_PHRASES;
     const timer = setTimeout(async () => {
+      if (showSpinner) setBoostRebuilding(true);
+      const t0 = performance.now();
+      if (verboseLogRef.current) {
+        console.log(`[Boost] rebuilding trie for ${entries.length} phrase(s)...`);
+      }
       try {
         const { encoded, skipped } = await encodeBoostPhrases(entries, tokenizer);
         if (cancelled) return;
@@ -1460,13 +1480,23 @@ export default function App() {
         // were dropped during encode; surface them so the user knows why.
         setBoostUnkWarnings(skipped);
         phraseBoostRef.current = trie.isEmpty ? null : trie;
+        if (verboseLogRef.current) {
+          const ms = performance.now() - t0;
+          const perLine = entries.length ? ms / entries.length : 0;
+          console.log(
+            `[Boost] trie rebuilt in ${ms.toFixed(1)}ms for ${entries.length} phrase(s) `
+            + `(avg ${perLine.toFixed(3)}ms/line, ${trie.size} inserted, ${skipped.length} skipped).`
+          );
+        }
       } catch (e) {
         if (cancelled) return;
         console.warn('[Boost] failed to build boosting trie:', e);
         phraseBoostRef.current = null;
+      } finally {
+        if (showSpinner) setBoostRebuilding(false);
       }
     }, BOOST_REBUILD_DEBOUNCE_MS);
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => { cancelled = true; clearTimeout(timer); if (showSpinner) setBoostRebuilding(false); };
   }, [boostPhrases, status, encodeBoostPhrases]);
 
   // Apply the strength slider without rebuilding the trie.
@@ -1474,6 +1504,9 @@ export default function App() {
     boostStrengthRef.current = boostStrength;
     if (phraseBoostRef.current) phraseBoostRef.current.strength = boostStrength;
   }, [boostStrength]);
+
+  // Keep the verbose-log ref current for the debounced rebuild closure.
+  useEffect(() => { verboseLogRef.current = verboseLog; }, [verboseLog]);
 
   /**
    * Load model weights and create an ONNX inference session.
@@ -3443,6 +3476,12 @@ export default function App() {
             <span className="spinner spinner--inline" aria-hidden="true" />
           )}
           {t('status')}: {t(status) || status}
+          {boostRebuilding && (
+            <span className="app-header__status-note">
+              <span className="spinner spinner--inline" aria-hidden="true" />
+              {t('boostRebuilding')}
+            </span>
+          )}
         </p>
       </div>
 

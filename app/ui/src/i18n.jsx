@@ -125,6 +125,7 @@ const translations = {
 
     // Phrase boosting
     boostPhrases: 'Boost phrases',
+    boostRebuilding: 'Rebuilding boost list...',
     boostSourceCustom: 'Custom (type your own)',
     boostPhrasesPlaceholder: 'One phrase per line.\nOptional weight, e.g. acetaminophen:2.5\nNegative weight penalises, e.g. um:-3\nOptional top-k gate, e.g. venlafaxine:5:50',
     boostStrength: 'Boost strength',
@@ -413,6 +414,7 @@ const translations = {
 
     // Renforcement de phrases
     boostPhrases: 'Phrases \u00e0 renforcer',
+    boostRebuilding: 'Reconstruction de la liste de renforcement...',
     boostSourceCustom: 'Personnalis\u00e9 (saisie libre)',
     boostPhrasesPlaceholder: 'Une phrase par ligne.\nPoids optionnel, ex.\u00a0: paracetamol:2.5\nPoids n\u00e9gatif pour p\u00e9naliser, ex.\u00a0: euh:-3\nGarde top-k optionnelle, ex.\u00a0: venlafaxine:5:50',
     boostStrength: 'Intensit\u00e9 du renforcement',
