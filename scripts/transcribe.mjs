@@ -15,11 +15,12 @@
 // Use it to feed a tricky recording through the model and compare runs with and
 // without phrase boosting, e.g.:
 //   node scripts/transcribe.mjs tricky.mp3 --phrase-boost="venlafaxine:5,truc:-5"
+//   node scripts/transcribe.mjs tricky.mp3 --phrase-boost=./phrases.txt --beam-width=4
 //
 // Built with Claude Code.
 
 import { readFile } from 'node:fs/promises';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { dirname, resolve, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,8 +58,9 @@ globalThis.fetch = async (url, opts) => {
 function parseArgs(argv) {
   const a = {
     audio: null,
-    boosts: [],            // raw --phrase-boost strings (repeatable)
+    boosts: [],            // raw --phrase-boost strings or file paths (repeatable)
     strength: 1,
+    beamWidth: 1,          // 1 = greedy; >1 = beam search
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',
@@ -82,6 +84,7 @@ function parseArgs(argv) {
       case '-h': case '--help': printHelp(); process.exit(0); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '-s': case '--boost-strength': a.strength = Number(val(flag)); break;
+      case '-w': case '--beam-width': a.beamWidth = parseInt(val(flag), 10); break;
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quant = val(flag); break;
@@ -99,6 +102,7 @@ function parseArgs(argv) {
   if (!a.audio) throw new Error('No audio file given. See --help.');
   if (a.quant !== 'int8' && a.quant !== 'fp32') throw new Error(`--quant must be int8 or fp32 (got ${a.quant})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
+  if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1) throw new Error('--beam-width must be an integer >= 1');
   return a;
 }
 
@@ -113,14 +117,22 @@ Arguments:
 
 Options:
   -b, --phrase-boost STR   Boost phrases as "phrase:weight" pairs, comma- or
-                           newline-separated. Repeatable. Weight defaults to 1
-                           and may be any real number for testing (negative
-                           values suppress a phrase). NOTE: the web UI clamps
-                           weights to (0, 10]; this CLI does not, so you can
-                           probe the full range.
+                           newline-separated, OR a path to a text file holding
+                           such phrases (one per line is fine). Repeatable; the
+                           argument is treated as a file when it resolves to an
+                           existing file, otherwise as inline phrases. Weight
+                           defaults to 1 and may be any real number for testing
+                           (negative values suppress a phrase). NOTE: the web UI
+                           clamps weights to (0, 10]; this CLI does not, so you
+                           can probe the full range.
                            Example: --phrase-boost="venlafaxine:5,truc:-5"
+                           Example: --phrase-boost=./phrases.txt
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
+  -w, --beam-width N       Beam search width (integer >= 1). 1 = greedy (default,
+                           fastest). Higher widths explore alternative hypotheses
+                           and let phrase boosting recover words greedy would
+                           discard, at roughly Nx the decode time.
       --model KEY          Model key (${listModels().join(', ')}).
                            Default: ${DEFAULT_MODEL}.
       --model-dir DIR      Directory holding the .onnx files + vocab.txt.
@@ -136,6 +148,17 @@ Options:
 }
 
 // --- phrase-boost parsing -------------------------------------------------
+// A spec is either inline phrases or a path to a text file of phrases. When the
+// (trimmed) spec resolves to an existing file we read it and treat its contents
+// as the phrase text; otherwise the spec itself is the phrase text.
+function expandBoostSpec(spec) {
+  const trimmed = spec.trim();
+  if (trimmed && existsSync(trimmed) && statSync(trimmed).isFile()) {
+    return readFileSync(trimmed, 'utf-8');
+  }
+  return spec;
+}
+
 // Mirrors the "phrase:weight" splitting of phraseBoost.parseBoostPhrases (a
 // weight is the numeric tail after the LAST colon), but accepts comma OR
 // newline separators and does NOT clamp the weight, so negative / >10 values
@@ -144,7 +167,7 @@ Options:
 // is newline-only and clamps to (0,10]) would defeat the purpose.
 function parseCliBoosts(specs) {
   const entries = [];
-  for (const spec of specs) {
+  for (const spec of specs.map(expandBoostSpec)) {
     for (const part of spec.split(/[,\n]/)) {
       const t = part.trim();
       if (!t) continue;
@@ -319,8 +342,11 @@ async function main() {
     if (phraseBoost.isEmpty) phraseBoost = null;
   }
 
+  if (args.beamWidth > 1) console.error(`[transcribe] beam search: width ${args.beamWidth}`);
+
   const result = await model.transcribe(pcm, 16000, {
     phraseBoost,
+    beamWidth: args.beamWidth,
     returnTimestamps: args.timestamps,
     returnConfidences: args.timestamps,
     debug: args.verbose,
