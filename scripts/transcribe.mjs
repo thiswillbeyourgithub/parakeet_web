@@ -65,6 +65,11 @@ function parseArgs(argv) {
     maesNumSteps: 2,       // MAES: max symbols emitted per frame
     maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
     maesExpansionGamma: 2.3, // MAES: log-prob prune threshold
+    frameStride: 1,        // sidebar: decimate encoder frames (1 = none)
+    temperature: 0.0,      // sidebar: decoder temperature (UI default 0.0)
+    chunking: true,        // sidebar: split long audio into chunks
+    chunkDuration: 60,     // sidebar: max chunk length, seconds
+    overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',
@@ -92,6 +97,11 @@ function parseArgs(argv) {
       case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
       case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
       case '--maes-expansion-gamma': a.maesExpansionGamma = Number(val(flag)); break;
+      case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
+      case '--temperature': a.temperature = Number(val(flag)); break;
+      case '--chunk-duration': a.chunkDuration = Number(val(flag)); break;
+      case '--overlap': a.overlap = Number(val(flag)); break;
+      case '--no-chunking': a.chunking = false; break;
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quant = val(flag); break;
@@ -113,6 +123,10 @@ function parseArgs(argv) {
   if (!Number.isInteger(a.maesNumSteps) || a.maesNumSteps < 1) throw new Error('--maes-num-steps must be an integer >= 1');
   if (!Number.isInteger(a.maesExpansionBeta) || a.maesExpansionBeta < 0) throw new Error('--maes-expansion-beta must be an integer >= 0');
   if (!Number.isFinite(a.maesExpansionGamma) || a.maesExpansionGamma <= 0) throw new Error('--maes-expansion-gamma must be a positive number');
+  if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) throw new Error('--frame-stride must be an integer in [1, 4]');
+  if (!Number.isFinite(a.temperature) || a.temperature < 0) throw new Error('--temperature must be a non-negative number');
+  if (!Number.isFinite(a.chunkDuration) || a.chunkDuration <= 0) throw new Error('--chunk-duration must be a positive number');
+  if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
   return a;
 }
 
@@ -161,6 +175,17 @@ Options:
                            dropped; smaller = more aggressive pruning / faster,
                            larger = wider search. Default 2.3. Only used when
                            --beam-width > 1.
+      --frame-stride N     Decimate encoder frames before decoding (integer in
+                           [1, 4]). 1 = use every frame (default). Sidebar knob.
+      --temperature F      Decoder temperature (non-negative float). Default 0.0
+                           (most greedy/confident). Sidebar knob.
+      --chunk-duration N   Max chunk length in seconds for long audio. Default
+                           60. Long audio is split into overlapping chunks and
+                           each chunk's transcript is printed as it is produced.
+      --overlap N          Overlap between chunks in seconds. Default 2 (matches
+                           the web UI).
+      --no-chunking        Disable chunking; transcribe the whole file in one
+                           pass (matches unticking the sidebar's chunking box).
       --model KEY          Model key (${listModels().join(', ')}).
                            Default: ${DEFAULT_MODEL}.
       --model-dir DIR      Directory holding the .onnx files + vocab.txt.
@@ -381,23 +406,43 @@ async function main() {
   if (args.beamWidth > 1) {
     console.error(`[transcribe] MAES beam search: width ${args.beamWidth}, num-steps ${args.maesNumSteps}, expansion-beta ${args.maesExpansionBeta}, expansion-gamma ${args.maesExpansionGamma}`);
   }
+  const willChunk = args.chunking && pcm.length > args.chunkDuration * 16000;
+  if (willChunk) {
+    console.error(`[transcribe] chunking: ${args.chunkDuration}s chunks, ${args.overlap}s overlap`);
+  }
 
-  const result = await model.transcribe(pcm, 16000, {
+  // Same chunking/stitching path the web UI uses (ParakeetModel.transcribeChunked).
+  // The onChunk callback streams each chunk's transcript to stdout as it lands.
+  const result = await model.transcribeChunked(pcm, 16000, {
+    enableChunking: args.chunking,
+    chunkDurationSec: args.chunkDuration,
+    overlapSec: args.overlap,
     phraseBoost,
     beamWidth: args.beamWidth,
     maesNumSteps: args.maesNumSteps,
     maesExpansionBeta: args.maesExpansionBeta,
     maesExpansionGamma: args.maesExpansionGamma,
+    frameStride: args.frameStride,
+    temperature: args.temperature,
     returnTimestamps: args.timestamps,
     returnConfidences: args.timestamps,
+    enableProfiling: args.verbose,
     debug: args.verbose,
+  }, ({ chunkNum, totalChunks, result: chunkRes, elapsedMs }) => {
+    // Only prefix when there is more than one chunk; a single-pass run prints
+    // its transcript once via the final block below.
+    if (totalChunks > 1) {
+      console.error(`[transcribe] chunk ${chunkNum}/${totalChunks} done in ${(elapsedMs / 1000).toFixed(1)}s`);
+      console.log(`[chunk ${chunkNum}/${totalChunks}] ${chunkRes.utterance_text}`);
+    }
   });
 
   model.dispose();
 
   if (args.json) {
     console.log(JSON.stringify(result, null, 2));
-  } else {
+  } else if (!willChunk) {
+    // Single-pass: nothing was streamed above, so print the full transcript.
     console.log(result.utterance_text);
   }
 }
