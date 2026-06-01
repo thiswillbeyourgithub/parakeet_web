@@ -401,15 +401,18 @@ export class ParakeetModel {
    * @param {number} id Chosen token id.
    * @param {number} step TDT duration argmax.
    * @param {number} frameStride
+   * @param {number} [maxSymbols] Per-frame emission cap. Defaults to the model's
+   *   greedy `maxTokensPerStep`; the MAES beam path passes `maesNumSteps` here so
+   *   the per-frame expansion budget is the MAES knob rather than the greedy cap.
    * @returns {{emit: boolean, isBlank: boolean, nextT: number, nextEmitted: number}}
    */
-  _advanceDecision(t, emittedAtFrame, id, step, frameStride) {
+  _advanceDecision(t, emittedAtFrame, id, step, frameStride, maxSymbols = this.maxTokensPerStep) {
     const isBlank = (id === this.blankId);
     let nextT, nextEmitted;
     if (step > 0) {
       nextT = t + step;
       nextEmitted = 0;
-    } else if (isBlank || emittedAtFrame + 1 >= this.maxTokensPerStep) {
+    } else if (isBlank || emittedAtFrame + 1 >= maxSymbols) {
       nextT = t + frameStride;
       nextEmitted = 0;
     } else {
@@ -461,9 +464,20 @@ export class ParakeetModel {
   }
 
   /**
-   * Expand one beam hypothesis by a single joiner step. Returns the candidate
-   * continuations (top-K tokens by boosted logit, plus a forced blank so the
-   * hypothesis can always advance time) and the shared next decoder state.
+   * Expand one beam hypothesis by a single joiner step (the per-hypothesis core
+   * of the MAES decoder). Returns the candidate continuations and the shared next
+   * decoder state.
+   *
+   * MAES adaptive expansion happens here in two stages:
+   *   - Over-generation (`maes_expansion_beta`): the caller's `expandK` is
+   *     `beamWidth + beta`, so we pull the top-(beamWidth+beta) tokens, plus a
+   *     forced blank so the hypothesis can always advance in time.
+   *   - Adaptive prune (`maes_expansion_gamma`): non-blank candidates whose
+   *     log-probability is more than `maesExpansionGamma` below the best
+   *     candidate are dropped. On a confident frame one token dominates and every
+   *     other expansion falls below the threshold, so the hypothesis branches
+   *     like greedy; on an ambiguous frame several survive and the beam widens.
+   *     This is what makes the effective width adapt per token.
    *
    * Each candidate carries:
    *   - id / isBlank / emit / step (TDT duration)
@@ -481,7 +495,7 @@ export class ParakeetModel {
    * @returns {{cands: Array<object>, newState: object}}
    */
   async _expandHyp(hyp, transposed, D, opts) {
-    const { temperature, beamWidth, phraseBoost } = opts;
+    const { temperature, expandK, maesExpansionGamma, phraseBoost } = opts;
     const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
     const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
     const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
@@ -490,9 +504,9 @@ export class ParakeetModel {
     if (phraseBoost) phraseBoost.active = hyp.active;
     const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
 
-    // Top-K over the (possibly boosted) logits, and always allow blank so the
-    // hypothesis can choose to advance time.
-    const topIds = this._topK(tokenLogits, beamWidth);
+    // Over-generate (top-(beamWidth+beta)) over the (possibly boosted) logits,
+    // and always allow blank so the hypothesis can choose to advance time.
+    const topIds = this._topK(tokenLogits, expandK);
     if (!topIds.includes(this.blankId)) topIds.push(this.blankId);
 
     // Capture boosted values, then restore so confidence/ranking use the true
@@ -503,12 +517,27 @@ export class ParakeetModel {
     if (boostSaved) phraseBoost.restore(tokenLogits, boostSaved);
 
     const logZ = this._logSumExp(tokenLogits); // temperature-1 partition
-    const cands = [];
+
+    // First pass: boosted log-prob (rankDelta) per candidate, and the best one
+    // for the MAES gamma threshold. Defer confidence + trie advance to the
+    // survivors so pruned candidates cost nothing extra.
+    const scored = [];
+    let maxRankDelta = -Infinity;
     for (const id of topIds) {
       const isBlank = (id === this.blankId);
       const trueLogit = tokenLogits[id];
       const boostBonus = boostedVal.get(id) - trueLogit;
       const rankDelta = (trueLogit - logZ) + boostBonus;
+      if (rankDelta > maxRankDelta) maxRankDelta = rankDelta;
+      scored.push({ id, isBlank, trueLogit, rankDelta });
+    }
+
+    // Adaptive (MAES) prune: keep only non-blank candidates within `gamma`
+    // log-prob of the best. Blank is always kept so the hypothesis can advance.
+    const threshold = maxRankDelta - maesExpansionGamma;
+    const cands = [];
+    for (const { id, isBlank, trueLogit, rankDelta } of scored) {
+      if (!isBlank && rankDelta < threshold) continue;
       const confVal = this._frameConfidence(tokenLogits, trueLogit, temperature);
       let active = hyp.active;
       if (!isBlank && phraseBoost) {
@@ -525,21 +554,36 @@ export class ParakeetModel {
   }
 
   /**
-   * Multi-hypothesis TDT beam search over the encoder frames. Returns the
-   * winning hypothesis' decoded ids and per-frame/per-token accumulators.
-   * Full-file only: never returns a decoder state, and disposes every ORT state
-   * tensor it allocates via refcounting (PLAN.md Q1).
+   * Multi-hypothesis TDT beam search over the encoder frames, using Modified
+   * Adaptive Expansion Search (MAES, Kim et al. 2020 — NeMo's `maes` strategy).
+   * Returns the winning hypothesis' decoded ids and per-frame/per-token
+   * accumulators. Full-file only: never returns a decoder state, and disposes
+   * every ORT state tensor it allocates via refcounting (PLAN.md Q1).
    *
    * Hypotheses are backpointer nodes (parent chain) so per-step accumulators are
    * reconstructed once at the end instead of copied every round. Because TDT
    * durations desync hypotheses in time, this is label-looping (each hyp owns
    * its frame pointer) rather than a single shared frame counter.
+   *
+   * MAES knobs (defaults match NeMo): `beamWidth` is the global beam cap kept
+   * after each round; `maesExpansionBeta` over-generates to top-(beamWidth+beta)
+   * per hypothesis; `maesExpansionGamma` adaptively prunes those expansions by
+   * log-prob (see `_expandHyp`); `maesNumSteps` caps symbols emitted per frame.
+   * The one MAES feature deliberately omitted is prefix-search recombination
+   * (`maes_prefix_alpha`): faithful prefix merging over this backpointer-node
+   * structure is high-risk for marginal gain on this model, so it is left out.
    * @returns {{ids: number[], tokenTimes: Array, tokenConfs: number[], frameConfs: number[], overallLogProb: number}}
    */
   async _decodeBeam(transposed, D, Tenc, opts) {
-    const { beamWidth, frameStride, phraseBoost, returnTimestamps, returnConfidences, timeStride } = opts;
+    const { beamWidth, frameStride, phraseBoost, returnTimestamps, returnConfidences, timeStride,
+            maesNumSteps, maesExpansionBeta, maesExpansionGamma } = opts;
 
     if (Tenc <= 0) return { ids: [], tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0 };
+
+    // Per-hypothesis expansion budget: top-(beamWidth+beta) tokens. Threaded into
+    // _expandHyp alongside the gamma threshold via the shared opts object below.
+    const expandK = beamWidth + maesExpansionBeta;
+    const expandOpts = { temperature: opts.temperature, phraseBoost, expandK, maesExpansionGamma };
 
     const rootActive = phraseBoost ? phraseBoost.active : null; // caller already reset()
     let beam = [{
@@ -566,10 +610,10 @@ export class ParakeetModel {
 
         const pool = [];
         for (const hyp of beam) {
-          const { cands, newState } = await this._expandHyp(hyp, transposed, D, opts);
+          const { cands, newState } = await this._expandHyp(hyp, transposed, D, expandOpts);
           if (newState) disposable.add(newState);
           for (const c of cands) {
-            const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, c.id, c.step, frameStride);
+            const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, c.id, c.step, frameStride, maesNumSteps);
             const child = {
               parent: hyp,
               emit: c.emit,
@@ -662,6 +706,10 @@ export class ParakeetModel {
       timeOffset = 0,
       phraseBoost = null,
       beamWidth = 1,
+      // MAES knobs (used only when beamWidth > 1). Defaults match NeMo's `maes`.
+      maesNumSteps = 2,
+      maesExpansionBeta = 2,
+      maesExpansionGamma = 2.3,
     } = opts;
 
     // Beam search is full-file only: a beam of N hypotheses cannot be serialized
@@ -886,6 +934,9 @@ export class ParakeetModel {
         returnTimestamps,
         returnConfidences,
         timeStride: TIME_STRIDE,
+        maesNumSteps: Math.max(1, Math.floor(maesNumSteps) || 1),
+        maesExpansionBeta: Math.max(0, Math.floor(maesExpansionBeta) || 0),
+        maesExpansionGamma: Number.isFinite(maesExpansionGamma) ? maesExpansionGamma : 2.3,
       });
       ids = out.ids;
       tokenTimes = out.tokenTimes;
