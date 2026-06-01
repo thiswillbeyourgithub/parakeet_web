@@ -34,6 +34,7 @@ const ema = (prev, sample, alpha = EMA_ALPHA) => prev == null ? sample : prev + 
  * @param {() => Array<{buf: Float32Array, used: number}>} cfg.getPcmChunks  Returns the live slab array.
  * @param {() => number} cfg.getSampleRate         Returns source sample rate (Hz).
  * @param {'auto'|number} cfg.windowMode  'auto' or a fixed window size in seconds (10..60).
+ * @param {() => (Object|null)} [cfg.getPhraseBoost]  Returns the current BoostingTrie (or null). Read per tick so the trie can change mid-recording; parakeet.js resets it per window (PLAN.md Q4).
  * @param {(state: {text: string, words: Object[]}) => void} cfg.onUpdate
  * @param {(stats: Object) => void} [cfg.onStats]
  * @returns {{ start: () => void, stop: () => Promise<void>, getState: () => Object }}
@@ -44,6 +45,7 @@ export function createLiveTranscriber(cfg) {
     getPcmChunks,
     getSampleRate,
     windowMode,
+    getPhraseBoost,
     onUpdate,
     onStats,
   } = cfg;
@@ -169,6 +171,7 @@ export function createLiveTranscriber(cfg) {
       const result = await model.transcribe(pcm16k, 16000, {
         returnTimestamps: true,
         timeOffset: windowStartAbs,
+        phraseBoost: getPhraseBoost?.() ?? null,
       });
       const processMs = performance.now() - t0;
 
