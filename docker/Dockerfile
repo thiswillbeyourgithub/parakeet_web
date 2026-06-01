@@ -110,7 +110,7 @@ COPY signaling ./signaling
 RUN cd app/ui && npm run build
 
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
-FROM caddy:2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
+FROM caddy:2-alpine@sha256:86deaf5e3d3408a6ccec08fbb79989783dd26e206ae10bcf78a801dc8c9ab794
 
 # F-107: the nodejs binary runs both the signaling server (which
 # untrusted phones connect to) and the entrypoint's config-generator
