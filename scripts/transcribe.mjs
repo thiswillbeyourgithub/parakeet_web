@@ -16,6 +16,7 @@
 // without phrase boosting, e.g.:
 //   node scripts/transcribe.mjs tricky.mp3 --phrase-boost="venlafaxine:5,truc:-5"
 //   node scripts/transcribe.mjs tricky.mp3 --phrase-boost=./phrases.txt --beam-width=4
+//   node scripts/transcribe.mjs tricky.mp3 --beam-width=8 --maes-expansion-gamma=3.0
 //
 // Built with Claude Code.
 
@@ -60,7 +61,10 @@ function parseArgs(argv) {
     audio: null,
     boosts: [],            // raw --phrase-boost strings or file paths (repeatable)
     strength: 1,
-    beamWidth: 1,          // 1 = greedy; >1 = beam search
+    beamWidth: 1,          // 1 = greedy; >1 = MAES beam search
+    maesNumSteps: 2,       // MAES: max symbols emitted per frame
+    maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
+    maesExpansionGamma: 2.3, // MAES: log-prob prune threshold
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',
@@ -85,6 +89,9 @@ function parseArgs(argv) {
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '-s': case '--boost-strength': a.strength = Number(val(flag)); break;
       case '-w': case '--beam-width': a.beamWidth = parseInt(val(flag), 10); break;
+      case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
+      case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
+      case '--maes-expansion-gamma': a.maesExpansionGamma = Number(val(flag)); break;
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quant = val(flag); break;
@@ -103,6 +110,9 @@ function parseArgs(argv) {
   if (a.quant !== 'int8' && a.quant !== 'fp32') throw new Error(`--quant must be int8 or fp32 (got ${a.quant})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
   if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 25) throw new Error('--beam-width must be an integer in [1, 25]');
+  if (!Number.isInteger(a.maesNumSteps) || a.maesNumSteps < 1) throw new Error('--maes-num-steps must be an integer >= 1');
+  if (!Number.isInteger(a.maesExpansionBeta) || a.maesExpansionBeta < 0) throw new Error('--maes-expansion-beta must be an integer >= 0');
+  if (!Number.isFinite(a.maesExpansionGamma) || a.maesExpansionGamma <= 0) throw new Error('--maes-expansion-gamma must be a positive number');
   return a;
 }
 
@@ -134,9 +144,23 @@ Options:
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
   -w, --beam-width N       Beam search width (integer in [1, 25]). 1 = greedy (default,
-                           fastest). Higher widths explore alternative hypotheses
-                           and let phrase boosting recover words greedy would
-                           discard, at roughly Nx the decode time.
+                           fastest). >1 runs MAES (Modified Adaptive Expansion
+                           Search): width is the global beam cap, but the gamma
+                           threshold below makes the effective width adapt per
+                           token, so confident tokens stay near-greedy speed and
+                           only ambiguous ones widen the search.
+      --maes-num-steps N   MAES: max symbols emitted per encoder frame (integer
+                           >= 1). Default 2. Only used when --beam-width > 1.
+      --maes-expansion-beta N
+                           MAES: over-generation budget; expands the top
+                           (beamWidth + N) tokens per hypothesis (integer >= 0).
+                           Default 2. Only used when --beam-width > 1.
+      --maes-expansion-gamma F
+                           MAES: log-prob prune threshold (positive float).
+                           Expansions more than F below the best candidate are
+                           dropped; smaller = more aggressive pruning / faster,
+                           larger = wider search. Default 2.3. Only used when
+                           --beam-width > 1.
       --model KEY          Model key (${listModels().join(', ')}).
                            Default: ${DEFAULT_MODEL}.
       --model-dir DIR      Directory holding the .onnx files + vocab.txt.
@@ -354,11 +378,16 @@ async function main() {
     if (phraseBoost.isEmpty) phraseBoost = null;
   }
 
-  if (args.beamWidth > 1) console.error(`[transcribe] beam search: width ${args.beamWidth}`);
+  if (args.beamWidth > 1) {
+    console.error(`[transcribe] MAES beam search: width ${args.beamWidth}, num-steps ${args.maesNumSteps}, expansion-beta ${args.maesExpansionBeta}, expansion-gamma ${args.maesExpansionGamma}`);
+  }
 
   const result = await model.transcribe(pcm, 16000, {
     phraseBoost,
     beamWidth: args.beamWidth,
+    maesNumSteps: args.maesNumSteps,
+    maesExpansionBeta: args.maesExpansionBeta,
+    maesExpansionGamma: args.maesExpansionGamma,
     returnTimestamps: args.timestamps,
     returnConfidences: args.timestamps,
     debug: args.verbose,
