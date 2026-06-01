@@ -254,14 +254,26 @@ encoder; a prior session did that by mistake and the files were deleted.
 - [x] Commit (asset aa4adde, test 8b97ae9, encoder 1e22aea).
 
 ### Phase 2: Boosting trie + decode hook
-- [ ] Create `app/src/phraseBoost.js` with `BoostingTrie` per §3.
-- [ ] Wire into `parakeet.js transcribe()`: accept `opts.phraseBoost`, reset at
-      start, inject boosts before argmax, advance after each emitted token.
-      Inject by copying only the affected logit indices (do not mutate the live
-      joiner subarray view unsafely). Default path (no boost) must be byte-for-
-      byte unchanged in behavior and ~unchanged in speed.
-- [ ] Verify memory hygiene: no new un-disposed ORT tensors; trie is plain JS.
-- [ ] Commit.
+- [x] Create `app/src/phraseBoost.js` with `BoostingTrie` per §3. DONE
+      (commit 62b7522): `BoostingTrie` (build/insert/reset/activeChildBoosts/
+      applyBoost/restore/advance), `parseBoostPhrases`, per-phrase weights with
+      linear depth scaling, settable global `strength`, `MAX_PHRASE_WEIGHT`.
+- [x] Wire into `parakeet.js transcribe()`. DONE (commit ba75ae5): accepts
+      `opts.phraseBoost`, resets per call, boosts logits before the argmax and
+      restores them right after (so confidence/log-prob use the model's true
+      logits; `maxLogit` reset to the chosen token's true logit), advances on
+      each non-blank emission. No-trie path is fully inert (default unchanged).
+      NOTE: chose in-place boost + restore-after-argmax rather than a separate
+      logit copy, so the perf-tuned 8x-unrolled argmax is reused verbatim (no
+      duplication); touched indices are saved/restored, which is safe because it
+      all happens before `_logitsTensor` is disposed.
+- [x] Verify memory hygiene: trie is plain JS; no new ORT tensors created. The
+      boost mutates the existing `tokenLogits` view in place and restores it; no
+      extra buffers beyond a tiny saved-pairs array per step.
+- [x] Test (commit c7be923): `scripts/test-phrase-boost.mjs` covers parsing,
+      build, depth-scaled bonuses, advance/mismatch reset, and argmax flip +
+      restore. All checks pass.
+- [x] Commit (62b7522 module, ba75ae5 hook, c7be923 test).
 
 ### Phase 3: UI + plumbing
 - [ ] Add a textarea ("one phrase per line", supporting optional `phrase:WEIGHT`
@@ -374,3 +386,18 @@ encoder; a prior session did that by mistake and the files were deleted.
   create `app/src/phraseBoost.js` (`BoostingTrie` per §3) and wire it into
   `parakeet.js transcribe()` behind an optional `opts.phraseBoost`, leaving the
   default no-boost path unchanged.
+- 2026-06-01, Session 2 (cont). **Phase 2 COMPLETE.** Built `app/src/phraseBoost.js`
+  (`BoostingTrie` + `parseBoostPhrases`, per-phrase weights x linear depth
+  scaling x settable global `strength`, pure `applyBoost`/`restore`) and wired it
+  into `parakeet.js transcribe()` via `opts.phraseBoost`: reset per call, boost
+  logits before the perf-tuned argmax (reused verbatim, no duplication), restore
+  right after with `maxLogit` reset to the chosen token's true logit so
+  confidence stays the model's, advance on each non-blank emission. No-trie path
+  is fully inert. `scripts/test-phrase-boost.mjs` (parse/build/advance/apply +
+  argmax-flip-then-restore) all pass; `node --check` clean on all edited files.
+  Commits: 62b7522 (module), ba75ae5 (hook), c7be923 (test). **Next:** Phase 3,
+  UI textarea + strength slider in a collapsed Advanced area of `App.jsx`, build
+  the trie once on phrase change (loading the encoder lazily via
+  `loadBpeEncoder`), persist phrases + strength in IndexedDB (`idb.js`), pass the
+  trie through all three `transcribe()` call sites (App.jsx x2, liveTranscriber),
+  and add EN/FR i18n strings.
