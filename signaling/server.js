@@ -338,7 +338,20 @@ function checkRateLimit(ip, limitType) {
     return { allowed: true, retryAfter: 0 };
 }
 
+// Test-only escape hatch: when TEST_DISABLE_RATE_LIMIT=1 every rate-limit
+// middleware becomes a pass-through. The integration suite (test/http/*)
+// spins many rooms per file and would otherwise trip the roomCreation cap
+// (5/min). This MUST never be set in production; it is read once at startup
+// so it cannot be flipped by a request. Mirrors WebSend's TEST_DISABLE_RATE_LIMIT.
+const TEST_DISABLE_RATE_LIMIT = process.env.TEST_DISABLE_RATE_LIMIT === '1';
+if (TEST_DISABLE_RATE_LIMIT) {
+    console.warn('WARNING: TEST_DISABLE_RATE_LIMIT=1 — rate limiting is OFF (test mode only)');
+}
+
 function rateLimitMiddleware(limitType) {
+    if (TEST_DISABLE_RATE_LIMIT) {
+        return (req, res, next) => next();
+    }
     return (req, res, next) => {
         const ip = getClientIp(req);
         const result = checkRateLimit(ip, limitType);
