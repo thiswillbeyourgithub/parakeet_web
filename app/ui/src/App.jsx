@@ -473,13 +473,13 @@ export default function App() {
   // unrelated state), and the strength slider just mutates trie.strength.
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
-  // Global default for casing expansion (on by default): each typed phrase is
-  // expanded to all casings (lower/UPPER/Sentence/Title) before encoding, so
-  // e.g. "venlafaxine" also boosts "Venlafaxine" and "VENLAFAXINE" (the BPE
-  // encoder is case-sensitive, so each casing is a distinct token sequence /
-  // trie branch). A per-phrase `:s`/`:i` suffix overrides this. See
+  // Global default for casing expansion (OFF by default): when ON, each typed
+  // phrase is expanded to all casings (lower/UPPER/Sentence/Title) before
+  // encoding, so e.g. "venlafaxine" also boosts "Venlafaxine" and "VENLAFAXINE"
+  // (the BPE encoder is case-sensitive, so each casing is a distinct token
+  // sequence / trie branch). A per-phrase `:s`/`:i` suffix overrides this. See
   // expandCasingVariants.
-  const [boostCaseInsensitive, setBoostCaseInsensitive] = useState(true);
+  const [boostCaseInsensitive, setBoostCaseInsensitive] = useState(false);
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
   // True while a long phrase list is (re)encoding+building so the header status
@@ -955,7 +955,7 @@ export default function App() {
           loadSetting('boostStrength', 1),
           loadSetting('boostSource', BOOST_SOURCE_CUSTOM),
           loadSetting('boostCustomText', ''),
-          loadSetting('boostCaseInsensitive', true),
+          loadSetting('boostCaseInsensitive', false),
         ]);
 
         // A saved value means the user previously picked a backend explicitly;
@@ -1000,7 +1000,7 @@ export default function App() {
         setLiveContextWindow(savedLiveContextWindow);
         setBoostPhrases(typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
-        setBoostCaseInsensitive(savedBoostCaseInsensitive !== false);
+        setBoostCaseInsensitive(savedBoostCaseInsensitive === true);
         {
           const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
           // Migration: pre-feature profiles have no boostCustomText but may
