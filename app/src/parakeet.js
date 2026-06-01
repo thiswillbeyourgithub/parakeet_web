@@ -1078,6 +1078,132 @@ export class ParakeetModel {
   }
 
   /**
+   * Transcribe a (possibly long) audio buffer by splitting it into overlapping
+   * chunks and stitching the per-chunk results back together. This is the
+   * file-transcription path used by both the web UI and the CLI harness, so the
+   * chunking/overlap/stitching behaviour stays in one place and the two callers
+   * cannot drift apart.
+   *
+   * Each chunk is transcribed with this.transcribe(); the per-chunk options
+   * (returnTimestamps, frameStride, temperature, beamWidth, MAES knobs,
+   * phraseBoost, enableProfiling, ...) are forwarded verbatim from `opts` so the
+   * model behaviour is identical to a single-pass call. Word timestamps are
+   * shifted by each chunk's start offset before being concatenated.
+   *
+   * When chunking is disabled (`enableChunking: false`) or the audio is shorter
+   * than one chunk, this falls back to a single this.transcribe() pass; the
+   * `onChunk` callback still fires once (with totalChunks === 1) so callers have
+   * a single code path.
+   *
+   * @param {Float32Array} audio          PCM samples.
+   * @param {number}       sampleRate      Sample rate of `audio` (Hz).
+   * @param {object}       opts            Chunking options + transcribe() opts:
+   *   @param {boolean} [opts.enableChunking=true]  Split long audio into chunks.
+   *   @param {number}  [opts.chunkDurationSec=60]  Max chunk length, seconds.
+   *   @param {number}  [opts.overlapSec=2]         Overlap between chunks, seconds.
+   *   (all other keys are forwarded to this.transcribe())
+   * @param {function}     [onChunk]       Optional async callback invoked after
+   *   each chunk with { chunkNum, totalChunks, result, partialText, start, end,
+   *   elapsedMs }. Awaited, so callers may yield to the UI here.
+   * @returns {Promise<object>} Combined result in the same shape transcribe()
+   *   returns (utterance_text, words, confidence_scores, metrics, is_final).
+   */
+  async transcribeChunked(audio, sampleRate = 16000, opts = {}, onChunk = null) {
+    const {
+      enableChunking = true,
+      chunkDurationSec = 60,
+      overlapSec = 2,
+      ...transcribeOpts
+    } = opts;
+
+    const maxChunkSamples = Math.max(1, Math.round(chunkDurationSec * sampleRate));
+
+    // Short audio (or chunking disabled): one pass, but still fire onChunk once
+    // so callers don't need a separate branch.
+    if (!enableChunking || audio.length <= maxChunkSamples) {
+      const t0 = performance.now();
+      const result = await this.transcribe(audio, sampleRate, transcribeOpts);
+      if (onChunk) {
+        await onChunk({
+          chunkNum: 1,
+          totalChunks: 1,
+          result,
+          partialText: result.utterance_text,
+          start: 0,
+          end: audio.length,
+          elapsedMs: performance.now() - t0,
+        });
+      }
+      return result;
+    }
+
+    const overlapSamples = Math.max(0, Math.round(overlapSec * sampleRate));
+    const stride = Math.max(1, maxChunkSamples - overlapSamples);
+    const totalChunks = Math.ceil(audio.length / stride);
+
+    const combinedTextParts = [];
+    const combinedWords = [];
+    let firstChunkMetrics = null;
+    let firstChunkConfidences = null;
+    let totalProcessingTime = 0;
+    let chunkNum = 0;
+
+    for (let start = 0; start < audio.length; start += stride) {
+      const end = Math.min(start + maxChunkSamples, audio.length);
+      // subarray (zero-copy view); the model copies into its own ORT tensor.
+      const chunk = audio.subarray(start, end);
+      chunkNum += 1;
+
+      const tChunk = performance.now();
+      const chunkRes = await this.transcribe(chunk, sampleRate, transcribeOpts);
+      const elapsedMs = performance.now() - tChunk;
+
+      // Shift word timestamps from chunk-local to absolute time.
+      const timeOffset = start / sampleRate;
+      if (chunkRes.words) {
+        for (const word of chunkRes.words) {
+          word.start_time += timeOffset;
+          word.end_time += timeOffset;
+          combinedWords.push(word);
+        }
+      }
+      combinedTextParts.push(chunkRes.utterance_text);
+
+      if (chunkNum === 1) {
+        firstChunkMetrics = chunkRes.metrics;
+        firstChunkConfidences = chunkRes.confidence_scores;
+      }
+      totalProcessingTime += chunkRes.metrics?.total_ms || 0;
+
+      if (onChunk) {
+        await onChunk({
+          chunkNum,
+          totalChunks,
+          result: chunkRes,
+          partialText: combinedTextParts.join(' '),
+          start,
+          end,
+          elapsedMs,
+        });
+      }
+    }
+
+    const combinedText = combinedTextParts.join(' ');
+    const totalDuration = audio.length / sampleRate;
+    return {
+      utterance_text: combinedText,
+      words: combinedWords,
+      confidence_scores: firstChunkConfidences || {},
+      metrics: {
+        ...firstChunkMetrics,
+        total_ms: totalProcessingTime,
+        rtf: totalProcessingTime ? totalDuration / (totalProcessingTime / 1000) : null,
+      },
+      is_final: true,
+    };
+  }
+
+  /**
    * Release all ONNX sessions and clean up resources.
    * Call this before loading a new model or when the page unloads.
    */

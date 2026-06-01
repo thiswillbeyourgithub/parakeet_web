@@ -2826,7 +2826,6 @@ export default function App() {
       // This happens when audio is very long and internal operations hit JS engine limits
       // Chunking can be toggled off to send full audio to the model in one pass
       const MAX_CHUNK_DURATION = chunkDuration; // seconds (user-configurable)
-      const MAX_CHUNK_SAMPLES = MAX_CHUNK_DURATION * 16000;
 
       // Wall-clock timer for the whole transcription (covers both the chunked
       // and single-pass branches below) plus an accumulator for the decode
@@ -2838,162 +2837,66 @@ export default function App() {
       const transcribeStartTime = performance.now();
       let totalDecodeMs = 0;
 
-      let res;
-      if (enableChunking && pcm.length > MAX_CHUNK_SAMPLES) {
-        console.log(`[Transcribe] Audio is long (${(pcm.length / 16000).toFixed(1)}s), processing in chunks...`);
+      // Chunking, overlap and per-chunk stitching live in
+      // ParakeetModel.transcribeChunked() so the web UI and the CLI harness
+      // (scripts/transcribe.mjs) share one code path and cannot drift. The UI
+      // only supplies the per-chunk callback that drives the progress bar and
+      // streams partial text. Throttle state is kept across callback calls.
+      let lastReportedProgress = -1; // update UI only when the % actually moves
+      let runningProcessingMs = 0;   // sum of per-chunk model time for the ETA
+      let chunksCompleted = 0;
 
-        // Process in chunks with overlap for better boundary handling
-        const OVERLAP_DURATION = 2; // seconds of overlap
-        const OVERLAP_SAMPLES = OVERLAP_DURATION * 16000;
-        // Append-only accumulators. The previous code stored a full chunkRes
-        // object per chunk (text + words + metrics + timing) and rebuilt the
-        // partial text by mapping over it every UI tick. For long files that
-        // means O(N²) string-concat work plus retaining per-chunk word arrays
-        // until the very end. Streaming into a string + a flat words array
-        // keeps peak memory close to one chunk's footprint.
-        const combinedTextParts = [];
-        const combinedWords = [];
-        let firstChunkMetrics = null;
-        let firstChunkConfidences = null;
-        let totalProcessingTime = 0;
-        let chunksCompleted = 0;
-        let lastReportedProgress = -1; // Track last reported progress to update UI only every 1%
-        const totalChunks = Math.ceil(pcm.length / (MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES));
+      const res = await modelRef.current.transcribeChunked(pcm, 16000, {
+        enableChunking,
+        chunkDurationSec: MAX_CHUNK_DURATION,
+        overlapSec: 2,
+        returnTimestamps: true,
+        returnConfidences: true,
+        frameStride,
+        temperature,
+        beamWidth,
+        maesNumSteps,
+        maesExpansionBeta,
+        maesExpansionGamma,
+        enableProfiling: beamWidth > 1,
+        phraseBoost: phraseBoostRef.current,
+      }, async ({ chunkNum, totalChunks, result, partialText, elapsedMs }) => {
+        // decode_ms scales with beam width; sum it for the single-beam estimate.
+        totalDecodeMs += result.metrics?.decode_ms || 0;
+        runningProcessingMs += result.metrics?.total_ms || 0;
+        chunksCompleted += 1;
 
-        for (let start = 0; start < pcm.length; start += MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES) {
-          const end = Math.min(start + MAX_CHUNK_SAMPLES, pcm.length);
-          // subarray (zero-copy view) rather than slice (full copy). The
-          // model copies into its own ORT tensor anyway, so the JS-side copy
-          // was pure waste and doubled chunk-time memory pressure.
-          const chunk = pcm.subarray(start, end);
-          const chunkNum = chunksCompleted + 1;
+        // Single-pass (no chunking): no incremental UI, only metrics bookkeeping.
+        if (totalChunks <= 1) return;
 
-          console.log(`[Transcribe] Processing chunk ${chunkNum}/${totalChunks} (${(start/16000).toFixed(1)}s - ${(end/16000).toFixed(1)}s)`);
+        console.log(`[Transcribe] Completed chunk ${chunkNum}/${totalChunks}`);
 
-          const chunkStartTime = performance.now();
-          console.time(`Transcribe-chunk-${chunkNum}`);
-          let chunkRes = await modelRef.current.transcribe(chunk, 16000, {
-            returnTimestamps: true,
-            returnConfidences: true,
-            frameStride,
-            temperature,
-            beamWidth,
-            maesNumSteps,
-            maesExpansionBeta,
-            maesExpansionGamma,
-            enableProfiling: beamWidth > 1,
-            phraseBoost: phraseBoostRef.current,
-          });
-          console.timeEnd(`Transcribe-chunk-${chunkNum}`);
-          const chunkElapsed = performance.now() - chunkStartTime;
-          totalDecodeMs += chunkRes.metrics?.decode_ms || 0;
+        // Only update the UI when the rounded progress actually advances (or on
+        // the last chunk) to avoid thrashing the renderer on short chunks.
+        const chunkProgress = Math.round((chunkNum / totalChunks) * 100);
+        if (chunkProgress <= lastReportedProgress && chunkNum !== totalChunks) return;
+        lastReportedProgress = chunkProgress;
 
-          // Adjust timestamps by chunk offset and stream into combinedWords.
-          const timeOffset = start / 16000;
-          if (chunkRes.words) {
-            for (const word of chunkRes.words) {
-              word.start_time += timeOffset;
-              word.end_time += timeOffset;
-              combinedWords.push(word);
-            }
-          }
-          combinedTextParts.push(chunkRes.utterance_text);
+        const avgChunkTime = runningProcessingMs / chunksCompleted;
+        const estimatedRemaining = (totalChunks - chunkNum) * avgChunkTime / 1000;
 
-          // Capture first-chunk metadata so we don't have to retain per-chunk
-          // objects for the final res assembly.
-          if (chunksCompleted === 0) {
-            firstChunkMetrics = chunkRes.metrics;
-            firstChunkConfidences = chunkRes.confidence_scores;
-          }
-          totalProcessingTime += chunkRes.metrics?.total_ms || 0;
-          chunksCompleted += 1;
-
-          // Calculate current progress percentage
-          const chunkProgress = Math.round((chunkNum / totalChunks) * 100);
-
-          // Only update UI if progress increased by at least 1% or it's the last chunk
-          if (chunkProgress > lastReportedProgress || chunkNum === totalChunks) {
-            lastReportedProgress = chunkProgress;
-
-            // Partial text from the running parts buffer (O(1) append).
-            const partialText = combinedTextParts.join(' ');
-
-            // Update progress bar and status text with timing info. Use the
-            // running average from totalProcessingTime to avoid keeping per-
-            // chunk processingTime values.
-            const avgChunkTime = totalProcessingTime / chunksCompleted;
-            const remainingChunks = totalChunks - chunkNum;
-            const estimatedRemaining = remainingChunks * avgChunkTime / 1000;
-
-            // Wrap UI updates in startTransition to keep UI responsive
-            startTransition(() => {
-              setText(partialText + ' [transcribing...]');
-              setProgressPct(chunkProgress);
-              setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${formatDuration(chunkElapsed/1000)} • Est. ${formatDuration(estimatedRemaining)} remaining`);
-              setStatus(`${t('transcribingFile')} "${safeName}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
-
-              if (chunkNum === 1) {
-                setLatestMetrics(firstChunkMetrics);
-              }
-            });
-
-            // Yield to browser to keep UI responsive
-            await new Promise(resolve => setTimeout(resolve, 0));
-          }
-
-          // Drop the chunk result before the next allocation. The model
-          // already disposed its ORT tensors; this just makes sure the
-          // returned object (with its words array) is reachable only via
-          // combinedWords for the next GC cycle.
-          chunkRes = null;
-        }
-
-        // Combine chunks and remove the "[transcribing...]" placeholder
-        console.log(`[Transcribe] Combining ${chunksCompleted} chunks...`);
-        const combinedText = combinedTextParts.join(' ');
-
-        // Clear progress indicators
-        setProgressPct(null);
-        setProgressText('');
-
-        // Combine metrics (use first chunk's metrics as baseline)
-        const totalDuration = pcm.length / 16000;
-
-        res = {
-          utterance_text: combinedText,
-          words: combinedWords,
-          confidence_scores: firstChunkConfidences || {},
-          metrics: {
-            ...firstChunkMetrics,
-            total_ms: totalProcessingTime,
-            rtf: totalDuration / (totalProcessingTime / 1000)
-          },
-          is_final: true
-        };
-
-        console.log(`[Transcribe] Chunked transcription completed successfully`);
-      } else {
-        console.log(`[Transcribe] Starting model.transcribe() with options:`, {
-          returnTimestamps: true,
-          returnConfidences: true,
-          frameStride
+        // Wrap UI updates in startTransition to keep the UI responsive.
+        startTransition(() => {
+          setText(partialText + ' [transcribing...]');
+          setProgressPct(chunkProgress);
+          setProgressText(`✓ Completed chunk ${chunkNum} of ${totalChunks} (${chunkProgress}%) • ${formatDuration(elapsedMs/1000)} • Est. ${formatDuration(estimatedRemaining)} remaining`);
+          setStatus(`${t('transcribingFile')} "${safeName}" - ${chunkProgress}% ${t('complete')} (${t('chunk')} ${chunkNum}/${totalChunks})`);
+          if (chunkNum === 1) setLatestMetrics(result.metrics);
         });
-        console.time(`Transcribe-${file.name}`);
-        res = await modelRef.current.transcribe(pcm, 16000, {
-          returnTimestamps: true,
-          returnConfidences: true,
-          frameStride,
-          beamWidth,
-          maesNumSteps,
-          maesExpansionBeta,
-          maesExpansionGamma,
-          enableProfiling: beamWidth > 1,
-          phraseBoost: phraseBoostRef.current,
-        });
-        console.timeEnd(`Transcribe-${file.name}`);
-        totalDecodeMs += res.metrics?.decode_ms || 0;
-        console.log(`[Transcribe] Transcription completed successfully`);
-      }
+
+        // Yield to the browser so the progress paint lands between chunks.
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+
+      // Clear progress indicators (no-op when no chunk UI ran).
+      setProgressPct(null);
+      setProgressText('');
+      console.log(`[Transcribe] Transcription completed successfully`);
 
       // Total wall time for the entire audio. When a wide beam was used, also
       // report the estimated single-beam (greedy) time so the cost of the beam
