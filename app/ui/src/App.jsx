@@ -414,6 +414,10 @@ export default function App() {
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
+  // WebGPU availability. `navigator.gpu` existing isn't enough: an adapter may
+  // still be unavailable (blocklisted GPU, headless Chromium, etc.), so we
+  // actually request one. null = still probing, true/false = resolved.
+  const [webgpuAvailable, setWebgpuAvailable] = useState(null);
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [, startTransition] = useTransition();
   const [preprocessor, setPreprocessor] = useState('nemo128');
@@ -1245,6 +1249,26 @@ export default function App() {
     acquireKeepalive();
     return () => releaseKeepalive();
   }, [isRecording, isTranscribing, isRemoteMic]);
+
+  // Probe WebGPU availability once on mount. `navigator.gpu` existing isn't
+  // enough (the adapter request can still fail on blocklisted GPUs or headless
+  // Chromium), so we actually request an adapter.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let available = false;
+      try {
+        if (navigator.gpu) {
+          const adapter = await navigator.gpu.requestAdapter();
+          available = !!adapter;
+        }
+      } catch {
+        available = false;
+      }
+      if (!cancelled) setWebgpuAvailable(available);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Persist backend selection
   useEffect(() => {
@@ -3475,6 +3499,13 @@ export default function App() {
     }
   }, []);
 
+  // When the WebGPU probe resolves to unavailable, force WASM, overriding any
+  // persisted choice (a saved 'webgpu-hybrid' would otherwise fail at load).
+  useEffect(() => {
+    if (!settingsLoaded || webgpuAvailable !== false) return;
+    setBackend((prev) => (prev.startsWith('webgpu') ? 'wasm' : prev));
+  }, [settingsLoaded, webgpuAvailable]);
+
   const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
   const handleLoadModelClick = (opts) => {
     if (isLowRam) {
@@ -3823,9 +3854,9 @@ export default function App() {
                   <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
                   {t('wasmCpu')}
                 </label>
-                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
-                  {t('webgpu')}
+                <label className={status === 'modelReady' || webgpuAvailable === false ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady' || webgpuAvailable === false} />
+                  {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
                 </label>
               </div>
             </div>
