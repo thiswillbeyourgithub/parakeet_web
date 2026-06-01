@@ -434,13 +434,6 @@ export default function App() {
   const [maesNumSteps, setMaesNumSteps] = useState(2);
   const [maesExpansionBeta, setMaesExpansionBeta] = useState(2);
   const [maesExpansionGamma, setMaesExpansionGamma] = useState(2.3);
-  // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident.
-  // Kept tunable in code (still wired through to the backend) but hidden from the
-  // sidebar and never loaded from persisted settings: this param is extremely
-  // finicky, and any value above 0.0 breaks the model in unpredictable ways.
-  // To re-expose it, restore the slider in the sidebar and re-add it to the
-  // loadSetting/usePersistedSetting calls below.
-  const [temperature, setTemperature] = useState(0.0);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
   const [chunkDuration, setChunkDuration] = useState(60); // seconds
@@ -2886,7 +2879,11 @@ export default function App() {
         returnTimestamps: true,
         returnConfidences: true,
         frameStride,
-        temperature,
+        // Pinned to 0: temperature never changes the transcript (greedy argmax
+        // is scale-invariant; MAES ranks at temperature 1 regardless), it only
+        // feeds confidence scores, where any value above 0 just adds noise.
+        // Passed explicitly so we don't inherit transcribe()'s 1.2 default.
+        temperature: 0,
         beamWidth,
         maesNumSteps,
         maesExpansionBeta,
@@ -3903,11 +3900,6 @@ export default function App() {
                 </div>
               </>
             )}
-
-            {/* Temperature slider intentionally hidden: the param is extremely
-                finicky and any value above 0.0 breaks the model in unpredictable
-                ways. Still wired up in code via the `temperature` state (default
-                0.0) so it can be re-added here without other plumbing. */}
 
             <div className="settings-group-header">{t('settingsGroupBoosting')}</div>
 
