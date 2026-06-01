@@ -303,6 +303,122 @@ export class ParakeetModel {
     }
   }
 
+  /**
+   * Argmax over a token-logit array. Pulled out of the decode loop so both the
+   * greedy (width-1) path and a future beam path can share the same hot kernel.
+   * The 8x unroll caches the block into v0..v7 before comparing, which sidesteps
+   * redundant TypedArray index lookups and bounds checks in V8 each time a new
+   * max is found. See upstream commit 514cea5.
+   * @param {Float32Array} tokenLogits
+   * @returns {{maxId: number, maxLogit: number}}
+   */
+  _pickArgmax(tokenLogits) {
+    let maxLogit = -Infinity, maxId = 0;
+    const tLen = tokenLogits.length;
+    let ai = 0;
+    for (; ai < tLen % 8; ai++) {
+      if (tokenLogits[ai] > maxLogit) { maxLogit = tokenLogits[ai]; maxId = ai; }
+    }
+    for (; ai < tLen; ai += 8) {
+      const v0 = tokenLogits[ai];
+      const v1 = tokenLogits[ai+1];
+      const v2 = tokenLogits[ai+2];
+      const v3 = tokenLogits[ai+3];
+      const v4 = tokenLogits[ai+4];
+      const v5 = tokenLogits[ai+5];
+      const v6 = tokenLogits[ai+6];
+      const v7 = tokenLogits[ai+7];
+      if (v0 > maxLogit) { maxLogit = v0; maxId = ai; }
+      if (v1 > maxLogit) { maxLogit = v1; maxId = ai + 1; }
+      if (v2 > maxLogit) { maxLogit = v2; maxId = ai + 2; }
+      if (v3 > maxLogit) { maxLogit = v3; maxId = ai + 3; }
+      if (v4 > maxLogit) { maxLogit = v4; maxId = ai + 4; }
+      if (v5 > maxLogit) { maxLogit = v5; maxId = ai + 5; }
+      if (v6 > maxLogit) { maxLogit = v6; maxId = ai + 6; }
+      if (v7 > maxLogit) { maxLogit = v7; maxId = ai + 7; }
+    }
+    return { maxId, maxLogit };
+  }
+
+  /**
+   * Softmax confidence (probability) of the chosen token, i.e. 1 / sum(exp((logit
+   * - maxLogit)/T)) where `maxLogit` is the chosen token's logit. `temperature`
+   * is the user-facing decoder temperature; at temperature 0 the model is fully
+   * greedy and confidence is 1.0. Always computed on the model's true (unboosted)
+   * logits so phrase boosting never distorts reported confidence. Clamps
+   * degenerate outputs to a tiny positive value so the overall log-prob can't be
+   * poisoned with -Infinity / NaN.
+   *
+   * The denom is unrolled 8x with eight independent accumulators for ILP, and
+   * (logit/T - maxLogit/T) is folded into (logit - maxLogit) * invTemp so the
+   * inner loop has one multiply instead of one divide per element. See upstream
+   * commit 501cef3.
+   * @param {Float32Array} tokenLogits
+   * @param {number} maxLogit Chosen token's (true) logit.
+   * @param {number} temperature
+   * @returns {number}
+   */
+  _frameConfidence(tokenLogits, maxLogit, temperature) {
+    let confVal;
+    if (temperature > 1e-8) {
+      const invTemp = 1.0 / temperature;
+      let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0;
+      let i = 0;
+      const len = tokenLogits.length;
+      for (; i <= len - 8; i += 8) {
+        s0 += Math.exp((tokenLogits[i]     - maxLogit) * invTemp);
+        s1 += Math.exp((tokenLogits[i + 1] - maxLogit) * invTemp);
+        s2 += Math.exp((tokenLogits[i + 2] - maxLogit) * invTemp);
+        s3 += Math.exp((tokenLogits[i + 3] - maxLogit) * invTemp);
+        s4 += Math.exp((tokenLogits[i + 4] - maxLogit) * invTemp);
+        s5 += Math.exp((tokenLogits[i + 5] - maxLogit) * invTemp);
+        s6 += Math.exp((tokenLogits[i + 6] - maxLogit) * invTemp);
+        s7 += Math.exp((tokenLogits[i + 7] - maxLogit) * invTemp);
+      }
+      let sumExp = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7;
+      for (; i < len; i++) {
+        sumExp += Math.exp((tokenLogits[i] - maxLogit) * invTemp);
+      }
+      confVal = 1 / sumExp;
+    } else {
+      // At temperature=0, the model is fully greedy, confidence is 1.0.
+      confVal = 1.0;
+    }
+    if (!Number.isFinite(confVal) || confVal <= 0) confVal = 1e-10;
+    return confVal;
+  }
+
+  /**
+   * Frame-advancement + emission rule for one decoded token, matching NeMo /
+   * onnx-asr reference exactly. Pure (depends only on its args + model
+   * constants) so the greedy loop and a future beam decoder share identical
+   * timing semantics:
+   *   - TDT duration > 0: advance by `step`, reset the per-frame emit counter.
+   *   - blank OR max-tokens reached: advance by `frameStride`, reset counter.
+   *   - else (non-blank, step 0, under cap): stay on the frame to emit again.
+   * @param {number} t Current encoder-frame pointer.
+   * @param {number} emittedAtFrame Tokens already emitted at this frame.
+   * @param {number} id Chosen token id.
+   * @param {number} step TDT duration argmax.
+   * @param {number} frameStride
+   * @returns {{emit: boolean, isBlank: boolean, nextT: number, nextEmitted: number}}
+   */
+  _advanceDecision(t, emittedAtFrame, id, step, frameStride) {
+    const isBlank = (id === this.blankId);
+    let nextT, nextEmitted;
+    if (step > 0) {
+      nextT = t + step;
+      nextEmitted = 0;
+    } else if (isBlank || emittedAtFrame + 1 >= this.maxTokensPerStep) {
+      nextT = t + frameStride;
+      nextEmitted = 0;
+    } else {
+      nextT = t;
+      nextEmitted = emittedAtFrame + 1;
+    }
+    return { emit: !isBlank, isBlank, nextT, nextEmitted };
+  }
+
   async computeFeatures(audio, sampleRate = 16000) {
     const { features, length } = await this.preprocessor.process(audio);
     const T = length; // number of frames returned by preprocessor
@@ -414,19 +530,27 @@ export class ParakeetModel {
     // transcription this single dispose is the biggest leak fix in the file.
     enc.dispose?.(); enc = null;
 
-    // --- Decode frame-by-frame ----------------------------------------
-    const ids = [];
-    const tokenTimes = [];
-    const tokenConfs = [];
-    const frameConfs = [];
-    let overallLogProb = 0;
-
+    // --- Decode (greedy = beam width 1) -------------------------------
+    // The decoder is a degenerate beam: a single hypothesis carrying its own
+    // frame pointer, decoder state, emitted ids and the per-frame
+    // confidence/timestamp accumulators. The per-step work is factored into
+    // _pickArgmax / _frameConfidence / _advanceDecision so a future
+    // multi-hypothesis beam (PLAN.md Q1) can reuse them unchanged.
+    const hyp = {
+      ids: [],
+      state: previousDecoderState || null,
+      t: 0,
+      emittedAtFrame: 0,
+      tokenTimes: [],
+      tokenConfs: [],
+      frameConfs: [],
+      overallLogProb: 0,
+    };
     // Caller may pass a decoder state from a previous (contiguous) chunk to
     // continue token-history continuity across calls. We hold a reference but
     // never dispose the externally-owned object — the caller still owns it.
-    decoderState = previousDecoderState || null;
     externalInitialState = previousDecoderState || null;
-    let emittedTokens = 0;
+    decoderState = hyp.state; // keep the function-scope alias in sync for finally
 
     // Phrase boosting: reset the trie's active state per decode window (Q4) so
     // matches start fresh. When no trie is supplied, this whole path is inert
@@ -434,138 +558,68 @@ export class ParakeetModel {
     phraseBoost?.reset();
 
     const decStartTime = perfEnabled ? performance.now() : 0;
+    const TIME_STRIDE = this.subsampling * this.windowStride;
 
-    for (let t = 0; t < Tenc; ) {
-      // Yield to browser every 50 frames to keep UI responsive
-      if (t % 50 === 0) {
+    while (hyp.t < Tenc) {
+      // Yield to browser every ~50 frames to keep UI responsive
+      if (hyp.t % 50 === 0) {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
-      
-      const frameBuf = transposed.subarray(t * D, (t + 1) * D);
+
+      const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
       inFlightEncTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
 
-      const prevTok = ids.length ? ids[ids.length - 1] : this.blankId;
-      const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, decoderState);
+      const prevTok = hyp.ids.length ? hyp.ids[hyp.ids.length - 1] : this.blankId;
+      const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, hyp.state);
 
       // Phrase boosting (shallow fusion): add the trie's rewards into the token
       // logits before the argmax so the per-step choice is biased toward
       // continuing/starting a boost phrase. We save the touched logits and
       // restore them right after the argmax so confidence/log-prob below stay
       // computed on the model's true (unboosted) distribution.
+      // Argmax is invariant to a positive temperature divide, so we argmax the
+      // raw logits directly (avoids the Infinity/NaN trap at temperature 0).
       const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
+      let { maxId, maxLogit } = this._pickArgmax(tokenLogits);
 
-      // Argmax on raw logits.
-      // Dividing by a positive temperature is monotonic, so argmax(logit/T)
-      // equals argmax(logit). That lets us skip the per-element division
-      // and avoids the Infinity/NaN trap when temperature is 0.
-      // The inner 8x unroll caches the block into local v0..v7 before
-      // doing the sequential comparisons, which sidesteps redundant
-      // TypedArray index lookups and bounds checks in V8 each time a new
-      // max is found. See upstream commit 514cea5.
-      const useTemp = temperature > 1e-8;
-      let maxLogit = -Infinity, maxId = 0;
-      const tLen = tokenLogits.length;
-      let ai = 0;
-      for (; ai < tLen % 8; ai++) {
-        if (tokenLogits[ai] > maxLogit) { maxLogit = tokenLogits[ai]; maxId = ai; }
-      }
-      for (; ai < tLen; ai += 8) {
-        const v0 = tokenLogits[ai];
-        const v1 = tokenLogits[ai+1];
-        const v2 = tokenLogits[ai+2];
-        const v3 = tokenLogits[ai+3];
-        const v4 = tokenLogits[ai+4];
-        const v5 = tokenLogits[ai+5];
-        const v6 = tokenLogits[ai+6];
-        const v7 = tokenLogits[ai+7];
-        if (v0 > maxLogit) { maxLogit = v0; maxId = ai; }
-        if (v1 > maxLogit) { maxLogit = v1; maxId = ai + 1; }
-        if (v2 > maxLogit) { maxLogit = v2; maxId = ai + 2; }
-        if (v3 > maxLogit) { maxLogit = v3; maxId = ai + 3; }
-        if (v4 > maxLogit) { maxLogit = v4; maxId = ai + 4; }
-        if (v5 > maxLogit) { maxLogit = v5; maxId = ai + 5; }
-        if (v6 > maxLogit) { maxLogit = v6; maxId = ai + 6; }
-        if (v7 > maxLogit) { maxLogit = v7; maxId = ai + 7; }
-      }
       // Restore the boosted logits so confidence/log-prob use the true values.
-      // The softmax below assumes maxLogit == tokenLogits[maxId] (it takes the
-      // chosen token's numerator as 1), so reset maxLogit to the chosen token's
-      // true (unboosted) logit. This yields the model's real confidence in the
-      // boosted choice and stays numerically safe for normal logit ranges.
+      // _frameConfidence assumes maxLogit == tokenLogits[maxId] (chosen token's
+      // numerator is 1), so reset maxLogit to the chosen token's true logit.
       if (boostSaved) {
         phraseBoost.restore(tokenLogits, boostSaved);
         maxLogit = tokenLogits[maxId];
       }
-      let confVal;
-      if (useTemp) {
-        // Softmax denom, unrolled 8x with eight independent accumulators
-        // for ILP, and (logit/T - maxLogit/T) folded into
-        // (logit - maxLogit) * invTemp so the inner loop has one
-        // multiply instead of one divide per element. See upstream
-        // commit 501cef3.
-        const invTemp = 1.0 / temperature;
-        let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0;
-        let i = 0;
-        const len = tokenLogits.length;
-        for (; i <= len - 8; i += 8) {
-          const v0 = (tokenLogits[i]     - maxLogit) * invTemp;
-          const v1 = (tokenLogits[i + 1] - maxLogit) * invTemp;
-          const v2 = (tokenLogits[i + 2] - maxLogit) * invTemp;
-          const v3 = (tokenLogits[i + 3] - maxLogit) * invTemp;
-          const v4 = (tokenLogits[i + 4] - maxLogit) * invTemp;
-          const v5 = (tokenLogits[i + 5] - maxLogit) * invTemp;
-          const v6 = (tokenLogits[i + 6] - maxLogit) * invTemp;
-          const v7 = (tokenLogits[i + 7] - maxLogit) * invTemp;
-          s0 += Math.exp(v0);
-          s1 += Math.exp(v1);
-          s2 += Math.exp(v2);
-          s3 += Math.exp(v3);
-          s4 += Math.exp(v4);
-          s5 += Math.exp(v5);
-          s6 += Math.exp(v6);
-          s7 += Math.exp(v7);
-        }
-        let sumExp = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7;
-        for (; i < len; i++) {
-          sumExp += Math.exp((tokenLogits[i] - maxLogit) * invTemp);
-        }
-        confVal = 1 / sumExp;
-      } else {
-        // At temperature=0, the model is fully greedy, confidence is 1.0.
-        confVal = 1.0;
-      }
-      // Clamp to a tiny positive value: degenerate logits (all -Infinity, NaN
-      // inputs) can produce confVal=0 or non-finite, which would poison the
-      // overall log-prob with -Infinity / NaN.
-      if (!Number.isFinite(confVal) || confVal <= 0) confVal = 1e-10;
-      frameConfs.push(confVal);
-      overallLogProb += Math.log(confVal);
 
-      if (maxId !== this.blankId) {
-        ids.push(maxId);
+      const confVal = this._frameConfidence(tokenLogits, maxLogit, temperature);
+      hyp.frameConfs.push(confVal);
+      hyp.overallLogProb += Math.log(confVal);
+
+      const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, maxId, step, frameStride);
+
+      if (dec.emit) {
+        hyp.ids.push(maxId);
         // Advance the boosting trie by the emitted token (blank leaves it
         // unchanged, so no advance in the else branch below).
         phraseBoost?.advance(maxId);
         if (returnTimestamps) {
-          const TIME_STRIDE = this.subsampling * this.windowStride;
           const durFrames = step > 0 ? step : 1;
-          const start = t * TIME_STRIDE;
-          const end = (t + durFrames) * TIME_STRIDE;
-          tokenTimes.push([start, end]);
+          const start = hyp.t * TIME_STRIDE;
+          const end = (hyp.t + durFrames) * TIME_STRIDE;
+          hyp.tokenTimes.push([start, end]);
         }
-        if (returnConfidences) tokenConfs.push(confVal);
-        emittedTokens += 1;
+        if (returnConfidences) hyp.tokenConfs.push(confVal);
         // Only adopt the new decoder state when a non-blank token is emitted.
         // Free the previous state (unless caller-owned) before reassigning.
-        if (decoderState && decoderState !== newState && decoderState !== externalInitialState) {
-          this._disposeDecoderState(decoderState, newState);
+        if (hyp.state && hyp.state !== newState && hyp.state !== externalInitialState) {
+          this._disposeDecoderState(hyp.state, newState);
         }
-        decoderState = newState;
+        hyp.state = newState;
+        decoderState = hyp.state;
       } else {
-        // Blank token: keep the previous decoderState and discard newState.
+        // Blank token: keep the previous state and discard newState.
         // Dispose newState's tensors that aren't aliased with the kept state.
-        if (newState && newState !== decoderState) {
-          this._disposeDecoderState(newState, decoderState);
+        if (newState && newState !== hyp.state) {
+          this._disposeDecoderState(newState, hyp.state);
         }
       }
 
@@ -577,33 +631,27 @@ export class ParakeetModel {
       inFlightEncTensor.dispose?.();
       inFlightEncTensor = null;
 
-      // Frame advancement matches NeMo / onnx-asr reference exactly:
-      //   - step > 0 (TDT duration prediction): advance by step, reset counter.
-      //   - blank OR max-tokens reached: advance by frameStride, reset counter.
-      //   - else: stay on the same frame so the decoder can emit another token.
-      // The previous local code forced an extra `t += 1` whenever we stayed,
-      // which masked legitimate multi-token-per-frame emission (e.g. "'s" + " no")
-      // and was the root cause behind drifting transcripts on contraction-heavy
-      // audio. It also failed to reset `emittedTokens` on the max-tokens branch,
-      // which is fixed here too.
-      if (step > 0) {
-        t += step;
-        emittedTokens = 0;
-      } else if (maxId === this.blankId || emittedTokens >= this.maxTokensPerStep) {
-        t += frameStride;
-        emittedTokens = 0;
-      }
+      hyp.t = dec.nextT;
+      hyp.emittedAtFrame = dec.nextEmitted;
     }
 
     // Dispose final decoder state unless the caller asked to keep it for a
     // future call. When returning state, the caller becomes its owner.
     // Either way we null `decoderState` so the function-level finally block
     // doesn't double-dispose or free a caller-owned tensor.
-    finalDecoderState = decoderState;
+    finalDecoderState = hyp.state;
     if (!returnDecoderState) {
-      this._disposeDecoderState(decoderState);
+      this._disposeDecoderState(hyp.state);
     }
     decoderState = null;
+
+    // Expose the winning hypothesis' accumulators under the names the
+    // word/token assembly below expects.
+    const ids = hyp.ids;
+    const tokenTimes = hyp.tokenTimes;
+    const tokenConfs = hyp.tokenConfs;
+    const frameConfs = hyp.frameConfs;
+    const overallLogProb = hyp.overallLogProb;
 
     if (perfEnabled) {
       tDecode = performance.now() - decStartTime;
