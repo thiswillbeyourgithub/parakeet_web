@@ -419,6 +419,11 @@ export default function App() {
   // boosting recover phrases greedy would prune. Full-file only: the streaming
   // path forces width 1 in the decoder.
   const [beamWidth, setBeamWidth] = useState(1);
+  // MAES (Modified Adaptive Expansion Search) knobs, used only when beamWidth>1.
+  // Defaults match NeMo's `maes` strategy.
+  const [maesNumSteps, setMaesNumSteps] = useState(2);
+  const [maesExpansionBeta, setMaesExpansionBeta] = useState(2);
+  const [maesExpansionGamma, setMaesExpansionGamma] = useState(2.3);
   // Decoder temperature: higher = more diverse/noisy, lower = more greedy/confident.
   // Kept tunable in code (still wired through to the backend) but hidden from the
   // sidebar and never loaded from persisted settings: this param is extremely
@@ -848,6 +853,9 @@ export default function App() {
           savedVerboseLog,
           savedFrameStride,
           savedBeamWidth,
+          savedMaesNumSteps,
+          savedMaesExpansionBeta,
+          savedMaesExpansionGamma,
           savedCpuThreads,
           savedNoiseSuppression,
           savedEchoCancellation,
@@ -874,6 +882,9 @@ export default function App() {
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
           loadSetting('beamWidth', 1),
+          loadSetting('maesNumSteps', 2),
+          loadSetting('maesExpansionBeta', 2),
+          loadSetting('maesExpansionGamma', 2.3),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),
@@ -905,6 +916,9 @@ export default function App() {
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
         setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? savedBeamWidth : 1);
+        setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 2);
+        setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 2);
+        setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 2.3);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
@@ -1221,6 +1235,9 @@ export default function App() {
   usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
   usePersistedSetting('beamWidth', beamWidth, settingsLoaded);
+  usePersistedSetting('maesNumSteps', maesNumSteps, settingsLoaded);
+  usePersistedSetting('maesExpansionBeta', maesExpansionBeta, settingsLoaded);
+  usePersistedSetting('maesExpansionGamma', maesExpansionGamma, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
@@ -2798,6 +2815,9 @@ export default function App() {
             frameStride,
             temperature,
             beamWidth,
+            maesNumSteps,
+            maesExpansionBeta,
+            maesExpansionGamma,
             enableProfiling: beamWidth > 1,
             phraseBoost: phraseBoostRef.current,
           });
@@ -2901,6 +2921,9 @@ export default function App() {
           returnConfidences: true,
           frameStride,
           beamWidth,
+          maesNumSteps,
+          maesExpansionBeta,
+          maesExpansionGamma,
           enableProfiling: beamWidth > 1,
           phraseBoost: phraseBoostRef.current,
         });
@@ -3811,6 +3834,70 @@ export default function App() {
                 style={{ width: '4.5rem' }}
               />
             </div>
+
+            {/* MAES knobs: only meaningful when beamWidth>1 (the decoder ignores
+                them at width 1, which is plain greedy), so hide them otherwise. */}
+            {beamWidth > 1 && (
+              <>
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesNumSteps')}:
+                    <InfoTooltip text={t('tooltipMaesNumSteps')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="10"
+                    value={maesNumSteps}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setMaesNumSteps(Math.max(1, Math.min(10, Math.round(v))));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesExpansionBeta')}:
+                    <InfoTooltip text={t('tooltipMaesExpansionBeta')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max="10"
+                    value={maesExpansionBeta}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setMaesExpansionBeta(Math.max(0, Math.min(10, Math.round(v))));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesExpansionGamma')}:
+                    <InfoTooltip text={t('tooltipMaesExpansionGamma')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.1"
+                    max="20"
+                    step="0.1"
+                    value={maesExpansionGamma}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v) && v > 0) setMaesExpansionGamma(Math.min(20, v));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+              </>
+            )}
 
             {/* Temperature slider intentionally hidden: the param is extremely
                 finicky and any value above 0.0 breaks the model in unpredictable
