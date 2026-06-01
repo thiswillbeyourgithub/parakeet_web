@@ -122,9 +122,9 @@ const translations = {
     // Phrase boosting
     boostPhrases: 'Boost phrases',
     boostSourceCustom: 'Custom (type your own)',
-    boostPhrasesPlaceholder: 'One phrase per line.\nOptional weight, e.g. acetaminophen:2.5\nNegative weight penalises, e.g. um:-3',
+    boostPhrasesPlaceholder: 'One phrase per line.\nOptional weight, e.g. acetaminophen:2.5\nNegative weight penalises, e.g. um:-3\nOptional top-k gate, e.g. venlafaxine:5:50',
     boostStrength: 'Boost strength',
-    boostWeightWarning: 'Out-of-range weight (must be nonzero, between -{max} and {max}); using 1 for:',
+    boostWeightWarning: 'Invalid weight (nonzero, -{max} to {max}) or top-k (integer ≥ 1); using defaults for:',
     boostUnkWarning: 'Skipped (the model has no tokens for these characters, e.g. Chinese/Japanese/Korean):',
     boostPhrasesLoaded: '{n} phrase(s) active',
 
@@ -146,7 +146,7 @@ const translations = {
     tooltipRemoteMicGain: 'Software gain multiplier applied on the phone before the audio is sent. Use values above 1 if the remote mic sounds too quiet, below 1 if it clips. Only affects the remote mic; the local mic ignores it. Default: 2.0.',
     tooltipLiveTranscription: 'Stream transcription as you speak. The model re-runs every few seconds on a sliding window of recent audio (no global context, so live text may differ from the final result). After you stop, the full audio is always re-transcribed in one pass; that final pass is the canonical transcript, so live is extra compute on top of it. Applies to microphone recordings only — uploaded audio files are always processed in a single pass and do not show a live preview. Default: off.',
     tooltipLiveContextWindow: 'How many seconds of recent audio the encoder sees on each live update. More context = better accuracy but more compute. Auto adapts the size to your machine’s speed (10–60s). Default: Auto.',
-    tooltipBoost: 'Bias transcription toward (or away from) words or phrases you list here (names, jargon, drug names, acronyms). One phrase per line; add an optional per-phrase weight after a colon, e.g. "acetaminophen:2.5" to boost or "um:-3" to penalise. The strength slider scales every phrase (negative inverts boosts into penalties, 0 disables). Runs 100% on your device. Because decoding is greedy, this is best-effort: it nudges each step toward your phrases but cannot always recover a word the decoder already discarded. Default: empty, strength 1.',
+    tooltipBoost: 'Bias transcription toward (or away from) words or phrases you list here (names, jargon, drug names, acronyms). One phrase per line; add an optional per-phrase weight after a colon, e.g. "acetaminophen:2.5" to boost or "um:-3" to penalise. Add a second number to set a per-phrase top-k gate, e.g. "venlafaxine:5:50": the phrase is only nudged when its token is already in the model\'s top 50 candidates, so boosting never forces a word the model did not consider (default top-k 25). The strength slider scales every phrase (negative inverts boosts into penalties, 0 disables). Runs 100% on your device. Because decoding is greedy, this is best-effort: it nudges each step toward your phrases but cannot always recover a word the decoder already discarded. Default: empty, strength 1.',
 
     // About / info section
     about: 'About',
@@ -402,9 +402,9 @@ const translations = {
     // Renforcement de phrases
     boostPhrases: 'Phrases \u00e0 renforcer',
     boostSourceCustom: 'Personnalis\u00e9 (saisie libre)',
-    boostPhrasesPlaceholder: 'Une phrase par ligne.\nPoids optionnel, ex.\u00a0: paracetamol:2.5\nPoids n\u00e9gatif pour p\u00e9naliser, ex.\u00a0: euh:-3',
+    boostPhrasesPlaceholder: 'Une phrase par ligne.\nPoids optionnel, ex.\u00a0: paracetamol:2.5\nPoids n\u00e9gatif pour p\u00e9naliser, ex.\u00a0: euh:-3\nGarde top-k optionnelle, ex.\u00a0: venlafaxine:5:50',
     boostStrength: 'Intensit\u00e9 du renforcement',
-    boostWeightWarning: 'Poids hors limites (doit \u00eatre non nul, entre -{max} et {max})\u00a0; valeur 1 utilis\u00e9e pour\u00a0:',
+    boostWeightWarning: 'Poids hors limites (doit \u00eatre non nul, entre -{max} et {max}) ou top-k (entier ≥ 1)\u00a0; valeur 1 utilis\u00e9e pour\u00a0:',
     boostUnkWarning: 'Ignor\u00e9es (le mod\u00e8le n\u2019a pas de jetons pour ces caract\u00e8res, ex.\u00a0: chinois/japonais/cor\u00e9en)\u00a0:',
     boostPhrasesLoaded: '{n} phrase(s) active(s)',
 
@@ -426,7 +426,7 @@ const translations = {
     tooltipRemoteMicGain: "Multiplicateur de gain logiciel appliqué sur le téléphone avant l'envoi de l'audio. Utilisez une valeur supérieure à 1 si le micro distant sonne trop bas, inférieure à 1 s'il sature. N'affecte que le micro distant ; le micro local l'ignore. Défaut : 2.0.",
     tooltipLiveTranscription: "Transcription en flux pendant que vous parlez. Le mod\u00e8le est relanc\u00e9 toutes les quelques secondes sur une fen\u00eatre glissante (sans contexte global, donc le texte en direct peut diff\u00e9rer du r\u00e9sultat final). Apr\u00e8s l'arr\u00eat, l'audio complet est syst\u00e9matiquement retranscrit en une seule passe ; cette passe finale est la transcription canonique, donc le mode direct est du calcul suppl\u00e9mentaire. S'applique uniquement aux enregistrements micro : les fichiers audio import\u00e9s sont toujours trait\u00e9s en une seule passe et n'affichent pas d'aper\u00e7u en direct. D\u00e9faut : d\u00e9sactiv\u00e9.",
     tooltipLiveContextWindow: "Nombre de secondes d'audio r\u00e9cent vues par l'encodeur \u00e0 chaque mise \u00e0 jour. Plus de contexte = meilleure pr\u00e9cision mais plus de calcul. Auto adapte la taille \u00e0 la vitesse de votre machine (10\u201360s). D\u00e9faut : Auto.",
-    tooltipBoost: "Oriente la transcription vers (ou \u00e0 l'\u00e9cart de) les mots ou phrases list\u00e9s ici (noms, jargon, m\u00e9dicaments, acronymes). Une phrase par ligne ; ajoutez un poids optionnel apr\u00e8s deux-points, ex. : \"paracetamol:2.5\" pour renforcer ou \"euh:-3\" pour p\u00e9naliser. Le curseur d'intensit\u00e9 multiplie chaque phrase (n\u00e9gatif inverse les renforcements en p\u00e9nalit\u00e9s, 0 d\u00e9sactive). Fonctionne 100\u00a0% sur votre appareil. Le d\u00e9codage \u00e9tant glouton, c'est un effet \"au mieux\"\u00a0: il oriente chaque \u00e9tape vers vos phrases mais ne peut pas toujours r\u00e9cup\u00e9rer un mot d\u00e9j\u00e0 \u00e9cart\u00e9 par le d\u00e9codeur. D\u00e9faut\u00a0: vide, intensit\u00e9 1.",
+    tooltipBoost: "Oriente la transcription vers (ou \u00e0 l'\u00e9cart de) les mots ou phrases list\u00e9s ici (noms, jargon, m\u00e9dicaments, acronymes). Une phrase par ligne ; ajoutez un poids optionnel apr\u00e8s deux-points, ex. : \"paracetamol:2.5\" pour renforcer ou \"euh:-3\" pour p\u00e9naliser. Ajoutez un second nombre pour fixer une garde top-k par phrase, ex. : \"venlafaxine:5:50\" : la phrase n'est renforc\u00e9e que si son token figure d\u00e9j\u00e0 parmi les 50 meilleurs candidats du mod\u00e8le, afin de ne jamais forcer un mot que le mod\u00e8le n'a pas envisag\u00e9 (top-k 25 par d\u00e9faut). Le curseur d'intensit\u00e9 multiplie chaque phrase (n\u00e9gatif inverse les renforcements en p\u00e9nalit\u00e9s, 0 d\u00e9sactive). Fonctionne 100\u00a0% sur votre appareil. Le d\u00e9codage \u00e9tant glouton, c'est un effet \"au mieux\"\u00a0: il oriente chaque \u00e9tape vers vos phrases mais ne peut pas toujours r\u00e9cup\u00e9rer un mot d\u00e9j\u00e0 \u00e9cart\u00e9 par le d\u00e9codeur. D\u00e9faut\u00a0: vide, intensit\u00e9 1.",
 
     // About / info section
     about: '\u00c0 propos',

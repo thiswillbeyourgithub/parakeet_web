@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BpeEncoder, buildVocabToId } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, MAX_PHRASE_WEIGHT } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const asset = JSON.parse(readFileSync(resolve(root, 'app/ui/public/tokenizer/bpe-merges.json'), 'utf-8'));
@@ -50,6 +50,15 @@ check('negative weight in range kept', signed[0].phrase === 'um' && signed[0].we
 check('under-range negative weight clamped + warning', signed[1].phrase === 'over' && signed[1].weight === 1 && !!signed[1].warning);
 check('zero weight rejected + warning', signed[2].phrase === 'zero' && signed[2].weight === 1 && !!signed[2].warning);
 
+// optional :weight:topk suffix; defaults; validation
+const tk = parseBoostPhrases('plain\nfoo:3\nbar:3:50\nbaz:3:0\nqux:3:2.5\nratio 3:1');
+check('no suffix => default weight + default topk', tk[0].phrase === 'plain' && tk[0].weight === 1 && tk[0].topk === DEFAULT_BOOST_TOPK);
+check('one number is the weight, topk defaults', tk[1].phrase === 'foo' && tk[1].weight === 3 && tk[1].topk === DEFAULT_BOOST_TOPK);
+check('weight:topk parsed (inner weight, outer topk)', tk[2].phrase === 'bar' && tk[2].weight === 3 && tk[2].topk === 50);
+check('topk < 1 rejected + warning', tk[3].phrase === 'baz' && tk[3].weight === 3 && tk[3].topk === DEFAULT_BOOST_TOPK && !!tk[3].warning);
+check('non-integer topk rejected + warning', tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].topk === DEFAULT_BOOST_TOPK && !!tk[4].warning);
+check('colon-only phrase still unaffected with topk parsing', tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].topk === DEFAULT_BOOST_TOPK);
+
 // --- trie build + advance + bonus map ------------------------------------
 console.log('BoostingTrie:');
 const ids = encoder.encode('acetaminophen'); // [691,291,316,281,669,1722]
@@ -59,17 +68,18 @@ check('non-empty after build', !trie.isEmpty && trie.size === 1);
 trie.reset();
 let boosts = trie.activeChildBoosts();
 check('root boosts only first token', boosts.size === 1 && boosts.has(ids[0]));
-check('depth-1 bonus = weight*(1+0.5*0) = 2', boosts.get(ids[0]) === 2);
+check('depth-1 bonus = weight*(1+0.5*0) = 2', boosts.get(ids[0]).bonus === 2);
+check('default topk carried on the bonus', boosts.get(ids[0]).topk === DEFAULT_BOOST_TOPK);
 
 trie.advance(ids[0]);
 boosts = trie.activeChildBoosts();
 check('after advance: second token boosted', boosts.has(ids[1]));
-check('depth-2 bonus = weight*(1+0.5*1) = 3', boosts.get(ids[1]) === 3);
-check('root still active: first token also boosted', boosts.get(ids[0]) === 2);
+check('depth-2 bonus = weight*(1+0.5*1) = 3', boosts.get(ids[1]).bonus === 3);
+check('root still active: first token also boosted', boosts.get(ids[0]).bonus === 2);
 
 trie.advance(999999); // a token not in any phrase
 boosts = trie.activeChildBoosts();
-check('mismatch drops to root only', boosts.size === 1 && boosts.get(ids[0]) === 2);
+check('mismatch drops to root only', boosts.size === 1 && boosts.get(ids[0]).bonus === 2);
 
 // --- applyBoost / restore flips argmax, then restores --------------------
 console.log('applyBoost / restore:');
@@ -96,7 +106,7 @@ console.log('penalise (negative weight):');
 const penTrie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: -2 }], encoder, { strength: 1, depthScaling: 0.5 });
 penTrie.reset();
 const penBoosts = penTrie.activeChildBoosts();
-check('negative bonus is stored, not lost against 0', penBoosts.get(ids[0]) === -2);
+check('negative bonus is stored, not lost against 0', penBoosts.get(ids[0]).bonus === -2);
 const penLogits = new Float32Array(V);
 penLogits[ids[0]] = 1.0;      // the phrase token would otherwise win
 penLogits[5] = 0.5;           // runner-up
@@ -105,6 +115,21 @@ const penSaved = penTrie.applyBoost(penLogits); // logits[ids[0]] += 1 * -2 => -
 check('penalty pushed the phrase token below the runner-up', argmaxOf(penLogits) === 5);
 penTrie.restore(penLogits, penSaved);
 check('restore brings the phrase token back', penLogits[ids[0]] === 1.0);
+
+// --- top-k gating: only boost tokens already in the model's top-k -----------
+console.log('top-k gating:');
+const gateLogits = new Float32Array(V);
+gateLogits[100] = 5; gateLogits[101] = 4; gateLogits[ids[0]] = 1; // ids[0] ranks 3rd
+const gate2 = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, topk: 2 }], encoder, { strength: 1 });
+gate2.reset();
+check('candidate outside top-k is gated out (applyBoost no-op)', gate2.applyBoost(gateLogits) === null);
+check('gated-out logit is untouched', gateLogits[ids[0]] === 1);
+const gate3 = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, topk: 3 }], encoder, { strength: 1 });
+gate3.reset();
+const gateSaved = gate3.applyBoost(gateLogits); // ids[0] now within top-3 => +5
+check('candidate inside top-k is boosted', Array.isArray(gateSaved) && gateLogits[ids[0]] === 6);
+gate3.restore(gateLogits, gateSaved);
+check('restore after gated boost', gateLogits[ids[0]] === 1);
 
 // --- OOV (<unk>) phrases are skipped, not inserted -----------------------
 console.log('skip <unk> phrases:');

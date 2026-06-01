@@ -17,6 +17,13 @@
 // linear and bounded so long phrases cannot blow up the logits. A negative
 // per-phrase weight flips the sign so the phrase is penalised instead of
 // boosted; a negative global strength inverts every phrase at once.
+//
+// Top-k gating (applyBoost): a candidate token only receives its bonus when its
+// raw logit is already among the model's top-k tokens (per-phrase, default
+// DEFAULT_BOOST_TOPK). This keeps boosting a ranking nudge rather than a hammer
+// that forces a token the model itself ranked far down (which would hallucinate
+// the phrase). The gate is on the model's own raw logits, so the strength
+// multiplier and weight sign do not affect which tokens are eligible.
 
 /** Internal: default linear depth-scaling factor (PLAN.md section 3). */
 const DEFAULT_DEPTH_SCALING = 0.5;
@@ -30,14 +37,44 @@ const DEFAULT_DEPTH_SCALING = 0.5;
 export const MAX_PHRASE_WEIGHT = 10;
 
 /**
- * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase, with an
- * optional trailing `:WEIGHT` (e.g. `acetaminophen:2.5` to boost, `um:-3` to
- * penalise). A weight is only recognised when the text after the LAST colon
- * parses as a number, so phrases containing colons (e.g. `ratio 3:1`) keep
- * working unless they end in `:num`. Note a negative weight is written with the
- * minus sign after the colon (`phrase:-3`).
+ * Default top-k gate for a phrase (see {@link BoostingTrie#applyBoost}). A
+ * phrase token only receives its boost when its raw logit is already among the
+ * model's top-`topk` tokens, so boosting nudges the ranking without forcing a
+ * token the model ranked far down. Overridable per-phrase via the `:weight:topk`
+ * suffix.
+ */
+export const DEFAULT_BOOST_TOPK = 25;
+
+/**
+ * If `text` ends in `:<number>` with a non-empty head before that colon, return
+ * `{ head, value }` (head trimmed); otherwise null. Used to peel the optional
+ * trailing `:weight` and `:weight:topk` fields off a phrase line.
+ * @param {string} text
+ * @returns {{head: string, value: number}|null}
+ */
+function peelTrailingNumber(text) {
+  const colon = text.lastIndexOf(':');
+  if (colon <= 0 || colon >= text.length - 1) return null;
+  const tail = text.slice(colon + 1).trim();
+  if (tail === '') return null;
+  const value = Number(tail);
+  if (!Number.isFinite(value)) return null;
+  const head = text.slice(0, colon).trim();
+  if (!head) return null;
+  return { head, value };
+}
+
+/**
+ * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase with two
+ * optional trailing numeric fields: `phrase:WEIGHT` or `phrase:WEIGHT:TOPK`
+ * (e.g. `acetaminophen:2.5`, `um:-3`, `venlafaxine:5:50`). Fields are peeled
+ * right-to-left, so a single trailing number is the weight and the inner of two
+ * is the weight while the outer (last) is the top-k gate. Because only a numeric
+ * tail after the LAST colon is treated as a field, phrases containing colons
+ * (e.g. `ratio 3:1`) keep working unless they end in `:num`. A negative weight
+ * is written with the minus sign after the colon (`phrase:-3`).
  * @param {string} raw
- * @returns {Array<{phrase: string, weight: number, warning?: string}>}
+ * @returns {Array<{phrase: string, weight: number, topk: number, warning?: string}>}
  */
 export function parseBoostPhrases(raw) {
   if (!raw) return [];
@@ -45,34 +82,70 @@ export function parseBoostPhrases(raw) {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+
     let phrase = trimmed;
     let weight = 1;
-    let warning;
-    const colon = trimmed.lastIndexOf(':');
-    if (colon > 0 && colon < trimmed.length - 1) {
-      const tail = trimmed.slice(colon + 1).trim();
-      const parsed = Number(tail);
-      if (tail !== '' && Number.isFinite(parsed)) {
-        const candidate = trimmed.slice(0, colon).trim();
-        if (candidate) {
-          phrase = candidate;
-          if (parsed === 0 || parsed < -MAX_PHRASE_WEIGHT || parsed > MAX_PHRASE_WEIGHT) {
-            warning = `weight ${parsed} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`;
-            weight = 1;
-          } else {
-            weight = parsed;
-          }
-        }
+    let topk = DEFAULT_BOOST_TOPK;
+    const warnings = [];
+
+    const last = peelTrailingNumber(phrase);
+    if (last) {
+      const prev = peelTrailingNumber(last.head);
+      if (prev) {
+        // phrase:WEIGHT:TOPK  (prev = weight, last = topk)
+        phrase = prev.head;
+        weight = prev.value;
+        topk = last.value;
+      } else {
+        // phrase:WEIGHT
+        phrase = last.head;
+        weight = last.value;
       }
     }
-    out.push(warning ? { phrase, weight, warning } : { phrase, weight });
+
+    if (weight === 0 || weight < -MAX_PHRASE_WEIGHT || weight > MAX_PHRASE_WEIGHT) {
+      warnings.push(`weight ${weight} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`);
+      weight = 1;
+    }
+    if (!Number.isInteger(topk) || topk < 1) {
+      warnings.push(`top-k ${topk} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK}`);
+      topk = DEFAULT_BOOST_TOPK;
+    }
+
+    const entry = { phrase, weight, topk };
+    if (warnings.length) entry.warning = warnings.join('; ');
+    out.push(entry);
   }
   return out;
 }
 
-/** @returns {{children: Map<number, object>, depth: number, bonus: number}} */
+/**
+ * Value of the `k`-th largest element of `logits` (1-indexed): the inclusion
+ * threshold for "top-k", so an element is in the top-k iff its value is >= this.
+ * Returns -Infinity when `k >= logits.length` (everything qualifies, i.e. the
+ * gate is effectively off). O(V*k) worst case with an early-out, cheap for the
+ * small k used by boost gating.
+ * @param {Float32Array|number[]} logits
+ * @param {number} k
+ * @returns {number}
+ */
+function kthLargestValue(logits, k) {
+  const n = logits.length;
+  if (k >= n) return -Infinity;
+  const top = new Float64Array(k).fill(-Infinity); // ascending; top[0] = threshold
+  for (let i = 0; i < n; i++) {
+    const v = logits[i];
+    if (v <= top[0]) continue;
+    let j = 1;
+    while (j < k && top[j] < v) { top[j - 1] = top[j]; j++; }
+    top[j - 1] = v;
+  }
+  return top[0];
+}
+
+/** @returns {{children: Map<number, object>, depth: number, bonus: number, topk: number}} */
 function makeNode(depth) {
-  return { children: new Map(), depth, bonus: 0 };
+  return { children: new Map(), depth, bonus: 0, topk: DEFAULT_BOOST_TOPK };
 }
 
 /**
@@ -107,7 +180,7 @@ export class BoostingTrie {
    * token, e.g. CJK) is dropped rather than inserted, since the decoder never
    * emits `<unk>` so the phrase could never match; such phrases are collected on
    * the returned trie's `skipped` array for the UI to warn about.
-   * @param {Array<{phrase: string, weight: number}>} entries
+   * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
    * @param {{encode: (text: string) => number[], unkId?: number}} encoder A BpeEncoder.
    * @param {Object} [opts] Forwarded to the constructor.
    * @returns {BoostingTrie}
@@ -115,14 +188,14 @@ export class BoostingTrie {
   static buildFromPhrases(entries, encoder, opts = {}) {
     const trie = new BoostingTrie(opts);
     const unkId = encoder.unkId;
-    for (const { phrase, weight } of entries) {
+    for (const { phrase, weight, topk } of entries) {
       const ids = encoder.encode(phrase);
       if (!ids.length) continue;
       if (unkId !== undefined && ids.includes(unkId)) {
         trie.skipped.push(phrase);
         continue;
       }
-      trie.insert(ids, weight ?? 1);
+      trie.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
     }
     return trie;
   }
@@ -134,8 +207,9 @@ export class BoostingTrie {
    * bonus regardless of sign.
    * @param {number[]} tokenIds
    * @param {number} [weight=1]
+   * @param {number} [topk=DEFAULT_BOOST_TOPK] Top-k gate carried with the bonus.
    */
-  insert(tokenIds, weight = 1) {
+  insert(tokenIds, weight = 1, topk = DEFAULT_BOOST_TOPK) {
     let node = this.root;
     for (const id of tokenIds) {
       let child = node.children.get(id);
@@ -144,7 +218,12 @@ export class BoostingTrie {
         node.children.set(id, child);
       }
       const bonus = weight * (1 + this.depthScaling * (child.depth - 1));
-      if (Math.abs(bonus) > Math.abs(child.bonus)) child.bonus = bonus;
+      // The winning (strongest-magnitude) phrase also owns the node's top-k gate,
+      // so the bonus and the threshold that gates it come from the same phrase.
+      if (Math.abs(bonus) > Math.abs(child.bonus)) {
+        child.bonus = bonus;
+        child.topk = topk;
+      }
       node = child;
     }
     this.size += 1;
@@ -161,18 +240,21 @@ export class BoostingTrie {
   }
 
   /**
-   * Token-id -> bonus map for the current active set (per-phrase weight x depth
-   * scaling, before the global strength multiplier). If two active nodes propose
-   * the same token, the larger-magnitude bonus wins (so a penalty is not masked
-   * by a weaker boost on a shared token, or vice versa).
-   * @returns {Map<number, number>}
+   * Token-id -> `{bonus, topk}` map for the current active set (per-phrase weight
+   * x depth scaling, before the global strength multiplier; plus the top-k gate
+   * carried with that bonus). If two active nodes propose the same token, the
+   * larger-magnitude bonus wins (so a penalty is not masked by a weaker boost on
+   * a shared token, or vice versa) and brings its own top-k along.
+   * @returns {Map<number, {bonus: number, topk: number}>}
    */
   activeChildBoosts() {
     const boosts = new Map();
     for (const node of this.active) {
       for (const [id, child] of node.children) {
         const prev = boosts.get(id);
-        if (prev === undefined || Math.abs(child.bonus) > Math.abs(prev)) boosts.set(id, child.bonus);
+        if (prev === undefined || Math.abs(child.bonus) > Math.abs(prev.bonus)) {
+          boosts.set(id, { bonus: child.bonus, topk: child.topk });
+        }
       }
     }
     return boosts;
@@ -182,6 +264,13 @@ export class BoostingTrie {
    * Add the boost rewards into a logit array in place, returning the saved
    * originals so the caller can restore them (keeps confidence/softmax computed
    * on the model's true logits). Returns null when there is nothing to boost.
+   *
+   * Top-k gating: a candidate token only receives its bonus when its raw logit
+   * is already among the model's top-`topk` tokens (the per-phrase gate, default
+   * {@link DEFAULT_BOOST_TOPK}). This keeps boosting a ranking nudge rather than
+   * a hammer that can force (or, with a penalty, suppress) a token the model
+   * itself ranked far away. The threshold is the topk-th largest raw logit,
+   * computed once per distinct topk value across the active candidates.
    * @param {Float32Array|number[]} logits
    * @returns {number[]|null} Flat [index, originalValue, ...] pairs, or null.
    */
@@ -189,9 +278,14 @@ export class BoostingTrie {
     if (this.strength === 0 || this.isEmpty) return null;
     const boosts = this.activeChildBoosts();
     if (boosts.size === 0) return null;
+    const thresholds = new Map();
+    for (const { topk } of boosts.values()) {
+      if (!thresholds.has(topk)) thresholds.set(topk, kthLargestValue(logits, topk));
+    }
     const saved = [];
-    for (const [id, bonus] of boosts) {
+    for (const [id, { bonus, topk }] of boosts) {
       if (id < 0 || id >= logits.length) continue;
+      if (logits[id] < thresholds.get(topk)) continue; // outside top-k: gated out
       saved.push(id, logits[id]);
       logits[id] += this.strength * bonus;
     }
