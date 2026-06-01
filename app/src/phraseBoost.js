@@ -152,32 +152,46 @@ export function encodePhrases(entries, encoder) {
 }
 
 /**
- * Value of the `k`-th largest element of `logits` (1-indexed): the inclusion
- * threshold for "top-k", so an element is in the top-k iff its value is >= this.
- * Returns -Infinity when `k >= logits.length` (everything qualifies, i.e. the
- * gate is effectively off). O(V*k) worst case with an early-out, cheap for the
- * small k used by boost gating.
+ * Indices of the `k` largest elements of `logits`, returned in descending value
+ * order so the array index doubles as the 0-based top-k rank (rank 0 = largest).
+ * Used by {@link BoostingTrie#applyBoost} to gate boosts: a token is "in top-k"
+ * iff its rank `< k`. O(V*k) to find the k largest (early-out on the running
+ * minimum) plus an O(k log k) sort, cheap for the small k used by boost gating.
+ * When `k >= logits.length` every index is returned (the gate is effectively
+ * off). Ties are broken by scan order, matching no particular phrase.
  * @param {Float32Array|number[]} logits
  * @param {number} k
- * @returns {number}
+ * @returns {number[]}
  */
-function kthLargestValue(logits, k) {
+function rankedTopKIds(logits, k) {
   const n = logits.length;
-  if (k >= n) return -Infinity;
-  const top = new Float64Array(k).fill(-Infinity); // ascending; top[0] = threshold
+  const kk = Math.min(k, n);
+  const ids = [];
+  const vals = [];
   for (let i = 0; i < n; i++) {
     const v = logits[i];
-    if (v <= top[0]) continue;
-    let j = 1;
-    while (j < k && top[j] < v) { top[j - 1] = top[j]; j++; }
-    top[j - 1] = v;
+    if (ids.length < kk) {
+      ids.push(i); vals.push(v);
+    } else {
+      let mi = 0; // index (within the kept set) of the current smallest
+      for (let j = 1; j < kk; j++) if (vals[j] < vals[mi]) mi = j;
+      if (v > vals[mi]) { vals[mi] = v; ids[mi] = i; }
+    }
   }
-  return top[0];
+  return ids
+    .map((id, idx) => idx)
+    .sort((a, b) => vals[b] - vals[a])
+    .map(idx => ids[idx]);
 }
 
-/** @returns {{children: Map<number, object>, depth: number, bonus: number, topk: number}} */
+/**
+ * Trie node. `children` is created lazily (null until the first child is
+ * inserted) so the many leaf nodes of a large list do not each carry an empty
+ * Map; readers must treat a null `children` as "no children".
+ * @returns {{children: Map<number, object>|null, depth: number, bonus: number, topk: number}}
+ */
 function makeNode(depth) {
-  return { children: new Map(), depth, bonus: 0, topk: DEFAULT_BOOST_TOPK };
+  return { children: null, depth, bonus: 0, topk: DEFAULT_BOOST_TOPK };
 }
 
 /**
@@ -194,6 +208,14 @@ export class BoostingTrie {
     this.strength = opts.strength ?? 1;
     this.depthScaling = opts.depthScaling ?? DEFAULT_DEPTH_SCALING;
     this.size = 0; // number of distinct phrases inserted (for UI/diagnostics)
+    /**
+     * Largest per-phrase top-k gate inserted so far. {@link applyBoost} only
+     * ever boosts a token inside the model's top-`maxTopk`, so this is the depth
+     * to which the per-step top-k scan must reach; each candidate is then gated
+     * by its own (possibly smaller) `topk`. Tracking the max globally avoids
+     * re-scanning the (potentially vocab-sized) active children every step.
+     */
+    this.maxTopk = 0;
     /**
      * Phrases that {@link BoostingTrie.buildFromPhrases} dropped because they
      * encode to an out-of-vocabulary `<unk>` token (e.g. CJK / scripts absent
@@ -253,12 +275,13 @@ export class BoostingTrie {
    * @param {number} [topk=DEFAULT_BOOST_TOPK] Top-k gate carried with the bonus.
    */
   insert(tokenIds, weight = 1, topk = DEFAULT_BOOST_TOPK) {
+    if (topk > this.maxTopk) this.maxTopk = topk;
     let node = this.root;
     for (const id of tokenIds) {
-      let child = node.children.get(id);
+      let child = node.children?.get(id);
       if (!child) {
         child = makeNode(node.depth + 1);
-        node.children.set(id, child);
+        (node.children ??= new Map()).set(id, child);
       }
       const bonus = weight * (1 + this.depthScaling * (child.depth - 1));
       // The winning (strongest-magnitude) phrase also owns the node's top-k gate,
@@ -279,28 +302,29 @@ export class BoostingTrie {
 
   /** @returns {boolean} True if any phrase is loaded. */
   get isEmpty() {
-    return this.root.children.size === 0;
+    return !this.root.children || this.root.children.size === 0;
   }
 
   /**
-   * Token-id -> `{bonus, topk}` map for the current active set (per-phrase weight
-   * x depth scaling, before the global strength multiplier; plus the top-k gate
-   * carried with that bonus). If two active nodes propose the same token, the
-   * larger-magnitude bonus wins (so a penalty is not masked by a weaker boost on
-   * a shared token, or vice versa) and brings its own top-k along.
-   * @returns {Map<number, {bonus: number, topk: number}>}
+   * Strongest-magnitude boost proposed for token `id` by the current active set,
+   * or null if no active node has `id` as a child. If two active nodes propose
+   * the same token, the larger-magnitude bonus wins (so a penalty is not masked
+   * by a weaker boost on a shared token, or vice versa) and brings its own
+   * top-k along. O(|active|) per lookup; the active set is small (root plus the
+   * few in-progress phrase nodes), so this stays cheap regardless of list size.
+   * @param {number} id
+   * @returns {{bonus: number, topk: number}|null}
    */
-  activeChildBoosts() {
-    const boosts = new Map();
+  childBoostFor(id) {
+    let best = null;
     for (const node of this.active) {
-      for (const [id, child] of node.children) {
-        const prev = boosts.get(id);
-        if (prev === undefined || Math.abs(child.bonus) > Math.abs(prev.bonus)) {
-          boosts.set(id, { bonus: child.bonus, topk: child.topk });
-        }
+      const child = node.children?.get(id);
+      if (!child) continue;
+      if (best === null || Math.abs(child.bonus) > Math.abs(best.bonus)) {
+        best = child;
       }
     }
-    return boosts;
+    return best === null ? null : { bonus: best.bonus, topk: best.topk };
   }
 
   /**
@@ -312,25 +336,30 @@ export class BoostingTrie {
    * is already among the model's top-`topk` tokens (the per-phrase gate, default
    * {@link DEFAULT_BOOST_TOPK}). This keeps boosting a ranking nudge rather than
    * a hammer that can force (or, with a penalty, suppress) a token the model
-   * itself ranked far away. The threshold is the topk-th largest raw logit,
-   * computed once per distinct topk value across the active candidates.
+   * itself ranked far away.
+   *
+   * Rather than enumerate every boostable child (up to vocab-sized for a large
+   * list) and discard those outside top-k, we scan the model's top-`maxTopk`
+   * tokens once and look each up in the (small) active set: only a top-k token
+   * can ever clear the gate, so this is equivalent but costs O(maxTopk *
+   * |active|) instead of O(active children), independent of the phrase count.
+   * Each candidate is then gated by its own (possibly smaller) `topk` via its
+   * rank in the ranked top-k list.
    * @param {Float32Array|number[]} logits
    * @returns {number[]|null} Flat [index, originalValue, ...] pairs, or null.
    */
   applyBoost(logits) {
     if (this.strength === 0 || this.isEmpty) return null;
-    const boosts = this.activeChildBoosts();
-    if (boosts.size === 0) return null;
-    const thresholds = new Map();
-    for (const { topk } of boosts.values()) {
-      if (!thresholds.has(topk)) thresholds.set(topk, kthLargestValue(logits, topk));
-    }
+    const ranked = rankedTopKIds(logits, this.maxTopk); // descending; index = rank
     const saved = [];
-    for (const [id, { bonus, topk }] of boosts) {
+    for (let rank = 0; rank < ranked.length; rank++) {
+      const id = ranked[rank];
       if (id < 0 || id >= logits.length) continue;
-      if (logits[id] < thresholds.get(topk)) continue; // outside top-k: gated out
+      const boost = this.childBoostFor(id);
+      if (boost === null) continue;
+      if (rank >= boost.topk) continue; // outside this candidate's own top-k gate
       saved.push(id, logits[id]);
-      logits[id] += this.strength * bonus;
+      logits[id] += this.strength * boost.bonus;
     }
     return saved.length ? saved : null;
   }
@@ -355,7 +384,7 @@ export class BoostingTrie {
     const next = [this.root];
     const seen = new Set([this.root]);
     for (const node of this.active) {
-      const child = node.children.get(tokenId);
+      const child = node.children?.get(tokenId);
       if (child && !seen.has(child)) {
         seen.add(child);
         next.push(child);
