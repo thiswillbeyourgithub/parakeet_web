@@ -28,13 +28,13 @@ import { BpeEncoder, buildVocabToId, vocabSignature } from './bpeEncoder.js';
 import { parseBoostPhrases, expandCasingVariants, encodePhrases } from './phraseBoost.js';
 
 /**
- * Casing-default baked into the compiled artifact. The browser turns casing
- * expansion ON by default, so compiling at the same default lets it reuse these
+ * Casing-default baked into the compiled artifact. The browser leaves casing
+ * expansion OFF by default, so compiling at the same default lets it reuse these
  * ids without a re-encode; it falls back to encoding the .txt itself when the
- * user has flipped the global toggle the other way (caseDefault mismatch).
- * Per-phrase `:s`/`:i` flags are honoured here regardless, exactly as in the UI.
+ * user has flipped the global toggle ON (caseDefault mismatch). Per-phrase
+ * `:s`/`:i` flags are honoured here regardless, exactly as in the UI.
  */
-export const CASE_DEFAULT = true;
+export const CASE_DEFAULT = false;
 
 /**
  * On-disk artifact format version. Bump when the shape of `encoded` (or any
