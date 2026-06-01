@@ -1,14 +1,18 @@
-// Phrase boosting (context biasing) for greedy TDT decoding.
+// Phrase boosting (context biasing) for TDT decoding.
 //
 // Ports the *concept* of NeMo's GPU-Accelerated Phrase-Boosting (PR #14277) to
-// this app's browser greedy decoder: a token-level boosting trie that injects an
+// this app's browser decoder: a token-level boosting trie that injects an
 // additive, logit-space reward (shallow fusion) for tokens that continue or
-// start a user-supplied phrase, biasing the per-step argmax toward (positive
-// weight) or away from (negative weight) those phrases. Because decoding is
-// greedy (no beam search), boosting is best-effort: it nudges each step, but
-// cannot recover a phrase greedy already pruned. The scoring is exposed as a
-// pure "boost these candidate logits" call so a future beam decoder can reuse
-// the same trie (see PLAN.md Q1).
+// start a user-supplied phrase, biasing decoding toward (positive weight) or
+// away from (negative weight) those phrases. The same trie drives both decode
+// paths in parakeet.js: the greedy (beam width 1) path, where the bonus nudges
+// the per-step argmax, and the MAES beam path, where each hypothesis carries its
+// own active-node set (parakeet.js borrows it via `phraseBoost.active = hyp.active`)
+// and the bonus also feeds the beam's pruning score so a phrase hypothesis can
+// survive the beam cut. Under greedy, boosting is best-effort and cannot recover
+// a phrase already pruned; MAES weakens that limit by keeping rival hypotheses
+// alive. Note beam search is full-file only: streaming / decoder-state continuity
+// forces greedy (parakeet.js), so the live transcriber always takes the greedy path.
 //
 // Reward model (PLAN.md section 3): each trie node at depth d carries
 //   nodeBonus = phraseWeight * (1 + DEPTH_SCALING * (d - 1))
