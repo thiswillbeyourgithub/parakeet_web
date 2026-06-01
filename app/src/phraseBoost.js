@@ -120,6 +120,34 @@ export function parseBoostPhrases(raw) {
 }
 
 /**
+ * Encode parsed phrase entries to token-id sequences, dropping phrases whose
+ * encoding contains the encoder's `<unk>` id (a character with no vocab token,
+ * e.g. CJK) since the decoder never emits `<unk>` so such a phrase could never
+ * match. Shared by {@link BoostingTrie.buildFromPhrases} (main thread) and the
+ * phrase-boost worker, so the encode + unk-filter rule lives in exactly one
+ * place. This is the CPU-heavy step for large lists (the BPE merge loop runs per
+ * phrase), which is why the worker calls it off the main thread.
+ * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
+ * @param {{encode: (text: string) => number[], unkId?: number}} encoder A BpeEncoder.
+ * @returns {{encoded: Array<{ids: number[], weight: number, topk?: number}>, skipped: string[]}}
+ */
+export function encodePhrases(entries, encoder) {
+  const unkId = encoder.unkId;
+  const encoded = [];
+  const skipped = [];
+  for (const { phrase, weight, topk } of entries) {
+    const ids = encoder.encode(phrase);
+    if (!ids.length) continue;
+    if (unkId !== undefined && ids.includes(unkId)) {
+      skipped.push(phrase);
+      continue;
+    }
+    encoded.push({ ids, weight, topk });
+  }
+  return { encoded, skipped };
+}
+
+/**
  * Value of the `k`-th largest element of `logits` (1-indexed): the inclusion
  * threshold for "top-k", so an element is in the top-k iff its value is >= this.
  * Returns -Infinity when `k >= logits.length` (everything qualifies, i.e. the
@@ -186,15 +214,26 @@ export class BoostingTrie {
    * @returns {BoostingTrie}
    */
   static buildFromPhrases(entries, encoder, opts = {}) {
+    const { encoded, skipped } = encodePhrases(entries, encoder);
+    const trie = BoostingTrie.buildFromEncoded(encoded, opts);
+    trie.skipped = skipped;
+    return trie;
+  }
+
+  /**
+   * Build a trie from already-encoded entries (token-id sequences). This is the
+   * cheap half of {@link buildFromPhrases}: it only inserts, with no BPE work,
+   * so the expensive encode can run elsewhere (e.g. a worker) via
+   * {@link encodePhrases} and the result handed here. The caller owns `skipped`
+   * (set it on the returned trie if needed).
+   * @param {Array<{ids: number[], weight?: number, topk?: number}>} encoded
+   * @param {Object} [opts] Forwarded to the constructor.
+   * @returns {BoostingTrie}
+   */
+  static buildFromEncoded(encoded, opts = {}) {
     const trie = new BoostingTrie(opts);
-    const unkId = encoder.unkId;
-    for (const { phrase, weight, topk } of entries) {
-      const ids = encoder.encode(phrase);
-      if (!ids.length) continue;
-      if (unkId !== undefined && ids.includes(unkId)) {
-        trie.skipped.push(phrase);
-        continue;
-      }
+    for (const { ids, weight, topk } of encoded) {
+      if (!ids || !ids.length) continue;
       trie.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
     }
     return trie;

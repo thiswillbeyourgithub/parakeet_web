@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BpeEncoder, buildVocabToId } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, encodePhrases, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const asset = JSON.parse(readFileSync(resolve(root, 'app/ui/public/tokenizer/bpe-merges.json'), 'utf-8'));
@@ -141,6 +141,25 @@ const mixedTrie = BoostingTrie.buildFromPhrases(
 check('clean Latin phrases inserted (accents + œ ligature)', mixedTrie.size === 2);
 check('CJK phrase recorded as skipped', eqArr(mixedTrie.skipped, ['東京']));
 check('skipped phrase is not boostable', !mixedTrie.root.children.has(encoder.unkId));
+
+// --- encodePhrases / buildFromEncoded (worker split) ---------------------
+// The worker calls encodePhrases off the main thread, then the main thread
+// builds the trie from the pre-encoded ids via buildFromEncoded. The result
+// must match the all-in-one buildFromPhrases path.
+console.log('encodePhrases + buildFromEncoded:');
+const splitEntries = [
+  { phrase: 'acetaminophen', weight: 1 },
+  { phrase: '東京', weight: 1 },
+  { phrase: 'sœur', weight: 1 },
+];
+const { encoded, skipped } = encodePhrases(splitEntries, encoder);
+check('encodePhrases drops the <unk> phrase', skipped.length === 1 && skipped[0] === '東京');
+check('encodePhrases keeps the clean phrases', encoded.length === 2);
+check('encoded ids match a direct encode', eqArr(encoded[0].ids, encoder.encode('acetaminophen')));
+const fromEncoded = BoostingTrie.buildFromEncoded(encoded, { strength: 1 });
+fromEncoded.skipped = skipped;
+check('buildFromEncoded yields the same size as buildFromPhrases', fromEncoded.size === mixedTrie.size);
+check('buildFromEncoded reaches the same first token', fromEncoded.root.children.has(ids[0]));
 
 console.log(`\n${failures === 0 ? 'PASS' : failures + ' FAILED'}`);
 process.exit(failures ? 1 : 0);
