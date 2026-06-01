@@ -121,14 +121,70 @@ export function parseBoostFields(text) {
 }
 
 /**
+ * Marker that turns a line into a list-level directive instead of a phrase. A
+ * line whose trimmed text starts with this prefix is consumed by
+ * {@link parseBoostDirectives} and skipped by {@link parseBoostPhrases}, so it
+ * never becomes a boost phrase. The prefix is reserved: an unrecognised
+ * directive key is silently ignored, which also lets `#! free text` double as a
+ * list-level comment.
+ */
+const DIRECTIVE_PREFIX = '#!';
+
+/**
+ * Whether an already-trimmed line is a `#!` directive rather than a phrase.
+ * Single source of truth so {@link parseBoostPhrases} (skip) and
+ * {@link parseBoostDirectives} (collect) agree on what counts as a directive.
+ * @param {string} trimmed A line already passed through `.trim()`.
+ * @returns {boolean}
+ */
+function isDirectiveLine(trimmed) {
+  return trimmed.startsWith(DIRECTIVE_PREFIX);
+}
+
+/**
+ * Parse list-level `#!key value` directive lines out of a boost blob. Directives
+ * configure the list as a whole rather than a single phrase, and live in the
+ * same .txt so a curated list ships self-contained. Recognised keys:
+ *   - `strength N` : the list's default global strength. The UI forces its
+ *     strength control to this value when the list is loaded (see App.jsx); a
+ *     non-finite or absent value leaves the control untouched.
+ * The key is matched case-insensitively and separated from its value by
+ * whitespace, `=` or `:` (so `#!strength 3`, `#!strength=3` and `#!strength:3`
+ * all work). Unknown keys are ignored, so `#! a note` is a harmless no-op. When
+ * `strength` appears more than once the last finite value wins.
+ * @param {string} raw
+ * @returns {{strength?: number}}
+ */
+export function parseBoostDirectives(raw) {
+  const out = {};
+  if (!raw) return out;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!isDirectiveLine(trimmed)) continue;
+    const body = trimmed.slice(DIRECTIVE_PREFIX.length).trim();
+    const m = body.match(/^(\S+?)[\s=:]+(.*)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const value = m[2].trim();
+    if (key === 'strength') {
+      const n = Number(value);
+      if (Number.isFinite(n)) out.strength = n;
+    }
+  }
+  return out;
+}
+
+/**
  * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase with up
  * to three optional trailing fields, `phrase:WEIGHT:TOPK:FLAG`, all peeled
  * right-to-left by {@link parseBoostFields} (e.g. `acetaminophen:2.5`, `um:-3`,
  * `venlafaxine:5:50`, `venlafaxine:5:50:i`, `epi::40:s`). An empty numeric field
  * keeps the default (`word::25`); the trailing `:s`/`:i` flag overrides
  * case sensitivity per phrase. A negative weight is written with the minus sign
- * after the colon (`phrase:-3`). This validates/clamps the raw fields and
- * records a per-entry `warning` for any it had to coerce.
+ * after the colon (`phrase:-3`). Lines starting with `#!` are list-level
+ * directives (see {@link parseBoostDirectives}) and are skipped here, never
+ * becoming phrases. This validates/clamps the raw fields and records a per-entry
+ * `warning` for any it had to coerce.
  * @param {string} raw
  * @returns {Array<{phrase: string, weight: number, topk: number, caseInsensitive?: boolean, warning?: string}>}
  */
@@ -138,6 +194,7 @@ export function parseBoostPhrases(raw) {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    if (isDirectiveLine(trimmed)) continue; // list-level #! directive, not a phrase
 
     let { phrase, weight, topk, caseInsensitive } = parseBoostFields(trimmed);
     const warnings = [];

@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BpeEncoder, buildVocabToId } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, encodePhrases, casingVariants, expandCasingVariants, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, casingVariants, expandCasingVariants, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const asset = JSON.parse(readFileSync(resolve(root, 'app/ui/public/tokenizer/bpe-merges.json'), 'utf-8'));
@@ -67,6 +67,22 @@ check(':s flag alone (defaults otherwise)', fl[2].phrase === 'c' && fl[2].weight
 check(':i flag right after weight (no topk)', fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].caseInsensitive === true);
 check('no flag leaves caseInsensitive undefined', fl[4].caseInsensitive === undefined);
 check('non-numeric middle field is not a weight', fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].caseInsensitive === true);
+
+// --- list-level #! directives --------------------------------------------
+console.log('parseBoostDirectives:');
+const dirParsed = parseBoostPhrases('#!strength 3\nvenlafaxine:5\n#! a comment\namlodipine');
+check('directive lines skipped, not phrases', dirParsed.length === 2
+  && dirParsed[0].phrase === 'venlafaxine' && dirParsed[1].phrase === 'amlodipine');
+check('strength directive parsed (space)', parseBoostDirectives('#!strength 3\nfoo').strength === 3);
+check('strength directive parsed (= separator)', parseBoostDirectives('#!strength=2.5').strength === 2.5);
+check('strength directive parsed (: separator)', parseBoostDirectives('#!strength:-4').strength === -4);
+check('strength directive case-insensitive key', parseBoostDirectives('#!STRENGTH 1.5').strength === 1.5);
+check('last strength directive wins', parseBoostDirectives('#!strength 2\n#!strength 7').strength === 7);
+check('non-finite strength ignored', parseBoostDirectives('#!strength abc').strength === undefined);
+check('unknown directive key ignored', Object.keys(parseBoostDirectives('#!note hello')).length === 0);
+check('no directive => empty result', Object.keys(parseBoostDirectives('plain\nfoo:3')).length === 0);
+check('# without ! is still a phrase', parseBoostPhrases('#hashtag').length === 1
+  && parseBoostPhrases('#hashtag')[0].phrase === '#hashtag');
 
 // --- casing expansion ----------------------------------------------------
 console.log('casingVariants / expandCasingVariants:');
