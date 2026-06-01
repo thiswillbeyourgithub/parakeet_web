@@ -445,8 +445,16 @@ async function main() {
     }
 
     console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${args.strength}`);
-    for (const { phrase, weight, topk } of entries) {
+    // Per-phrase encoding listing is useful for a handful of inline probes but
+    // floods the terminal for a list of thousands; cap it unless --verbose. Only
+    // text/inline entries are listed here (.pwc ids are already summarised above).
+    const PHRASE_LIST_CAP = 20;
+    const showAll = args.verbose || entries.length <= PHRASE_LIST_CAP;
+    for (const { phrase, weight, topk } of (showAll ? entries : entries.slice(0, PHRASE_LIST_CAP))) {
       console.error(`             - "${phrase}" (weight ${weight}, top-k ${topk})  -> [${encoder.encode(phrase).join(', ')}]`);
+    }
+    if (!showAll) {
+      console.error(`             ... and ${entries.length - PHRASE_LIST_CAP} more (pass --verbose to list all)`);
     }
     if (phraseBoost.skipped.length) {
       console.error(`[transcribe] skipped (out-of-vocab, cannot be matched): ${phraseBoost.skipped.join(', ')}`);
