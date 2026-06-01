@@ -66,7 +66,6 @@ function parseArgs(argv) {
     maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
     maesExpansionGamma: 2.3, // MAES: log-prob prune threshold
     frameStride: 1,        // sidebar: decimate encoder frames (1 = none)
-    temperature: 0.0,      // sidebar: decoder temperature (UI default 0.0)
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: 60,     // sidebar: max chunk length, seconds
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
@@ -98,7 +97,6 @@ function parseArgs(argv) {
       case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
       case '--maes-expansion-gamma': a.maesExpansionGamma = Number(val(flag)); break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
-      case '--temperature': a.temperature = Number(val(flag)); break;
       case '--chunk-duration': a.chunkDuration = Number(val(flag)); break;
       case '--overlap': a.overlap = Number(val(flag)); break;
       case '--no-chunking': a.chunking = false; break;
@@ -124,7 +122,6 @@ function parseArgs(argv) {
   if (!Number.isInteger(a.maesExpansionBeta) || a.maesExpansionBeta < 0) throw new Error('--maes-expansion-beta must be an integer >= 0');
   if (!Number.isFinite(a.maesExpansionGamma) || a.maesExpansionGamma <= 0) throw new Error('--maes-expansion-gamma must be a positive number');
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) throw new Error('--frame-stride must be an integer in [1, 4]');
-  if (!Number.isFinite(a.temperature) || a.temperature < 0) throw new Error('--temperature must be a non-negative number');
   if (!Number.isFinite(a.chunkDuration) || a.chunkDuration <= 0) throw new Error('--chunk-duration must be a positive number');
   if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
   return a;
@@ -177,8 +174,6 @@ Options:
                            --beam-width > 1.
       --frame-stride N     Decimate encoder frames before decoding (integer in
                            [1, 4]). 1 = use every frame (default). Sidebar knob.
-      --temperature F      Decoder temperature (non-negative float). Default 0.0
-                           (most greedy/confident). Sidebar knob.
       --chunk-duration N   Max chunk length in seconds for long audio. Default
                            60. Long audio is split into overlapping chunks and
                            each chunk's transcript is printed as it is produced.
@@ -423,7 +418,13 @@ async function main() {
     maesExpansionBeta: args.maesExpansionBeta,
     maesExpansionGamma: args.maesExpansionGamma,
     frameStride: args.frameStride,
-    temperature: args.temperature,
+    // Hardcoded 0 to mirror the web UI, where the temperature slider is
+    // intentionally hidden and the state pinned at 0.0: temperature never
+    // affects the transcript (greedy argmax is scale-invariant; MAES ranks at
+    // temperature 1 regardless), it only feeds confidence scores, where any
+    // value above 0 just makes them noisier. Pass 0 explicitly so we don't
+    // inherit transcribe()'s 1.2 default and diverge from the UI's confidences.
+    temperature: 0,
     returnTimestamps: args.timestamps,
     returnConfidences: args.timestamps,
     enableProfiling: args.verbose,
