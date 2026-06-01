@@ -1,4 +1,4 @@
-# PLAN.md — Phrase Boosting (Context Biasing) for Parakeet Web
+# PLAN.md: Phrase Boosting (Context Biasing) for Parakeet Web
 
 > **This is a recursive / cross-session plan file.** It is the single source of
 > truth for the "phrase boosting" feature. Any session can pick this up: read it
@@ -84,7 +84,7 @@ TDT decoding only** (no beam search). Therefore:
   returns `tokenLogits`, a zero-copy `subarray` view of the joiner output).
   **This is the single injection point**: apply boost to a *copy* of the token
   logits (or boost specific indices) before the argmax. Do NOT mutate the
-  `subarray` view in place without care — it views the live joiner buffer
+  `subarray` view in place without care, since it views the live joiner buffer
   (`_logitsTensor`) which is disposed after each step; copying the affected
   region is safest.
 - **Per-frame loop mechanics matter for trie state:**
@@ -94,7 +94,7 @@ TDT decoding only** (no beam search). Therefore:
   - TDT `step`/duration controls frame advancement; multiple tokens can be
     emitted on the same frame (`emittedTokens`, `maxTokensPerStep = 10`).
   - The trie state must live across frames for the whole utterance, reset per
-    `transcribe()` call (or carried via `previousDecoderState` for streaming —
+    `transcribe()` call (or carried via `previousDecoderState` for streaming;
     see open question Q4).
 - **Tokenizer gap (BIG):** `app/src/tokenizer.js` only does **id → text**
   (`decode`). There is **no text → token-id encoder**. To turn a user phrase
@@ -157,7 +157,7 @@ TDT decoding only** (no beam search). Therefore:
   - `app/ui/src/App.jsx:2659` (single-shot path)
   - `app/ui/src/lib/liveTranscriber.js:169` (live streaming path)
 - **Config / i18n / persistence:** `app/ui/src/config.js` (runtime config),
-  `app/ui/src/i18n.jsx` (all UI strings — add new keys), `app/src/idb.js`
+  `app/ui/src/i18n.jsx` (all UI strings, add new keys), `app/src/idb.js`
   (IndexedDB) for persisting the phrase list.
 
 ## 3. Chosen algorithm (greedy shallow-fusion boosting trie)
@@ -192,7 +192,7 @@ This is the design to implement unless a future session deliberately changes it
    emitted, advance every active node that has `maxId` as a child to that child;
    nodes that don't match drop back to root (greedy can't keep alternatives).
    Always keep root active so a new phrase can start anytime. On phrase
-   completion (terminal node) optionally emit nothing special — the tokens are
+   completion (terminal node) optionally emit nothing special, since the tokens are
    already in `ids`.
 5. **Parameters** (mirror the PR's vocabulary): a user-facing global
    `boostStrength` slider (≈ alpha * context_score) multiplied by each phrase's
@@ -203,18 +203,18 @@ exporting a `BoostingTrie` class with `buildFromPhrases(phrases, tokenizer,
 opts)`, `reset()`, `activeChildBoosts()` (returns token-id → bonus map for the
 current active set), and `advance(tokenId)`. `parakeet.js` consumes it through a
 single optional `opts.phraseBoost` (an already-built trie or its config); do not
-duplicate decode logic. Per the user's global rule: **no code duplication** —
+duplicate decode logic. Per the user's global rule of **no code duplication**:
 if boosting needs to touch the argmax in more than one place, factor the argmax
 into a helper rather than copy-pasting the unrolled loop.
 
 ## 4. Task breakdown (check off as you go)
 
-### Phase 0 — Setup
+### Phase 0: Setup
 - [x] Research PR/issue + codebase; write this PLAN.md.
 - [ ] (Optional) Resolve the open questions in §6 with the user, or proceed with
       the documented defaults and note the choice in the Progress log.
 
-### Phase 1 — BPE encoder (text → token ids) [RISKIEST] (Q5)
+### Phase 1: BPE encoder (text -> token ids) [RISKIEST] (Q5)
 NOTE: tokenizer VERIFIED as BPE (see §2.3 Q5). Do NOT build a unigram/Viterbi
 encoder; a prior session did that by mistake and the files were deleted.
 - [x] Locate/verify the tokenizer source and format. DONE (session 2): it is
@@ -253,7 +253,7 @@ encoder; a prior session did that by mistake and the files were deleted.
       `huggingface_hub`). Commit 8b97ae9.
 - [x] Commit (asset aa4adde, test 8b97ae9, encoder 1e22aea).
 
-### Phase 2 — Boosting trie + decode hook
+### Phase 2: Boosting trie + decode hook
 - [ ] Create `app/src/phraseBoost.js` with `BoostingTrie` per §3.
 - [ ] Wire into `parakeet.js transcribe()`: accept `opts.phraseBoost`, reset at
       start, inject boosts before argmax, advance after each emitted token.
@@ -263,7 +263,7 @@ encoder; a prior session did that by mistake and the files were deleted.
 - [ ] Verify memory hygiene: no new un-disposed ORT tensors; trie is plain JS.
 - [ ] Commit.
 
-### Phase 3 — UI + plumbing
+### Phase 3: UI + plumbing
 - [ ] Add a textarea ("one phrase per line", supporting optional `phrase:WEIGHT`
       per Q6) + a global boost-strength slider, in a collapsed Advanced area of
       `App.jsx` (Q2). Show inline parse warnings for malformed weights.
@@ -272,18 +272,18 @@ encoder; a prior session did that by mistake and the files were deleted.
 - [ ] Build the trie once when phrases change (not per transcribe), pass it
       through all three `transcribe()` call sites (App.jsx x2, liveTranscriber).
 - [ ] Add i18n strings in `i18n.jsx` for every new label/help text (EN + FR at
-      minimum — match existing languages present in the file).
+      minimum, match existing languages present in the file).
 - [ ] Commit (UI and i18n can be one or two commits; one commit per logical
       unit per the user's preference).
 
-### Phase 4 — Live transcription path
+### Phase 4: Live transcription path
 - [ ] Confirm boosting works with the streaming/windowed `liveTranscriber.js`
       path. Mind that live re-transcribes overlapping windows; trie state should
       reset per window (it already calls `transcribe()` per tick). Verify no
       double-counting / drift.
 - [ ] Commit.
 
-### Phase 5 — Verify, document, screenshot
+### Phase 5: Verify, document, screenshot
 - [ ] Manual verification with the `/verify` or `/run` skill: load model, enable
       a boost phrase that the model otherwise mis-transcribes, confirm it now
       appears. Capture before/after.
@@ -327,15 +327,15 @@ encoder; a prior session did that by mistake and the files were deleted.
   syntax) multiplied by the global strength slider.
 
 ## 7. Progress log (append newest at bottom; date + what changed + next step)
-- 2026-05-31 — Session 1. Researched NeMo PR #14277 (server CUDA GPU-PB) and
+- 2026-05-31, Session 1. Researched NeMo PR #14277 (server CUDA GPU-PB) and
   issue #14772; confirmed it can only be ported as a *concept* to this app's
   greedy TDT decoder. Mapped codebase anchor points (decode loop in
   `parakeet.js transcribe()` ~L452-476; missing text→id encoder in
   `tokenizer.js`; three `transcribe()` call sites). Chose greedy shallow-fusion
   boosting-trie design (§3). Wrote this PLAN.md. **Next:** confirm open
   questions in §6 (or accept defaults), then start Phase 1 (vocab subword
-  encoder) — the riskiest correctness piece.
-- 2026-05-31 — Session 1 (cont). Resolved all open questions with the user and
+  encoder), the riskiest correctness piece.
+- 2026-05-31, Session 1 (cont). Resolved all open questions with the user and
   folded the answers into §2/§3/§4/§6: greedy-now-beam-later (Q1), real
   tokenizer-faithful encoder (Q5), per-phrase weights (Q6), Advanced textarea +
   slider (Q2), IndexedDB (Q3), reset-per-window streaming (Q4). **Next:** Phase 1
