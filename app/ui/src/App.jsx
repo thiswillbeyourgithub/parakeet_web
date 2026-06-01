@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, encodePhrases, expandCasingVariants, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes } from './lib/format.js';
 
@@ -1454,6 +1454,12 @@ export default function App() {
       }
     }
     prebuiltBoostRef.current = pre;
+    // A curated list can ship its own default strength via a `#!strength N`
+    // directive line; loading the list forces the strength control to that
+    // value (clamped to the slider's range), so the list comes pre-tuned. A
+    // list with no directive leaves whatever strength the user had.
+    const { strength } = parseBoostDirectives(r.text);
+    if (strength !== undefined) setBoostStrength(Math.max(-10, Math.min(10, strength)));
     setBoostPhrases(r.text);
   }
 
