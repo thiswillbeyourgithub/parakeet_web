@@ -377,9 +377,17 @@ echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
 # - Otherwise it's an https:// URL to a single .txt file.
 # Each file is one phrase per line (optionally "phrase:WEIGHT"), exactly the
 # format the boost textarea accepts.
+# Larger byte cap for a precompiled .pwc than for served text: a .pwc is the
+# token-id encoding of a list, which for a 100k-phrase list is much bigger than
+# its .txt. It is read by the boot prebuild (not served to browsers), so the cap
+# only guards this container's node process against a poisoned giant file. Matches
+# the browser's BOOST_PREBUILT_MAX_BYTES (App.jsx).
+_PWC_MAX_BYTES=67108864
 BOOST_DIR="/var/boost"
 mkdir -p "$BOOST_DIR"
-rm -f "$BOOST_DIR"/*.txt "$BOOST_DIR/manifest.txt" 2>/dev/null || true
+# Clean every per-boot artifact, not just .txt: stale .json/.pwc from a previous
+# start (or a list since removed from the source) must not linger and be served.
+rm -f "$BOOST_DIR"/*.txt "$BOOST_DIR"/*.pwc "$BOOST_DIR"/*.json "$BOOST_DIR/manifest.txt" 2>/dev/null || true
 
 if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
   if ! _validate_source "$BOOST_PHRASES_SOURCE"; then
@@ -394,6 +402,15 @@ if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
       echo "[entrypoint] Using local boost-phrases folder: $BOOST_PHRASES_SOURCE"
       if [ -d "$BOOST_PHRASES_SOURCE" ]; then
         cp "$BOOST_PHRASES_SOURCE"/*.txt "$BOOST_DIR/" 2>/dev/null || true
+        # Precompiled .pwc caches (from scripts/compile-boost.mjs) shipped next
+        # to the .txt: copy them in so the prebuild can reuse them and skip the
+        # encode. Only the local-folder case carries .pwc; the URL case fetches a
+        # single .txt and always encodes. Cap each one (defense in depth).
+        cp "$BOOST_PHRASES_SOURCE"/*.pwc "$BOOST_DIR/" 2>/dev/null || true
+        for f in "$BOOST_DIR"/*.pwc; do
+          [ -f "$f" ] || continue
+          _enforce_size_cap "$f" "$_PWC_MAX_BYTES" || true
+        done
       else
         echo "[entrypoint] WARNING: Local boost-phrases folder not found: $BOOST_PHRASES_SOURCE"
       fi
