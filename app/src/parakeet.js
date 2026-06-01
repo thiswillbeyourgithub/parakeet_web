@@ -419,6 +419,225 @@ export class ParakeetModel {
     return { emit: !isBlank, isBlank, nextT, nextEmitted };
   }
 
+  /**
+   * Log-sum-exp of a logit array at temperature 1 (the true-model log partition
+   * function). The beam decoder uses it to turn raw logits into comparable
+   * log-probabilities for ranking. Two passes: max for numerical stability,
+   * then the exponential sum.
+   * @param {Float32Array} logits
+   * @returns {number}
+   */
+  _logSumExp(logits) {
+    let m = -Infinity;
+    for (let i = 0; i < logits.length; i++) if (logits[i] > m) m = logits[i];
+    if (!Number.isFinite(m)) return m;
+    let s = 0;
+    for (let i = 0; i < logits.length; i++) s += Math.exp(logits[i] - m);
+    return m + Math.log(s);
+  }
+
+  /**
+   * Indices of the `k` largest values in `logits` (unordered). O(V*k), cheap for
+   * the small beam widths this decoder targets, and avoids sorting the whole
+   * vocab each step.
+   * @param {Float32Array} logits
+   * @param {number} k
+   * @returns {number[]}
+   */
+  _topK(logits, k) {
+    const idx = [];
+    const val = [];
+    for (let i = 0; i < logits.length; i++) {
+      const v = logits[i];
+      if (idx.length < k) {
+        idx.push(i); val.push(v);
+      } else {
+        let mi = 0; // index (within the kept set) of the current smallest
+        for (let j = 1; j < k; j++) if (val[j] < val[mi]) mi = j;
+        if (v > val[mi]) { val[mi] = v; idx[mi] = i; }
+      }
+    }
+    return idx;
+  }
+
+  /**
+   * Expand one beam hypothesis by a single joiner step. Returns the candidate
+   * continuations (top-K tokens by boosted logit, plus a forced blank so the
+   * hypothesis can always advance time) and the shared next decoder state.
+   *
+   * Each candidate carries:
+   *   - id / isBlank / emit / step (TDT duration)
+   *   - confVal: frame confidence at the UI temperature on the TRUE (unboosted)
+   *     logits, for output confidence_scores (matches greedy semantics).
+   *   - rankDelta: boosted log-probability at temperature 1, for pruning. It is
+   *     independent of the UI temperature so ranking still discriminates at
+   *     temperature 0 (where confVal collapses to 1.0).
+   *   - active: the boosting trie's active-node set for the child (advanced for
+   *     emitted tokens, inherited for blank). The trie's `active` field is
+   *     borrowed per-hyp via assignment so phraseBoost.js needs no change.
+   *
+   * The caller owns `newState`: it must retain it for surviving emit-children
+   * and dispose it if no emit-child references it.
+   * @returns {{cands: Array<object>, newState: object}}
+   */
+  async _expandHyp(hyp, transposed, D, opts) {
+    const { temperature, beamWidth, phraseBoost } = opts;
+    const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
+    const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
+    const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
+
+    // Boost selection: borrow the trie's active set for this hypothesis.
+    if (phraseBoost) phraseBoost.active = hyp.active;
+    const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
+
+    // Top-K over the (possibly boosted) logits, and always allow blank so the
+    // hypothesis can choose to advance time.
+    const topIds = this._topK(tokenLogits, beamWidth);
+    if (!topIds.includes(this.blankId)) topIds.push(this.blankId);
+
+    // Capture boosted values, then restore so confidence/ranking use the true
+    // distribution. boostBonus is the additive reward boosting applied (0 when
+    // no trie or the token is not boosted).
+    const boostedVal = new Map();
+    for (const id of topIds) boostedVal.set(id, tokenLogits[id]);
+    if (boostSaved) phraseBoost.restore(tokenLogits, boostSaved);
+
+    const logZ = this._logSumExp(tokenLogits); // temperature-1 partition
+    const cands = [];
+    for (const id of topIds) {
+      const isBlank = (id === this.blankId);
+      const trueLogit = tokenLogits[id];
+      const boostBonus = boostedVal.get(id) - trueLogit;
+      const rankDelta = (trueLogit - logZ) + boostBonus;
+      const confVal = this._frameConfidence(tokenLogits, trueLogit, temperature);
+      let active = hyp.active;
+      if (!isBlank && phraseBoost) {
+        phraseBoost.active = hyp.active;
+        phraseBoost.advance(id);
+        active = phraseBoost.active;
+      }
+      cands.push({ id, isBlank, emit: !isBlank, step, confVal, rankDelta, active });
+    }
+
+    _logitsTensor?.dispose?.();
+    encTensor.dispose?.();
+    return { cands, newState };
+  }
+
+  /**
+   * Multi-hypothesis TDT beam search over the encoder frames. Returns the
+   * winning hypothesis' decoded ids and per-frame/per-token accumulators.
+   * Full-file only: never returns a decoder state, and disposes every ORT state
+   * tensor it allocates via refcounting (PLAN.md Q1).
+   *
+   * Hypotheses are backpointer nodes (parent chain) so per-step accumulators are
+   * reconstructed once at the end instead of copied every round. Because TDT
+   * durations desync hypotheses in time, this is label-looping (each hyp owns
+   * its frame pointer) rather than a single shared frame counter.
+   * @returns {{ids: number[], tokenTimes: Array, tokenConfs: number[], frameConfs: number[], overallLogProb: number}}
+   */
+  async _decodeBeam(transposed, D, Tenc, opts) {
+    const { beamWidth, frameStride, phraseBoost, returnTimestamps, returnConfidences, timeStride } = opts;
+
+    if (Tenc <= 0) return { ids: [], tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0 };
+
+    const rootActive = phraseBoost ? phraseBoost.active : null; // caller already reset()
+    let beam = [{
+      parent: null, emit: false, id: null, confVal: null, tokenTime: null,
+      state: null, t: 0, emittedAtFrame: 0, overallLogProb: 0, score: 0,
+      active: rootActive, lastTok: this.blankId,
+    }];
+    let best = null; // highest-scoring finished hypothesis (t >= Tenc)
+    let round = 0;
+
+    try {
+      while (beam.length) {
+        if (round % 25 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        round++;
+
+        // Decoder-state GC via per-round mark-and-sweep. `disposable` collects
+        // every state that *might* become free this round (the consumed parents,
+        // each fresh newState, and any best-state displaced by a better finish);
+        // `keep` collects states still referenced after pruning. Set semantics
+        // make shared states (blank children reuse the parent's state, emit
+        // siblings share one newState) safe with no refcount bookkeeping.
+        const disposable = new Set();
+        for (const hyp of beam) disposable.add(hyp.state);
+
+        const pool = [];
+        for (const hyp of beam) {
+          const { cands, newState } = await this._expandHyp(hyp, transposed, D, opts);
+          if (newState) disposable.add(newState);
+          for (const c of cands) {
+            const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, c.id, c.step, frameStride);
+            const child = {
+              parent: hyp,
+              emit: c.emit,
+              id: c.emit ? c.id : null,
+              confVal: c.confVal,
+              tokenTime: (c.emit && returnTimestamps)
+                ? [hyp.t * timeStride, (hyp.t + (c.step > 0 ? c.step : 1)) * timeStride]
+                : null,
+              state: c.emit ? newState : hyp.state,
+              t: dec.nextT,
+              emittedAtFrame: dec.nextEmitted,
+              overallLogProb: hyp.overallLogProb + Math.log(c.confVal),
+              score: hyp.score + c.rankDelta,
+              active: c.active,
+              lastTok: c.emit ? c.id : hyp.lastTok,
+            };
+            if (child.t >= Tenc) {
+              // Finished: keep only the running best (finished scores are final).
+              if (best === null || child.score > best.score) {
+                if (best) disposable.add(best.state); // old best may now be free
+                best = child;
+              }
+            } else {
+              pool.push(child);
+            }
+          }
+        }
+
+        pool.sort((a, b) => b.score - a.score);
+        beam = pool.slice(0, beamWidth);
+
+        // Sweep: free every disposable state no surviving hypothesis (or best)
+        // still points at.
+        const keep = new Set();
+        for (const h of beam) keep.add(h.state);
+        if (best) keep.add(best.state);
+        for (const s of disposable) if (s && !keep.has(s)) this._disposeDecoderState(s);
+      }
+    } finally {
+      // Dispose whatever is still live (the beam never returns a decoder state).
+      // On the normal path the loop ends with beam=[] so this just frees best;
+      // on an error mid-decode it frees the live beam too. Deduped so a shared
+      // state is never double-disposed.
+      const live = new Set();
+      for (const h of beam) if (h.state) live.add(h.state);
+      if (best && best.state) live.add(best.state);
+      for (const s of live) this._disposeDecoderState(s);
+    }
+
+    // Reconstruct the winning path from the backpointer chain (seed has no
+    // frame). Only scalars/ids are read here, so the disposed states don't matter.
+    const idsR = [], framesR = [], timesR = [], confsR = [];
+    let overall = 0;
+    if (best) {
+      overall = best.overallLogProb;
+      for (let node = best; node && node.parent; node = node.parent) {
+        framesR.push(node.confVal);
+        if (node.emit) {
+          idsR.push(node.id);
+          if (returnTimestamps) timesR.push(node.tokenTime);
+          if (returnConfidences) confsR.push(node.confVal);
+        }
+      }
+      idsR.reverse(); framesR.reverse(); timesR.reverse(); confsR.reverse();
+    }
+    return { ids: idsR, tokenTimes: timesR, tokenConfs: confsR, frameConfs: framesR, overallLogProb: overall };
+  }
+
   async computeFeatures(audio, sampleRate = 16000) {
     const { features, length } = await this.preprocessor.process(audio);
     const T = length; // number of frames returned by preprocessor
@@ -442,7 +661,17 @@ export class ParakeetModel {
       returnDecoderState = false,
       timeOffset = 0,
       phraseBoost = null,
+      beamWidth = 1,
     } = opts;
+
+    // Beam search is full-file only: a beam of N hypotheses cannot be serialized
+    // into the single decoder state the streaming path round-trips, so width > 1
+    // is forced back to greedy whenever decoder-state continuity is requested.
+    let effBeamWidth = Math.max(1, Math.floor(beamWidth) || 1);
+    if (returnDecoderState && effBeamWidth > 1) {
+      console.warn('[Parakeet] beamWidth>1 is unsupported with decoder-state continuity (streaming); forcing width 1.');
+      effBeamWidth = 1;
+    }
 
     // Collect per-stage timings only when the caller opts in. Default off so a
     // production transcribe() doesn't spam the console; `verbose: true` at model
@@ -530,128 +759,142 @@ export class ParakeetModel {
     // transcription this single dispose is the biggest leak fix in the file.
     enc.dispose?.(); enc = null;
 
-    // --- Decode (greedy = beam width 1) -------------------------------
-    // The decoder is a degenerate beam: a single hypothesis carrying its own
-    // frame pointer, decoder state, emitted ids and the per-frame
-    // confidence/timestamp accumulators. The per-step work is factored into
-    // _pickArgmax / _frameConfidence / _advanceDecision so a future
-    // multi-hypothesis beam (PLAN.md Q1) can reuse them unchanged.
-    const hyp = {
-      ids: [],
-      state: previousDecoderState || null,
-      t: 0,
-      emittedAtFrame: 0,
-      tokenTimes: [],
-      tokenConfs: [],
-      frameConfs: [],
-      overallLogProb: 0,
-    };
-    // Caller may pass a decoder state from a previous (contiguous) chunk to
-    // continue token-history continuity across calls. We hold a reference but
-    // never dispose the externally-owned object — the caller still owns it.
-    externalInitialState = previousDecoderState || null;
-    decoderState = hyp.state; // keep the function-scope alias in sync for finally
-
+    // --- Decode -------------------------------------------------------
     // Phrase boosting: reset the trie's active state per decode window (Q4) so
     // matches start fresh. When no trie is supplied, this whole path is inert
     // and the default decoding behavior is unchanged.
     phraseBoost?.reset();
-
+    externalInitialState = previousDecoderState || null;
     const decStartTime = perfEnabled ? performance.now() : 0;
     const TIME_STRIDE = this.subsampling * this.windowStride;
 
-    while (hyp.t < Tenc) {
-      // Yield to browser every ~50 frames to keep UI responsive
-      if (hyp.t % 50 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 0));
+    // Winning hypothesis' accumulators, populated by whichever decode path runs.
+    let ids, tokenTimes, tokenConfs, frameConfs, overallLogProb;
+
+    if (effBeamWidth === 1) {
+      // --- Greedy (= beam width 1) ------------------------------------
+      // A single hypothesis carrying its own frame pointer, decoder state,
+      // emitted ids and per-frame accumulators. Bit-for-bit identical to the
+      // original greedy decoder.
+      const hyp = {
+        ids: [],
+        state: previousDecoderState || null,
+        t: 0,
+        emittedAtFrame: 0,
+        tokenTimes: [],
+        tokenConfs: [],
+        frameConfs: [],
+        overallLogProb: 0,
+      };
+      decoderState = hyp.state; // keep the function-scope alias in sync for finally
+
+      while (hyp.t < Tenc) {
+        // Yield to browser every ~50 frames to keep UI responsive
+        if (hyp.t % 50 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
+        inFlightEncTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
+
+        const prevTok = hyp.ids.length ? hyp.ids[hyp.ids.length - 1] : this.blankId;
+        const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, hyp.state);
+
+        // Phrase boosting (shallow fusion): add the trie's rewards into the
+        // token logits before the argmax so the per-step choice is biased
+        // toward continuing/starting a boost phrase. Restore right after so
+        // confidence/log-prob below stay computed on the true distribution.
+        // Argmax is invariant to a positive temperature divide, so we argmax
+        // the raw logits directly (avoids the Infinity/NaN trap at temp 0).
+        const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
+        let { maxId, maxLogit } = this._pickArgmax(tokenLogits);
+
+        // _frameConfidence assumes maxLogit == tokenLogits[maxId] (chosen
+        // token's numerator is 1), so reset maxLogit to the true logit.
+        if (boostSaved) {
+          phraseBoost.restore(tokenLogits, boostSaved);
+          maxLogit = tokenLogits[maxId];
+        }
+
+        const confVal = this._frameConfidence(tokenLogits, maxLogit, temperature);
+        hyp.frameConfs.push(confVal);
+        hyp.overallLogProb += Math.log(confVal);
+
+        const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, maxId, step, frameStride);
+
+        if (dec.emit) {
+          hyp.ids.push(maxId);
+          // Advance the boosting trie by the emitted token (blank leaves it
+          // unchanged, so no advance in the else branch below).
+          phraseBoost?.advance(maxId);
+          if (returnTimestamps) {
+            const durFrames = step > 0 ? step : 1;
+            const start = hyp.t * TIME_STRIDE;
+            const end = (hyp.t + durFrames) * TIME_STRIDE;
+            hyp.tokenTimes.push([start, end]);
+          }
+          if (returnConfidences) hyp.tokenConfs.push(confVal);
+          // Only adopt the new decoder state when a non-blank token is emitted.
+          // Free the previous state (unless caller-owned) before reassigning.
+          if (hyp.state && hyp.state !== newState && hyp.state !== externalInitialState) {
+            this._disposeDecoderState(hyp.state, newState);
+          }
+          hyp.state = newState;
+          decoderState = hyp.state;
+        } else {
+          // Blank token: keep the previous state and discard newState.
+          if (newState && newState !== hyp.state) {
+            this._disposeDecoderState(newState, hyp.state);
+          }
+        }
+
+        // Dispose the joiner logits tensor now that subarray views are consumed
+        _logitsTensor?.dispose?.();
+        // Dispose the per-frame encoder tensor. Without this, each decoded
+        // frame leaks its WASM-side handle (~450k handles for a 1h audio at
+        // sub=8/stride=0.01s).
+        inFlightEncTensor.dispose?.();
+        inFlightEncTensor = null;
+
+        hyp.t = dec.nextT;
+        hyp.emittedAtFrame = dec.nextEmitted;
       }
 
-      const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
-      inFlightEncTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
-
-      const prevTok = hyp.ids.length ? hyp.ids[hyp.ids.length - 1] : this.blankId;
-      const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, hyp.state);
-
-      // Phrase boosting (shallow fusion): add the trie's rewards into the token
-      // logits before the argmax so the per-step choice is biased toward
-      // continuing/starting a boost phrase. We save the touched logits and
-      // restore them right after the argmax so confidence/log-prob below stay
-      // computed on the model's true (unboosted) distribution.
-      // Argmax is invariant to a positive temperature divide, so we argmax the
-      // raw logits directly (avoids the Infinity/NaN trap at temperature 0).
-      const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
-      let { maxId, maxLogit } = this._pickArgmax(tokenLogits);
-
-      // Restore the boosted logits so confidence/log-prob use the true values.
-      // _frameConfidence assumes maxLogit == tokenLogits[maxId] (chosen token's
-      // numerator is 1), so reset maxLogit to the chosen token's true logit.
-      if (boostSaved) {
-        phraseBoost.restore(tokenLogits, boostSaved);
-        maxLogit = tokenLogits[maxId];
+      // Dispose final decoder state unless the caller asked to keep it for a
+      // future call. When returning state, the caller becomes its owner.
+      finalDecoderState = hyp.state;
+      if (!returnDecoderState) {
+        this._disposeDecoderState(hyp.state);
       }
+      decoderState = null;
 
-      const confVal = this._frameConfidence(tokenLogits, maxLogit, temperature);
-      hyp.frameConfs.push(confVal);
-      hyp.overallLogProb += Math.log(confVal);
-
-      const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, maxId, step, frameStride);
-
-      if (dec.emit) {
-        hyp.ids.push(maxId);
-        // Advance the boosting trie by the emitted token (blank leaves it
-        // unchanged, so no advance in the else branch below).
-        phraseBoost?.advance(maxId);
-        if (returnTimestamps) {
-          const durFrames = step > 0 ? step : 1;
-          const start = hyp.t * TIME_STRIDE;
-          const end = (hyp.t + durFrames) * TIME_STRIDE;
-          hyp.tokenTimes.push([start, end]);
-        }
-        if (returnConfidences) hyp.tokenConfs.push(confVal);
-        // Only adopt the new decoder state when a non-blank token is emitted.
-        // Free the previous state (unless caller-owned) before reassigning.
-        if (hyp.state && hyp.state !== newState && hyp.state !== externalInitialState) {
-          this._disposeDecoderState(hyp.state, newState);
-        }
-        hyp.state = newState;
-        decoderState = hyp.state;
-      } else {
-        // Blank token: keep the previous state and discard newState.
-        // Dispose newState's tensors that aren't aliased with the kept state.
-        if (newState && newState !== hyp.state) {
-          this._disposeDecoderState(newState, hyp.state);
-        }
-      }
-
-      // Dispose the joiner logits tensor now that subarray views are consumed
-      _logitsTensor?.dispose?.();
-      // Dispose the per-frame encoder tensor. Without this, each decoded
-      // frame leaks its WASM-side handle (~450k handles for a 1h audio at
-      // sub=8/stride=0.01s).
-      inFlightEncTensor.dispose?.();
-      inFlightEncTensor = null;
-
-      hyp.t = dec.nextT;
-      hyp.emittedAtFrame = dec.nextEmitted;
+      ids = hyp.ids;
+      tokenTimes = hyp.tokenTimes;
+      tokenConfs = hyp.tokenConfs;
+      frameConfs = hyp.frameConfs;
+      overallLogProb = hyp.overallLogProb;
+    } else {
+      // --- Beam search (width > 1) ------------------------------------
+      // Full-file only (the streaming guard above forced width 1 when state
+      // continuity is requested), so the beam never returns/owns a decoder
+      // state and disposes everything it allocates internally.
+      const out = await this._decodeBeam(transposed, D, Tenc, {
+        beamWidth: effBeamWidth,
+        temperature,
+        frameStride,
+        phraseBoost,
+        returnTimestamps,
+        returnConfidences,
+        timeStride: TIME_STRIDE,
+      });
+      ids = out.ids;
+      tokenTimes = out.tokenTimes;
+      tokenConfs = out.tokenConfs;
+      frameConfs = out.frameConfs;
+      overallLogProb = out.overallLogProb;
+      finalDecoderState = null;
+      decoderState = null;
     }
-
-    // Dispose final decoder state unless the caller asked to keep it for a
-    // future call. When returning state, the caller becomes its owner.
-    // Either way we null `decoderState` so the function-level finally block
-    // doesn't double-dispose or free a caller-owned tensor.
-    finalDecoderState = hyp.state;
-    if (!returnDecoderState) {
-      this._disposeDecoderState(hyp.state);
-    }
-    decoderState = null;
-
-    // Expose the winning hypothesis' accumulators under the names the
-    // word/token assembly below expects.
-    const ids = hyp.ids;
-    const tokenTimes = hyp.tokenTimes;
-    const tokenConfs = hyp.tokenConfs;
-    const frameConfs = hyp.frameConfs;
-    const overallLogProb = hyp.overallLogProb;
 
     if (perfEnabled) {
       tDecode = performance.now() - decStartTime;
