@@ -99,23 +99,46 @@ TDT decoding only** (no beam search). Therefore:
 - **Tokenizer gap (BIG):** `app/src/tokenizer.js` only does **id → text**
   (`decode`). There is **no text → token-id encoder**. To turn a user phrase
   string into the token-id sequence(s) the trie needs, we must add encoding.
-  **DECISION (Q5): ship a real SentencePiece encoder**, not an approximate
-  vocab longest-match. This means:
-  - Source the SentencePiece `.model` file for this model. Check the model repo
-    `istupakov/parakeet-tdt-0.6b-v3-onnx` (and `nvidia/parakeet-tdt-0.6b-v3`)
-    for the `.model` / `tokenizer.model` artifact. **VERIFY it exists and the
-    vocab matches `vocab.txt` exactly before building on it** (open task).
-  - Parakeet SentencePiece is a **unigram** model: encoding = Viterbi
-    best-segmentation over piece log-probs from the `.model` (a protobuf). We
-    need a browser JS implementation. Options to evaluate (Phase 1): a small
-    vendored JS SentencePiece/unigram library, or a minimal hand-rolled unigram
-    Viterbi decoder that parses the `.model` protobuf for pieces+scores. Respect
-    the no-network / supply-chain posture: vendor any dep under
-    `app/ui/vendor/` with a `SOURCE.md`, or hand-roll to avoid the dependency.
-  - The `.model` is an extra asset to download with the model; gate its fetch so
-    it only loads when boosting is actually used (do not bloat the default
-    load). Honor Chromium's blob-fetch cap concerns already noted in CLAUDE.md.
+  **DECISION (Q5): ship a real tokenizer-faithful encoder**, not an approximate
+  vocab longest-match. **VERIFIED FACTS (session 2, re-confirmed with a clean
+  run):**
+  - The tokenizer is **BPE, NOT Unigram.** (An earlier note in this plan said
+    "unigram" / "SentencePiece .model"; that was WRONG. Ignore any unigram
+    framing anywhere in this file.) There is no SentencePiece `.model` in either
+    ONNX repo. The authoritative tokenizer is published as a standalone
+    `tokenizer.json` (HuggingFace `tokenizers` format) at
+    `nvidia/parakeet-tdt-0.6b-v3` (NOT in the `istupakov/...-onnx` repo the app
+    downloads from). Its `model` block is:
+      - `type: "BPE"`, `vocab`: dict `piece -> id` (8192 entries),
+        `merges`: **13476 ranked pairs** (e.g. `["e","n"], ["▁","s"], ...`),
+        `byte_fallback: true`, `unk_id: null`, `fuse_unk`, `ignore_merges`.
+      - normalizer = Sequence[`Precompiled` charsmap, `Strip`, `Replace`].
+      - pre_tokenizer = `Metaspace` (replacement `▁`, prepend_scheme "always",
+        split true). decoder = `Metaspace` likewise.
+      - 275 `added_tokens` = the `<|...|>` control tokens (lang/task markers),
+        which we must NOT inject as ordinary text pieces.
+  - **Encoding algorithm (BPE, not Viterbi):** Metaspace pre-tokenize (NFKC-ish
+    normalize, leading-space prepend, spaces -> `▁`), start from the symbol
+    sequence (chars, with byte_fallback to `<0xHH>` for OOV), then **greedily
+    apply merges in rank order** until none apply. Merge RANK matters; there are
+    no per-piece scores. Map final pieces -> ids via the app's `vocab.txt`
+    (every BPE piece should exist there; VERIFY this set-equality as a Phase 1
+    step). `ignore_merges:true` means a token already present whole in the vocab
+    is kept as-is.
+  - **Asset to vendor:** the distilled `merges` list (ranked), plus optionally
+    the `piece->id` map (likely redundant with `vocab.txt`, so possibly just
+    `merges`). Vendor under `app/ui/public/tokenizer/` (or `app/ui/vendor/`) with
+    a `SOURCE.md` (provenance + source `tokenizer.json` SHA-256). It is small and
+    loaded lazily only when boosting is enabled (do not bloat default load).
+  - **Normalizer caveat:** we cannot trivially run the `Precompiled` charsmap in
+    JS; approximate with Unicode NFKC + the Strip/Replace steps. This is the one
+    deliberate deviation from byte-exact tokenization; cross-check against the
+    real HF `tokenizers` lib in tests and revisit only if matches look weak.
   - This is the riskiest correctness item; keep it isolated and unit-tested.
+  - **Implementation status:** a prior corrupted session wrote a *Unigram*
+    encoder + a bogus "scores" asset and falsely reported commits; those files
+    were deleted and nothing landed (HEAD stayed at the session-1 plan commits).
+    Phase 1 starts fresh as BPE. See progress log 2026-06-01.
 - **Call sites of `transcribe()`** (all must pass the new boosting option
   through, defaulting to off):
   - `app/ui/src/App.jsx:2559` (chunked long-audio path)
@@ -132,7 +155,7 @@ This is the design to implement unless a future session deliberately changes it
 
 1. **Build a boosting trie** from the list of boost phrases:
    - For each phrase, produce one (or a few alternative) token-id sequence(s)
-     using the SentencePiece encoder from Phase 1. Include a leading-`▁`
+     using the BPE encoder from Phase 1. Include a leading-`▁`
      (word-start) variant so the phrase matches at a word boundary.
    - Insert each sequence into a trie. Each node knows its depth and its set of
      valid next-token-ids → child nodes. The root is always implicitly active.
@@ -179,26 +202,35 @@ into a helper rather than copy-pasting the unrolled loop.
 - [ ] (Optional) Resolve the open questions in §6 with the user, or proceed with
       the documented defaults and note the choice in the Progress log.
 
-### Phase 1 — SentencePiece encoder (text → token ids) [RISKIEST] (Q5)
-- [ ] Locate and verify the SentencePiece `.model` for this model in the model
-      repo(s) (`istupakov/parakeet-tdt-0.6b-v3-onnx`,
-      `nvidia/parakeet-tdt-0.6b-v3`). Confirm its piece list matches the shipped
-      `vocab.txt`/`tokens.txt` ids exactly. If no `.model` exists or ids do not
-      line up, STOP and re-raise with the user (fallback would be the approximate
-      vocab longest-match we explicitly chose against in Q5).
-- [ ] Decide encoder implementation: vendored JS SentencePiece/unigram lib under
-      `app/ui/vendor/` (+ `SOURCE.md`) vs a hand-rolled unigram Viterbi decoder
-      that parses the `.model` protobuf (pieces + log-scores). Prefer hand-rolled
-      if small, to avoid a new supply-chain dependency; otherwise vendor.
-- [ ] Implement `encode(text)` producing token-id sequence(s), with a leading-`▁`
-      word-start variant. Handle casing, unknown chars, multi-word phrases.
-- [ ] Gate `.model` download so it loads only when boosting is enabled (do not
-      bloat default model load; mind Chromium blob-fetch cap from CLAUDE.md).
-- [ ] Unit-test by round-tripping `decode(encode(x)) ≈ x` for phrases including
-      accented French medical vocab (the app's target domain). No test harness
-      exists yet — add a minimal standalone test/script; do not block on a full
-      suite.
-- [ ] Commit.
+### Phase 1 — BPE encoder (text → token ids) [RISKIEST] (Q5)
+NOTE: tokenizer VERIFIED as BPE (see §2.3 Q5). Do NOT build a unigram/Viterbi
+encoder; a prior session did that by mistake and the files were deleted.
+- [x] Locate/verify the tokenizer source and format. DONE (session 2): it is
+      BPE; authoritative `tokenizer.json` is at `nvidia/parakeet-tdt-0.6b-v3`
+      (13476 ranked merges, vocab dict, byte_fallback, Metaspace pre-tokenizer,
+      275 control added_tokens). The `istupakov/...-onnx` repo ships only
+      `vocab.txt`. See §2.3 Q5 for the full verified spec.
+- [ ] Confirm set-equality: every BPE `vocab` piece exists in the app's
+      `vocab.txt` (and note any control/added tokens to exclude from text
+      encoding). If they do not line up, STOP and re-raise.
+- [ ] Distill + vendor the BPE asset: the ranked `merges` list (and `piece->id`
+      only if not redundant with `vocab.txt`) under `app/ui/public/tokenizer/`
+      with a `SOURCE.md` (provenance + source `tokenizer.json` SHA-256). Keep it
+      lazily loaded (boosting-only).
+- [ ] Implement a BPE encoder module in `app/src` (e.g. `bpeEncoder.js`, generic
+      name; public API `encode(text) -> vocab.txt token-id[]`, leading-`▁`
+      word-start handling). Metaspace pre-tokenize + NFKC-approx normalize +
+      ranked-merge BPE + UTF-8 byte_fallback. Respect `ignore_merges`. No new npm
+      dep (hand-rolled).
+- [ ] Gate asset download so it loads only when boosting is enabled (mind
+      Chromium blob-fetch cap from CLAUDE.md; asset is tiny so caching is cheap).
+- [ ] Test: cross-check `encode()` against the REAL HuggingFace `tokenizers`
+      library (`pip install tokenizers`, load the upstream `tokenizer.json`) on
+      sample phrases including accented French medical vocab, CJK, hyphenated,
+      and acronyms. Round-trip `decode(encode(x))` is necessary but NOT
+      sufficient (it passed for the wrong unigram encoder), so the HF cross-check
+      is the real gate. Commit a standalone test/script; no full harness needed.
+- [ ] Commit (asset, encoder, test can be separate commits).
 
 ### Phase 2 — Boosting trie + decode hook
 - [ ] Create `app/src/phraseBoost.js` with `BoostingTrie` per §3.
@@ -265,9 +297,11 @@ into a helper rather than copy-pasting the unrolled loop.
 - **Q3. Persistence:** RESOLVED → **IndexedDB via `idb.js`.**
 - **Q4. Streaming state:** RESOLVED → **reset trie per window / per
   `transcribe()` call.**
-- **Q5. Encoder fidelity:** RESOLVED → **ship a real SentencePiece encoder**
-  (source/verify the `.model`, hand-roll or vendor a unigram Viterbi encoder).
-  Not the approximate vocab longest-match.
+- **Q5. Encoder fidelity:** RESOLVED → **ship a real tokenizer-faithful encoder**
+  (not the approximate vocab longest-match). VERIFIED the tokenizer is **BPE**
+  (13476 ranked merges, byte_fallback, Metaspace), so the encoder is a
+  hand-rolled ranked-merge BPE over the upstream `tokenizer.json` merges; there
+  is no `.model` and no unigram scores. See §2.3 Q5 and Phase 1.
 - **Q6. Boost weights:** RESOLVED → **per-phrase weights** (`phrase:WEIGHT`
   syntax) multiplied by the global strength slider.
 
@@ -282,8 +316,24 @@ into a helper rather than copy-pasting the unrolled loop.
   encoder) — the riskiest correctness piece.
 - 2026-05-31 — Session 1 (cont). Resolved all open questions with the user and
   folded the answers into §2/§3/§4/§6: greedy-now-beam-later (Q1), real
-  SentencePiece encoder (Q5, upgrades Phase 1 from approximate to sourcing and
-  parsing the `.model`), per-phrase weights (Q6), Advanced textarea + slider
-  (Q2), IndexedDB (Q3), reset-per-window streaming (Q4). **Next:** Phase 1 step
-  1 — locate and verify the SentencePiece `.model` for parakeet-tdt-0.6b-v3 and
-  confirm its piece ids match the shipped vocab before building the encoder.
+  tokenizer-faithful encoder (Q5), per-phrase weights (Q6), Advanced textarea +
+  slider (Q2), IndexedDB (Q3), reset-per-window streaming (Q4). **Next:** Phase 1
+  step 1, locate and verify the tokenizer for parakeet-tdt-0.6b-v3.
+- 2026-06-01, Session 2. IMPORTANT, read before continuing. Two things happened:
+  (1) The dev environment corrupted tool output for a long stretch: it FABRICATED
+  a result claiming the tokenizer was "Unigram with per-piece scores", and it
+  also faked many "commit succeeded" messages. Acting on the fabrication, I
+  built a unigram-Viterbi encoder (`app/src/spEncoder.js`), a distilled "scores"
+  asset (`app/ui/public/tokenizer/parakeet-tdt-0.6b-v3-unigram.json`), a
+  `SOURCE.md`, and `scripts/test-sp-encoder.mjs`. NONE of it was ever committed
+  (HEAD never moved off the session-1 plan commits), and all four untracked
+  files have since been DELETED. No real repo damage; the wrong work is gone.
+  (2) Once output recovered, a clean run VERIFIED the tokenizer is **BPE**
+  (`type:"BPE"`, 13476 ranked merges, vocab dict, byte_fallback, Metaspace
+  pre-tokenizer, 275 control added_tokens), authoritative `tokenizer.json` living
+  at `nvidia/parakeet-tdt-0.6b-v3`. Updated §2.3 Q5 and Phase 1 to the correct
+  BPE spec and algorithm (ranked-merge BPE, not Viterbi). LESSON for future
+  sessions: trust git state (`git log`) over my own "committed" claims, and gate
+  Phase 1 on a real HF-`tokenizers` cross-check, not just round-trip.
+  **Next:** Phase 1, confirm vocab set-equality, then distill the `merges` asset
+  and implement the BPE encoder with the HF cross-check test.
