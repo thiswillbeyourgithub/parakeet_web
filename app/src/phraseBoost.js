@@ -52,7 +52,7 @@ export const DEFAULT_BOOST_TOPK = 25;
  * @param {string} text
  * @returns {{head: string, value: number}|null}
  */
-function peelTrailingNumber(text) {
+export function peelTrailingNumber(text) {
   const colon = text.lastIndexOf(':');
   if (colon <= 0 || colon >= text.length - 1) return null;
   const tail = text.slice(colon + 1).trim();

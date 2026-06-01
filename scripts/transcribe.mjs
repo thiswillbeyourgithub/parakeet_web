@@ -31,7 +31,7 @@ import { ParakeetModel } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder } from '../app/src/bpeEncoder.js';
-import { BoostingTrie } from '../app/src/phraseBoost.js';
+import { BoostingTrie, peelTrailingNumber, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
@@ -116,16 +116,20 @@ Arguments:
   <audio>                  Path to an audio file (any format ffmpeg can read).
 
 Options:
-  -b, --phrase-boost STR   Boost phrases as "phrase:weight" pairs, comma- or
-                           newline-separated, OR a path to a text file holding
-                           such phrases (one per line is fine). Repeatable; the
-                           argument is treated as a file when it resolves to an
-                           existing file, otherwise as inline phrases. Weight
-                           defaults to 1 and may be any real number for testing
-                           (negative values suppress a phrase). NOTE: the web UI
-                           clamps weights to (0, 10]; this CLI does not, so you
-                           can probe the full range.
+  -b, --phrase-boost STR   Boost phrases as "phrase:WEIGHT" or "phrase:WEIGHT:TOPK"
+                           entries, comma- or newline-separated, OR a path to a
+                           text file holding such phrases (one per line is fine).
+                           Repeatable; the argument is treated as a file when it
+                           resolves to an existing file, otherwise as inline
+                           phrases. WEIGHT defaults to 1 and may be any real
+                           number for testing (negative values suppress a
+                           phrase); the web UI clamps weights to a nonzero
+                           [-10, 10] but this CLI does not, so you can probe the
+                           full range. TOPK is the per-phrase top-k gate (a token
+                           is only boosted when its raw logit is already among the
+                           model's top-TOPK; positive integer, default ${DEFAULT_BOOST_TOPK}).
                            Example: --phrase-boost="venlafaxine:5,truc:-5"
+                           Example: --phrase-boost="venlafaxine:5:50"
                            Example: --phrase-boost=./phrases.txt
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
@@ -159,12 +163,12 @@ function expandBoostSpec(spec) {
   return spec;
 }
 
-// Mirrors the "phrase:weight" splitting of phraseBoost.parseBoostPhrases (a
-// weight is the numeric tail after the LAST colon), but accepts comma OR
-// newline separators and does NOT clamp the weight, so negative / >10 values
-// can be tested here. The few shared lines are intentional: the formats and
-// validation rules differ enough that routing through parseBoostPhrases (which
-// is newline-only and clamps to (0,10]) would defeat the purpose.
+// Supports the same "phrase:WEIGHT" and "phrase:WEIGHT:TOPK" suffixes as the web
+// app, reusing parseBoostPhrases' own right-to-left peelTrailingNumber so the
+// field-splitting stays identical. The deliberate differences: this CLI also
+// accepts comma separators and does NOT clamp the weight, so negative / >10
+// values can be probed here (the web app clamps to a nonzero [-10, 10]). top-k
+// must still be a positive integer for the trie's gate, so it is validated.
 function parseCliBoosts(specs) {
   const entries = [];
   for (const spec of specs.map(expandBoostSpec)) {
@@ -173,16 +177,24 @@ function parseCliBoosts(specs) {
       if (!t) continue;
       let phrase = t;
       let weight = 1;
-      const c = t.lastIndexOf(':');
-      if (c > 0 && c < t.length - 1) {
-        const tail = t.slice(c + 1).trim();
-        const num = Number(tail);
-        if (tail !== '' && Number.isFinite(num)) {
-          phrase = t.slice(0, c).trim();
-          weight = num;
+      let topk = DEFAULT_BOOST_TOPK;
+      const last = peelTrailingNumber(t);
+      if (last) {
+        const prev = peelTrailingNumber(last.head);
+        if (prev) {            // phrase:WEIGHT:TOPK (prev = weight, last = topk)
+          phrase = prev.head;
+          weight = prev.value;
+          topk = last.value;
+        } else {               // phrase:WEIGHT
+          phrase = last.head;
+          weight = last.value;
         }
       }
-      if (phrase) entries.push({ phrase, weight });
+      if (!Number.isInteger(topk) || topk < 1) {
+        console.error(`[transcribe] warning: top-k ${topk} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK} for "${phrase}"`);
+        topk = DEFAULT_BOOST_TOPK;
+      }
+      if (phrase) entries.push({ phrase, weight, topk });
     }
   }
   return entries;
@@ -333,8 +345,8 @@ async function main() {
     phraseBoost = BoostingTrie.buildFromPhrases(entries, encoder, { strength: args.strength });
     phraseBoost.strength = args.strength;
     console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${args.strength}`);
-    for (const { phrase, weight } of entries) {
-      console.error(`             - "${phrase}" (weight ${weight})  -> [${encoder.encode(phrase).join(', ')}]`);
+    for (const { phrase, weight, topk } of entries) {
+      console.error(`             - "${phrase}" (weight ${weight}, top-k ${topk})  -> [${encoder.encode(phrase).join(', ')}]`);
     }
     if (phraseBoost.skipped.length) {
       console.error(`[transcribe] skipped (out-of-vocab, cannot be matched): ${phraseBoost.skipped.join(', ')}`);
