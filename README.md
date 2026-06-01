@@ -124,6 +124,8 @@ Open the settings panel and find the **Phrase boosting** group:
 
 Your phrase list and strength are saved locally (IndexedDB) and survive reloads. Like everything else in this app, boosting runs **100% in your browser**: nothing about your phrases is sent anywhere.
 
+**Operator-provided lists (optional, self-hosted):** set the `BOOST_PHRASES_SOURCE` environment variable to a local folder of `.txt` files (one phrase per line, optionally `phrase:weight`) or to an https URL pointing at a single `.txt` file. When at least one list is found, a selector appears above the box so users can pick which list to load; choosing one fills the box with that file's contents. The selector always includes a **Custom** entry for typing your own phrases, and that custom text is saved across sessions independently of the loaded files. When the variable is unset, no selector is shown and the box works exactly as described above (manual entry only).
+
 ### How it works
 
 This is a browser port of the *concept* behind NVIDIA NeMo's [GPU-Accelerated Phrase-Boosting](https://github.com/NVIDIA-NeMo/NeMo/pull/14277) (see also issue [#14772](https://github.com/NVIDIA-NeMo/NeMo/issues/14772)). Each phrase is tokenized with a faithful reimplementation of the model's BPE tokenizer and inserted into a token-level **boosting trie**. During decoding, before each token is chosen, the trie adds a small additive reward (shallow fusion) to the tokens that would start or continue one of your phrases, with deeper matches rewarded a little more to encourage finishing a phrase once it starts.
