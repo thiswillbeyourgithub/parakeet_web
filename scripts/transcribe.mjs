@@ -102,7 +102,7 @@ function parseArgs(argv) {
   if (!a.audio) throw new Error('No audio file given. See --help.');
   if (a.quant !== 'int8' && a.quant !== 'fp32') throw new Error(`--quant must be int8 or fp32 (got ${a.quant})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
-  if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1) throw new Error('--beam-width must be an integer >= 1');
+  if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 25) throw new Error('--beam-width must be an integer in [1, 25]');
   return a;
 }
 
@@ -133,7 +133,7 @@ Options:
                            Example: --phrase-boost=./phrases.txt
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
-  -w, --beam-width N       Beam search width (integer >= 1). 1 = greedy (default,
+  -w, --beam-width N       Beam search width (integer in [1, 25]). 1 = greedy (default,
                            fastest). Higher widths explore alternative hypotheses
                            and let phrase boosting recover words greedy would
                            discard, at roughly Nx the decode time.
