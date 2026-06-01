@@ -111,7 +111,17 @@ TDT decoding only** (no beam search). Therefore:
     downloads from). Its `model` block is:
       - `type: "BPE"`, `vocab`: dict `piece -> id` (8192 entries),
         `merges`: **13476 ranked pairs** (e.g. `["e","n"], ["▁","s"], ...`),
-        `byte_fallback: true`, `unk_id: null`, `fuse_unk`, `ignore_merges`.
+        `byte_fallback: true`, `unk_id: null`, `fuse_unk: true`,
+        `ignore_merges: false` (an earlier note said true; corrected session 2).
+        NOTE: although `byte_fallback` is true, the vocab contains **no**
+        `<0xHH>` byte tokens, so OOV characters fall through to `<unk>` (id 0),
+        and `fuse_unk` collapses adjacent `<unk>`s into one (verified: 東京 ->
+        `['▁','<unk>']`). CJK/non-Latin phrases therefore cannot be boosted
+        meaningfully; this is a tokenizer limitation, not an encoder bug.
+      - **Digits 0-9 are added_tokens** (ids 234-243), so they are extracted
+        BEFORE BPE, exactly like the control tokens. This matters: in "200mg"
+        the word-start marker `▁` lands on `m` (segment "mg"), not on the digits.
+        The encoder must split added tokens out of the raw text first.
       - normalizer = Sequence[`Precompiled` charsmap, `Strip`, `Replace`].
       - pre_tokenizer = `Metaspace` (replacement `▁`, prepend_scheme "always",
         split true). decoder = `Metaspace` likewise.
@@ -122,9 +132,11 @@ TDT decoding only** (no beam search). Therefore:
     sequence (chars, with byte_fallback to `<0xHH>` for OOV), then **greedily
     apply merges in rank order** until none apply. Merge RANK matters; there are
     no per-piece scores. Map final pieces -> ids via the app's `vocab.txt`
-    (every BPE piece should exist there; VERIFY this set-equality as a Phase 1
-    step). `ignore_merges:true` means a token already present whole in the vocab
-    is kept as-is.
+    (VERIFIED session 2: ids 0..8191 are byte-for-byte identical between the BPE
+    `vocab` and the app's `vocab.txt`; the only diff is id 8192, `<blank>`
+    upstream vs `<blk>` in vocab.txt, which is the blank token and irrelevant to
+    text encoding). `ignore_merges` is **false** here, so the standard
+    greedy-merge path always runs.
   - **Asset to vendor:** the distilled `merges` list (ranked), plus optionally
     the `piece->id` map (likely redundant with `vocab.txt`, so possibly just
     `merges`). Vendor under `app/ui/public/tokenizer/` (or `app/ui/vendor/`) with
@@ -210,27 +222,36 @@ encoder; a prior session did that by mistake and the files were deleted.
       (13476 ranked merges, vocab dict, byte_fallback, Metaspace pre-tokenizer,
       275 control added_tokens). The `istupakov/...-onnx` repo ships only
       `vocab.txt`. See §2.3 Q5 for the full verified spec.
-- [ ] Confirm set-equality: every BPE `vocab` piece exists in the app's
-      `vocab.txt` (and note any control/added tokens to exclude from text
-      encoding). If they do not line up, STOP and re-raise.
-- [ ] Distill + vendor the BPE asset: the ranked `merges` list (and `piece->id`
-      only if not redundant with `vocab.txt`) under `app/ui/public/tokenizer/`
-      with a `SOURCE.md` (provenance + source `tokenizer.json` SHA-256). Keep it
-      lazily loaded (boosting-only).
-- [ ] Implement a BPE encoder module in `app/src` (e.g. `bpeEncoder.js`, generic
-      name; public API `encode(text) -> vocab.txt token-id[]`, leading-`▁`
-      word-start handling). Metaspace pre-tokenize + NFKC-approx normalize +
-      ranked-merge BPE + UTF-8 byte_fallback. Respect `ignore_merges`. No new npm
-      dep (hand-rolled).
-- [ ] Gate asset download so it loads only when boosting is enabled (mind
-      Chromium blob-fetch cap from CLAUDE.md; asset is tiny so caching is cheap).
-- [ ] Test: cross-check `encode()` against the REAL HuggingFace `tokenizers`
-      library (`pip install tokenizers`, load the upstream `tokenizer.json`) on
-      sample phrases including accented French medical vocab, CJK, hyphenated,
-      and acronyms. Round-trip `decode(encode(x))` is necessary but NOT
-      sufficient (it passed for the wrong unigram encoder), so the HF cross-check
-      is the real gate. Commit a standalone test/script; no full harness needed.
-- [ ] Commit (asset, encoder, test can be separate commits).
+- [x] Confirm set-equality. DONE (session 2): ids 0..8191 are byte-for-byte
+      identical between the BPE `vocab` and the app's `vocab.txt`; only id 8192
+      differs (`<blank>` vs `<blk>`, the blank token, irrelevant to encoding).
+      So `vocab.txt` alone is sufficient for piece->id; no need to vendor it.
+      Digits 0-9 and the `<|...|>` controls are added_tokens (extract pre-BPE);
+      no `<0xHH>` byte tokens exist so OOV -> `<unk>` (fused). See §2.3 Q5.
+- [x] Distill + vendor the BPE asset. DONE: `scripts/distill-bpe-merges.py`
+      writes `app/ui/public/tokenizer/bpe-merges.json` (ranked `merges` +
+      `added_tokens` contents + model flags; ids resolved from `vocab.txt` at
+      runtime, so NOT duplicated). 187 KB raw / 53 KB gzipped. `SOURCE.md`
+      records provenance + source `tokenizer.json` SHA-256
+      `bd321b096832a3f270bd3b2a88823957920f1a5c5ada71114a26ea729d0cbe91`.
+      Commit aa4adde.
+- [x] Implement a BPE encoder module. DONE: `app/src/bpeEncoder.js` exports
+      `BpeEncoder`, `buildVocabToId`, and `loadBpeEncoder(tokenizer, url)`
+      (lazy same-origin fetch of the asset). Faithful pipeline: added-token
+      extraction -> NFKC-approx normalize + strip-right + collapse 2+ spaces ->
+      Metaspace -> ranked-merge BPE -> byte_fallback -> fuse_unk. No new npm dep.
+      Commit 1e22aea.
+- [ ] Gate asset download so it loads only when boosting is enabled. PARTIAL:
+      `loadBpeEncoder()` only fetches when called, so it is naturally
+      boosting-only; the actual wiring (call it from the UI when boosting turns
+      on) happens in Phase 3. Re-confirm there then.
+- [x] Test: cross-check against the REAL HuggingFace `tokenizers` library. DONE:
+      `scripts/test-bpe-encoder.mjs` (+ `scripts/gen-bpe-fixture.py`) compares
+      exact id sequences for 57 phrases (accented French medical vocab, CJK,
+      hyphenated, acronyms, digits, whitespace edge cases). **All 57 match HF.**
+      Run: `node scripts/test-bpe-encoder.mjs` (needs python `tokenizers` +
+      `huggingface_hub`). Commit 8b97ae9.
+- [x] Commit (asset aa4adde, test 8b97ae9, encoder 1e22aea).
 
 ### Phase 2 — Boosting trie + decode hook
 - [ ] Create `app/src/phraseBoost.js` with `BoostingTrie` per §3.
@@ -337,3 +358,19 @@ encoder; a prior session did that by mistake and the files were deleted.
   Phase 1 on a real HF-`tokenizers` cross-check, not just round-trip.
   **Next:** Phase 1, confirm vocab set-equality, then distill the `merges` asset
   and implement the BPE encoder with the HF cross-check test.
+- 2026-06-01, Session 2 (cont). **Phase 1 COMPLETE.** Verified set-equality (BPE
+  vocab ids 0..8191 byte-for-byte match the app's `vocab.txt`; only id 8192
+  differs, `<blank>` vs `<blk>`), so the only asset needed is the ranked
+  `merges` (no piece->id duplication). Found digits 0-9 are added_tokens
+  (extracted pre-BPE) and there are no `<0xHH>` byte tokens (OOV -> fused
+  `<unk>`); corrected the plan's `ignore_merges` (false, not true). Built:
+  `scripts/distill-bpe-merges.py` -> `app/ui/public/tokenizer/bpe-merges.json`
+  (+ SOURCE.md); `app/src/bpeEncoder.js` (hand-rolled faithful BPE, no npm dep);
+  `scripts/test-bpe-encoder.mjs` + `scripts/gen-bpe-fixture.py` cross-checking
+  against the REAL HuggingFace `tokenizers` lib. **All 57 test phrases match HF
+  exactly** (the real gate, since round-trip alone is insufficient). Commits:
+  aa4adde (asset), 8b97ae9 (test), 1e22aea (encoder). Environment was reliable
+  this session (verified git state matched after each commit). **Next:** Phase 2,
+  create `app/src/phraseBoost.js` (`BoostingTrie` per §3) and wire it into
+  `parakeet.js transcribe()` behind an optional `opts.phraseBoost`, leaving the
+  default no-boost path unchanged.
