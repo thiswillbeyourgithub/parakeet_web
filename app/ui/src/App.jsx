@@ -473,11 +473,13 @@ export default function App() {
   // unrelated state), and the strength slider just mutates trie.strength.
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
-  // When true, each typed phrase is expanded to all casings (lower/UPPER/
-  // Sentence/Title) before encoding, so e.g. "venlafaxine" also boosts
-  // "Venlafaxine" and "VENLAFAXINE" (the BPE encoder is case-sensitive, so each
-  // casing is a distinct token sequence / trie branch). See expandCasingVariants.
-  const [boostCaseInsensitive, setBoostCaseInsensitive] = useState(false);
+  // Global default for casing expansion (on by default): each typed phrase is
+  // expanded to all casings (lower/UPPER/Sentence/Title) before encoding, so
+  // e.g. "venlafaxine" also boosts "Venlafaxine" and "VENLAFAXINE" (the BPE
+  // encoder is case-sensitive, so each casing is a distinct token sequence /
+  // trie branch). A per-phrase `:s`/`:i` suffix overrides this. See
+  // expandCasingVariants.
+  const [boostCaseInsensitive, setBoostCaseInsensitive] = useState(true);
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
   // True while a long phrase list is (re)encoding+building so the header status
@@ -953,7 +955,7 @@ export default function App() {
           loadSetting('boostStrength', 1),
           loadSetting('boostSource', BOOST_SOURCE_CUSTOM),
           loadSetting('boostCustomText', ''),
-          loadSetting('boostCaseInsensitive', false),
+          loadSetting('boostCaseInsensitive', true),
         ]);
 
         // A saved value means the user previously picked a backend explicitly;
@@ -998,7 +1000,7 @@ export default function App() {
         setLiveContextWindow(savedLiveContextWindow);
         setBoostPhrases(typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
-        setBoostCaseInsensitive(savedBoostCaseInsensitive === true);
+        setBoostCaseInsensitive(savedBoostCaseInsensitive !== false);
         {
           const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
           // Migration: pre-feature profiles have no boostCustomText but may
@@ -1440,6 +1442,9 @@ export default function App() {
           pre = {
             text: r.text,
             vocabSig: parsed.vocabSig,
+            // The global casing-default the prebuild expanded at; legacy
+            // artifacts omit it (un-expanded), so treat a missing value as false.
+            caseDefault: parsed.caseDefault === true,
             encoded: parsed.encoded,
             skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
           };
@@ -1537,13 +1542,11 @@ export default function App() {
   useEffect(() => {
     const parsed = parseBoostPhrases(boostPhrases);
     setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
-    // Casing expansion (toggle): turn each typed phrase into one entry per
-    // casing so the case-sensitive encoder gets a trie branch for each. Done
-    // here (not in the worker) so it also forces a re-encode rather than using
-    // the server-prebuilt encoding, which was built from the un-expanded text.
-    const entries = boostCaseInsensitive
-      ? expandCasingVariants(parsed.filter(p => p.phrase))
-      : parsed.filter(p => p.phrase);
+    // Casing expansion: turn each case-insensitive phrase into one entry per
+    // casing so the case-sensitive encoder gets a trie branch for each. Runs
+    // unconditionally because a per-phrase `:i` flag can opt a phrase in even
+    // when the global default is off (and `:s` can opt one out when it is on).
+    const entries = expandCasingVariants(parsed.filter(p => p.phrase), boostCaseInsensitive);
     const tokenizer = modelRef.current?.tokenizer;
     if (!entries.length || !tokenizer) {
       phraseBoostRef.current = null;
@@ -1556,9 +1559,12 @@ export default function App() {
     // that skips the BPE encode (the slow part) entirely.
     const pre = prebuiltBoostRef.current;
     const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
-    // Casing expansion changes the entry set, so the prebuilt encoding (built
-    // from the un-expanded text) no longer matches: re-encode instead.
-    const usePrebuilt = !boostCaseInsensitive && !!pre && pre.text === boostPhrases && pre.vocabSig === sig;
+    // The prebuilt encoding bakes in the casing expansion at the global default
+    // it was built with (`pre.caseDefault`; absent on legacy artifacts => false,
+    // i.e. un-expanded). It only matches when the user's current global default
+    // agrees; otherwise the entry set differs, so re-encode.
+    const usePrebuilt = !!pre && pre.text === boostPhrases && pre.vocabSig === sig
+      && (pre.caseDefault ?? false) === boostCaseInsensitive;
     // Long lists take long enough to encode+build that the user should see the
     // app is busy; small ones (or prebuilt ones, which only insert) rebuild in
     // a few ms, so a spinner would only flash.

@@ -50,35 +50,87 @@ export const MAX_PHRASE_WEIGHT = 10;
 export const DEFAULT_BOOST_TOPK = 25;
 
 /**
- * If `text` ends in `:<number>` with a non-empty head before that colon, return
- * `{ head, value }` (head trimmed); otherwise null. Used to peel the optional
- * trailing `:weight` and `:weight:topk` fields off a phrase line.
+ * Peel the last `:`-delimited field off `text` for the weight/top-k parser.
+ * Returns `{ head, value }` for a numeric field, `{ head, empty: true }` for an
+ * empty field (e.g. the `::` in `word::25`, meaning "use the default"), or null
+ * when there is no field to peel: no colon, an empty head (so `:0.5` stays a
+ * phrase), or a non-numeric non-empty tail (so `ratio 3:1` peels but `bad:abc`
+ * does not). `head` is trimmed.
  * @param {string} text
- * @returns {{head: string, value: number}|null}
+ * @returns {{head: string, value?: number, empty?: boolean}|null}
  */
-export function peelTrailingNumber(text) {
+function peelValueField(text) {
   const colon = text.lastIndexOf(':');
-  if (colon <= 0 || colon >= text.length - 1) return null;
-  const tail = text.slice(colon + 1).trim();
-  if (tail === '') return null;
-  const value = Number(tail);
-  if (!Number.isFinite(value)) return null;
+  if (colon <= 0) return null; // no colon, or empty head (keep ":x" as a phrase)
   const head = text.slice(0, colon).trim();
-  if (!head) return null;
+  const tail = text.slice(colon + 1).trim();
+  if (tail === '') return { head, empty: true };
+  const value = Number(tail);
+  if (!Number.isFinite(value)) return null; // non-numeric tail belongs to the phrase
   return { head, value };
 }
 
 /**
- * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase with two
- * optional trailing numeric fields: `phrase:WEIGHT` or `phrase:WEIGHT:TOPK`
- * (e.g. `acetaminophen:2.5`, `um:-3`, `venlafaxine:5:50`). Fields are peeled
- * right-to-left, so a single trailing number is the weight and the inner of two
- * is the weight while the outer (last) is the top-k gate. Because only a numeric
- * tail after the LAST colon is treated as a field, phrases containing colons
- * (e.g. `ratio 3:1`) keep working unless they end in `:num`. A negative weight
- * is written with the minus sign after the colon (`phrase:-3`).
+ * Split one phrase line into its fields: `phrase[:WEIGHT[:TOPK[:s|i]]]`. Fields
+ * are peeled right-to-left and the phrase keeps any colons it contains (only a
+ * trailing field of the right shape is consumed), so e.g. `ratio 3:1` and
+ * `bad:abc` still work. Details:
+ *   - An empty numeric field means "use the default": `word::25` is default
+ *     weight + top-k 25; `word:5` is weight 5 + default top-k.
+ *   - The optional trailing `:s` / `:i` flag sets per-phrase case sensitivity
+ *     (`s` = case-sensitive, `i` = case-insensitive, i.e. boost all casings).
+ *     It must be the last field; absent leaves `caseInsensitive` undefined so
+ *     the caller's global default applies.
+ * Returns RAW, unvalidated weight/topk (callers clamp/warn as they like); weight
+ * defaults to 1, topk to {@link DEFAULT_BOOST_TOPK}, caseInsensitive to undefined.
+ * @param {string} text A single phrase line (leading/trailing space tolerated).
+ * @returns {{phrase: string, weight: number, topk: number, caseInsensitive: (boolean|undefined)}}
+ */
+export function parseBoostFields(text) {
+  let phrase = text.trim();
+  let weight = 1;
+  let topk = DEFAULT_BOOST_TOPK;
+  let caseInsensitive;
+
+  // 1. Optional trailing case flag (:s / :i), last field only.
+  const flagColon = phrase.lastIndexOf(':');
+  if (flagColon > 0) {
+    const tag = phrase.slice(flagColon + 1).trim().toLowerCase();
+    if (tag === 's' || tag === 'i') {
+      caseInsensitive = tag === 'i';
+      phrase = phrase.slice(0, flagColon).trim();
+    }
+  }
+
+  // 2. Optional :WEIGHT then :WEIGHT:TOPK, peeled right-to-left.
+  const last = peelValueField(phrase);
+  if (last) {
+    const prev = peelValueField(last.head);
+    if (prev) {
+      // phrase:WEIGHT:TOPK  (prev = weight, last = topk)
+      phrase = prev.head;
+      if (!prev.empty) weight = prev.value;
+      if (!last.empty) topk = last.value;
+    } else {
+      // phrase:WEIGHT
+      phrase = last.head;
+      if (!last.empty) weight = last.value;
+    }
+  }
+  return { phrase, weight, topk, caseInsensitive };
+}
+
+/**
+ * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase with up
+ * to three optional trailing fields, `phrase:WEIGHT:TOPK:FLAG`, all peeled
+ * right-to-left by {@link parseBoostFields} (e.g. `acetaminophen:2.5`, `um:-3`,
+ * `venlafaxine:5:50`, `venlafaxine:5:50:i`, `epi::40:s`). An empty numeric field
+ * keeps the default (`word::25`); the trailing `:s`/`:i` flag overrides
+ * case sensitivity per phrase. A negative weight is written with the minus sign
+ * after the colon (`phrase:-3`). This validates/clamps the raw fields and
+ * records a per-entry `warning` for any it had to coerce.
  * @param {string} raw
- * @returns {Array<{phrase: string, weight: number, topk: number, warning?: string}>}
+ * @returns {Array<{phrase: string, weight: number, topk: number, caseInsensitive?: boolean, warning?: string}>}
  */
 export function parseBoostPhrases(raw) {
   if (!raw) return [];
@@ -87,25 +139,8 @@ export function parseBoostPhrases(raw) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    let phrase = trimmed;
-    let weight = 1;
-    let topk = DEFAULT_BOOST_TOPK;
+    let { phrase, weight, topk, caseInsensitive } = parseBoostFields(trimmed);
     const warnings = [];
-
-    const last = peelTrailingNumber(phrase);
-    if (last) {
-      const prev = peelTrailingNumber(last.head);
-      if (prev) {
-        // phrase:WEIGHT:TOPK  (prev = weight, last = topk)
-        phrase = prev.head;
-        weight = prev.value;
-        topk = last.value;
-      } else {
-        // phrase:WEIGHT
-        phrase = last.head;
-        weight = last.value;
-      }
-    }
 
     if (weight === 0 || weight < -MAX_PHRASE_WEIGHT || weight > MAX_PHRASE_WEIGHT) {
       warnings.push(`weight ${weight} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`);
@@ -117,6 +152,7 @@ export function parseBoostPhrases(raw) {
     }
 
     const entry = { phrase, weight, topk };
+    if (caseInsensitive !== undefined) entry.caseInsensitive = caseInsensitive;
     if (warnings.length) entry.warning = warnings.join('; ');
     out.push(entry);
   }
@@ -160,20 +196,31 @@ export function casingVariants(phrase) {
  * model can emit (see {@link casingVariants}). The BPE encoder is
  * case-sensitive, so `venlafaxine`, `Venlafaxine` and `VENLAFAXINE` encode to
  * different token sequences and must each be their own trie branch; this turns
- * one typed phrase into one entry per casing variant. Deduplicated across the
- * whole list by phrase string; on a collision the larger-magnitude weight wins
- * (matching the trie's strongest-magnitude rule) and carries its own top-k.
- * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
+ * one typed phrase into one entry per casing variant.
+ *
+ * Whether an entry expands is decided per phrase: its own `caseInsensitive`
+ * flag (the `:s`/`:i` suffix) wins, falling back to `defaultCaseInsensitive`
+ * (the UI's global toggle) when the entry has no flag. A case-sensitive entry
+ * passes through unchanged. Deduplicated across the whole list by phrase
+ * string; on a collision the larger-magnitude weight wins (matching the trie's
+ * strongest-magnitude rule) and carries its own top-k.
+ * @param {Array<{phrase: string, weight: number, topk?: number, caseInsensitive?: boolean}>} entries
+ * @param {boolean} [defaultCaseInsensitive=false] Applied to entries with no `:s`/`:i` flag.
  * @returns {Array<{phrase: string, weight: number, topk?: number}>}
  */
-export function expandCasingVariants(entries) {
+export function expandCasingVariants(entries, defaultCaseInsensitive = false) {
   const byPhrase = new Map();
+  const add = (entry, phrase) => {
+    const prev = byPhrase.get(phrase);
+    if (!prev || Math.abs(entry.weight) > Math.abs(prev.weight)) {
+      byPhrase.set(phrase, { ...entry, phrase });
+    }
+  };
   for (const entry of entries) {
-    for (const phrase of casingVariants(entry.phrase)) {
-      const prev = byPhrase.get(phrase);
-      if (!prev || Math.abs(entry.weight) > Math.abs(prev.weight)) {
-        byPhrase.set(phrase, { ...entry, phrase });
-      }
+    if (entry.caseInsensitive ?? defaultCaseInsensitive) {
+      for (const phrase of casingVariants(entry.phrase)) add(entry, phrase);
+    } else {
+      add(entry, entry.phrase);
     }
   }
   return [...byPhrase.values()];

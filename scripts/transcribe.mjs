@@ -32,7 +32,7 @@ import { ParakeetModel } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, peelTrailingNumber, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostFields, expandCasingVariants, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
@@ -137,20 +137,24 @@ Arguments:
   <audio>                  Path to an audio file (any format ffmpeg can read).
 
 Options:
-  -b, --phrase-boost STR   Boost phrases as "phrase:WEIGHT" or "phrase:WEIGHT:TOPK"
-                           entries, comma- or newline-separated, OR a path to a
-                           text file holding such phrases (one per line is fine).
-                           Repeatable; the argument is treated as a file when it
-                           resolves to an existing file, otherwise as inline
-                           phrases. WEIGHT defaults to 1 and may be any real
-                           number for testing (negative values suppress a
-                           phrase); the web UI clamps weights to a nonzero
-                           [-10, 10] but this CLI does not, so you can probe the
-                           full range. TOPK is the per-phrase top-k gate (a token
-                           is only boosted when its raw logit is already among the
-                           model's top-TOPK; positive integer, default ${DEFAULT_BOOST_TOPK}).
+  -b, --phrase-boost STR   Boost phrases as "phrase:WEIGHT:TOPK:FLAG" entries
+                           (every field after the phrase is optional), comma- or
+                           newline-separated, OR a path to a text file holding
+                           such phrases (one per line is fine). Repeatable; the
+                           argument is treated as a file when it resolves to an
+                           existing file, otherwise as inline phrases. WEIGHT
+                           defaults to 1 and may be any real number for testing
+                           (negative values suppress a phrase); the web UI clamps
+                           weights to a nonzero [-10, 10] but this CLI does not,
+                           so you can probe the full range. An empty WEIGHT keeps
+                           the default ("phrase::40"). TOPK is the per-phrase
+                           top-k gate (a token is only boosted when its raw logit
+                           is already among the model's top-TOPK; positive
+                           integer, default ${DEFAULT_BOOST_TOPK}). FLAG is "s"
+                           (case-sensitive, default) or "i" (case-insensitive:
+                           also boost the phrase's lower/UPPER/Title casings).
                            Example: --phrase-boost="venlafaxine:5,truc:-5"
-                           Example: --phrase-boost="venlafaxine:5:50"
+                           Example: --phrase-boost="venlafaxine:5:50:i"
                            Example: --phrase-boost=./phrases.txt
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
@@ -207,41 +211,33 @@ function expandBoostSpec(spec) {
   return spec;
 }
 
-// Supports the same "phrase:WEIGHT" and "phrase:WEIGHT:TOPK" suffixes as the web
-// app, reusing parseBoostPhrases' own right-to-left peelTrailingNumber so the
-// field-splitting stays identical. The deliberate differences: this CLI also
-// accepts comma separators and does NOT clamp the weight, so negative / >10
-// values can be probed here (the web app clamps to a nonzero [-10, 10]). top-k
-// must still be a positive integer for the trie's gate, so it is validated.
+// Supports the same `phrase:WEIGHT:TOPK:FLAG` suffixes as the web app, reusing
+// parseBoostFields so the field-splitting (and the `:s`/`:i` case flag) stays
+// identical. The deliberate differences: this CLI also accepts comma separators
+// and does NOT clamp the weight, so negative / >10 values can be probed here
+// (the web app clamps to a nonzero [-10, 10]). top-k must still be a positive
+// integer for the trie's gate, so it is validated. Per-phrase `:i` expands that
+// phrase to all casings (the CLI default is case-sensitive, i.e. no expansion).
 function parseCliBoosts(specs) {
   const entries = [];
   for (const spec of specs.map(expandBoostSpec)) {
     for (const part of spec.split(/[,\n]/)) {
       const t = part.trim();
       if (!t) continue;
-      let phrase = t;
-      let weight = 1;
-      let topk = DEFAULT_BOOST_TOPK;
-      const last = peelTrailingNumber(t);
-      if (last) {
-        const prev = peelTrailingNumber(last.head);
-        if (prev) {            // phrase:WEIGHT:TOPK (prev = weight, last = topk)
-          phrase = prev.head;
-          weight = prev.value;
-          topk = last.value;
-        } else {               // phrase:WEIGHT
-          phrase = last.head;
-          weight = last.value;
-        }
-      }
+      let { phrase, weight, topk, caseInsensitive } = parseBoostFields(t);
       if (!Number.isInteger(topk) || topk < 1) {
         console.error(`[transcribe] warning: top-k ${topk} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK} for "${phrase}"`);
         topk = DEFAULT_BOOST_TOPK;
       }
-      if (phrase) entries.push({ phrase, weight, topk });
+      if (phrase) {
+        const entry = { phrase, weight, topk };
+        if (caseInsensitive !== undefined) entry.caseInsensitive = caseInsensitive;
+        entries.push(entry);
+      }
     }
   }
-  return entries;
+  // Honour any per-phrase `:i` flag; default case-sensitive (no expansion).
+  return expandCasingVariants(entries, false);
 }
 
 // --- model file resolution ------------------------------------------------

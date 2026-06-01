@@ -59,6 +59,15 @@ check('topk < 1 rejected + warning', tk[3].phrase === 'baz' && tk[3].weight === 
 check('non-integer topk rejected + warning', tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].topk === DEFAULT_BOOST_TOPK && !!tk[4].warning);
 check('colon-only phrase still unaffected with topk parsing', tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].topk === DEFAULT_BOOST_TOPK);
 
+// optional empty fields (use default) and the trailing :s / :i case flag
+const fl = parseBoostPhrases('a::40\nb:5:50:i\nc:s\nd:2:i\ne:5:50\nf:abc:i');
+check('empty weight keeps default, explicit topk', fl[0].phrase === 'a' && fl[0].weight === 1 && fl[0].topk === 40);
+check(':i flag after weight:topk parsed', fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].topk === 50 && fl[1].caseInsensitive === true);
+check(':s flag alone (defaults otherwise)', fl[2].phrase === 'c' && fl[2].weight === 1 && fl[2].caseInsensitive === false);
+check(':i flag right after weight (no topk)', fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].caseInsensitive === true);
+check('no flag leaves caseInsensitive undefined', fl[4].caseInsensitive === undefined);
+check('non-numeric middle field is not a weight', fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].caseInsensitive === true);
+
 // --- casing expansion ----------------------------------------------------
 console.log('casingVariants / expandCasingVariants:');
 const cv = casingVariants('venlafaxine');
@@ -71,18 +80,27 @@ check('as-typed mixed casing is preserved as a variant',
   casingVariants('mRNA').includes('mRNA'));
 check('empty phrase yields nothing', eqArr(casingVariants(''), []));
 
-const expanded = expandCasingVariants([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]);
-check('expand multiplies one entry into its casings', expanded.length === 3);
+// Global default off (the function default): an unflagged entry passes through.
+check('default off => no expansion',
+  expandCasingVariants([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]).length === 1);
+// Global default on: an unflagged entry expands to all its casings.
+const expanded = expandCasingVariants([{ phrase: 'venlafaxine', weight: 5, topk: 50 }], true);
+check('default on => expands one entry into its casings', expanded.length === 3);
 check('expanded entries carry the original weight + topk',
   expanded.every(e => e.weight === 5 && e.topk === 50));
 check('expanded entries cover each casing',
   ['venlafaxine', 'Venlafaxine', 'VENLAFAXINE'].every(p => expanded.some(e => e.phrase === p)));
+// Per-phrase flag overrides the global default in both directions.
+check('per-phrase :i expands even when default is off',
+  expandCasingVariants([{ phrase: 'venlafaxine', weight: 1, caseInsensitive: true }], false).length === 3);
+check('per-phrase :s stays single even when default is on',
+  expandCasingVariants([{ phrase: 'venlafaxine', weight: 1, caseInsensitive: false }], true).length === 1);
 // Dedup across entries: a typed variant collides with a generated one; the
 // larger-magnitude weight wins so an explicit strong phrase is not weakened.
 const dedup = expandCasingVariants([
   { phrase: 'venlafaxine', weight: 2 },
   { phrase: 'Venlafaxine', weight: 8 },
-]);
+], true);
 check('collision keeps the larger-magnitude weight',
   dedup.find(e => e.phrase === 'Venlafaxine').weight === 8);
 check('no duplicate phrase strings after expansion',

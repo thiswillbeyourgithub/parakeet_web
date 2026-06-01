@@ -15,7 +15,7 @@
 //
 // Reuses the exact browser code paths (no duplicated tokenization rules):
 // parseVocabText + vocabSignature + BpeEncoder + parseBoostPhrases +
-// encodePhrases. Built with Claude Code.
+// expandCasingVariants + encodePhrases. Built with Claude Code.
 //
 // Usage:  node prebuild-boost.mjs <boostDir> <vocabPath> <mergesPath>
 
@@ -23,7 +23,14 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { parseVocabText } from '../app/src/tokenizer.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from '../app/src/bpeEncoder.js';
-import { parseBoostPhrases, encodePhrases } from '../app/src/phraseBoost.js';
+import { parseBoostPhrases, expandCasingVariants, encodePhrases } from '../app/src/phraseBoost.js';
+
+// Casing-default baked into the prebuilt encoding. The browser turns casing
+// expansion ON by default, so prebuilding at the same default lets it reuse
+// these ids without re-encoding; it falls back to encoding the .txt itself when
+// the user has flipped the global toggle the other way (caseDefault mismatch).
+// Per-phrase `:s`/`:i` flags are honoured here regardless, exactly as in the UI.
+const CASE_DEFAULT = true;
 
 const [boostDir, vocabPath, mergesPath] = process.argv.slice(2);
 
@@ -69,22 +76,27 @@ console.log(`[prebuild-boost] vocab ${id2token.length} tokens (sig ${sig}); ${tx
 for (const file of txtFiles) {
   const name = basename(file, '.txt');
   const raw = readFileSync(join(boostDir, file), 'utf-8');
-  const entries = parseBoostPhrases(raw).filter(p => p.phrase);
-  if (!entries.length) {
+  const parsed = parseBoostPhrases(raw).filter(p => p.phrase);
+  if (!parsed.length) {
     console.log(`[prebuild-boost] ${file}: no phrases, skipping.`);
     continue;
   }
+  // Expand casings exactly as the browser will at CASE_DEFAULT, so the prebuilt
+  // ids are reusable without a re-encode in the common (default) configuration.
+  const entries = expandCasingVariants(parsed, CASE_DEFAULT);
   const t0 = Date.now();
   const { encoded, skipped } = encodePhrases(entries, encoder);
   const ms = Date.now() - t0;
   const outPath = join(boostDir, `${name}.json`);
   // `vocabSig` lets the browser confirm the prebuilt ids match the tokenizer it
   // actually loaded before trusting them; on a mismatch it re-encodes the .txt.
-  writeFileSync(outPath, JSON.stringify({ vocabSig: sig, encoded, skipped }));
+  // `caseDefault` records the expansion default these ids were built at.
+  writeFileSync(outPath, JSON.stringify({ vocabSig: sig, caseDefault: CASE_DEFAULT, encoded, skipped }));
   const perLine = entries.length ? (ms / entries.length) : 0;
   console.log(
-    `[prebuild-boost] ${file}: encoded ${encoded.length}/${entries.length} phrase(s) `
-    + `(${skipped.length} skipped) in ${ms}ms (avg ${perLine.toFixed(3)}ms/line) -> ${name}.json`
+    `[prebuild-boost] ${file}: ${parsed.length} phrase(s) -> ${entries.length} after casing `
+    + `expansion; encoded ${encoded.length} (${skipped.length} skipped) in ${ms}ms `
+    + `(avg ${perLine.toFixed(3)}ms/line) -> ${name}.json`
   );
 }
 
