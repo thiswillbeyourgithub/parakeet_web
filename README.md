@@ -17,6 +17,7 @@
 - [Dictation Mode](#dictation-mode)
 - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
 - [Live Transcription](#live-transcription)
+- [Phrase Boosting](#phrase-boosting)
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
 - [Mobile debugging](#mobile-debugging)
@@ -38,6 +39,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | ⚡ **WebGPU Accelerated** | Fast GPU inference with automatic WASM fallback for compatibility |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
 | ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
+| 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
 | 🕐 **Word Timestamps** | Per-word timestamps and confidence score heatmap |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
@@ -108,6 +110,25 @@ When you hit stop, the canonical full-audio transcription pass runs as it always
   - Or pick a fixed value (10/15/20/30/45/60 s) if you want to override the auto-adapter — for example, choose 60 s on a fast desktop to maximize accuracy, or 10 s on a phone to keep latency low.
 
 The cadence (how often the live transcript updates) is always auto-adapted: if a transcription pass takes longer than expected, updates back off so the queue never grows. Enable **Display more details** in settings to see the current window size, step interval, and per-tick processing time below the live transcript.
+
+This feature was implemented with [Claude Code](https://www.anthropic.com/claude-code).
+
+## Phrase Boosting
+
+Speech models reliably mis-hear words they rarely saw in training: personal names, local place names, drug names, niche jargon, acronyms. **Phrase boosting** lets you give the decoder a short list of words and phrases to favor, so acoustically ambiguous audio resolves toward them instead of a more common look-alike.
+
+Open the settings panel and find the **Phrase boosting** group:
+
+- **Boost phrases**: one phrase per line. Optionally add a per-phrase weight after a colon, for example `acetaminophen:2.5` (higher means a stronger nudge; an out-of-range weight is ignored with an inline warning and treated as 1).
+- **Boost strength**: a global multiplier applied on top of every phrase's weight. Set it to 0 to disable boosting without clearing your list.
+
+Your phrase list and strength are saved locally (IndexedDB) and survive reloads. Like everything else in this app, boosting runs **100% in your browser**: nothing about your phrases is sent anywhere.
+
+### How it works
+
+This is a browser port of the *concept* behind NVIDIA NeMo's [GPU-Accelerated Phrase-Boosting](https://github.com/NVIDIA-NeMo/NeMo/pull/14277) (see also issue [#14772](https://github.com/NVIDIA-NeMo/NeMo/issues/14772)). Each phrase is tokenized with a faithful reimplementation of the model's BPE tokenizer and inserted into a token-level **boosting trie**. During decoding, before each token is chosen, the trie adds a small additive reward (shallow fusion) to the tokens that would start or continue one of your phrases, with deeper matches rewarded a little more to encourage finishing a phrase once it starts.
+
+Because this app decodes **greedily** (one best token per step, no beam search), boosting is best-effort: it biases each step toward your phrases, but it cannot recover a phrase the greedy decoder already discarded on an earlier frame. Boost strength helps, but very large values can distort otherwise-correct text, so start small and increase only as needed. Non-Latin scripts that the tokenizer maps to a single unknown token (e.g. some CJK input) cannot be boosted meaningfully; this is a tokenizer limitation, not a bug.
 
 This feature was implemented with [Claude Code](https://www.anthropic.com/claude-code).
 

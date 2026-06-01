@@ -325,6 +325,7 @@ export class ParakeetModel {
       previousDecoderState = null,
       returnDecoderState = false,
       timeOffset = 0,
+      phraseBoost = null,
     } = opts;
 
     // Collect per-stage timings only when the caller opts in. Default off so a
@@ -427,6 +428,11 @@ export class ParakeetModel {
     externalInitialState = previousDecoderState || null;
     let emittedTokens = 0;
 
+    // Phrase boosting: reset the trie's active state per decode window (Q4) so
+    // matches start fresh. When no trie is supplied, this whole path is inert
+    // and the default decoding behavior is unchanged.
+    phraseBoost?.reset();
+
     const decStartTime = perfEnabled ? performance.now() : 0;
 
     for (let t = 0; t < Tenc; ) {
@@ -440,6 +446,13 @@ export class ParakeetModel {
 
       const prevTok = ids.length ? ids[ids.length - 1] : this.blankId;
       const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, decoderState);
+
+      // Phrase boosting (shallow fusion): add the trie's rewards into the token
+      // logits before the argmax so the per-step choice is biased toward
+      // continuing/starting a boost phrase. We save the touched logits and
+      // restore them right after the argmax so confidence/log-prob below stay
+      // computed on the model's true (unboosted) distribution.
+      const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
 
       // Argmax on raw logits.
       // Dividing by a positive temperature is monotonic, so argmax(logit/T)
@@ -473,6 +486,15 @@ export class ParakeetModel {
         if (v5 > maxLogit) { maxLogit = v5; maxId = ai + 5; }
         if (v6 > maxLogit) { maxLogit = v6; maxId = ai + 6; }
         if (v7 > maxLogit) { maxLogit = v7; maxId = ai + 7; }
+      }
+      // Restore the boosted logits so confidence/log-prob use the true values.
+      // The softmax below assumes maxLogit == tokenLogits[maxId] (it takes the
+      // chosen token's numerator as 1), so reset maxLogit to the chosen token's
+      // true (unboosted) logit. This yields the model's real confidence in the
+      // boosted choice and stays numerically safe for normal logit ranges.
+      if (boostSaved) {
+        phraseBoost.restore(tokenLogits, boostSaved);
+        maxLogit = tokenLogits[maxId];
       }
       let confVal;
       if (useTemp) {
@@ -521,6 +543,9 @@ export class ParakeetModel {
 
       if (maxId !== this.blankId) {
         ids.push(maxId);
+        // Advance the boosting trie by the emitted token (blank leaves it
+        // unchanged, so no advance in the else branch below).
+        phraseBoost?.advance(maxId);
         if (returnTimestamps) {
           const TIME_STRIDE = this.subsampling * this.windowStride;
           const durFrames = step > 0 ? step : 1;

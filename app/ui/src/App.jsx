@@ -19,6 +19,8 @@ import {
 import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
+import { loadBpeEncoder } from '../../src/bpeEncoder.js';
+import { BoostingTrie, parseBoostPhrases, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes } from './lib/format.js';
 
@@ -381,6 +383,20 @@ export default function App() {
   // built once per session) read the latest user setting.
   const liveTranscriptionEnabledRef = useRef(false);
   const liveContextWindowRef = useRef('auto');
+  // Phrase boosting (context biasing): the user lists phrases to bias the
+  // greedy decoder toward (PLAN.md). `boostPhrases` is the raw textarea text
+  // (one phrase per line, optional `phrase:WEIGHT`); `boostStrength` is the
+  // global multiplier (0 disables). The built BoostingTrie lives in a ref so
+  // we rebuild it only when the phrase text changes (not on every keystroke of
+  // unrelated state), and the strength slider just mutates trie.strength.
+  const [boostPhrases, setBoostPhrases] = useState('');
+  const [boostStrength, setBoostStrength] = useState(1);
+  const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
+  const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
+  const boostStrengthRef = useRef(1);
+  // Cached BPE encoder, tied to the tokenizer it was built from so a model
+  // swap (different vocab) rebuilds it. { tokenizer, encoder } | null.
+  const bpeEncoderRef = useRef(null);
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -777,6 +793,8 @@ export default function App() {
           savedTranscriptDisplayMode,
           savedLiveTranscriptionEnabled,
           savedLiveContextWindow,
+          savedBoostPhrases,
+          savedBoostStrength,
         ] = await Promise.all([
           loadSetting('backend', 'wasm'),
           loadSetting('preprocessor', 'nemo128'),
@@ -802,6 +820,8 @@ export default function App() {
           loadSetting('transcriptDisplayMode', 'raw'),
           loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
+          loadSetting('boostPhrases', ''),
+          loadSetting('boostStrength', 1),
         ]);
 
         setBackend(savedBackend);
@@ -833,6 +853,8 @@ export default function App() {
         setTranscriptDisplayMode(savedTranscriptDisplayMode);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
+        setBoostPhrases(typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
+        setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
         setSettingsLoaded(true);
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -1147,6 +1169,8 @@ export default function App() {
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
+  usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
+  usePersistedSetting('boostStrength', boostStrength, settingsLoaded);
   // F-128: transcripts persist to a dedicated DB (parakeetweb-transcripts-db).
   // When the array shrinks (per-entry delete, clear-all), wipe the whole DB
   // before re-persisting so LevelDB drops the SST/log files that still hold
@@ -1169,6 +1193,50 @@ export default function App() {
   useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
   useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
+
+  // Phrase boosting: rebuild the trie when the phrase text changes or the model
+  // becomes ready (the encoder needs the loaded tokenizer's vocab). The BPE
+  // asset is fetched lazily here, so it only downloads once the user actually
+  // enters boost phrases (PLAN.md Phase 1 "gate asset download" / Phase 3).
+  // Strength is applied separately (below) so moving the slider does not force
+  // a re-encode. We rebuild on `status` so a model load/swap refreshes the trie.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const parsed = parseBoostPhrases(boostPhrases);
+      if (!cancelled) {
+        setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
+      }
+      const entries = parsed.filter(p => p.phrase);
+      const tokenizer = modelRef.current?.tokenizer;
+      if (!entries.length || !tokenizer) {
+        phraseBoostRef.current = null;
+        return;
+      }
+      try {
+        if (!bpeEncoderRef.current || bpeEncoderRef.current.tokenizer !== tokenizer) {
+          const encoder = await loadBpeEncoder(tokenizer);
+          if (cancelled) return;
+          bpeEncoderRef.current = { tokenizer, encoder };
+        }
+        const trie = BoostingTrie.buildFromPhrases(entries, bpeEncoderRef.current.encoder, {
+          strength: boostStrengthRef.current,
+        });
+        if (cancelled) return;
+        phraseBoostRef.current = trie.isEmpty ? null : trie;
+      } catch (e) {
+        console.warn('[Boost] failed to build boosting trie:', e);
+        phraseBoostRef.current = null;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [boostPhrases, status]);
+
+  // Apply the strength slider without rebuilding the trie.
+  useEffect(() => {
+    boostStrengthRef.current = boostStrength;
+    if (phraseBoostRef.current) phraseBoostRef.current.strength = boostStrength;
+  }, [boostStrength]);
 
   /**
    * Load model weights and create an ONNX inference session.
@@ -1289,6 +1357,7 @@ export default function App() {
       getPcmChunks: () => pcmChunksRef.current,
       getSampleRate: () => audioCtx?.sampleRate || 48000,
       windowMode: winSetting === 'auto' ? 'auto' : Number(winSetting),
+      getPhraseBoost: () => phraseBoostRef.current,
       onUpdate: ({ text, words }) => setLiveTranscript({ text, words }),
       onStats: setLiveStats,
     });
@@ -2560,7 +2629,8 @@ export default function App() {
             returnTimestamps: true,
             returnConfidences: true,
             frameStride,
-            temperature
+            temperature,
+            phraseBoost: phraseBoostRef.current,
           });
           console.timeEnd(`Transcribe-chunk-${chunkNum}`);
           const chunkElapsed = performance.now() - chunkStartTime;
@@ -2659,7 +2729,8 @@ export default function App() {
         res = await modelRef.current.transcribe(pcm, 16000, {
           returnTimestamps: true,
           returnConfidences: true,
-          frameStride
+          frameStride,
+          phraseBoost: phraseBoostRef.current,
         });
         console.timeEnd(`Transcribe-${file.name}`);
         console.log(`[Transcribe] Transcription completed successfully`);
@@ -3580,6 +3651,58 @@ export default function App() {
                 finicky and any value above 0.0 breaks the model in unpredictable
                 ways. Still wired up in code via the `temperature` state (default
                 0.0) so it can be re-added here without other plumbing. */}
+
+            <div className="settings-group-header">{t('settingsGroupBoosting')}</div>
+
+            <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.4rem' }}>
+              <span className="setting-label">
+                {t('boostPhrases')}:
+                <InfoTooltip text={t('tooltipBoost')} />
+              </span>
+              <textarea
+                value={boostPhrases}
+                onChange={e => setBoostPhrases(e.target.value)}
+                placeholder={t('boostPhrasesPlaceholder')}
+                rows={4}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                style={{
+                  width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                  fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
+                  borderRadius: '4px', border: '1px solid #d1d5db',
+                }}
+              />
+              {boostWarnings.length > 0 && (
+                <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
+                  {t('boostWeightWarning').replace('{max}', MAX_PHRASE_WEIGHT)}{' '}
+                  {boostWarnings.map(w => w.phrase).join(', ')}
+                </p>
+              )}
+              {boostPhrases.trim() && (
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                  {t('boostPhrasesLoaded').replace(
+                    '{n}',
+                    parseBoostPhrases(boostPhrases).filter(p => p.phrase).length,
+                  )}
+                </p>
+              )}
+            </div>
+
+            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('boostStrength')}: {boostStrength.toFixed(1)}
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="5"
+                step="0.5"
+                value={boostStrength}
+                onChange={e => setBoostStrength(Number(e.target.value))}
+                style={{ flex: '1 1 auto' }}
+              />
+            </div>
 
             <div className="settings-group-header">{t('settingsGroupDebug')}</div>
 
