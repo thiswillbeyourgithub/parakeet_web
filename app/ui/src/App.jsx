@@ -2748,6 +2748,16 @@ export default function App() {
       const MAX_CHUNK_DURATION = chunkDuration; // seconds (user-configurable)
       const MAX_CHUNK_SAMPLES = MAX_CHUNK_DURATION * 16000;
 
+      // Wall-clock timer for the whole transcription (covers both the chunked
+      // and single-pass branches below) plus an accumulator for the decode
+      // phase. Decode is the only stage whose cost scales ~linearly with beam
+      // width (preprocess/encode/tokenize run once per chunk regardless), so
+      // summing decode_ms lets us estimate the single-beam (greedy) wall time.
+      // decode_ms is only populated when profiling is on, which we enable below
+      // whenever beamWidth > 1 (the only case the estimate is meaningful).
+      const transcribeStartTime = performance.now();
+      let totalDecodeMs = 0;
+
       let res;
       if (enableChunking && pcm.length > MAX_CHUNK_SAMPLES) {
         console.log(`[Transcribe] Audio is long (${(pcm.length / 16000).toFixed(1)}s), processing in chunks...`);
@@ -2788,10 +2798,12 @@ export default function App() {
             frameStride,
             temperature,
             beamWidth,
+            enableProfiling: beamWidth > 1,
             phraseBoost: phraseBoostRef.current,
           });
           console.timeEnd(`Transcribe-chunk-${chunkNum}`);
           const chunkElapsed = performance.now() - chunkStartTime;
+          totalDecodeMs += chunkRes.metrics?.decode_ms || 0;
 
           // Adjust timestamps by chunk offset and stream into combinedWords.
           const timeOffset = start / 16000;
@@ -2889,11 +2901,26 @@ export default function App() {
           returnConfidences: true,
           frameStride,
           beamWidth,
+          enableProfiling: beamWidth > 1,
           phraseBoost: phraseBoostRef.current,
         });
         console.timeEnd(`Transcribe-${file.name}`);
+        totalDecodeMs += res.metrics?.decode_ms || 0;
         console.log(`[Transcribe] Transcription completed successfully`);
       }
+
+      // Total wall time for the entire audio. When a wide beam was used, also
+      // report the estimated single-beam (greedy) time so the cost of the beam
+      // width is visible: only the decode phase scales with beam width, so the
+      // estimate keeps the beam-independent wall time and divides decode by it.
+      const transcribeElapsedMs = performance.now() - transcribeStartTime;
+      let transcribeTimeLog = `[Transcribe] Total time for entire audio: ${formatDuration(transcribeElapsedMs / 1000)}`;
+      if (beamWidth > 1 && totalDecodeMs > 0) {
+        const nonDecodeMs = Math.max(0, transcribeElapsedMs - totalDecodeMs);
+        const singleBeamMs = nonDecodeMs + totalDecodeMs / beamWidth;
+        transcribeTimeLog += ` (~${formatDuration(singleBeamMs / 1000)} estimated with beamWidth=1, current beamWidth=${beamWidth})`;
+      }
+      console.log(transcribeTimeLog);
 
       setLatestMetrics(res.metrics);
       // Add to transcriptions list
