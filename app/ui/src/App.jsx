@@ -418,6 +418,14 @@ export default function App() {
   // still be unavailable (blocklisted GPU, headless Chromium, etc.), so we
   // actually request one. null = still probing, true/false = resolved.
   const [webgpuAvailable, setWebgpuAvailable] = useState(null);
+  // Tracks whether the backend reflects an explicit choice (restored from a
+  // saved setting or picked in the UI) vs. our automatic default. The RAM-based
+  // default heuristic only applies when this is false.
+  const backendChosenByUserRef = useRef(false);
+  const chooseBackend = (value) => {
+    backendChosenByUserRef.current = true;
+    setBackend(value);
+  };
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [, startTransition] = useTransition();
   const [preprocessor, setPreprocessor] = useState('nemo128');
@@ -907,7 +915,7 @@ export default function App() {
           savedBoostSource,
           savedBoostCustomText,
         ] = await Promise.all([
-          loadSetting('backend', 'wasm'),
+          loadSetting('backend', null),
           loadSetting('preprocessor', 'nemo128'),
           loadPersistedTranscripts(),
           loadSetting('verboseLog', false),
@@ -941,7 +949,14 @@ export default function App() {
           loadSetting('boostCustomText', ''),
         ]);
 
-        setBackend(savedBackend);
+        // A saved value means the user previously picked a backend explicitly;
+        // honour it (subject to the WebGPU-availability override below). When
+        // absent, leave `backend` at its initial value so the RAM-based default
+        // heuristic can choose once the WebGPU probe resolves.
+        if (savedBackend !== null) {
+          backendChosenByUserRef.current = true;
+          setBackend(savedBackend);
+        }
         setPreprocessor(savedPreprocessor);
         setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
@@ -3499,12 +3514,23 @@ export default function App() {
     }
   }, []);
 
-  // When the WebGPU probe resolves to unavailable, force WASM, overriding any
-  // persisted choice (a saved 'webgpu-hybrid' would otherwise fail at load).
+  // Resolve the effective backend once both the WebGPU probe and settings load
+  // have completed.
+  //   - WebGPU unavailable: force WASM, overriding any persisted choice (a
+  //     saved 'webgpu-hybrid' would otherwise fail at load).
+  //   - No explicit user choice yet: default by RAM. WebGPU runs the fp32
+  //     encoder (~2.4 GB), so default to it only on devices that don't look
+  //     low on memory; otherwise WASM (int8 encoder, ~600 MB).
   useEffect(() => {
-    if (!settingsLoaded || webgpuAvailable !== false) return;
-    setBackend((prev) => (prev.startsWith('webgpu') ? 'wasm' : prev));
-  }, [settingsLoaded, webgpuAvailable]);
+    if (!settingsLoaded || webgpuAvailable === null) return;
+    if (webgpuAvailable === false) {
+      setBackend((prev) => (prev.startsWith('webgpu') ? 'wasm' : prev));
+      return;
+    }
+    if (!backendChosenByUserRef.current) {
+      setBackend(isLowRam ? 'wasm' : 'webgpu-hybrid');
+    }
+  }, [settingsLoaded, webgpuAvailable, isLowRam]);
 
   const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
   const handleLoadModelClick = (opts) => {
@@ -3851,11 +3877,11 @@ export default function App() {
               </span>
               <div className="setting-options">
                 <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady'} />
+                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => chooseBackend(e.target.value)} disabled={status === 'modelReady'} />
                   {t('wasmCpu')}
                 </label>
                 <label className={status === 'modelReady' || webgpuAvailable === false ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => setBackend(e.target.value)} disabled={status === 'modelReady' || webgpuAvailable === false} />
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => chooseBackend(e.target.value)} disabled={status === 'modelReady' || webgpuAvailable === false} />
                   {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
                 </label>
               </div>
