@@ -3768,18 +3768,18 @@ export default function App() {
 
             <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
               <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                {t('beamWidth')} (1-8):
+                {t('beamWidth')} (1-100):
                 <InfoTooltip text={t('tooltipBeamWidth')} />
               </span>
               <input
                 type="number"
                 inputMode="numeric"
                 min="1"
-                max="8"
+                max="100"
                 value={beamWidth}
                 onChange={e=>{
                   const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(8, Math.round(v))));
+                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(100, Math.round(v))));
                 }}
                 style={{ width: '4.5rem' }}
               />
