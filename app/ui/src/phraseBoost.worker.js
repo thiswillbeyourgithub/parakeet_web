@@ -14,7 +14,7 @@
 //   postMessage({ id, ok: false, error })            on failure
 // `id` echoes the request so the caller can ignore stale (superseded) replies.
 
-import { BpeEncoder, buildVocabToId, BPE_ASSET_URL } from '../../src/bpeEncoder.js';
+import { BpeEncoder, buildVocabToId, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
 import { encodePhrases } from '../../src/phraseBoost.js';
 
 // The BPE asset is identical across requests, so fetch + parse it once. The
@@ -30,10 +30,9 @@ async function getEncoder(id2token, assetUrl) {
     if (!resp.ok) throw new Error(`[BoostWorker] failed to fetch ${assetUrl}: ${resp.status}`);
     cachedAsset = await resp.json();
   }
-  // Vocab signature: length plus first/last piece. Two distinct model vocabs
-  // never collide on all three, and rebuilding the encoder (parsing merges into
-  // a Map) on a false miss would only cost a few ms.
-  const sig = `${id2token.length}:${id2token[0]}:${id2token[id2token.length - 1]}`;
+  // Vocab signature (shared helper): a false miss only costs rebuilding the
+  // encoder (parsing merges into a Map), a few ms.
+  const sig = vocabSignature(id2token);
   if (!cachedEncoder || cachedVocabSig !== sig) {
     cachedEncoder = new BpeEncoder(cachedAsset, buildVocabToId(id2token));
     cachedVocabSig = sig;

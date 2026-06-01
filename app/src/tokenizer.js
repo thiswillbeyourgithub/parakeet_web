@@ -12,6 +12,31 @@ async function fetchText(url) {
 }
 
 /**
+ * Parse the raw text of a `vocab.txt` / `tokens.txt` file into an `id2token`
+ * array (index = id, value = piece). Each line is `<piece> <id>` (whitespace
+ * separated); invalid lines are skipped with a warning. Shared by
+ * {@link ParakeetTokenizer.fromUrl} (browser) and the server-side boost
+ * prebuild (Node, reading the local vocab from disk), so the parse rule lives
+ * in one place.
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function parseVocabText(text) {
+  const id2token = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line) continue;
+    const [tok, idStr] = line.split(/\s+/);
+    const id = parseInt(idStr, 10);
+    if (isNaN(id) || !tok) {
+      console.warn(`[ParakeetTokenizer] Skipping invalid vocab line: ${JSON.stringify(line)}`);
+      continue;
+    }
+    id2token[id] = tok;
+  }
+  return id2token;
+}
+
+/**
  * Tokenizer/decoder for Parakeet SentencePiece-style token vocabularies.
  */
 export class ParakeetTokenizer {
@@ -43,18 +68,7 @@ export class ParakeetTokenizer {
    */
   static async fromUrl(tokensUrl) {
     const text = await fetchText(tokensUrl);
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    const id2token = [];
-    for (const line of lines) {
-      const [tok, idStr] = line.split(/\s+/);
-      const id = parseInt(idStr, 10);
-      if (isNaN(id) || !tok) {
-        console.warn(`[ParakeetTokenizer] Skipping invalid vocab line: ${JSON.stringify(line)}`);
-        continue;
-      }
-      id2token[id] = tok;
-    }
-    return new ParakeetTokenizer(id2token);
+    return new ParakeetTokenizer(parseVocabText(text));
   }
 
   /**
