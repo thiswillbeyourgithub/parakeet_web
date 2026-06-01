@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, encodePhrases, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, encodePhrases, expandCasingVariants, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes } from './lib/format.js';
 
@@ -473,6 +473,11 @@ export default function App() {
   // unrelated state), and the strength slider just mutates trie.strength.
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
+  // When true, each typed phrase is expanded to all casings (lower/UPPER/
+  // Sentence/Title) before encoding, so e.g. "venlafaxine" also boosts
+  // "Venlafaxine" and "VENLAFAXINE" (the BPE encoder is case-sensitive, so each
+  // casing is a distinct token sequence / trie branch). See expandCasingVariants.
+  const [boostCaseInsensitive, setBoostCaseInsensitive] = useState(false);
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
   // True while a long phrase list is (re)encoding+building so the header status
@@ -914,6 +919,7 @@ export default function App() {
           savedBoostStrength,
           savedBoostSource,
           savedBoostCustomText,
+          savedBoostCaseInsensitive,
         ] = await Promise.all([
           loadSetting('backend', null),
           loadSetting('preprocessor', 'nemo128'),
@@ -947,6 +953,7 @@ export default function App() {
           loadSetting('boostStrength', 1),
           loadSetting('boostSource', BOOST_SOURCE_CUSTOM),
           loadSetting('boostCustomText', ''),
+          loadSetting('boostCaseInsensitive', false),
         ]);
 
         // A saved value means the user previously picked a backend explicitly;
@@ -991,6 +998,7 @@ export default function App() {
         setLiveContextWindow(savedLiveContextWindow);
         setBoostPhrases(typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
+        setBoostCaseInsensitive(savedBoostCaseInsensitive === true);
         {
           const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
           // Migration: pre-feature profiles have no boostCustomText but may
@@ -1341,6 +1349,7 @@ export default function App() {
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
   usePersistedSetting('boostStrength', boostStrength, settingsLoaded);
+  usePersistedSetting('boostCaseInsensitive', boostCaseInsensitive, settingsLoaded);
   usePersistedSetting('boostSource', boostSource, settingsLoaded);
   usePersistedSetting('boostCustomText', boostCustomText, settingsLoaded);
   // F-128: transcripts persist to a dedicated DB (parakeetweb-transcripts-db).
@@ -1528,7 +1537,13 @@ export default function App() {
   useEffect(() => {
     const parsed = parseBoostPhrases(boostPhrases);
     setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
-    const entries = parsed.filter(p => p.phrase);
+    // Casing expansion (toggle): turn each typed phrase into one entry per
+    // casing so the case-sensitive encoder gets a trie branch for each. Done
+    // here (not in the worker) so it also forces a re-encode rather than using
+    // the server-prebuilt encoding, which was built from the un-expanded text.
+    const entries = boostCaseInsensitive
+      ? expandCasingVariants(parsed.filter(p => p.phrase))
+      : parsed.filter(p => p.phrase);
     const tokenizer = modelRef.current?.tokenizer;
     if (!entries.length || !tokenizer) {
       phraseBoostRef.current = null;
@@ -1541,7 +1556,9 @@ export default function App() {
     // that skips the BPE encode (the slow part) entirely.
     const pre = prebuiltBoostRef.current;
     const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
-    const usePrebuilt = !!pre && pre.text === boostPhrases && pre.vocabSig === sig;
+    // Casing expansion changes the entry set, so the prebuilt encoding (built
+    // from the un-expanded text) no longer matches: re-encode instead.
+    const usePrebuilt = !boostCaseInsensitive && !!pre && pre.text === boostPhrases && pre.vocabSig === sig;
     // Long lists take long enough to encode+build that the user should see the
     // app is busy; small ones (or prebuilt ones, which only insert) rebuild in
     // a few ms, so a spinner would only flash.
@@ -1582,7 +1599,7 @@ export default function App() {
       }
     }, BOOST_REBUILD_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(timer); if (showSpinner) setBoostRebuilding(false); };
-  }, [boostPhrases, status, encodeBoostPhrases]);
+  }, [boostPhrases, boostCaseInsensitive, status, encodeBoostPhrases]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {
@@ -4068,6 +4085,15 @@ export default function App() {
                   borderRadius: '4px', border: '1px solid #d1d5db',
                 }}
               />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                <input
+                  type="checkbox"
+                  checked={boostCaseInsensitive}
+                  onChange={e => setBoostCaseInsensitive(e.target.checked)}
+                />
+                {t('boostCaseInsensitive')}
+                <InfoTooltip text={t('tooltipBoostCaseInsensitive')} />
+              </label>
               {boostWarnings.length > 0 && (
                 <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
                   {t('boostWeightWarning').replace('{max}', MAX_PHRASE_WEIGHT)}{' '}

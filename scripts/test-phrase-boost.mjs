@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BpeEncoder, buildVocabToId } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, encodePhrases, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, encodePhrases, casingVariants, expandCasingVariants, MAX_PHRASE_WEIGHT, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const asset = JSON.parse(readFileSync(resolve(root, 'app/ui/public/tokenizer/bpe-merges.json'), 'utf-8'));
@@ -58,6 +58,35 @@ check('weight:topk parsed (inner weight, outer topk)', tk[2].phrase === 'bar' &&
 check('topk < 1 rejected + warning', tk[3].phrase === 'baz' && tk[3].weight === 3 && tk[3].topk === DEFAULT_BOOST_TOPK && !!tk[3].warning);
 check('non-integer topk rejected + warning', tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].topk === DEFAULT_BOOST_TOPK && !!tk[4].warning);
 check('colon-only phrase still unaffected with topk parsing', tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].topk === DEFAULT_BOOST_TOPK);
+
+// --- casing expansion ----------------------------------------------------
+console.log('casingVariants / expandCasingVariants:');
+const cv = casingVariants('venlafaxine');
+check('single word -> lower/UPPER/Sentence (Title == Sentence, deduped)',
+  eqArr(cv, ['venlafaxine', 'VENLAFAXINE', 'Venlafaxine']));
+const cvMulti = casingVariants('myocardial infarction');
+check('multi word distinguishes Sentence from Title case',
+  cvMulti.includes('Myocardial infarction') && cvMulti.includes('Myocardial Infarction'));
+check('as-typed mixed casing is preserved as a variant',
+  casingVariants('mRNA').includes('mRNA'));
+check('empty phrase yields nothing', eqArr(casingVariants(''), []));
+
+const expanded = expandCasingVariants([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]);
+check('expand multiplies one entry into its casings', expanded.length === 3);
+check('expanded entries carry the original weight + topk',
+  expanded.every(e => e.weight === 5 && e.topk === 50));
+check('expanded entries cover each casing',
+  ['venlafaxine', 'Venlafaxine', 'VENLAFAXINE'].every(p => expanded.some(e => e.phrase === p)));
+// Dedup across entries: a typed variant collides with a generated one; the
+// larger-magnitude weight wins so an explicit strong phrase is not weakened.
+const dedup = expandCasingVariants([
+  { phrase: 'venlafaxine', weight: 2 },
+  { phrase: 'Venlafaxine', weight: 8 },
+]);
+check('collision keeps the larger-magnitude weight',
+  dedup.find(e => e.phrase === 'Venlafaxine').weight === 8);
+check('no duplicate phrase strings after expansion',
+  new Set(dedup.map(e => e.phrase)).size === dedup.length);
 
 // --- trie build + advance + bonus map ------------------------------------
 console.log('BoostingTrie:');

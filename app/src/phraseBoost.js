@@ -124,6 +124,62 @@ export function parseBoostPhrases(raw) {
 }
 
 /**
+ * Casing variants of a phrase that the model might emit: as-typed, all
+ * lowercase, ALL UPPERCASE, Sentence case (first letter capitalised) and Title
+ * Case (each space-separated word capitalised). Surrogate-safe; deduplicated
+ * with the as-typed form first. Drug names / jargon are usually ASCII, but
+ * `toLowerCase`/`toUpperCase` also give sensible variants for accented Latin.
+ * @param {string} phrase
+ * @returns {string[]}
+ */
+export function casingVariants(phrase) {
+  const capFirst = (s) => {
+    const chars = Array.from(s); // codepoints (surrogate-safe)
+    if (!chars.length) return s;
+    chars[0] = chars[0].toUpperCase();
+    return chars.join('');
+  };
+  const lower = phrase.toLowerCase();
+  const candidates = [
+    phrase,                                   // as typed (preserves e.g. mRNA)
+    lower,                                     // mid-sentence common noun
+    phrase.toUpperCase(),                      // acronym / emphasis
+    capFirst(lower),                           // Sentence case (sentence start)
+    lower.split(' ').map(capFirst).join(' '),  // Title Case (proper noun)
+  ];
+  const seen = new Set();
+  const out = [];
+  for (const v of candidates) {
+    if (v && !seen.has(v)) { seen.add(v); out.push(v); }
+  }
+  return out;
+}
+
+/**
+ * Expand parsed boost entries so each typed phrase covers every casing the
+ * model can emit (see {@link casingVariants}). The BPE encoder is
+ * case-sensitive, so `venlafaxine`, `Venlafaxine` and `VENLAFAXINE` encode to
+ * different token sequences and must each be their own trie branch; this turns
+ * one typed phrase into one entry per casing variant. Deduplicated across the
+ * whole list by phrase string; on a collision the larger-magnitude weight wins
+ * (matching the trie's strongest-magnitude rule) and carries its own top-k.
+ * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
+ * @returns {Array<{phrase: string, weight: number, topk?: number}>}
+ */
+export function expandCasingVariants(entries) {
+  const byPhrase = new Map();
+  for (const entry of entries) {
+    for (const phrase of casingVariants(entry.phrase)) {
+      const prev = byPhrase.get(phrase);
+      if (!prev || Math.abs(entry.weight) > Math.abs(prev.weight)) {
+        byPhrase.set(phrase, { ...entry, phrase });
+      }
+    }
+  }
+  return [...byPhrase.values()];
+}
+
+/**
  * Encode parsed phrase entries to token-id sequences, dropping phrases whose
  * encoding contains the encoder's `<unk>` id (a character with no vocab token,
  * e.g. CJK) since the decoder never emits `<unk>` so such a phrase could never
