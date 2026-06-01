@@ -276,24 +276,41 @@ encoder; a prior session did that by mistake and the files were deleted.
 - [x] Commit (62b7522 module, ba75ae5 hook, c7be923 test).
 
 ### Phase 3: UI + plumbing
-- [ ] Add a textarea ("one phrase per line", supporting optional `phrase:WEIGHT`
-      per Q6) + a global boost-strength slider, in a collapsed Advanced area of
-      `App.jsx` (Q2). Show inline parse warnings for malformed weights.
-- [ ] Persist the phrase list + global strength in **IndexedDB via `idb.js`**
-      (Q3) so it survives reloads.
-- [ ] Build the trie once when phrases change (not per transcribe), pass it
+- [x] Add a textarea ("one phrase per line", supporting optional `phrase:WEIGHT`
+      per Q6) + a global boost-strength slider, in a Phrase-boosting settings
+      group of `App.jsx` (Q2). Show inline parse warnings for malformed weights.
+      DONE (commit 203a39c): new `settingsGroupBoosting` group with a monospace
+      textarea, an out-of-range-weight warning line, an active-phrase count, and
+      a 0..5 step-0.5 strength slider.
+- [x] Persist the phrase list + global strength in **IndexedDB via `idb.js`**
+      (Q3) so it survives reloads. DONE: `boostPhrases` + `boostStrength` loaded
+      in `loadSettings`, saved via `usePersistedSetting`, defaults `''` / `1`.
+- [x] Build the trie once when phrases change (not per transcribe), pass it
       through all three `transcribe()` call sites (App.jsx x2, liveTranscriber).
-- [ ] Add i18n strings in `i18n.jsx` for every new label/help text (EN + FR at
-      minimum, match existing languages present in the file).
-- [ ] Commit (UI and i18n can be one or two commits; one commit per logical
-      unit per the user's preference).
+      DONE: a `useEffect([boostPhrases, status])` lazily loads the BPE encoder
+      (via `loadBpeEncoder`, cached per-tokenizer so a model swap rebuilds it)
+      and builds the `BoostingTrie` into `phraseBoostRef`; a separate
+      `useEffect([boostStrength])` mutates `trie.strength` without re-encoding.
+      `phraseBoostRef.current` is passed to both file call sites; the live path
+      reads it per tick via `getPhraseBoost`. This also completes the Phase 1
+      "gate asset download" item: the asset only fetches once a phrase exists.
+- [x] Add i18n strings in `i18n.jsx` for every new label/help text (EN + FR).
+      DONE (commit 7d4259d): `settingsGroupBoosting`, `boostPhrases`,
+      `boostPhrasesPlaceholder`, `boostStrength`, `boostWeightWarning`,
+      `boostPhrasesLoaded`, `tooltipBoost` in both `en` and `fr`.
+- [x] Commit (7d4259d i18n, 0bb0b3d live plumbing, 203a39c App UI+wiring).
+      `npm run build` passes; the asset is copied to `dist/tokenizer/`.
 
 ### Phase 4: Live transcription path
-- [ ] Confirm boosting works with the streaming/windowed `liveTranscriber.js`
-      path. Mind that live re-transcribes overlapping windows; trie state should
-      reset per window (it already calls `transcribe()` per tick). Verify no
-      double-counting / drift.
-- [ ] Commit.
+- [x] Confirm boosting works with the streaming/windowed `liveTranscriber.js`
+      path. DONE by design: `createLiveTranscriber` takes `getPhraseBoost` and
+      passes `getPhraseBoost?.() ?? null` into each tick's `transcribe()`.
+      No double-counting / drift: `parakeet.js` calls `phraseBoost.reset()` at
+      the start of every `transcribe()`, so the trie's active set resets per
+      window; ticks are serialized by the `running` guard and never overlap a
+      file transcribe, so the single shared trie instance is never used
+      concurrently. (In-browser confirmation belongs to Phase 5 manual verify.)
+- [x] Commit (live plumbing landed with Phase 3 as 0bb0b3d).
 
 ### Phase 5: Verify, document, screenshot
 - [ ] Manual verification with the `/verify` or `/run` skill: load model, enable
@@ -401,3 +418,23 @@ encoder; a prior session did that by mistake and the files were deleted.
   `loadBpeEncoder`), persist phrases + strength in IndexedDB (`idb.js`), pass the
   trie through all three `transcribe()` call sites (App.jsx x2, liveTranscriber),
   and add EN/FR i18n strings.
+- 2026-06-01, Session 2 (cont). **Phase 3 + Phase 4 COMPLETE.** Wired phrase
+  boosting end to end through the UI and all decode paths. App.jsx: new
+  `boostPhrases` / `boostStrength` state persisted in IndexedDB (defaults `''`
+  / `1`); a Phrase-boosting settings group (monospace textarea one-phrase-per-
+  line with optional `:WEIGHT`, out-of-range-weight warning, active count, and a
+  0..5 step-0.5 strength slider); a `useEffect([boostPhrases, status])` that
+  lazily loads the BPE encoder (cached per-tokenizer so a model swap rebuilds
+  it) and builds the `BoostingTrie` into `phraseBoostRef`, plus a separate
+  `useEffect([boostStrength])` that mutates `trie.strength` without re-encoding.
+  The trie is passed to both file `transcribe()` sites and, via `getPhraseBoost`,
+  into each live tick. Phase 4 holds by design (per-call `reset()` + serialized
+  ticks; no concurrent reuse). i18n EN+FR added. `npm run build` passes; asset
+  copied to `dist/tokenizer/`; `node scripts/test-phrase-boost.mjs` still PASS.
+  Commits: 7d4259d (i18n), 0bb0b3d (live plumbing), 203a39c (App UI + wiring).
+  **Next:** Phase 5, manual in-browser verify (load model, boost a normally
+  mis-transcribed phrase, confirm it appears), then update README (features +
+  a Phrase Boosting section, mention Claude Code + greedy best-effort limit),
+  ask the user before refreshing the screenshot, bump the version
+  (`app/package.json` only, separate last commit), and drop the
+  "implement phrase boosting" line from TODO.md.
