@@ -1090,6 +1090,16 @@ export class ParakeetModel {
    * model behaviour is identical to a single-pass call. Word timestamps are
    * shifted by each chunk's start offset before being concatenated.
    *
+   * Overlap dedup: consecutive chunks share `overlapSec` of audio, so each side
+   * independently transcribes the same words in that zone. Rather than emit them
+   * twice, we split the shared zone at its midpoint (the "seam") using the
+   * absolute word timestamps: the earlier chunk keeps the words whose midpoint
+   * falls before the seam, the later chunk keeps the words at/after it, so every
+   * overlap word survives exactly once. The combined transcript text is then
+   * rebuilt from the deduped words so text and word list stay consistent. This
+   * requires `returnTimestamps: true`; without timestamps there are no words to
+   * align on, so we fall back to plain text concatenation (the old behaviour).
+   *
    * When chunking is disabled (`enableChunking: false`) or the audio is shorter
    * than one chunk, this falls back to a single this.transcribe() pass; the
    * `onChunk` callback still fires once (with totalChunks === 1) so callers have
@@ -1141,12 +1151,24 @@ export class ParakeetModel {
     const stride = Math.max(1, maxChunkSamples - overlapSamples);
     const totalChunks = Math.ceil(audio.length / stride);
 
+    // Dedup is only possible when transcribe() returns timestamped words; with
+    // returnTimestamps off there are no words, so we keep the plain-concat path.
+    const canDedup = !!transcribeOpts.returnTimestamps;
+    const wordMid = (w) => (w.start_time + w.end_time) / 2;
+
     const combinedTextParts = [];
     const combinedWords = [];
     let firstChunkMetrics = null;
     let firstChunkConfidences = null;
     let totalProcessingTime = 0;
     let chunkNum = 0;
+    let prevEnd = null; // absolute sample index where the previous chunk ended
+
+    // Text reflecting what's currently in combinedWords (deduped) when we have
+    // words, otherwise the raw per-chunk concatenation.
+    const buildText = () => (canDedup && combinedWords.length
+      ? combinedWords.map((w) => w.text).join(' ')
+      : combinedTextParts.join(' '));
 
     for (let start = 0; start < audio.length; start += stride) {
       const end = Math.min(start + maxChunkSamples, audio.length);
@@ -1160,14 +1182,31 @@ export class ParakeetModel {
 
       // Shift word timestamps from chunk-local to absolute time.
       const timeOffset = start / sampleRate;
-      if (chunkRes.words) {
-        for (const word of chunkRes.words) {
-          word.start_time += timeOffset;
-          word.end_time += timeOffset;
-          combinedWords.push(word);
+      const chunkWords = chunkRes.words || [];
+      for (const word of chunkWords) {
+        word.start_time += timeOffset;
+        word.end_time += timeOffset;
+      }
+
+      // Stitch this chunk's words onto the running list, deduping the overlap
+      // zone [start, prevEnd] at its midpoint seam. The first chunk (prevEnd
+      // null) and the no-timestamp fallback just append everything.
+      if (canDedup && prevEnd != null && combinedWords.length && chunkWords.length) {
+        const seamSec = (start + prevEnd) / 2 / sampleRate;
+        // Drop the previous chunk's words past the seam (combinedWords stays
+        // time-ordered, so the overlap words are exactly the trailing run).
+        while (combinedWords.length && wordMid(combinedWords[combinedWords.length - 1]) >= seamSec) {
+          combinedWords.pop();
         }
+        // Keep only this chunk's words at/after the seam.
+        for (const word of chunkWords) {
+          if (wordMid(word) >= seamSec) combinedWords.push(word);
+        }
+      } else {
+        for (const word of chunkWords) combinedWords.push(word);
       }
       combinedTextParts.push(chunkRes.utterance_text);
+      prevEnd = end;
 
       if (chunkNum === 1) {
         firstChunkMetrics = chunkRes.metrics;
@@ -1180,7 +1219,7 @@ export class ParakeetModel {
           chunkNum,
           totalChunks,
           result: chunkRes,
-          partialText: combinedTextParts.join(' '),
+          partialText: buildText(),
           start,
           end,
           elapsedMs,
@@ -1188,7 +1227,7 @@ export class ParakeetModel {
       }
     }
 
-    const combinedText = combinedTextParts.join(' ');
+    const combinedText = buildText();
     const totalDuration = audio.length / sampleRate;
     return {
       utterance_text: combinedText,
