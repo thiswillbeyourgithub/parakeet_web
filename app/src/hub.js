@@ -36,6 +36,15 @@ const FLUSH_INTERVAL = 8 * 1024 * 1024;
 const MAX_RETRIES = 6;
 const PARTIAL_PREFIX = 'partial-';
 const SEGMENT_INFIX = '-seg-';
+// Sibling record storing validation metadata ({ etag, size, savedAt }) for a
+// completed download, keyed META_PREFIX + cacheKey. Lets a later load confirm
+// the cached blob is intact (size) and unchanged upstream (etag) before reusing
+// it, instead of blindly trusting whatever bytes are in the cache.
+const META_PREFIX = 'meta-';
+// How long to wait on the freshness HEAD before falling back to the cache. Kept
+// short so a slow/blocked HuggingFace never stalls startup for a user who
+// already has the model cached.
+const REVALIDATE_TIMEOUT_MS = 4000;
 // If no chunk arrives for this long, abort the fetch and retry. Without it
 // a silently half-open connection (proxy idle-out, dropped TCP) hangs the
 // reader forever instead of triggering the existing retry/backoff logic.
@@ -46,6 +55,65 @@ const repoFileCache = new Map();
 
 function makeCacheKey(repoId, revision, subfolder, filename) {
   return `hf-${repoId}-${revision}-${subfolder}-${filename}`;
+}
+
+/**
+ * Decide whether a cached model file can be reused as-is or must be
+ * re-downloaded. Deliberately conservative: it only returns 'redownload' on
+ * positive evidence the cached bytes are wrong, so a flaky network, a blocked
+ * HuggingFace, or a download predating the metadata feature never triggers a
+ * needless multi-GB re-download. Everything else reuses the cache.
+ *
+ * Re-download is returned when:
+ *   - integrity: a recorded size exists and the cached blob's byte length does
+ *     not match it (truncated / partially-written / corrupt cache), or
+ *   - freshness: a successful HEAD returned an ETag that differs from the one
+ *     recorded at download time (upstream file genuinely changed).
+ *
+ * @param {Object} args
+ * @param {number} args.cachedSize Byte length of the cached blob.
+ * @param {?{etag?: string, size?: number}} args.meta Recorded metadata, or null.
+ * @param {?{ok: boolean, etag: ?string}} args.head HEAD revalidation result, or
+ *   null when revalidation was skipped (offline) or failed.
+ * @returns {'use'|'redownload'}
+ */
+export function decideCacheAction({ cachedSize, meta, head }) {
+  // Integrity: we know how big the file should be and the cache disagrees.
+  if (meta && typeof meta.size === 'number' && meta.size > 0 && cachedSize !== meta.size) {
+    return 'redownload';
+  }
+  // Freshness: only act on a clear, two-sided ETag mismatch. A missing ETag on
+  // either side (no recorded etag, HEAD failed/omitted it) means "can't tell" —
+  // and we err toward keeping the cache.
+  if (head && head.ok && head.etag && meta && meta.etag && head.etag !== meta.etag) {
+    return 'redownload';
+  }
+  return 'use';
+}
+
+/**
+ * Best-effort HEAD request to read the current ETag for a URL, used to detect
+ * whether an upstream file changed since it was cached. Never throws: any
+ * network error, non-OK status, or timeout resolves to null so the caller
+ * falls back to using the cache. Skipped entirely when the browser reports it
+ * is offline.
+ *
+ * @param {string} url
+ * @returns {Promise<{ok: boolean, etag: ?string}|null>}
+ */
+async function headRevalidate(url) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error('revalidate timeout')), REVALIDATE_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { method: 'HEAD', signal: ac.signal });
+    if (!resp.ok) return { ok: false, etag: null };
+    return { ok: true, etag: resp.headers.get('etag') || resp.headers.get('last-modified') || null };
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Filenames accepted from HF's API. Restrict to a flat, safe alphabet so
@@ -365,6 +433,15 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
   if (typeof indexedDB !== 'undefined') {
     try {
       await saveFileToDb(cacheKey, blob);
+      // Record validation metadata next to the blob so a later load can verify
+      // integrity (size) and freshness (etag) before reusing it. Best-effort:
+      // a failure here just means the next load skips validation and trusts the
+      // cache, which matches the pre-metadata behaviour.
+      try {
+        await saveFileToDb(META_PREFIX + cacheKey, { etag, size: blob.size, savedAt: Date.now() });
+      } catch (e) {
+        console.warn(`${logTag} Failed to write cache metadata for ${filename}:`, e);
+      }
       console.log(`${logTag} Cached ${filename} in IndexedDB`);
     } catch (e) {
       console.warn(`${logTag} Failed to cache in IndexedDB:`, e);
@@ -405,8 +482,17 @@ export async function getModelFile(repoId, filename, options = {}) {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
-        console.log(`[Hub] Using cached ${filename} from IndexedDB`);
-        return URL.createObjectURL(cachedBlob);
+        let meta = null;
+        try { meta = await getFileFromDb(META_PREFIX + cacheKey); } catch (_) {}
+        // Skip the freshness HEAD when there's no recorded etag to compare
+        // against (nothing to learn) or no metadata at all (legacy cache):
+        // size-only validation still runs, and we avoid a pointless round-trip.
+        const head = meta?.etag ? await headRevalidate(url) : null;
+        if (decideCacheAction({ cachedSize: cachedBlob.size, meta, head }) === 'use') {
+          console.log(`[Hub] Using cached ${filename} from IndexedDB`);
+          return URL.createObjectURL(cachedBlob);
+        }
+        console.warn(`[Hub] Cached ${filename} failed validation (stale or corrupt); re-downloading`);
       }
     } catch (e) {
       console.warn('[Hub] IndexedDB cache check failed:', e);
