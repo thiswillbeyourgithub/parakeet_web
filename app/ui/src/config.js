@@ -20,4 +20,9 @@ export const CONFIG = {
   // (anything else, including unset, keeps it enabled). Server-side
   // RELAY_ENABLE remains the master gate.
   VITE_RELAY_ENABLE: runtime.VITE_RELAY_ENABLE ?? import.meta.env.VITE_RELAY_ENABLE,
+  // Not operator-settable: the docker entrypoint stamps this with the container
+  // start time (ISO 8601) when it generates /config.js, so the dev banner can
+  // tell visitors how long ago the instance was last restarted. Absent outside
+  // docker (dev server has no /config.js), so the banner falls back gracefully.
+  CONTAINER_STARTED_AT: runtime.CONTAINER_STARTED_AT,
 };

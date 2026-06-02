@@ -487,6 +487,9 @@ node -e '
   ];
   const obj = {};
   for (const k of keys) obj[k] = process.env[k] ?? "";
+  // Stamp the container start time (not operator-settable) so the dev-mode
+  // banner can show "restarted N hours ago". Generated here, on every boot.
+  obj.CONTAINER_STARTED_AT = new Date().toISOString();
   const safe = JSON.stringify(obj, null, 2)
     .replace(/<\/script/gi, "<\\/script")
     .replace(/\u2028/g, "\\u2028")

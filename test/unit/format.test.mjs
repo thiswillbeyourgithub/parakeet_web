@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, formatDuration, formatBytes } from '../../app/ui/src/lib/format.js';
+import { formatTime, formatDuration, formatBytes, relativeAge } from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
   test('zero', () => assert.equal(formatTime(0), '0:00'));
@@ -33,5 +33,37 @@ describe('formatBytes (base 1024)', () => {
   test('negative / non-finite -> 0 B', () => {
     assert.equal(formatBytes(-1), '0 B');
     assert.equal(formatBytes(NaN), '0 B');
+  });
+});
+
+describe('relativeAge (coarse "n units ago")', () => {
+  const now = Date.parse('2026-06-02T12:00:00Z');
+  const ago = (sec) => new Date(now - sec * 1000).toISOString();
+
+  test('under a minute -> justNow (value 0)', () => {
+    assert.deepEqual(relativeAge(ago(0), now), { value: 0, unit: 'justNow' });
+    assert.deepEqual(relativeAge(ago(59), now), { value: 0, unit: 'justNow' });
+  });
+  test('minutes between 1 and 59', () => {
+    assert.deepEqual(relativeAge(ago(60), now), { value: 1, unit: 'minute' });
+    assert.deepEqual(relativeAge(ago(120), now), { value: 2, unit: 'minute' });
+    assert.deepEqual(relativeAge(ago(59 * 60), now), { value: 59, unit: 'minute' });
+  });
+  test('hours between 1 and 23', () => {
+    assert.deepEqual(relativeAge(ago(3600), now), { value: 1, unit: 'hour' });
+    assert.deepEqual(relativeAge(ago(3 * 3600), now), { value: 3, unit: 'hour' });
+    assert.deepEqual(relativeAge(ago(23 * 3600), now), { value: 23, unit: 'hour' });
+  });
+  test('days at 24h and beyond', () => {
+    assert.deepEqual(relativeAge(ago(24 * 3600), now), { value: 1, unit: 'day' });
+    assert.deepEqual(relativeAge(ago(3 * 24 * 3600), now), { value: 3, unit: 'day' });
+  });
+  test('future / clock skew clamps to justNow', () => {
+    assert.deepEqual(relativeAge(ago(-100), now), { value: 0, unit: 'justNow' });
+  });
+  test('unparseable input -> null', () => {
+    assert.equal(relativeAge('garbage', now), null);
+    assert.equal(relativeAge(undefined, now), null);
+    assert.equal(relativeAge('', now), null);
   });
 });

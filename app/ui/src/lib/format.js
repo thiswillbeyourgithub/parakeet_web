@@ -28,6 +28,25 @@ export function formatDuration(seconds) {
 }
 
 /**
+ * Coarse "how long ago" of an ISO timestamp, as a { value, unit } pair so the
+ * caller can localize the unit word. `unit` is one of 'justNow' | 'minute' |
+ * 'hour' | 'day'; under a minute returns { value: 0, unit: 'justNow' }. Picks
+ * the largest sensible unit (days at >= 24h, hours at >= 60min, else minutes).
+ * Returns null when the input is not a parseable timestamp.
+ */
+export function relativeAge(fromIso, nowMs = Date.now()) {
+  const then = Date.parse(fromIso);
+  if (!Number.isFinite(then)) return null;
+  const sec = Math.max(0, Math.floor((nowMs - then) / 1000));
+  if (sec < 60) return { value: 0, unit: 'justNow' };
+  const min = Math.floor(sec / 60);
+  if (min < 60) return { value: min, unit: 'minute' };
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return { value: hr, unit: 'hour' };
+  return { value: Math.floor(hr / 24), unit: 'day' };
+}
+
+/**
  * Format a byte count as a short human-readable string (KB/MB/GB, base 1024).
  * One decimal for MB/GB, integer for KB and B.
  */

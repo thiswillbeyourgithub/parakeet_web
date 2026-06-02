@@ -197,7 +197,19 @@ const translations = {
     delete: '\ud83d\uddd1\ufe0f Delete',
 
     // Warnings
-    devModeBanner: '\u26a0\ufe0f Development version \u2014 this instance is under active development. Expect bugs, instability, and frequent changes.',
+    devModeBanner: '\u26a0\ufe0f Development version: this instance is under active development. Expect bugs, instability, and frequent changes.',
+    // {age} is a localized relative time like "3 hours ago" (see the age* keys);
+    // the banner renders a GitHub issues link between Intro and Outro.
+    devModeBannerIntro: '\u26a0\ufe0f Development version: this instance is under active development and was last restarted {age}, so it may be temporarily broken. Expect bugs, instability, and frequent changes. Please come back in a few hours, and if a problem persists, ',
+    devModeBannerIssueLink: 'open a GitHub issue',
+    devModeBannerOutro: '.',
+    ageJustNow: 'just now',
+    ageMinuteAgo: '{n} minute ago',
+    ageMinutesAgo: '{n} minutes ago',
+    ageHourAgo: '{n} hour ago',
+    ageHoursAgo: '{n} hours ago',
+    ageDayAgo: '{n} day ago',
+    ageDaysAgo: '{n} days ago',
     lowRamWarning: '\u26a0\ufe0f Your device may have limited memory',
     lowRamModelMayFail: '. The speech recognition model (~100\u2013200 MB) might fail to load.',
     lowRamConfirmTitle: '\u26a0\ufe0f Low memory detected',
@@ -490,7 +502,19 @@ const translations = {
     delete: '\ud83d\uddd1\ufe0f Supprimer',
 
     // Warnings
-    devModeBanner: "\u26a0\ufe0f Version de d\u00e9veloppement \u2014 cette instance est en cours de d\u00e9veloppement actif. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents.",
+    devModeBanner: "\u26a0\ufe0f Version de d\u00e9veloppement : cette instance est en cours de d\u00e9veloppement actif. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents.",
+    // {age} est un temps relatif localis\u00e9 comme \u00ab il y a 3 heures \u00bb (voir les cl\u00e9s age*) ;
+    // la banni\u00e8re ins\u00e8re un lien vers les issues GitHub entre Intro et Outro.
+    devModeBannerIntro: "\u26a0\ufe0f Version de d\u00e9veloppement : cette instance est en cours de d\u00e9veloppement actif et a \u00e9t\u00e9 red\u00e9marr\u00e9e {age}, elle est donc peut-\u00eatre temporairement cass\u00e9e. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents. Revenez dans quelques heures, et si un probl\u00e8me persiste, ",
+    devModeBannerIssueLink: 'ouvrez une issue GitHub',
+    devModeBannerOutro: '.',
+    ageJustNow: "\u00e0 l'instant",
+    ageMinuteAgo: 'il y a {n} minute',
+    ageMinutesAgo: 'il y a {n} minutes',
+    ageHourAgo: 'il y a {n} heure',
+    ageHoursAgo: 'il y a {n} heures',
+    ageDayAgo: 'il y a {n} jour',
+    ageDaysAgo: 'il y a {n} jours',
     lowRamWarning: '\u26a0\ufe0f Votre appareil pourrait avoir une m\u00e9moire limit\u00e9e',
     lowRamModelMayFail: '. Le mod\u00e8le de reconnaissance vocale (~100\u2013200 Mo) pourrait ne pas se charger.',
     lowRamConfirmTitle: '\u26a0\ufe0f M\u00e9moire faible d\u00e9tect\u00e9e',
@@ -621,9 +645,13 @@ export function I18nProvider({ children }) {
     localStorage.setItem('parakeetweb_lang', lang);
   }, [lang]);
 
-  const t = (key) => {
+  const t = (key, params) => {
     const table = _isKnownLang(lang) ? translations[lang] : translations.en;
-    return (_hasOwn.call(table, key) && table[key]) || translations.en[key] || key;
+    let str = (_hasOwn.call(table, key) && table[key]) || translations.en[key] || key;
+    if (params) {
+      for (const k in params) str = str.replaceAll(`{${k}}`, String(params[k]));
+    }
+    return str;
   };
 
   return (
