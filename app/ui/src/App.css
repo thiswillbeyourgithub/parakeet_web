@@ -642,23 +642,49 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .history-text-container { position: relative; }
 
-.history-text-container .copy-button {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
+/* Per-entry control row: [Audio][Raw][Confidence][Dictation] on the left, the
+   always-visible kebab on the right. */
+.history-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
-.history-text-container:hover .copy-button {
-  opacity: 1;
-  pointer-events: auto;
+.history-modes {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
-.history-text-container .kebab-button { opacity: 0; transition: opacity 0.2s; }
+/* Inline audio player + Transcribe again, shown when the Audio toggle is on. */
+.history-audio {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
 
-.history-text-container:hover .kebab-button,
-.history-text-container .kebab-button[aria-expanded="true"] { opacity: 1; }
+.transcribe-again-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--accent);
+  color: white;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s;
+}
 
-.kebab-menu-wrapper:has(.kebab-dropdown) .kebab-button { opacity: 1; }
+.transcribe-again-button:hover:not(:disabled) { filter: brightness(1.05); }
+.transcribe-again-button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .history-text {
   background: var(--bg-subtle);
@@ -672,10 +698,12 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 /* ─── Kebab menu ─────────────────────────────────────────────────────────── */
+/* Lives in the per-entry control row (flex), so position relative for the
+   absolutely-positioned dropdown. Always visible (no hover gate) for
+   discoverability. */
 .kebab-menu-wrapper {
-  position: absolute;
-  top: 0.25rem;
-  right: 0.25rem;
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .kebab-button {

@@ -910,6 +910,20 @@ export default function App() {
   // Close any open kebab dropdown when a modal mounts so its inner Copy
   // buttons are not reachable by Tab+Enter from inside the modal.
   useEffect(() => { if (anyModalOpen) setOpenKebabId(null); }, [anyModalOpen]);
+
+  // Per-entry display mode override (id -> 'raw'|'confidence'|'dictation').
+  // Entries default to the global `transcriptDisplayMode` (the "default
+  // transcript display" setting) until the user toggles them individually.
+  const [entryDisplayModes, setEntryDisplayModes] = useState({});
+  // Set of transcription ids whose inline audio player is expanded.
+  const [openAudioIds, setOpenAudioIds] = useState(() => new Set());
+  // Id of the entry currently being re-transcribed via "Transcribe again", so
+  // its button can show a spinner. Only one runs at a time (isTranscribing).
+  const [reTranscribingId, setReTranscribingId] = useState(null);
+  // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
+  // so we can revoke them on close/delete/unmount without re-rendering.
+  const entryAudioUrlsRef = useRef(new Map());
+
   // Tracks which history item is showing its confidence score overlay
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -3493,6 +3507,9 @@ export default function App() {
   function clearTranscriptions() {
     setTranscriptions([]);
     setText('');
+    // Revoke every inline-player URL so the discarded audio leaves no leak.
+    for (const id of [...entryAudioUrlsRef.current.keys()]) revokeEntryAudioUrl(id);
+    setOpenAudioIds(new Set());
     // Forget the on-disk copy too. If persistTranscripts is OFF the key
     // may not exist; idbDelete on a missing key is a no-op.
     forgetPersistedTranscripts();
@@ -3572,7 +3589,73 @@ export default function App() {
   function deleteTranscription(id) {
     setTranscriptions(prev => prev.filter(t => t.id !== id));
     setOpenKebabId(null);
+    revokeEntryAudioUrl(id);
+    setOpenAudioIds(prev => { if (!prev.has(id)) return prev; const next = new Set(prev); next.delete(id); return next; });
   }
+
+  // --- Per-entry display mode + inline audio player helpers ---
+
+  // The display mode for one entry: its own override, else the global default.
+  function getEntryMode(id) {
+    return entryDisplayModes[id] ?? transcriptDisplayMode;
+  }
+  function setEntryMode(id, mode) {
+    setEntryDisplayModes(prev => ({ ...prev, [id]: mode }));
+  }
+
+  // Lazily mint (and cache) the object URL backing an entry's inline player.
+  function getEntryAudioUrl(trans) {
+    if (!trans.audioBlob) return null;
+    const cached = entryAudioUrlsRef.current.get(trans.id);
+    if (cached) return cached;
+    const url = URL.createObjectURL(trans.audioBlob);
+    entryAudioUrlsRef.current.set(trans.id, url);
+    return url;
+  }
+  // Revoke and forget an entry's player URL (on close / delete / clear).
+  function revokeEntryAudioUrl(id) {
+    const url = entryAudioUrlsRef.current.get(id);
+    if (url) {
+      try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ }
+      entryAudioUrlsRef.current.delete(id);
+    }
+  }
+  // Toggle the inline audio player for an entry; revoke its URL when collapsing.
+  function toggleAudio(id) {
+    setOpenAudioIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); revokeEntryAudioUrl(id); }
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Re-run the full transcription pipeline on an entry's stored audio with the
+  // current settings (beam width, chunking, phrase boost, ...), then replace
+  // that entry's text/words/metrics in place. Reuses the resampled PCM the model
+  // already heard, so it skips audio decode/resample entirely (no over-applying
+  // the audio preprocessing that already ran when the entry was created).
+  async function transcribeAgain(trans) {
+    if (!trans?.pcm || !modelRef.current || isTranscribing) return;
+    setReTranscribingId(trans.id);
+    try {
+      await runTranscription(trans.pcm, {
+        safeName: trans.filename,
+        audioDuration: trans.audioDuration ?? trans.duration,
+        replaceId: trans.id,
+      });
+    } finally {
+      setReTranscribingId(null);
+    }
+  }
+
+  // Revoke any outstanding inline-player URLs when the app unmounts.
+  useEffect(() => () => {
+    for (const url of entryAudioUrlsRef.current.values()) {
+      try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ }
+    }
+    entryAudioUrlsRef.current.clear();
+  }, []);
 
   // Load dictation regex rules from CSV files served at /dictation-regex/
   useEffect(() => {
@@ -3733,10 +3816,12 @@ export default function App() {
     return result;
   }
 
-  // Build dictation cache lazily via useEffect to avoid setState during render
+  // Build dictation cache lazily via useEffect to avoid setState during render.
+  // Display mode is per-entry now, so cache any entry whose effective mode is
+  // 'dictation' (its override, or the global default).
   useEffect(() => {
-    if (transcriptDisplayMode !== 'dictation' || !dictationRegexRules.length) return;
-    const missing = transcriptions.filter(t => t.text && !dictationCache[t.id]);
+    if (!dictationRegexRules.length) return;
+    const missing = transcriptions.filter(t => t.text && getEntryMode(t.id) === 'dictation' && !dictationCache[t.id]);
     if (missing.length === 0) return;
     const newEntries = {};
     for (const t of missing) {
@@ -3747,11 +3832,11 @@ export default function App() {
     // is read but intentionally excluded: the effect mutates it via the
     // functional updater above, and including it would re-trigger the
     // effect on every cache write (a no-op since `missing` is then empty).
-  }, [transcriptDisplayMode, dictationRegexRules, transcriptions]);
+  }, [transcriptDisplayMode, entryDisplayModes, dictationRegexRules, transcriptions]);
 
-  // Get the display text for a transcription based on current display mode
+  // Get the display text for a transcription based on its per-entry display mode
   function getDisplayText(trans) {
-    if (transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0) {
+    if (getEntryMode(trans.id) === 'dictation' && dictationRegexRules.length > 0) {
       // Return cached result, or compute synchronously without setting state
       return dictationCache[trans.id] || applyDictationRegex(trans.text);
     }
@@ -4939,31 +5024,6 @@ export default function App() {
         <div className="history">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1rem 0.5rem', flexWrap: 'wrap', gap: '0.5rem', borderBottom: '1px solid var(--border)' }}>
             <h3 style={{ margin: 0 }}>{t('transcriptions')}</h3>
-            <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-              <button
-                onClick={() => setTranscriptDisplayMode('raw')}
-                className={`display-mode-button${transcriptDisplayMode === 'raw' ? ' active' : ''}`}
-                title="Raw transcription"
-              >
-                {t('raw')}
-              </button>
-              <button
-                onClick={() => { setTranscriptDisplayMode('confidence'); setShowConfidenceHeatmap(true); }}
-                className={`display-mode-button${transcriptDisplayMode === 'confidence' ? ' active' : ''}`}
-                title={t('confidence')}
-              >
-                {t('confidence')}
-              </button>
-              {dictationRegexRules.length > 0 && (
-                <button
-                  onClick={() => setTranscriptDisplayMode('dictation')}
-                  className={`display-mode-button${transcriptDisplayMode === 'dictation' ? ' active' : ''}`}
-                  title={`${t('dictationRules')} (${dictationRegexRules.length} ${t('dictationRulesExperimental')})`}
-                >
-                  {t('dictationExp')}
-                </button>
-              )}
-            </div>
           </div>
           <div>
             {transcriptions.map((trans) => {
@@ -4971,7 +5031,9 @@ export default function App() {
               const wordConfs = trans.words?.map(w => w.confidence).filter(c => c != null) || [];
               const avgConf = wordConfs.length > 0 ? wordConfs.reduce((a, b) => a + b, 0) / wordConfs.length : null;
               const minConf = wordConfs.length > 0 ? Math.min(...wordConfs) : null;
-              
+              const entryMode = getEntryMode(trans.id);
+              const audioOpen = openAudioIds.has(trans.id);
+
               return (
                 <div className={`history-item${trans.id === newestTranscriptionIdRef.current ? ' history-item-enter' : ''}`} key={trans.id}>
                   <div className="history-meta">
@@ -4984,44 +5046,45 @@ export default function App() {
                     )}
                     <span>{trans.timestamp}</span>
                   </div>
-                  <div className="history-text-container">
-                    <div className="history-text">
-                      {showConfidenceHeatmap && transcriptDisplayMode === 'confidence' && trans.words && trans.words.length > 0 ? (
-                        // Render word-by-word with adaptive confidence heatmap
-                        (() => {
-                          // Calculate min/max confidence for adaptive coloring
-                          const confidences = trans.words.map(w => w.confidence).filter(c => c != null);
-                          const minConf = confidences.length > 0 ? Math.min(...confidences) : 0;
-                          const maxConf = confidences.length > 0 ? Math.max(...confidences) : 1;
 
-                          return trans.words.map((word, i) => (
-                            <span
-                              key={i}
-                              style={{
-                                backgroundColor: getConfidenceColor(word.confidence, minConf, maxConf),
-                                padding: '2px 3px',
-                                borderRadius: '3px',
-                                display: 'inline-block',
-                                marginRight: '0.2em',
-                                transition: 'background-color 0.2s'
-                              }}
-                              title={word.confidence ? `"${word.text}" - Confidence: ${(word.confidence * 100).toFixed(1)}% (Range: ${(minConf * 100).toFixed(1)}%-${(maxConf * 100).toFixed(1)}%)` : word.text}
-                            >
-                              {word.text}
-                            </span>
-                          ));
-                        })()
-                      ) : (
-                        // Show raw or dictation-cleaned text
-                        <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
+                  {/* Per-entry control row: [Audio][Raw][Confidence][Dictation?]
+                      on the left, always-visible kebab on the right. */}
+                  <div className="history-controls">
+                    <div className="history-modes">
+                      {trans.audioBlob && (
+                        <button
+                          onClick={() => toggleAudio(trans.id)}
+                          className={`display-mode-button${audioOpen ? ' active' : ''}`}
+                          title={t('audio')}
+                          aria-expanded={audioOpen}
+                        >
+                          {audioOpen ? '▾' : '▸'} {t('audio')}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setEntryMode(trans.id, 'raw')}
+                        className={`display-mode-button${entryMode === 'raw' ? ' active' : ''}`}
+                        title="Raw transcription"
+                      >
+                        {t('raw')}
+                      </button>
+                      <button
+                        onClick={() => { setEntryMode(trans.id, 'confidence'); setShowConfidenceHeatmap(true); }}
+                        className={`display-mode-button${entryMode === 'confidence' ? ' active' : ''}`}
+                        title={t('confidence')}
+                      >
+                        {t('confidence')}
+                      </button>
+                      {dictationRegexRules.length > 0 && (
+                        <button
+                          onClick={() => setEntryMode(trans.id, 'dictation')}
+                          className={`display-mode-button${entryMode === 'dictation' ? ' active' : ''}`}
+                          title={`${t('dictationRules')} (${dictationRegexRules.length} ${t('dictationRulesExperimental')})`}
+                        >
+                          {t('dictationExp')}
+                        </button>
                       )}
                     </div>
-                    {/* Confidence score overlay shown when toggled via kebab menu */}
-                    {transcriptDisplayMode === 'confidence' && avgConf !== null && (
-                      <div className="confidence-overlay">
-                        Avg: {(avgConf * 100).toFixed(1)}% &nbsp;|&nbsp; Min: {(minConf * 100).toFixed(1)}%
-                      </div>
-                    )}
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">
                       <button
@@ -5053,6 +5116,63 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  {/* Inline audio player + Transcribe again (audio is in-memory
+                      only, so this is absent on entries restored after reload). */}
+                  {audioOpen && trans.audioBlob && (
+                    <div className="history-audio">
+                      <audio controls src={getEntryAudioUrl(trans)} className="audio-player" />
+                      <button
+                        className="transcribe-again-button"
+                        disabled={isTranscribing}
+                        onClick={() => transcribeAgain(trans)}
+                        title={t('transcribeAgainHint')}
+                      >
+                        {reTranscribingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
+                        {reTranscribingId === trans.id ? t('transcribingAgain') : t('transcribeAgain')}
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="history-text-container">
+                    <div className="history-text">
+                      {showConfidenceHeatmap && entryMode === 'confidence' && trans.words && trans.words.length > 0 ? (
+                        // Render word-by-word with adaptive confidence heatmap
+                        (() => {
+                          // Calculate min/max confidence for adaptive coloring
+                          const confidences = trans.words.map(w => w.confidence).filter(c => c != null);
+                          const minConf = confidences.length > 0 ? Math.min(...confidences) : 0;
+                          const maxConf = confidences.length > 0 ? Math.max(...confidences) : 1;
+
+                          return trans.words.map((word, i) => (
+                            <span
+                              key={i}
+                              style={{
+                                backgroundColor: getConfidenceColor(word.confidence, minConf, maxConf),
+                                padding: '2px 3px',
+                                borderRadius: '3px',
+                                display: 'inline-block',
+                                marginRight: '0.2em',
+                                transition: 'background-color 0.2s'
+                              }}
+                              title={word.confidence ? `"${word.text}" - Confidence: ${(word.confidence * 100).toFixed(1)}% (Range: ${(minConf * 100).toFixed(1)}%-${(maxConf * 100).toFixed(1)}%)` : word.text}
+                            >
+                              {word.text}
+                            </span>
+                          ));
+                        })()
+                      ) : (
+                        // Show raw or dictation-cleaned text
+                        <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
+                      )}
+                    </div>
+                    {/* Confidence score overlay shown in per-entry confidence mode */}
+                    {entryMode === 'confidence' && avgConf !== null && (
+                      <div className="confidence-overlay">
+                        Avg: {(avgConf * 100).toFixed(1)}% &nbsp;|&nbsp; Min: {(minConf * 100).toFixed(1)}%
+                      </div>
+                    )}
                   </div>
                 </div>
               );
