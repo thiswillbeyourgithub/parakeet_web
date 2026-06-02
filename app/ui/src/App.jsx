@@ -187,6 +187,12 @@ const TRANSCRIPTS_KEY = 'transcripts';
 const getSettingsDb = () => openIdb(SETTINGS_DB_NAME, SETTINGS_STORE_NAME);
 const getTranscriptsDb = () => openIdb(TRANSCRIPTS_DB_NAME, TRANSCRIPTS_STORE_NAME);
 
+// Watchdog cap for restoring settings on startup. The scalar settings are tiny
+// IndexedDB reads (sub-ms normally), so the only way they stall is a wedged DB
+// (e.g. another tab holding a versionchange that blocks our open). Past this we
+// stop waiting, log it, and boot on defaults rather than hang on a blank state.
+const SETTINGS_LOAD_TIMEOUT_MS = 6000;
+
 async function loadSetting(key, defaultValue) {
   try {
     const value = await idbGet(await getSettingsDb(), SETTINGS_STORE_NAME, STORAGE_KEY_PREFIX + key);
@@ -859,6 +865,12 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // True once the (potentially large/slow) transcript history has actually been
+  // read back into state. The history loads *after* settingsLoaded flips, so the
+  // transcript-persist effect must wait on this too: otherwise the early
+  // settingsLoaded=true would let it write the still-empty array over the
+  // on-disk history before the read resolves. See the load effect below.
+  const transcriptsRestoredRef = useRef(false);
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
   // Auto-copy: when enabled, every transcription is written to the system
   // clipboard. F-125: default OFF so the headline "audio never leaves your
@@ -901,24 +913,44 @@ export default function App() {
 
   // Load settings from IndexedDB on mount
   useEffect(() => {
+    // `booted` guards against the watchdog and the real load both finishing the
+    // restore. Whichever flips it first wins; the loser bails (so a late real
+    // load does not overwrite the defaults the watchdog already booted on).
+    let booted = false;
+    const watchdog = setTimeout(() => {
+      if (booted) return;
+      booted = true;
+      console.warn(`[App] Settings restore timed out after ${SETTINGS_LOAD_TIMEOUT_MS}ms `
+        + `(IndexedDB likely blocked by another tab holding a versionchange); `
+        + `booting on defaults. Saved preferences were not applied this session.`);
+      setSettingsLoaded(true);
+    }, SETTINGS_LOAD_TIMEOUT_MS);
+
     async function loadSettings() {
       try {
         // Check version first - purge old data if version mismatch
         const storedVersion = await loadSetting('version', null);
-        
+        if (booted) return; // watchdog already booted on defaults; skip late restore
+
         if (!storedVersion || storedVersion !== VERSION) {
           console.log(`[App] Version mismatch (stored: ${storedVersion}, current: ${VERSION}). Purging old data...`);
           await clearAllSettings();
           await saveSetting('version', VERSION);
+          if (booted) return;
+          booted = true;
+          clearTimeout(watchdog);
           // Set defaults without loading old values
           setSettingsLoaded(true);
           return;
         }
-        
+
+        // Fast phase: the scalar settings are tiny reads loaded together. The
+        // transcript history (potentially large/slow) is deliberately NOT in
+        // this batch; it loads last, after the app boots, so it can never delay
+        // restore or trip the watchdog.
         const [
           savedBackend,
           savedPreprocessor,
-          savedTranscriptions,
           savedVerboseLog,
           savedFrameStride,
           savedBeamWidth,
@@ -948,7 +980,6 @@ export default function App() {
         ] = await Promise.all([
           loadSetting('backend', null),
           loadSetting('preprocessor', 'nemo128'),
-          loadPersistedTranscripts(),
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
           loadSetting('beamWidth', 1),
@@ -963,10 +994,8 @@ export default function App() {
           loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoTranscribe', true),
           loadSetting('autoCopyToClipboard', false),
-          // Migration: load with `null` so we can distinguish "user opted in/out"
-          // from "never set, default to false". Resolved below against existing
-          // transcript presence so we don't silently delete history of users
-          // who upgraded into the post-F-55 build.
+          // Load with `null` so the F-132 default below can tell "never set"
+          // apart from an explicit choice (see the setPersistTranscripts comment).
           loadSetting('persistTranscripts', null),
           loadSetting('showAdvancedInfo', false),
           loadSetting('enableChunking', true),
@@ -980,6 +1009,7 @@ export default function App() {
           loadSetting('boostCustomText', ''),
           loadSetting('boostCaseInsensitive', false),
         ]);
+        if (booted) return; // watchdog won while we awaited; skip the stale restore
 
         // A saved value means the user previously picked a backend explicitly;
         // honour it (subject to the WebGPU-availability override below). When
@@ -990,7 +1020,6 @@ export default function App() {
           setBackend(savedBackend);
         }
         setPreprocessor(savedPreprocessor);
-        setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
         setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(25, savedBeamWidth) : 1);
@@ -1045,14 +1074,31 @@ export default function App() {
           boostCustomTextRef.current = seedCustom;
           setBoostSource(restoredSource);
         }
+        // Scalar settings are in; boot the app now so the UI is configured and
+        // persistence/boost-init can proceed, and stop the watchdog.
+        booted = true;
+        clearTimeout(watchdog);
         setSettingsLoaded(true);
+
+        // Slow phase, last: restore the transcript history. Done after booting
+        // so a large/slow read never blocks restore. transcriptsRestoredRef
+        // gates the persist effect until this lands, so the setSettingsLoaded
+        // above cannot write the empty in-memory array over the on-disk history.
+        const savedTranscriptions = await loadPersistedTranscripts();
+        setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
+        transcriptsRestoredRef.current = true;
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
-        setSettingsLoaded(true);
+        if (!booted) {
+          booted = true;
+          clearTimeout(watchdog);
+          setSettingsLoaded(true);
+        }
       }
     }
-    
+
     loadSettings();
+    return () => clearTimeout(watchdog);
   }, [maxCores]);
 
   // Cleanup on component unmount
@@ -1408,7 +1454,10 @@ export default function App() {
   // the prior longer array. Append-only growth uses a plain idbPut.
   const prevTranscriptsLenRef = useRef(transcriptions.length);
   useEffect(() => {
-    if (!settingsLoaded || !persistTranscripts) {
+    // Wait for the history read to land (transcriptsRestoredRef) before writing:
+    // settingsLoaded flips before the read resolves, so persisting here too early
+    // would clobber the on-disk history with the still-empty in-memory array.
+    if (!settingsLoaded || !transcriptsRestoredRef.current || !persistTranscripts) {
       prevTranscriptsLenRef.current = transcriptions.length;
       return;
     }
