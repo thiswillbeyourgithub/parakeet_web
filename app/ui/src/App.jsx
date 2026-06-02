@@ -4575,7 +4575,7 @@ export default function App() {
         <input 
           ref={fileInputRef}
           type="file"
-          accept="audio/*"
+          accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.opus,.webm"
           onChange={transcribeFile}
           disabled={!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview}
           style={{ display: 'none' }}
