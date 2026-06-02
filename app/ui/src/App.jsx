@@ -365,6 +365,13 @@ const BOOST_COLLAPSE_MIN_PHRASES = 100;
 // more (what %)" tail so the user still knows the true scale.
 const BOOST_UNK_PREVIEW_MAX = 50;
 
+// Default beam-search width, chosen by platform. Beam search is ~Nx the decode
+// cost, so Android (phones/tablets, far weaker than a laptop/desktop) gets a
+// lighter default than a computer. Users can still override via the slider.
+const DEFAULT_BEAM_WIDTH = /android/i.test(
+  typeof navigator !== 'undefined' ? navigator.userAgent : ''
+) ? 5 : 10;
+
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
 // non-2xx response, or {ok:false, oversize:true, declared} when the body is
@@ -489,7 +496,7 @@ export default function App() {
   // widths explore alternative hypotheses (~Nx decode cost) and let phrase
   // boosting recover phrases greedy would prune. Full-file only: the streaming
   // path forces width 1 in the decoder.
-  const [beamWidth, setBeamWidth] = useState(1);
+  const [beamWidth, setBeamWidth] = useState(DEFAULT_BEAM_WIDTH);
   // MAES (Modified Adaptive Expansion Search) knobs, used only when beamWidth>1.
   // Defaults match NeMo's `maes` strategy.
   const [maesNumSteps, setMaesNumSteps] = useState(2);
@@ -1008,7 +1015,7 @@ export default function App() {
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
-          loadSetting('beamWidth', 1),
+          loadSetting('beamWidth', DEFAULT_BEAM_WIDTH),
           loadSetting('maesNumSteps', 2),
           loadSetting('maesExpansionBeta', 2),
           loadSetting('maesExpansionGamma', 2.3),
@@ -1048,7 +1055,7 @@ export default function App() {
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
-        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(25, savedBeamWidth) : 1);
+        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(25, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
         setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 2);
         setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 2);
         setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 2.3);
