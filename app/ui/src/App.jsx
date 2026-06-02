@@ -1731,7 +1731,18 @@ export default function App() {
     const tokenizer = modelRef.current?.tokenizer;
     if (!phraseEntries.length || !tokenizer) {
       phraseBoostRef.current = null;
-      setBoostUnkWarnings([]);
+      // No tokenizer yet (model not loaded), but a server-prebuilt artifact
+      // already ships its own `skipped` list (the phrases the model vocab can't
+      // represent, computed against that vocab at prebuild time) and is fetched
+      // into prebuiltBoostRef the moment the list is selected. Surface it now so
+      // the untokenizable-words warning appears on list-load rather than only
+      // once the model is ready; the full rebuild below recomputes it against
+      // the live tokenizer. Guard on text match so an edited list shows nothing
+      // stale (editing a curated list drops the prebuilt anyway).
+      const pre = prebuiltBoostRef.current;
+      const canPreview = phraseEntries.length && pre
+        && pre.text === boostPhrases && Array.isArray(pre.skipped);
+      setBoostUnkWarnings(canPreview ? pre.skipped : []);
       return;
     }
     // Use the server-prebuilt encoding when it matches the current text exactly

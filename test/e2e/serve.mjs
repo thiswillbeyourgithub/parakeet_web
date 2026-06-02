@@ -18,6 +18,10 @@ const here = resolve(fileURLToPath(import.meta.url), '..');
 const ROOT = resolve(here, '../..');
 const DIST = resolve(ROOT, 'app/ui/dist');
 const MODEL_DIR = resolve(process.env.PARAKEET_E2E_MODEL_DIR || join(ROOT, 'fallback_models'));
+// Curated boost-phrase lists (manifest.txt + <name>.txt + optional prebuilt
+// <name>.json), mirroring what Caddy serves at /boost-phrases/* in production.
+// Lets a spec exercise the curated-list + prebuilt-artifact path without weights.
+const BOOST_DIR = resolve(process.env.PARAKEET_E2E_BOOST_DIR || join(here, 'fixtures/boost-phrases'));
 const PORT = parseInt(process.env.PORT, 10) || 4178;
 
 const MIME = {
@@ -69,6 +73,17 @@ const server = http.createServer((req, res) => {
     res.statusCode = 404;
     setHeaders(res, '.txt');
     return res.end(`model file not found: ${pathname} (looked in ${MODEL_DIR})`);
+  }
+
+  // Curated boost-phrase lists, served from BOOST_DIR (no isolation headers
+  // needed; these are plain fetches). A missing file is a 404 so the app's
+  // soft-miss handling kicks in, exactly as in production.
+  if (pathname.startsWith('/boost-phrases/')) {
+    const filePath = safeJoin(BOOST_DIR, pathname.slice('/boost-phrases'.length));
+    if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(res, filePath);
+    res.statusCode = 404;
+    setHeaders(res, '.txt');
+    return res.end(`boost-phrases file not found: ${pathname}`);
   }
 
   // Static app, with SPA fallback to index.html.
