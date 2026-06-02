@@ -359,6 +359,12 @@ const BOOST_PREBUILT_MAX_BYTES = 64 * 1024 * 1024;
 // render it. Custom text is always editable regardless of size.
 const BOOST_COLLAPSE_MIN_PHRASES = 2000;
 
+// Cap on how many skipped (untokenizable) phrases are listed inline. A curated
+// list can drop thousands of terms the model has no tokens for; spelling them
+// all out floods the sidebar. We show the first N and append a "+ how many
+// more (what %)" tail so the user still knows the true scale.
+const BOOST_UNK_PREVIEW_MAX = 50;
+
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
 // non-2xx response, or {ok:false, oversize:true, declared} when the body is
@@ -4329,7 +4335,15 @@ export default function App() {
               {boostUnkWarnings.length > 0 && (
                 <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
                   {t('boostUnkWarning')}{' '}
-                  {boostUnkWarnings.join(', ')}
+                  {boostUnkWarnings.slice(0, BOOST_UNK_PREVIEW_MAX).join(', ')}
+                  {boostUnkWarnings.length > BOOST_UNK_PREVIEW_MAX && (
+                    ' ' + t('boostUnkWarningCropped')
+                      .replace('{shown}', BOOST_UNK_PREVIEW_MAX)
+                      .replace('{total}', boostUnkWarnings.length)
+                      .replace('{pct}', Math.round(
+                        (BOOST_UNK_PREVIEW_MAX / boostUnkWarnings.length) * 100,
+                      ))
+                  )}
                 </p>
               )}
               {boostPhrases.trim() && (
