@@ -104,7 +104,7 @@ export async function stopServer(srv) {
   });
 }
 
-/** Create a room and return { roomId, secret } plus a header helper. */
+/** Create a room and return { roomId, secret }. */
 export async function createRoom(srv) {
   const res = await fetch(`${srv.baseUrl}/api/rooms`, {
     method: 'POST',
@@ -113,3 +113,31 @@ export async function createRoom(srv) {
   if (!res.ok) throw new Error(`createRoom failed: ${res.status}`);
   return res.json();
 }
+
+/** GET an API path with the allowed Origin and optional room secret. */
+export function apiGet(srv, path, secret) {
+  const headers = { Origin: srv.origin };
+  if (secret) headers['X-Room-Secret'] = secret;
+  return fetch(`${srv.baseUrl}${path}`, { headers });
+}
+
+/** POST JSON to an API path with the allowed Origin and optional room secret. */
+export function apiPost(srv, path, body, secret) {
+  const headers = { Origin: srv.origin, 'Content-Type': 'application/json' };
+  if (secret) headers['X-Room-Secret'] = secret;
+  return fetch(`${srv.baseUrl}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
+// A minimal SDP whose every line passes the server's per-line RFC-4566 shape
+// check, and a well-formed trickle-ICE candidate. Shared across http tests.
+export const SAMPLE_SDP = [
+  'v=0',
+  'o=- 0 0 IN IP4 127.0.0.1',
+  's=-',
+  't=0 0',
+  'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+  'c=IN IP4 0.0.0.0',
+  'a=ice-ufrag:abcd',
+].join('\r\n');
+
+export const SAMPLE_CANDIDATE = 'candidate:1 1 udp 2122252543 192.168.1.2 54321 typ host';

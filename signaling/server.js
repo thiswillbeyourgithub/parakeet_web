@@ -23,6 +23,18 @@ const PORT = parseInt(process.env.PORT, 10) || 3001;
 const DOMAIN = process.env.DOMAIN || 'localhost';
 const DEV = process.env.DEV === '1';
 
+// Test-only escape hatch: when TEST_DISABLE_RATE_LIMIT=1 every rate-limit
+// middleware becomes a pass-through. The integration suite (test/http/*) spins
+// many rooms per file and would otherwise trip the roomCreation cap (5/min).
+// Read once here (before any rateLimitMiddleware call at module-eval time, so
+// it is out of the const's temporal dead zone) and never flippable by a
+// request. MUST never be set in production. Mirrors WebSend's flag of the same
+// name.
+const TEST_DISABLE_RATE_LIMIT = process.env.TEST_DISABLE_RATE_LIMIT === '1';
+if (TEST_DISABLE_RATE_LIMIT) {
+    console.warn('WARNING: TEST_DISABLE_RATE_LIMIT=1 — rate limiting is OFF (test mode only)');
+}
+
 // ============ ICE Server Configuration ============
 const STUN_SERVER = process.env.STUN_SERVER || '';
 const STUN_GOOGLE_FALLBACK = process.env.STUN_GOOGLE_FALLBACK !== 'false';
@@ -336,16 +348,6 @@ function checkRateLimit(ip, limitType) {
 
     limiter.timestamps.push(now);
     return { allowed: true, retryAfter: 0 };
-}
-
-// Test-only escape hatch: when TEST_DISABLE_RATE_LIMIT=1 every rate-limit
-// middleware becomes a pass-through. The integration suite (test/http/*)
-// spins many rooms per file and would otherwise trip the roomCreation cap
-// (5/min). This MUST never be set in production; it is read once at startup
-// so it cannot be flipped by a request. Mirrors WebSend's TEST_DISABLE_RATE_LIMIT.
-const TEST_DISABLE_RATE_LIMIT = process.env.TEST_DISABLE_RATE_LIMIT === '1';
-if (TEST_DISABLE_RATE_LIMIT) {
-    console.warn('WARNING: TEST_DISABLE_RATE_LIMIT=1 — rate limiting is OFF (test mode only)');
 }
 
 function rateLimitMiddleware(limitType) {
