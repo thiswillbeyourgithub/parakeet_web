@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the fast tiers (tier 1 unit + tier 2 http integration).
+# Tier 3 (Playwright full-transcription E2E) is intentionally skipped — it loads
+# a ~600 MB model and is far too slow for pre-push. Run it with `npm run test:e2e`.
+# Bypass this hook with `git push --no-verify` if you must.
+#
+# Activated automatically by the root package.json `prepare` script, which runs
+# `git config core.hooksPath .githooks` on `npm install`.
+set -e
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "[pre-push] Running npm test (tier 1 unit + tier 2 http)..."
+if ! npm test --silent; then
+  echo "[pre-push] Tests failed — push aborted. (override with --no-verify)" >&2
+  exit 1
+fi
+echo "[pre-push] All fast-tier tests passed."

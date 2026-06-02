@@ -1,0 +1,72 @@
+# CI test gate for pull requests. Mirrors the local pre-push hook (the fast
+# tiers) and adds the heavy tier-3 E2E as a separate job.
+#
+# NOTE: to make these checks actually BLOCK a merge, a repo admin must enable
+# them as required status checks under Settings -> Branches -> branch protection
+# (the workflow alone runs the checks but does not enforce them).
+#
+# Generated with Claude Code.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master, fork]
+
+jobs:
+  fast:
+    # Tier 1 (unit) + tier 2 (http integration). Fast, no model download.
+    name: unit + http
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Tier-1 imports parakeet.js (needs onnxruntime-web); tier-2 spawns the
+      # signaling server (needs express + ws). Each package vendors its own lock.
+      - name: Install app deps (onnxruntime-web)
+        run: npm ci
+        working-directory: app
+      - name: Install signaling deps (express, ws)
+        run: npm ci
+        working-directory: signaling
+      - name: Run unit + http tiers
+        run: npm test
+
+  e2e:
+    # Tier 3: full-transcription happy path in headless Chromium. Heavy (loads
+    # the ~633 MB int8 model), so the weights are cached across runs.
+    name: e2e (full transcription)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PARAKEET_E2E_MODEL_DIR: ${{ github.workspace }}/.e2e-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root deps (Playwright)
+        run: npm ci
+      - name: Install UI deps
+        run: npm ci
+        working-directory: app/ui
+      - name: Build UI
+        run: npm run build
+        working-directory: app/ui
+
+      - name: Cache int8 model weights
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PARAKEET_E2E_MODEL_DIR }}
+          # Bump this key when the pinned model repo/revision changes.
+          key: parakeet-e2e-models-istupakov-v3-int8
+      - name: Fetch model weights (cache miss only)
+        run: npm run e2e:models
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E
+        run: npm run test:e2e
