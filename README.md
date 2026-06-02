@@ -134,7 +134,7 @@ Open the settings panel and find the **Phrase boosting** group:
 
 Your phrase list and strength are saved locally (IndexedDB) and survive reloads. Like everything else in this app, boosting runs **100% in your browser**: nothing about your phrases is sent anywhere.
 
-**Operator-provided lists (optional, self-hosted):** set the `BOOST_PHRASES_SOURCE` environment variable to a local folder of `.txt` files (one phrase per line, same per-line syntax as the box) or to an https URL pointing at a single `.txt` file. When at least one list is found, a selector appears above the box so users can pick which list to load; choosing one fills the box with that file's contents. The selector always includes a **Custom** entry for typing your own phrases, and that custom text is saved across sessions independently of the loaded files. A served list can ship pre-tuned by carrying its own default strength on a `#!strength N` line, and very large lists can be precompiled to `.pwc` files so visitors' browsers skip the encode step (see the collapsible reference below). When the variable is unset, no selector is shown and the box works exactly as described above (manual entry only).
+**Operator-provided lists (optional, self-hosted):** set the `BOOST_PHRASES_SOURCE` environment variable to a local folder of `.txt` files (one phrase per line, same per-line syntax as the box) or to an https URL pointing at a single `.txt` file. When at least one list is found, a selector appears above the box so users can pick which list to load; choosing one fills the box with that file's contents. The selector always includes a **Custom** entry for typing your own phrases, and that custom text is saved across sessions independently of the loaded files. A served list can ship pre-tuned by carrying its own default strength on a `#!strength N` line, and very large lists can be precompiled to `.pwc` files so the container skips re-encoding them on every boot (a server-startup saving, not a visitor-side one; see the collapsible reference below). When the variable is unset, no selector is shown and the box works exactly as described above (manual entry only).
 
 <details>
 <summary><strong>Full per-line syntax, how boosting works, and precompiled lists</strong></summary>
@@ -159,13 +159,13 @@ By default this app decodes **greedily** (one best token per step), so boosting 
 
 #### Precompiled lists (`.pwc`, self-hosted only)
 
-When `LOCAL_MODEL_PATH` is set, the container encodes each operator-provided list to token ids at boot so visitors' browsers skip that work. That encode still runs on **every** container start, which is slow for a very large (10k-100k phrase) list. To avoid it, precompile the list once:
+When `LOCAL_MODEL_PATH` is set, the container encodes each operator-provided list to token ids at boot and serves the result (a sibling `.json`) so visitors' browsers skip that work. Visitors are already fast either way; what is not free is that boot encode itself, which reruns on **every** container start and is slow for a very large (10k-100k phrase) list. Precompiling spares the **server** that repeated startup work (it does not change visitor speed). Compile the list once:
 
 ```bash
 node scripts/compile-boost.mjs my-list.txt --model-dir /path/to/model
 ```
 
-(use the same model folder you mount at `LOCAL_MODEL_PATH`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The `.pwc` is a gzip-compressed file (it is only ever read back by the container, never fetched by a browser, so it ships smaller). The container then reuses the `.pwc`'s token ids at boot instead of re-encoding, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
+(use the same model folder you mount at `LOCAL_MODEL_PATH`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The `.pwc` is a gzip-compressed file (it is only ever read back by the container, never fetched by a browser, so it ships smaller). The container then reuses the `.pwc`'s token ids at boot instead of re-encoding, cutting container startup time, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
 
 </details>
 
