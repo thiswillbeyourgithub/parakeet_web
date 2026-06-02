@@ -23,6 +23,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, selectPrebuilt, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes, relativeAge } from './lib/format.js';
+import { requestPersistentStorage } from './lib/persistStorage.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
@@ -964,6 +965,21 @@ export default function App() {
   const [dictationRegexLoaded, setDictationRegexLoaded] = useState(false);
   // Track which transcriptions have had dictation applied (id -> cleaned text)
   const [dictationCache, setDictationCache] = useState({});
+
+  // Ask the browser to keep our IndexedDB (where the multi-GB model weights
+  // live) in the persistent bucket so it is not evicted under disk pressure.
+  // Eviction is the real reason a cached model gets re-downloaded "after an
+  // update": the version-mismatch purge only clears the settings DB, never the
+  // model cache. Fire-and-forget; never blocks boot.
+  useEffect(() => {
+    requestPersistentStorage().then((persisted) => {
+      if (persisted === null) {
+        console.log('[App] Persistent storage API unavailable; model cache may be evicted under pressure');
+      } else {
+        console.log(`[App] Persistent storage ${persisted ? 'granted' : 'NOT granted'} (model cache eviction ${persisted ? 'prevented' : 'still possible'})`);
+      }
+    });
+  }, []);
 
   // Load settings from IndexedDB on mount
   useEffect(() => {
