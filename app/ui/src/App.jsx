@@ -3985,9 +3985,10 @@ export default function App() {
             <div style={{
               marginBottom: '0.75rem',
               padding: '0.75rem',
-              background: '#f9fafb',
+              background: 'var(--bg-card)',
+              color: 'var(--text)',
               borderRadius: '4px',
-              border: '1px solid #e5e7eb',
+              border: '1px solid var(--border)',
               fontSize: '0.9rem',
               lineHeight: '1.8'
             }}>
@@ -4008,7 +4009,7 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#888' }}>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: 'var(--text-subtle)' }}>
                 {t('shortcutsDisabledInInputs')}
               </p>
             </div>
