@@ -4158,6 +4158,8 @@ export default function App() {
               </select>
             </div>
 
+            <div className="settings-group-header">{t('settingsGroupAdvanced')}</div>
+
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
@@ -4193,8 +4195,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            <div className="settings-group-header">{t('settingsGroupAdvanced')}</div>
 
             <div className="setting-row">
               <span className="setting-label">
