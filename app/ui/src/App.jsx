@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, selectPrebuilt, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
 import { formatTime, formatDuration, formatBytes, relativeAge } from './lib/format.js';
 
@@ -1614,52 +1614,58 @@ export default function App() {
   // separately (below) so moving the slider does not force a re-encode. We
   // rebuild on `status` so a model load/swap refreshes the trie.
   useEffect(() => {
+    // parseBoostPhrases is cheap (a line scan) and feeds the inline warnings,
+    // so it always runs. The expensive step is expandCasingVariants below, so
+    // we defer it until we know the prebuilt encoding can't be reused.
     const parsed = parseBoostPhrases(boostPhrases);
     setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
-    // Casing expansion: turn each case-insensitive phrase into one entry per
-    // casing so the case-sensitive encoder gets a trie branch for each. Runs
-    // unconditionally because a per-phrase `:i` flag can opt a phrase in even
-    // when the global default is off (and `:s` can opt one out when it is on).
-    const entries = expandCasingVariants(parsed.filter(p => p.phrase), boostCaseInsensitive);
+    const phraseEntries = parsed.filter(p => p.phrase);
     const tokenizer = modelRef.current?.tokenizer;
-    if (!entries.length || !tokenizer) {
+    if (!phraseEntries.length || !tokenizer) {
       phraseBoostRef.current = null;
       setBoostUnkWarnings([]);
       return;
     }
-    let cancelled = false;
     // Use the server-prebuilt encoding when it matches the current text exactly
     // (unedited) and the vocab it was built for matches the loaded tokenizer;
-    // that skips the BPE encode (the slow part) entirely.
+    // that skips the BPE encode (the slow part) entirely. Decide this *before*
+    // casing-expanding the list: the prebuilt already baked in the expansion, so
+    // on the prebuilt path expandCasingVariants would be pure wasted work, and
+    // it is heavy enough (hundreds of ms to seconds on a large case-insensitive
+    // list) to freeze the UI on the main thread. Worse, this effect re-runs on
+    // every `status` change, so re-expanding here would re-freeze on each model
+    // load / recording transition, not just once.
     const pre = prebuiltBoostRef.current;
     const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
     // The prebuilt encoding bakes in the casing expansion at the global default
-    // it was built with (`pre.caseDefault`; absent on legacy artifacts => false,
-    // i.e. un-expanded). It only matches when the user's current global default
-    // agrees; otherwise the entry set differs, so re-encode.
-    const usePrebuilt = !!pre && pre.text === boostPhrases && pre.vocabSig === sig
-      && (pre.caseDefault ?? false) === boostCaseInsensitive;
+    // it was built with; selectPrebuilt() validates text + vocab + case toggle
+    // and, when rejected, explains why (see its docstring).
+    const { usePrebuilt, reasons: prebuiltRejectReasons } = selectPrebuilt(pre, {
+      text: boostPhrases, vocabSig: sig, caseInsensitive: boostCaseInsensitive,
+    });
+    // Casing expansion: turn each case-insensitive phrase into one entry per
+    // casing so the case-sensitive encoder gets a trie branch for each. Only
+    // needed on the encode path; a per-phrase `:i` flag can opt a phrase in even
+    // when the global default is off (and `:s` can opt one out when it is on).
+    const entries = usePrebuilt ? null : expandCasingVariants(phraseEntries, boostCaseInsensitive);
+    // Phrase count for the spinner gate and logs: the prebuilt is already encoded.
+    const count = usePrebuilt ? pre.encoded.length : entries.length;
+    let cancelled = false;
     // When a prebuilt exists but is rejected, say why: this is the difference
     // between a fast (prebuilt) rebuild and a slow from-scratch BPE re-encode,
     // so it is the first thing to check if a curated list is unexpectedly slow.
     if (verboseLogRef.current && pre && !usePrebuilt) {
-      const reasons = [];
-      if (pre.text !== boostPhrases) reasons.push('list text was edited (no longer matches the prebuilt)');
-      if (pre.vocabSig !== sig) reasons.push(`vocab mismatch (prebuilt for ${pre.vocabSig}, model is ${sig})`);
-      if ((pre.caseDefault ?? false) !== boostCaseInsensitive) {
-        reasons.push(`case toggle differs (prebuilt at caseDefault=${pre.caseDefault ?? false}, UI is ${boostCaseInsensitive})`);
-      }
-      console.log(`[Boost] prebuilt encoding present but NOT used; will BPE-encode in-browser. Reason: ${reasons.join('; ')}.`);
+      console.log(`[Boost] prebuilt encoding present but NOT used; will BPE-encode in-browser. Reason: ${prebuiltRejectReasons.join('; ')}.`);
     }
     // Long lists take long enough to encode+build that the user should see the
     // app is busy; small ones (or prebuilt ones, which only insert) rebuild in
     // a few ms, so a spinner would only flash.
-    const showSpinner = !usePrebuilt && entries.length >= BOOST_SPINNER_MIN_PHRASES;
+    const showSpinner = !usePrebuilt && count >= BOOST_SPINNER_MIN_PHRASES;
     const timer = setTimeout(async () => {
       if (showSpinner) setBoostRebuilding(true);
       const t0 = performance.now();
       if (verboseLogRef.current) {
-        console.log(`[Boost] rebuilding trie for ${entries.length} phrase(s)`
+        console.log(`[Boost] rebuilding trie for ${count} phrase(s)`
           + `${usePrebuilt ? ' (server-prebuilt encoding, skipping BPE)' : ''}...`);
       }
       try {
@@ -1675,9 +1681,9 @@ export default function App() {
         phraseBoostRef.current = trie.isEmpty ? null : trie;
         if (verboseLogRef.current) {
           const ms = performance.now() - t0;
-          const perLine = entries.length ? ms / entries.length : 0;
+          const perLine = count ? ms / count : 0;
           console.log(
-            `[Boost] trie rebuilt in ${ms.toFixed(1)}ms for ${entries.length} phrase(s) `
+            `[Boost] trie rebuilt in ${ms.toFixed(1)}ms for ${count} phrase(s) `
             + `(avg ${perLine.toFixed(3)}ms/line, ${trie.size} inserted, ${skipped.length} skipped`
             + `${usePrebuilt ? ', prebuilt' : ''}).`
           );

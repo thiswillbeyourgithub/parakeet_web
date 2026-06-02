@@ -312,6 +312,46 @@ export function encodePhrases(entries, encoder) {
 }
 
 /**
+ * Decide whether a server-prebuilt boost encoding can be reused as-is instead of
+ * BPE-encoding the phrase list in the browser. This is the gate that lets the
+ * reload/restore path skip both the encode (the slow BPE merge loop) *and* the
+ * main-thread casing expansion: the prebuilt already bakes both in, so when this
+ * returns `usePrebuilt: true` the caller must not re-parse/re-expand the list
+ * (doing so blocks the UI for seconds on a large case-insensitive list).
+ *
+ * Reuse is valid only when all three agree:
+ *  - the list text is unedited (matches what the prebuilt was built from),
+ *  - the vocab signature the prebuilt was built for matches the loaded model,
+ *  - the global casing default matches the prebuilt's baked-in `caseDefault`
+ *    (legacy artifacts omit it, so a missing value is treated as `false`, i.e.
+ *    un-expanded).
+ *
+ * @param {{text: string, vocabSig: string, caseDefault?: boolean, encoded: Array}|null} prebuilt
+ *   The loaded prebuilt encoding, or null/undefined when none is available.
+ * @param {{text: string, vocabSig: string|null, caseInsensitive: boolean}} current
+ *   The current UI state to validate the prebuilt against.
+ * @returns {{usePrebuilt: boolean, reasons: string[]}} `reasons` is empty when
+ *   the prebuilt is used (or absent); otherwise it lists each mismatch in
+ *   developer-facing wording (for the verbose log), since that is the line
+ *   between a fast prebuilt rebuild and a slow from-scratch re-encode.
+ */
+export function selectPrebuilt(prebuilt, current) {
+  if (!prebuilt) return { usePrebuilt: false, reasons: [] };
+  const { text, vocabSig, caseInsensitive } = current;
+  const reasons = [];
+  if (prebuilt.text !== text) {
+    reasons.push('list text was edited (no longer matches the prebuilt)');
+  }
+  if (prebuilt.vocabSig !== vocabSig) {
+    reasons.push(`vocab mismatch (prebuilt for ${prebuilt.vocabSig}, model is ${vocabSig})`);
+  }
+  if ((prebuilt.caseDefault ?? false) !== caseInsensitive) {
+    reasons.push(`case toggle differs (prebuilt at caseDefault=${prebuilt.caseDefault ?? false}, UI is ${caseInsensitive})`);
+  }
+  return { usePrebuilt: reasons.length === 0, reasons };
+}
+
+/**
  * Indices of the `k` largest elements of `logits`, returned in descending value
  * order so the array index doubles as the 0-based top-k rank (rank 0 = largest).
  * Used by {@link BoostingTrie#applyBoost} to gate boosts: a token is "in top-k"

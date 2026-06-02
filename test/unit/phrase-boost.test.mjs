@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { BpeEncoder, buildVocabToId } from '../../app/src/bpeEncoder.js';
 import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
-  casingVariants, expandCasingVariants, DEFAULT_BOOST_TOPK,
+  casingVariants, expandCasingVariants, selectPrebuilt, DEFAULT_BOOST_TOPK,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -202,4 +202,65 @@ describe('encodePhrases + buildFromEncoded (worker split)', () => {
   const fromEncoded = BoostingTrie.buildFromEncoded(encoded, { strength: 1 });
   test('buildFromEncoded yields the same size as buildFromPhrases', () => assert.equal(fromEncoded.size, mixedTrie.size));
   test('buildFromEncoded reaches the same first token', () => assert.ok(fromEncoded.root.children.has(ids[0])));
+});
+
+describe('selectPrebuilt (reload fast-path gate)', () => {
+  // This gate decides whether the reload/restore path can reuse the server
+  // prebuilt encoding and so SKIP the in-browser parse + casing-expand + BPE
+  // encode. A false negative here means the UI re-encodes a large curated list
+  // on the main thread (the freeze the prebuilt exists to avoid), so the match
+  // conditions are pinned exactly.
+  const pre = {
+    text: 'venlafaxine\nacetaminophen',
+    vocabSig: 'sig-abc',
+    caseDefault: false,
+    encoded: [{ ids: [1, 2], weight: 1 }],
+  };
+  const base = { text: pre.text, vocabSig: 'sig-abc', caseInsensitive: false };
+
+  test('reuses the prebuilt when text + vocab + case all agree', () => {
+    const r = selectPrebuilt(pre, base);
+    assert.equal(r.usePrebuilt, true);
+    assert.deepEqual(r.reasons, []);
+  });
+
+  test('no prebuilt => not used, no reasons', () => {
+    assert.deepEqual(selectPrebuilt(null, base), { usePrebuilt: false, reasons: [] });
+  });
+
+  test('edited text rejects the prebuilt', () => {
+    const r = selectPrebuilt(pre, { ...base, text: pre.text + '\nibuprofen' });
+    assert.equal(r.usePrebuilt, false);
+    assert.equal(r.reasons.length, 1);
+    assert.match(r.reasons[0], /text was edited/);
+  });
+
+  test('vocab mismatch rejects the prebuilt', () => {
+    const r = selectPrebuilt(pre, { ...base, vocabSig: 'sig-different' });
+    assert.equal(r.usePrebuilt, false);
+    assert.match(r.reasons[0], /vocab mismatch/);
+  });
+
+  test('a null model vocabSig (model not loaded) rejects the prebuilt', () => {
+    assert.equal(selectPrebuilt(pre, { ...base, vocabSig: null }).usePrebuilt, false);
+  });
+
+  test('case toggle differing from the prebuilt caseDefault rejects it', () => {
+    const r = selectPrebuilt(pre, { ...base, caseInsensitive: true });
+    assert.equal(r.usePrebuilt, false);
+    assert.match(r.reasons[0], /case toggle differs/);
+  });
+
+  test('legacy prebuilt (no caseDefault) is treated as un-expanded (false)', () => {
+    const legacy = { ...pre };
+    delete legacy.caseDefault;
+    assert.equal(selectPrebuilt(legacy, { ...base, caseInsensitive: false }).usePrebuilt, true);
+    assert.equal(selectPrebuilt(legacy, { ...base, caseInsensitive: true }).usePrebuilt, false);
+  });
+
+  test('multiple mismatches are all reported', () => {
+    const r = selectPrebuilt(pre, { text: 'edited', vocabSig: 'other', caseInsensitive: true });
+    assert.equal(r.usePrebuilt, false);
+    assert.equal(r.reasons.length, 3);
+  });
 });
