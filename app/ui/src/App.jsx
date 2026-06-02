@@ -4322,12 +4322,12 @@ export default function App() {
                 <div
                   style={{
                     width: '100%', boxSizing: 'border-box',
-                    fontSize: '0.85rem', padding: '0.6rem 0.7rem',
+                    fontSize: '0.78rem', padding: '0.6rem 0.7rem',
                     borderRadius: '4px', border: '1px dashed #d1d5db',
-                    background: 'var(--surface-muted, #f9fafb)', color: 'var(--text-muted)',
+                    background: 'var(--surface-muted, #f9fafb)', color: '#b45309',
                   }}
                 >
-                  <div style={{ color: 'var(--text)', fontWeight: 600 }}>
+                  <div style={{ fontWeight: 600 }}>
                     {t('boostCuratedLoaded').replace('{name}', boostSource.replace(/\.txt$/, ''))}
                   </div>
                   <div>{t('boostCuratedEditHint')}</div>
