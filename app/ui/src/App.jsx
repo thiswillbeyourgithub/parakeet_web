@@ -360,12 +360,6 @@ const BOOST_PREBUILT_MAX_BYTES = 64 * 1024 * 1024;
 // render it. Custom text is always editable regardless of size.
 const BOOST_COLLAPSE_MIN_PHRASES = 100;
 
-// Cap on how many skipped (untokenizable) phrases are listed inline. A curated
-// list can drop thousands of terms the model has no tokens for; spelling them
-// all out floods the sidebar. We show the first N and append a "+ how many
-// more (what %)" tail so the user still knows the true scale.
-const BOOST_UNK_PREVIEW_MAX = 50;
-
 // RAM cutoff (in GB) below which a device is treated as low-memory. The model
 // needs ~100-200 MB plus runtime overhead; below 3 GB the tab is at risk.
 // Shared by the low-RAM backend/model-load guard (isLowRam) and the default
@@ -4293,7 +4287,7 @@ export default function App() {
                 {t('boostPhrases')}:
                 <InfoTooltip text={t('tooltipBoost')} />
               </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem' }}>
                 {boostFiles.length > 0 && (
                   <select
                     value={boostSource}
@@ -4319,7 +4313,7 @@ export default function App() {
                       const v = Number(e.target.value);
                       if (Number.isFinite(v)) setBoostStrength(Math.max(-10, Math.min(10, v)));
                     }}
-                    style={{ width: '4.5rem' }}
+                    style={{ width: '3.5rem' }}
                   />
                 </label>
               </div>
@@ -4369,29 +4363,38 @@ export default function App() {
                 <InfoTooltip text={t('tooltipBoostCaseInsensitive')} />
               </label>
               {boostWarnings.length > 0 && (
-                <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
+                <p style={{
+                  fontSize: '0.78rem', color: '#b45309', margin: 0,
+                  overflowWrap: 'anywhere', wordBreak: 'break-word',
+                }}>
                   {t('boostWeightWarning').replace('{max}', MAX_PHRASE_WEIGHT)}{' '}
                   {boostWarnings.map(w => w.phrase).join(', ')}
-                </p>
-              )}
-              {boostUnkWarnings.length > 0 && (
-                <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>
-                  {t('boostUnkWarning')}{' '}
-                  {boostUnkWarnings.slice(0, BOOST_UNK_PREVIEW_MAX).join(', ')}
-                  {boostUnkWarnings.length > BOOST_UNK_PREVIEW_MAX && (
-                    ' ' + t('boostUnkWarningCropped')
-                      .replace('{shown}', BOOST_UNK_PREVIEW_MAX)
-                      .replace('{total}', boostUnkWarnings.length)
-                      .replace('{pct}', Math.round(
-                        (BOOST_UNK_PREVIEW_MAX / boostUnkWarnings.length) * 100,
-                      ))
-                  )}
                 </p>
               )}
               {boostPhrases.trim() && (
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
                   {t('boostPhrasesLoaded').replace('{n}', boostPhraseCount)}
                 </p>
+              )}
+              {boostUnkWarnings.length > 0 && (
+                <details style={{ fontSize: '0.78rem', color: '#b45309' }}>
+                  <summary style={{ cursor: 'pointer' }}>
+                    {t('boostUnkSummary').replace('{n}', boostUnkWarnings.length)}
+                  </summary>
+                  <p style={{ margin: '0.4rem 0' }}>{t('boostUnkWarning')}</p>
+                  <textarea
+                    readOnly
+                    value={boostUnkWarnings.join('\n')}
+                    rows={Math.min(8, boostUnkWarnings.length)}
+                    spellCheck={false}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                      fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
+                      borderRadius: '4px', border: '1px solid #d1d5db',
+                      color: 'var(--text)',
+                    }}
+                  />
+                </details>
               )}
             </div>
 
