@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useTransition, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
@@ -349,6 +349,15 @@ const BOOST_SPINNER_MIN_PHRASES = 500;
 // 5 MB text cap because the encoded JSON of a 100k-phrase list is bigger than
 // its source text; oversize just falls back to encoding the .txt in-browser.
 const BOOST_PREBUILT_MAX_BYTES = 64 * 1024 * 1024;
+
+// Phrase count past which a *served* (non-Custom) list is collapsed to a
+// read-only summary instead of being dumped into the editable textarea. A
+// curated list this large (e.g. a 60k-line medical lexicon) is never hand
+// edited, and rendering it in a controlled textarea makes the field scroll and
+// the whole sidebar lag (every re-render re-passes the giant string). The text
+// still lives in `boostPhrases` for the rebuild/prebuilt path; we just don't
+// render it. Custom text is always editable regardless of size.
+const BOOST_COLLAPSE_MIN_PHRASES = 2000;
 
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
@@ -1666,6 +1675,23 @@ export default function App() {
     if (boostWorkerRef.current) boostWorkerRef.current.terminate();
   }, []);
 
+  // Parse the phrase text once per change, not once per render. The full line
+  // scan is cheap per call but the App component re-renders on every unrelated
+  // state change (recording timer, status flips, ...); re-scanning a 60k-line
+  // curated list on each of those is what made the sidebar lag. Both the
+  // rebuild effect and the render (count + collapse gate) read this memo.
+  const boostParsed = useMemo(() => parseBoostPhrases(boostPhrases), [boostPhrases]);
+  const boostPhraseCount = useMemo(
+    () => boostParsed.filter(p => p.phrase).length,
+    [boostParsed],
+  );
+  // A large *served* (non-Custom) list is collapsed to a read-only summary
+  // rather than rendered in the editable textarea: a 60k-line lexicon is never
+  // hand edited, and a controlled textarea that big makes the field scroll and
+  // the sidebar lag. The text still lives in `boostPhrases` for boosting.
+  const boostCollapsed = boostSource !== BOOST_SOURCE_CUSTOM
+    && boostPhraseCount >= BOOST_COLLAPSE_MIN_PHRASES;
+
   // Phrase boosting: rebuild the trie when the phrase text changes or the model
   // becomes ready (the encoder needs the loaded tokenizer's vocab). The rebuild
   // is debounced (a large paste shouldn't re-encode per keystroke) and the
@@ -1678,10 +1704,11 @@ export default function App() {
   // rebuild + warning-state writes on each of those froze the UI on a large
   // curated list (the textarea reconciled the whole list every time).
   useEffect(() => {
-    // parseBoostPhrases is cheap (a line scan) and feeds the inline warnings,
-    // so it always runs. The expensive step is expandCasingVariants below, so
-    // we defer it until we know the prebuilt encoding can't be reused.
-    const parsed = parseBoostPhrases(boostPhrases);
+    // The parse is memoized (boostParsed) so it runs once per text change, not
+    // per render. It feeds the inline warnings; the expensive step is
+    // expandCasingVariants below, deferred until we know the prebuilt encoding
+    // can't be reused.
+    const parsed = boostParsed;
     setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
     const phraseEntries = parsed.filter(p => p.phrase);
     const tokenizer = modelRef.current?.tokenizer;
@@ -1761,7 +1788,7 @@ export default function App() {
       }
     }, BOOST_REBUILD_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(timer); if (showSpinner) setBoostRebuilding(false); };
-  }, [boostPhrases, boostCaseInsensitive, tokenizerVocabSig, encodeBoostPhrases]);
+  }, [boostPhrases, boostParsed, boostCaseInsensitive, tokenizerVocabSig, encodeBoostPhrases]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {
@@ -4248,26 +4275,42 @@ export default function App() {
                   />
                 </label>
               </div>
-              <textarea
-                value={boostPhrases}
-                onChange={e => {
-                  const v = e.target.value;
-                  setBoostPhrases(v);
-                  // Only the Custom slot is the user's own; edits while a file
-                  // is selected stay in this session and aren't saved as custom.
-                  if (boostSource === BOOST_SOURCE_CUSTOM) setBoostCustomText(v);
-                }}
-                placeholder={t('boostPhrasesPlaceholder')}
-                rows={4}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                style={{
-                  width: '100%', boxSizing: 'border-box', resize: 'vertical',
-                  fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
-                  borderRadius: '4px', border: '1px solid #d1d5db',
-                }}
-              />
+              {boostCollapsed ? (
+                <div
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    fontSize: '0.85rem', padding: '0.6rem 0.7rem',
+                    borderRadius: '4px', border: '1px dashed #d1d5db',
+                    background: 'var(--surface-muted, #f9fafb)', color: 'var(--text-muted)',
+                  }}
+                >
+                  <div style={{ color: 'var(--text)', fontWeight: 600 }}>
+                    {t('boostCuratedLoaded').replace('{name}', boostSource.replace(/\.txt$/, ''))}
+                  </div>
+                  <div>{t('boostCuratedEditHint')}</div>
+                </div>
+              ) : (
+                <textarea
+                  value={boostPhrases}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setBoostPhrases(v);
+                    // Only the Custom slot is the user's own; edits while a file
+                    // is selected stay in this session and aren't saved as custom.
+                    if (boostSource === BOOST_SOURCE_CUSTOM) setBoostCustomText(v);
+                  }}
+                  placeholder={t('boostPhrasesPlaceholder')}
+                  rows={4}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                    fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
+                    borderRadius: '4px', border: '1px solid #d1d5db',
+                  }}
+                />
+              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
                 <input
                   type="checkbox"
@@ -4291,10 +4334,7 @@ export default function App() {
               )}
               {boostPhrases.trim() && (
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
-                  {t('boostPhrasesLoaded').replace(
-                    '{n}',
-                    parseBoostPhrases(boostPhrases).filter(p => p.phrase).length,
-                  )}
+                  {t('boostPhrasesLoaded').replace('{n}', boostPhraseCount)}
                 </p>
               )}
             </div>

@@ -136,6 +136,8 @@ const translations = {
     boostWeightWarning: 'Invalid weight (nonzero, -{max} to {max}) or top-k (integer ≥ 1); using defaults for:',
     boostUnkWarning: 'Skipped (the model has no tokens for these characters, e.g. Chinese/Japanese/Korean):',
     boostPhrasesLoaded: '{n} phrase(s) active',
+    boostCuratedLoaded: 'Curated list "{name}" loaded',
+    boostCuratedEditHint: 'Switch to Custom to type and edit your own phrases.',
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
@@ -441,6 +443,8 @@ const translations = {
     boostWeightWarning: 'Poids hors limites (doit \u00eatre non nul, entre -{max} et {max}) ou top-k (entier ≥ 1)\u00a0; valeur 1 utilis\u00e9e pour\u00a0:',
     boostUnkWarning: 'Ignor\u00e9es (le mod\u00e8le n\u2019a pas de jetons pour ces caract\u00e8res, ex.\u00a0: chinois/japonais/cor\u00e9en)\u00a0:',
     boostPhrasesLoaded: '{n} phrase(s) active(s)',
+    boostCuratedLoaded: 'Liste pr\u00e9d\u00e9finie \u00ab\u00a0{name}\u00a0\u00bb charg\u00e9e',
+    boostCuratedEditHint: 'Passez en mode Personnalis\u00e9 pour saisir et modifier vos propres phrases.',
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
