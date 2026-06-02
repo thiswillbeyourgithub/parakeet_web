@@ -365,12 +365,33 @@ const BOOST_COLLAPSE_MIN_PHRASES = 100;
 // more (what %)" tail so the user still knows the true scale.
 const BOOST_UNK_PREVIEW_MAX = 50;
 
-// Default beam-search width, chosen by platform. Beam search is ~Nx the decode
-// cost, so Android (phones/tablets, far weaker than a laptop/desktop) gets a
-// lighter default than a computer. Users can still override via the slider.
-const DEFAULT_BEAM_WIDTH = /android/i.test(
-  typeof navigator !== 'undefined' ? navigator.userAgent : ''
-) ? 5 : 10;
+// RAM cutoff (in GB) below which a device is treated as low-memory. The model
+// needs ~100-200 MB plus runtime overhead; below 3 GB the tab is at risk.
+// Shared by the low-RAM backend/model-load guard (isLowRam) and the default
+// beam-width tier below.
+const RAM_THRESHOLD_GB = 3;
+const RAM_THRESHOLD_BYTES = RAM_THRESHOLD_GB * 1024 * 1024 * 1024;
+
+// Phones/tablets: weak enough to warrant the lightest beam default and the
+// low-RAM model-load warning. Shared by both.
+const MOBILE_UA_RE = /Android|iPhone|iPad|iPod/i;
+
+// Default beam-search width, chosen by device tier. Beam search costs ~Nx the
+// decode, so weaker devices get a lighter default: phones (2), low-RAM
+// computers (5), everything else (10). Phone UA is checked first so a low-RAM
+// phone still gets 2 rather than the 5 the RAM tier would give. Detection
+// mirrors the isLowRam heuristic (heap limit, then deviceMemory). Users can
+// still override via the slider.
+function defaultBeamWidth() {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  if (MOBILE_UA_RE.test(ua)) return 2;
+  const heapLimit = typeof performance !== 'undefined' ? performance?.memory?.jsHeapSizeLimit : undefined;
+  if (heapLimit !== undefined) return heapLimit < RAM_THRESHOLD_BYTES ? 5 : 10;
+  const mem = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
+  if (mem !== undefined) return mem < RAM_THRESHOLD_GB ? 5 : 10;
+  return 10;
+}
+const DEFAULT_BEAM_WIDTH = defaultBeamWidth();
 
 // Fetch text from `url`, streaming and aborting if the body exceeds
 // `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
@@ -3706,13 +3727,11 @@ export default function App() {
     return `rgba(239, 68, 68, ${opacity})`;
   }
 
-  // Low-RAM / mobile detection. Triggers when JS heap limit is below 3 GB
-  // (the model needs ~100-200 MB plus runtime overhead). Falls back to
-  // navigator.deviceMemory (Chrome/Edge) or mobile UA sniffing when heap
-  // info is unavailable. When detected, clicking Load Model opens a
-  // confirmation popup warning that the tab may crash.
-  const RAM_THRESHOLD_GB = 3;
-  const RAM_THRESHOLD_BYTES = RAM_THRESHOLD_GB * 1024 * 1024 * 1024;
+  // Low-RAM / mobile detection. Triggers when JS heap limit is below the shared
+  // RAM_THRESHOLD_GB cutoff (the model needs ~100-200 MB plus runtime
+  // overhead). Falls back to navigator.deviceMemory (Chrome/Edge) or mobile UA
+  // sniffing when heap info is unavailable. When detected, clicking Load Model
+  // opens a confirmation popup warning that the tab may crash.
   const _lowRamInfoRef = useRef(null);
   const [lowRamInfo, setLowRamInfo] = useState(null); // { detectedGB, source }
   const [isLowRam] = useState(() => {
@@ -3727,7 +3746,7 @@ export default function App() {
       _lowRamInfoRef.current = { detectedGB: String(mem), source: 'device memory' };
       return mem < RAM_THRESHOLD_GB;
     }
-    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    if (MOBILE_UA_RE.test(navigator.userAgent)) {
       _lowRamInfoRef.current = { detectedGB: '?', source: 'mobile device' };
       return true;
     }
