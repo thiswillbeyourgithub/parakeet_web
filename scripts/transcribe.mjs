@@ -219,7 +219,7 @@ Options:
 // True when the (trimmed) spec is an existing .pwc file. Kept narrow (extension
 // + real file) so an inline phrase that merely ends in ".pwc" is not mistaken
 // for an artifact path.
-function isPwcPath(spec) {
+export function isPwcPath(spec) {
   const t = spec.trim();
   return /\.pwc$/i.test(t) && existsSync(t) && statSync(t).isFile();
 }
@@ -227,7 +227,7 @@ function isPwcPath(spec) {
 // A non-.pwc spec is either inline phrases or a path to a text file of phrases.
 // When the (trimmed) spec resolves to an existing file we read it and treat its
 // contents as the phrase text; otherwise the spec itself is the phrase text.
-function expandBoostSpec(spec) {
+export function expandBoostSpec(spec) {
   const trimmed = spec.trim();
   if (trimmed && existsSync(trimmed) && statSync(trimmed).isFile()) {
     return readFileSync(trimmed, 'utf-8');
@@ -244,7 +244,7 @@ function expandBoostSpec(spec) {
 // (one entry per line, `:i` flag preserved but not yet applied); the caller runs
 // expandCasingVariants to turn each `:i` phrase into its casing branches for the
 // trie, while keeping these typed phrases for display.
-function parseCliBoosts(specs) {
+export function parseCliBoosts(specs) {
   const entries = [];
   for (const spec of specs.map(expandBoostSpec)) {
     for (const part of spec.split(/[,\n]/)) {
@@ -266,7 +266,7 @@ function parseCliBoosts(specs) {
 }
 
 // --- model file resolution ------------------------------------------------
-function resolveModelDir(cliDir, repoId) {
+export function resolveModelDir(cliDir, repoId) {
   if (cliDir) {
     if (!existsSync(cliDir)) throw new Error(`--model-dir not found: ${cliDir}`);
     return cliDir;
@@ -290,7 +290,7 @@ function resolveModelDir(cliDir, repoId) {
   return snap;
 }
 
-function resolveFiles(dir, quant) {
+export function resolveFiles(dir, quant) {
   const enc = quant === 'int8' ? 'encoder-model.int8.onnx' : 'encoder-model.onnx';
   const dec = quant === 'int8' ? 'decoder_joint-model.int8.onnx' : 'decoder_joint-model.onnx';
   const vocab = 'vocab.txt';
@@ -309,7 +309,7 @@ function resolveFiles(dir, quant) {
 // Create an ORT session from a model file. For fp32 encoders with external
 // weights (encoder-model.onnx.data), pass the sidecar via externalData so the
 // WASM runtime can resolve the tensors it references.
-async function createSession(modelPath, opts) {
+export async function createSession(modelPath, opts) {
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
   const dataPath = modelPath + '.data';
@@ -320,7 +320,7 @@ async function createSession(modelPath, opts) {
 }
 
 // --- audio decode ---------------------------------------------------------
-function findFfmpeg(explicit) {
+export function findFfmpeg(explicit) {
   const candidates = (explicit
     ? [explicit]
     : [process.env.FFMPEG, 'ffmpeg', '/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg']
@@ -335,7 +335,7 @@ function findFfmpeg(explicit) {
   );
 }
 
-function decodePcm(ffmpeg, file) {
+export function decodePcm(ffmpeg, file) {
   return new Promise((res, rej) => {
     const proc = spawn(ffmpeg, [
       '-hide_banner', '-loglevel', 'error',
@@ -359,36 +359,40 @@ function decodePcm(ffmpeg, file) {
   });
 }
 
-// --- main -----------------------------------------------------------------
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+// --- reusable pipeline builders -------------------------------------------
+// These are factored out of main() so other Node harnesses (e.g. a WER
+// benchmark over a NeMo manifest) can construct the exact same model + boosting
+// trie the CLI uses, without duplicating the glue. The CLI's main() below is a
+// thin caller over them.
 
-  const cfg = getModelConfig(args.model);
-  if (!cfg) throw new Error(`Unknown model "${args.model}". Known: ${listModels().join(', ')}`);
+// Construct a ParakeetModel from a model key / local dir, mirroring the CLI's
+// resolution and ORT-WASM configuration. Returns the model plus the resolved
+// tokenizer, config and directory so callers can log or reuse them. The
+// encoder/decoder ONNX sessions and tokenizer are loaded here; audio is NOT
+// (decode per-file with decodePcm so one model can transcribe a whole dataset).
+export async function loadParakeetModel({
+  model: modelKey = DEFAULT_MODEL,
+  modelDir = null,
+  quant = 'int8',
+  threads = 0,
+  verbose = false,
+} = {}) {
+  const cfg = getModelConfig(modelKey);
+  if (!cfg) throw new Error(`Unknown model "${modelKey}". Known: ${listModels().join(', ')}`);
 
-  const dir = resolveModelDir(args.modelDir, cfg.repoId);
-  const { encoderPath, decoderPath, vocabPath } = resolveFiles(dir, args.quant);
-  console.error(`[transcribe] model: ${args.model} (${args.quant})`);
-  console.error(`[transcribe] dir:   ${dir}`);
+  const dir = resolveModelDir(modelDir, cfg.repoId);
+  const { encoderPath, decoderPath, vocabPath } = resolveFiles(dir, quant);
 
   // ORT WASM config.
-  if (args.threads > 0) ort.env.wasm.numThreads = args.threads;
+  if (threads > 0) ort.env.wasm.numThreads = threads;
   ort.env.wasm.proxy = false;
-  ort.env.logLevel = args.verbose ? 'verbose' : 'error';
+  ort.env.logLevel = verbose ? 'verbose' : 'error';
 
-  const ffmpeg = findFfmpeg(args.ffmpeg);
-  console.error(`[transcribe] ffmpeg: ${ffmpeg}`);
-
-  // Load everything in parallel: audio, sessions, tokenizer.
-  const tDecodeStart = Date.now();
-  const [pcm, encoderSession, joinerSession, tokenizer] = await Promise.all([
-    decodePcm(ffmpeg, args.audio),
-    createSession(encoderPath, { executionProviders: ['wasm'], logSeverityLevel: args.verbose ? 0 : 3 }),
-    createSession(decoderPath, { executionProviders: ['wasm'], logSeverityLevel: args.verbose ? 0 : 3 }),
+  const [encoderSession, joinerSession, tokenizer] = await Promise.all([
+    createSession(encoderPath, { executionProviders: ['wasm'], logSeverityLevel: verbose ? 0 : 3 }),
+    createSession(decoderPath, { executionProviders: ['wasm'], logSeverityLevel: verbose ? 0 : 3 }),
     ParakeetTokenizer.fromUrl(vocabPath),
   ]);
-  const audioSec = pcm.length / 16000;
-  console.error(`[transcribe] audio:  ${audioSec.toFixed(2)}s, ${pcm.length} samples (loaded in ${((Date.now() - tDecodeStart) / 1000).toFixed(1)}s)`);
 
   const preprocessor = new JsPreprocessor({ nMels: cfg.featuresSize });
   const model = new ParakeetModel({
@@ -399,63 +403,70 @@ async function main() {
     ort,
     subsampling: cfg.subsampling,
     windowStride: 0.01,
-    verbose: args.verbose,
+    verbose,
   });
+  return { model, tokenizer, cfg, dir };
+}
 
-  // Build the phrase-boosting trie (inert when no phrases were given). Text /
-  // inline specs are encoded here; precompiled .pwc specs contribute their
-  // pre-encoded ids with no re-encode (once their vocab signature matches).
-  let phraseBoost = null;
-  const pwcSpecs = args.boosts.filter(isPwcPath);
-  const textSpecs = args.boosts.filter((s) => !isPwcPath(s));
+// Build the phrase-boosting trie (or null when no phrases were given) from the
+// same `--phrase-boost` specs the CLI accepts: inline phrases, .txt files, and
+// precompiled .pwc artifacts. `strength` is the UI slider multiplier. `quiet`
+// suppresses the per-phrase listing (useful when sweeping many configs); the
+// returned trie is identical either way. Reused by both the CLI and benchmarks
+// so boosting behaviour can never diverge between them.
+export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, quiet = false, verbose = false }) {
+  const pwcSpecs = boosts.filter(isPwcPath);
+  const textSpecs = boosts.filter((s) => !isPwcPath(s));
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
   // the casing-expanded set actually inserted into the trie (an `:i` phrase
   // becomes its lower/UPPER/Title branches). CLI default is case-sensitive.
   const typedBoosts = parseCliBoosts(textSpecs);
   const entries = expandCasingVariants(typedBoosts, false);
-  if (entries.length || pwcSpecs.length) {
-    // The encoder is only needed to encode text/inline phrases; when every spec
-    // is a precompiled .pwc we skip loading it and start from an empty trie.
-    const encoder = entries.length ? await loadBpeEncoder(tokenizer, BPE_MERGES) : null;
-    phraseBoost = entries.length
-      ? BoostingTrie.buildFromPhrases(entries, encoder, { strength: args.strength })
-      : new BoostingTrie({ strength: args.strength });
-    phraseBoost.strength = args.strength;
+  if (!entries.length && !pwcSpecs.length) return null;
 
-    // Precompiled .pwc lists: confirm the vocab signature matches the loaded
-    // model (its ids would otherwise index a different vocab and be meaningless),
-    // then insert the pre-encoded ids straight into the same trie.
-    const sig = vocabSignature(tokenizer.id2token);
-    for (const spec of pwcSpecs) {
-      const path = spec.trim();
-      let artifact;
-      try {
-        artifact = readPwc(path);
-      } catch (e) {
-        throw new Error(`failed to read .pwc ${path}: ${e.message}`);
-      }
-      if (!artifactMatchesVocab(artifact, sig)) {
-        throw new Error(
-          `.pwc ${path} was not compiled for this model (vocab signature mismatch); its token `
-          + `ids would be meaningless. Recompile it: node scripts/compile-boost.mjs <list>.txt --model-dir <dir>`,
-        );
-      }
-      for (const { ids, weight, topk } of artifact.encoded) {
-        phraseBoost.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
-      }
-      if (Array.isArray(artifact.skipped) && artifact.skipped.length) {
-        phraseBoost.skipped = phraseBoost.skipped.concat(artifact.skipped);
-      }
-      console.error(`[transcribe] reused precompiled ${path}: ${artifact.encoded.length} encoded phrase(s)`);
+  // The encoder is only needed to encode text/inline phrases; when every spec
+  // is a precompiled .pwc we skip loading it and start from an empty trie.
+  const encoder = entries.length ? await loadBpeEncoder(tokenizer, BPE_MERGES) : null;
+  const phraseBoost = entries.length
+    ? BoostingTrie.buildFromPhrases(entries, encoder, { strength })
+    : new BoostingTrie({ strength });
+  phraseBoost.strength = strength;
+
+  // Precompiled .pwc lists: confirm the vocab signature matches the loaded
+  // model (its ids would otherwise index a different vocab and be meaningless),
+  // then insert the pre-encoded ids straight into the same trie.
+  const sig = vocabSignature(tokenizer.id2token);
+  for (const spec of pwcSpecs) {
+    const path = spec.trim();
+    let artifact;
+    try {
+      artifact = readPwc(path);
+    } catch (e) {
+      throw new Error(`failed to read .pwc ${path}: ${e.message}`);
     }
+    if (!artifactMatchesVocab(artifact, sig)) {
+      throw new Error(
+        `.pwc ${path} was not compiled for this model (vocab signature mismatch); its token `
+        + `ids would be meaningless. Recompile it: node scripts/compile-boost.mjs <list>.txt --model-dir <dir>`,
+      );
+    }
+    for (const { ids, weight, topk } of artifact.encoded) {
+      phraseBoost.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
+    }
+    if (Array.isArray(artifact.skipped) && artifact.skipped.length) {
+      phraseBoost.skipped = phraseBoost.skipped.concat(artifact.skipped);
+    }
+    if (!quiet) console.error(`[transcribe] reused precompiled ${path}: ${artifact.encoded.length} encoded phrase(s)`);
+  }
 
-    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${args.strength}`);
+  if (!quiet) {
+    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}`);
     // List the phrases AS TYPED, not their generated casing variants, and cap
     // the listing: it is handy for a handful of inline probes but floods the
     // terminal for a list of thousands. --verbose lifts the cap. (.pwc ids are
     // already summarised above.)
     const PHRASE_LIST_CAP = 20;
-    const showAll = args.verbose || typedBoosts.length <= PHRASE_LIST_CAP;
+    const showAll = verbose || typedBoosts.length <= PHRASE_LIST_CAP;
     for (const { phrase, weight, topk } of (showAll ? typedBoosts : typedBoosts.slice(0, PHRASE_LIST_CAP))) {
       console.error(`             - "${phrase}" (weight ${weight}, top-k ${topk})  -> [${encoder.encode(phrase).join(', ')}]`);
     }
@@ -465,8 +476,39 @@ async function main() {
     if (phraseBoost.skipped.length) {
       console.error(`[transcribe] skipped (out-of-vocab, cannot be matched): ${phraseBoost.skipped.join(', ')}`);
     }
-    if (phraseBoost.isEmpty) phraseBoost = null;
   }
+  if (phraseBoost.isEmpty) return null;
+  return phraseBoost;
+}
+
+// --- main -----------------------------------------------------------------
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
+  const { model, tokenizer, dir } = await loadParakeetModel({
+    model: args.model,
+    modelDir: args.modelDir,
+    quant: args.quant,
+    threads: args.threads,
+    verbose: args.verbose,
+  });
+  console.error(`[transcribe] model: ${args.model} (${args.quant})`);
+  console.error(`[transcribe] dir:   ${dir}`);
+
+  const ffmpeg = findFfmpeg(args.ffmpeg);
+  console.error(`[transcribe] ffmpeg: ${ffmpeg}`);
+
+  const tDecodeStart = Date.now();
+  const pcm = await decodePcm(ffmpeg, args.audio);
+  const audioSec = pcm.length / 16000;
+  console.error(`[transcribe] audio:  ${audioSec.toFixed(2)}s, ${pcm.length} samples (loaded in ${((Date.now() - tDecodeStart) / 1000).toFixed(1)}s)`);
+
+  const phraseBoost = await buildPhraseBoost({
+    boosts: args.boosts,
+    strength: args.strength,
+    tokenizer,
+    verbose: args.verbose,
+  });
 
   if (args.beamWidth > 1) {
     console.error(`[transcribe] MAES beam search: width ${args.beamWidth}, num-steps ${args.maesNumSteps}, expansion-beta ${args.maesExpansionBeta}, expansion-gamma ${args.maesExpansionGamma}`);
@@ -518,7 +560,14 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(`\n[transcribe] error: ${e.message}`);
-  process.exit(1);
-});
+// Only run the CLI when executed directly (node scripts/transcribe.mjs ...),
+// not when this module is imported for its exported helpers (e.g. by a WER
+// benchmark harness). process.argv[1] is the entry script's path.
+const invokedDirectly = process.argv[1]
+  && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  main().catch((e) => {
+    console.error(`\n[transcribe] error: ${e.message}`);
+    process.exit(1);
+  });
+}
