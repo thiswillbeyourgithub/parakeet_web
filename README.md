@@ -4,9 +4,13 @@
 
 # Parakeet Web
 
+**[English](./README.md) | [Français](./README_fr.md)**
+
 > ⚠️ **EXPERIMENTAL WIP** – Made with care but with AI. Expect bugs, breaking changes, and rough edges.
 
 **Try it now: [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/)** — no installation required.
+
+Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://olicorne.org)).
 
 ---
 
