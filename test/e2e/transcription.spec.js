@@ -77,8 +77,8 @@ test('transcribes a short clip with the WASM int8 model', async ({ page }) => {
   // Model ready: the app renders a ✔ once weights are loaded and initialised.
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
 
-  // Feed the fixture clip into the hidden file input; autoTranscribe is on by
-  // default, so transcription starts on its own.
+  // Feed the fixture clip into the hidden file input; uploads always transcribe
+  // immediately, so transcription starts on its own.
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 
   // The transcript renders into the newest .history-text block.
@@ -92,6 +92,25 @@ test('transcribes a short clip with the WASM int8 model', async ({ page }) => {
     const o = overlap(words(GOLDEN), words(got));
     expect(o, `transcript "${got}" vs golden "${GOLDEN}" overlap ${o.toFixed(2)}`).toBeGreaterThanOrEqual(0.7);
   }).toPass({ timeout: 60 * 1000 });
+
+  // The audio is attached to the entry: toggle its inline player open and
+  // assert an <audio> element appears inside the entry.
+  await page.locator('.history-modes button', { hasText: 'Audio' }).first().click();
+  await expect(page.locator('.history-audio audio').first()).toBeVisible({ timeout: 10 * 1000 });
+
+  // "Transcribe again" re-runs the pipeline on the stored audio and replaces
+  // the entry's text in place (no new entry is appended).
+  const before = (await historyText.innerText()).trim();
+  await page.getByRole('button', { name: 'Transcribe again' }).first().click();
+  // The button label flips to a transient "Transcribing..." while running, then
+  // back; waiting for it to return proves the re-run completed.
+  await expect(page.getByRole('button', { name: 'Transcribe again' }).first())
+    .toBeVisible({ timeout: 6 * 60 * 1000 });
+  await expect(page.locator('.history-item')).toHaveCount(1);
+  await expect(historyText).not.toBeEmpty();
+  const after = (await historyText.innerText()).trim();
+  expect(overlap(words(before), words(after)),
+    `re-transcribe "${after}" vs first "${before}"`).toBeGreaterThanOrEqual(0.7);
 
   expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
 });
@@ -115,6 +134,6 @@ test('refuses a file picked while the model is still loading', async ({ page }) 
   await expect.poll(() => dialogs.length, { timeout: 30 * 1000 }).toBeGreaterThan(0);
   expect(dialogs.some((m) => /still loading/i.test(m))).toBe(true);
 
-  // And nothing must appear in the player: no preview container is rendered.
-  await expect(page.locator('.audio-preview-container')).toHaveCount(0);
+  // And nothing must be transcribed: no history entry is rendered.
+  await expect(page.locator('.history-item')).toHaveCount(0);
 });

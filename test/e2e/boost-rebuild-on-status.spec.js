@@ -77,7 +77,7 @@ test('boost trie does not rebuild on transcribe status churn', async ({ page }) 
   await page.waitForTimeout(1000);
   const afterReady = boostRebuilds;
 
-  // Transcribe the fixture clip. autoTranscribe is on by default, so feeding the
+  // Transcribe the fixture clip. Uploads transcribe immediately, so feeding the
   // file starts it; this churns `status` (transcribing... -> modelReady) which
   // is exactly what used to re-trigger the rebuild.
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
