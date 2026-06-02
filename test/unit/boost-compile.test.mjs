@@ -11,7 +11,9 @@ import { writeFileSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writePwc, readPwc, BOOST_ARTIFACT_VERSION } from '../../app/src/boostCompile.js';
+import { writePwc, readPwc, compileBoostText, BOOST_ARTIFACT_VERSION } from '../../app/src/boostCompile.js';
+import { BpeEncoder, buildVocabToId, vocabSignature } from '../../app/src/bpeEncoder.js';
+import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
 const sampleArtifact = () => ({
   version: BOOST_ARTIFACT_VERSION,
@@ -66,4 +68,27 @@ describe('writePwc / readPwc', () => {
   });
 
   test('cleanup', () => { rmSync(dir, { recursive: true, force: true }); });
+});
+
+// The .pwc the operator ships must already exclude phrases the model has no
+// tokens for (e.g. CJK -> <unk>): such a phrase could never be boosted (the
+// decoder never emits <unk>), so it must not bloat `encoded`. It is recorded in
+// `skipped` instead, which the UI surfaces as a warning. encodePhrases pins the
+// skip at its own level; this pins that compileBoostText carries it into the
+// artifact, since that is the layer that writes the shipped .pwc.
+describe('compileBoostText filters untokenizable phrases', () => {
+  const fixture = loadCachedFixture();
+  const encoder = new BpeEncoder(loadMergesAsset(), buildVocabToId(fixture.id2token));
+  const vocabSig = vocabSignature(fixture.id2token);
+  // One plainly tokenizable phrase plus one CJK phrase that encodes to <unk>.
+  const { artifact } = compileBoostText('venlafaxine\n東京', encoder, vocabSig);
+
+  test('untokenizable phrase recorded in skipped', () =>
+    assert.deepEqual(artifact.skipped, ['東京']));
+  test('untokenizable phrase excluded from encoded', () =>
+    assert.equal(artifact.encoded.length, 1));
+  test('no encoded entry contains the <unk> id', () =>
+    assert.ok(artifact.encoded.every(e => !e.ids.includes(encoder.unkId))));
+  test('artifact pins the vocab signature', () =>
+    assert.equal(artifact.vocabSig, vocabSig));
 });
