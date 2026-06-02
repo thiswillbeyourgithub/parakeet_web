@@ -515,9 +515,9 @@ export default function App() {
   const [beamWidth, setBeamWidth] = useState(DEFAULT_BEAM_WIDTH);
   // MAES (Modified Adaptive Expansion Search) knobs, used only when beamWidth>1.
   // Defaults match NeMo's `maes` strategy.
-  const [maesNumSteps, setMaesNumSteps] = useState(3);
-  const [maesExpansionBeta, setMaesExpansionBeta] = useState(4);
-  const [maesExpansionGamma, setMaesExpansionGamma] = useState(4.0);
+  const [maesNumSteps, setMaesNumSteps] = useState(2);
+  const [maesExpansionBeta, setMaesExpansionBeta] = useState(2);
+  const [maesExpansionGamma, setMaesExpansionGamma] = useState(2.3);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
   const [chunkDuration, setChunkDuration] = useState(60); // seconds
@@ -1033,9 +1033,9 @@ export default function App() {
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
           loadSetting('beamWidth', DEFAULT_BEAM_WIDTH),
-          loadSetting('maesNumSteps', 3),
-          loadSetting('maesExpansionBeta', 4),
-          loadSetting('maesExpansionGamma', 4.0),
+          loadSetting('maesNumSteps', 2),
+          loadSetting('maesExpansionBeta', 2),
+          loadSetting('maesExpansionGamma', 2.3),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),
@@ -1072,9 +1072,9 @@ export default function App() {
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
         setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(25, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
-        setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 3);
-        setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 4);
-        setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 4.0);
+        setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 2);
+        setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 2);
+        setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 2.3);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
