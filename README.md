@@ -21,6 +21,7 @@
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
 - [Mobile debugging](#mobile-debugging)
+- [Architecture](#architecture)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
 - [Credits](#credits)
@@ -244,6 +245,12 @@ Examples:
   (the room info is in the hash fragment, so `?debug=1` goes before the `#`)
 
 Without `?debug=1`, no devtools surface is shipped to the user.
+
+## Architecture
+
+For a file-by-file map of the codebase (the inference engine, the UI, the
+signaling server, Docker packaging and the test suite) see
+[ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## License
 
