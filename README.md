@@ -152,6 +152,7 @@ No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-t
 
 - **Local network only**: works out of the box with no extra config (STUN-only / direct P2P).
 - **Over the internet**: requires a [coturn](https://github.com/coturn/coturn) TURN relay. A commented-out coturn service is included in `docker/docker-compose.yml` — uncomment it and set `TURN_SERVER`, `TURN_SECRET`, and `TURN_EXTERNAL_IP` in `docker/.env`. If you already run coturn (e.g. for [WebSend](https://github.com/nicMusic/websend) or Nextcloud Talk), point to it and reuse the same `TURN_SECRET`.
+- **Restrictive networks (last resort)**: when both direct WebRTC and TURN/TURNS are blocked (some corporate proxies strip UDP and the TURNS CONNECT upgrade), the signaling sidecar can forward the encrypted audio frames itself, over WebSocket (preferred) or HTTP long-poll. After the SDP exchange the client races WebRTC and the relay in parallel for ~10 s: WebRTC wins if it gets through, otherwise the relay takes over and the peer connection is torn down. Audio stays AES-256-GCM end-to-end, so the relay only ever sees ciphertext (it is purely a transport fallback). Enabled by default; toggle with `RELAY_ENABLE` (server) and `VITE_RELAY_ENABLE` (client).
 
 See `docker/env.example` for all configuration options.
 
