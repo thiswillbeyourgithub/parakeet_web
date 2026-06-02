@@ -165,7 +165,7 @@ Lorsque `LOCAL_MODEL_PATH` est défini, le conteneur encode chaque liste fournie
 node scripts/compile-boost.mjs my-list.txt --model-dir /path/to/model
 ```
 
-(utilisez le même dossier de modèle que celui monté à `LOCAL_MODEL_PATH`) et déposez le fichier `my-list.pwc` résultant à côté de `my-list.txt` dans votre dossier `BOOST_PHRASES_SOURCE`. Le conteneur réutilise alors le `.pwc` tel quel au démarrage au lieu de ré-encoder, tant que sa signature de vocabulaire correspond au modèle. Si le modèle (et donc le vocabulaire) diffère, le `.pwc` périmé est silencieusement ignoré et le `.txt` est ré-encodé, donc un `.pwc` non concordant n'est jamais erroné, seulement sauté. La réutilisation de `.pwc` ne concerne que les dossiers locaux (la forme à URL unique ré-encode toujours).
+(utilisez le même dossier de modèle que celui monté à `LOCAL_MODEL_PATH`) et déposez le fichier `my-list.pwc` résultant à côté de `my-list.txt` dans votre dossier `BOOST_PHRASES_SOURCE`. Le `.pwc` est un fichier compressé en gzip (il n'est jamais relu que par le conteneur, jamais récupéré par un navigateur, il est donc livré plus petit). Le conteneur réutilise alors les identifiants de tokens du `.pwc` au démarrage au lieu de ré-encoder, tant que sa signature de vocabulaire correspond au modèle. Si le modèle (et donc le vocabulaire) diffère, le `.pwc` périmé est silencieusement ignoré et le `.txt` est ré-encodé, donc un `.pwc` non concordant n'est jamais erroné, seulement sauté. La réutilisation de `.pwc` ne concerne que les dossiers locaux (la forme à URL unique ré-encode toujours).
 
 </details>
 

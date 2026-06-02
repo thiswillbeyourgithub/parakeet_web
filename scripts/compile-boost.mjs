@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Compile a phrase-boost .txt list into a .pwc (parakeet-web-compiled) artifact,
-// so the production container can skip re-encoding the list on every boot.
+// so the production container can skip re-encoding the list on every boot. The
+// .pwc is gzip-compressed JSON (written via writePwc); it is read back only by
+// Node, never fetched by a browser, so compressing it just shrinks what the
+// operator ships.
 //
 // Background: when an operator ships boost lists via BOOST_PHRASES_SOURCE and
 // the model vocab is on disk, the container pre-encodes each list to token ids
@@ -35,10 +38,10 @@
 //                     the input). Ignored for multiple inputs.
 //   -h, --help        Show this help.
 
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadBoostEncoder, compileBoostText } from '../app/src/boostCompile.js';
+import { loadBoostEncoder, compileBoostText, writePwc } from '../app/src/boostCompile.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_MERGES = join(ROOT, 'app/ui/public/tokenizer/bpe-merges.json');
@@ -129,7 +132,7 @@ for (const input of inputs) {
     failures++;
     continue;
   }
-  writeFileSync(outPath, JSON.stringify(artifact));
+  writePwc(outPath, artifact);
   const perLine = expandedCount ? (ms / expandedCount) : 0;
   console.log(
     `[compile-boost] ${input}: ${parsedCount} phrase(s) -> ${expandedCount} after casing `

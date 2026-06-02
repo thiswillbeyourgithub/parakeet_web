@@ -34,7 +34,7 @@ import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
 import { BoostingTrie, parseBoostFields, expandCasingVariants, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
-import { artifactMatchesVocab } from '../app/src/boostCompile.js';
+import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
@@ -430,7 +430,7 @@ async function main() {
       const path = spec.trim();
       let artifact;
       try {
-        artifact = JSON.parse(readFileSync(path, 'utf-8'));
+        artifact = readPwc(path);
       } catch (e) {
         throw new Error(`failed to read .pwc ${path}: ${e.message}`);
       }

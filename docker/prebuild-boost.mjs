@@ -17,9 +17,9 @@
 // start. An operator can avoid it by running scripts/compile-boost.mjs ahead of
 // time to produce a sibling <name>.pwc and shipping it next to the .txt. When a
 // .pwc is present and its vocab signature matches the model loaded here, this
-// script reuses it verbatim (writes it straight to <name>.json, no encode); on
-// any mismatch it falls back to encoding the .txt, so a stale .pwc is never
-// wrong, only ignored.
+// script reuses its ids (decompresses the gzip .pwc via readPwc, then writes a
+// plain <name>.json for the browser, no encode); on any mismatch it falls back
+// to encoding the .txt, so a stale .pwc is never wrong, only ignored.
 //
 // Reuses the shared compile pipeline (no duplicated tokenization rules); see
 // app/src/boostCompile.js. Built with Claude Code.
@@ -32,6 +32,7 @@ import {
   loadBoostEncoder,
   compileBoostText,
   isReusableArtifact,
+  readPwc,
   CASE_DEFAULT,
 } from '../app/src/boostCompile.js';
 
@@ -83,7 +84,7 @@ for (const file of txtFiles) {
   if (existsSync(pwcPath)) {
     let artifact = null;
     try {
-      artifact = JSON.parse(readFileSync(pwcPath, 'utf-8'));
+      artifact = readPwc(pwcPath);
     } catch (e) {
       console.log(`[prebuild-boost] ${name}.pwc is unparseable (${e.message}); re-encoding ${file}.`);
     }

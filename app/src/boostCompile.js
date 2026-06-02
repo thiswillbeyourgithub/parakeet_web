@@ -14,6 +14,10 @@
 // The artifact (the .pwc the operator ships, and the .json the container serves
 // and the browser fetches) is:
 //   { version, vocabSig, caseDefault, encoded, skipped }
+// The .pwc is written gzip-compressed (writePwc/readPwc) since it is only read
+// back by Node (the boot prebuild + scripts/transcribe.mjs), never fetched by a
+// browser; the served .json stays plain JSON (the browser parses it directly,
+// and Caddy gzip/zstd-compresses it on the wire anyway).
 // `vocabSig` pins it to the exact tokenizer vocab it was built against; on a
 // mismatch the boot reuse check (and the browser) re-encode from the .txt, so a
 // stale artifact is never wrong, only ignored. `version` lets a future format
@@ -22,7 +26,8 @@
 // Node-only: imports node:fs to read the vocab + merges. MUST NOT be imported
 // from the browser bundle (App.jsx). Built with Claude Code.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { parseVocabText } from './tokenizer.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from './bpeEncoder.js';
 import { parseBoostPhrases, expandCasingVariants, encodePhrases } from './phraseBoost.js';
@@ -80,6 +85,36 @@ export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
     parsedCount: parsed.length,
     expandedCount: entries.length,
   };
+}
+
+/**
+ * Serialize a compiled artifact to a .pwc file as gzip-compressed JSON. The
+ * .pwc is the operator-shipped cache (scripts/compile-boost.mjs output); the
+ * browser never fetches it (the container re-serializes a plain .json from it
+ * at boot), so compressing it only shrinks the stored/shipped artifact and can
+ * never affect what the UI parses. Token-id arrays compress well, so a clinical
+ * list's .pwc drops several-fold.
+ * @param {string} path Output path (conventionally .pwc).
+ * @param {any} artifact The artifact object from {@link compileBoostText}.
+ */
+export function writePwc(path, artifact) {
+  writeFileSync(path, gzipSync(Buffer.from(JSON.stringify(artifact), 'utf-8')));
+}
+
+/**
+ * Read and parse a .pwc artifact written by {@link writePwc}. The on-disk form
+ * is gzip-compressed JSON, detected by the gzip magic bytes (0x1f 0x8b) rather
+ * than the extension, so a plain-JSON .pwc compiled before compression was
+ * added is still accepted unchanged.
+ * @param {string} path Path to the .pwc file.
+ * @returns {any} The parsed artifact object.
+ */
+export function readPwc(path) {
+  const buf = readFileSync(path);
+  const text = (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b)
+    ? gunzipSync(buf).toString('utf-8')
+    : buf.toString('utf-8');
+  return JSON.parse(text);
 }
 
 /**

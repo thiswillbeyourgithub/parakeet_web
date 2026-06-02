@@ -378,10 +378,11 @@ echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
 # Each file is one phrase per line (optionally "phrase:WEIGHT"), exactly the
 # format the boost textarea accepts.
 # Larger byte cap for a precompiled .pwc than for served text: a .pwc is the
-# token-id encoding of a list, which for a 100k-phrase list is much bigger than
-# its .txt. It is read by the boot prebuild (not served to browsers), so the cap
-# only guards this container's node process against a poisoned giant file. Matches
-# the browser's BOOST_PREBUILT_MAX_BYTES (App.jsx).
+# token-id encoding of a list (gzip-compressed JSON), which for a 100k-phrase
+# list can still outweigh its .txt. It is read by the boot prebuild (not served
+# to browsers), so the cap only guards this container's node process against a
+# poisoned giant file; it bounds the on-disk (compressed) size, not the inflated
+# JSON. Matches the browser's BOOST_PREBUILT_MAX_BYTES (App.jsx).
 _PWC_MAX_BYTES=67108864
 BOOST_DIR="/var/boost"
 mkdir -p "$BOOST_DIR"

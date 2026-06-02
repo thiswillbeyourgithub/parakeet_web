@@ -165,7 +165,7 @@ When `LOCAL_MODEL_PATH` is set, the container encodes each operator-provided lis
 node scripts/compile-boost.mjs my-list.txt --model-dir /path/to/model
 ```
 
-(use the same model folder you mount at `LOCAL_MODEL_PATH`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The container then reuses the `.pwc` verbatim at boot instead of re-encoding, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
+(use the same model folder you mount at `LOCAL_MODEL_PATH`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The `.pwc` is a gzip-compressed file (it is only ever read back by the container, never fetched by a browser, so it ships smaller). The container then reuses the `.pwc`'s token ids at boot instead of re-encoding, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
 
 </details>
 
