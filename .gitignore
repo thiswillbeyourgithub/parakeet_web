@@ -20,3 +20,10 @@ TEMP_PLAN.md
 framagit_murmure
 TODO.md
 phrase_boosting
+
+# E2E (tier 3) artifacts and local model weights (downloaded, never committed)
+fallback_models
+test-results
+playwright-report
+.playwright
+test/e2e/.cache

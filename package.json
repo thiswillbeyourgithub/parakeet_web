@@ -11,6 +11,7 @@
     "test:http": "node --test --test-reporter=spec 'test/http/*.test.mjs'",
     "test:e2e": "playwright test -c test/e2e/playwright.config.js",
     "test:all": "npm run test && npm run test:e2e",
+    "e2e:models": "node scripts/fetch-e2e-models.mjs",
     "fixture:bpe": "python scripts/gen-bpe-fixture.py > test/fixtures/bpe-fixture.json"
   },
   "devDependencies": {
