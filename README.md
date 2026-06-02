@@ -122,20 +122,47 @@ Speech models reliably mis-hear words they rarely saw in training: personal name
 
 Open the settings panel and find the **Phrase boosting** group:
 
-- **Boost phrases**: one phrase per line, with two optional numbers after a colon:
+- **Boost phrases**: one phrase per line, with up to three optional colon-separated fields (`phrase:WEIGHT:TOPK:CASE`). The full per-line syntax is in the collapsible reference below; the two most common fields are:
   - `phrase:WEIGHT`, e.g. `acetaminophen:2.5`. A positive weight nudges the decoder *toward* the phrase; a **negative** weight pushes it *away* (a penalty), e.g. `um:-3` to suppress a filler word. The valid range is -10 to 10 (nonzero); an out-of-range or zero weight is ignored with an inline warning and treated as 1.
   - `phrase:WEIGHT:TOPK`, e.g. `venlafaxine:5:50`, sets a per-phrase **top-k gate**: the phrase is only nudged when its token is already among the model's top `TOPK` candidates for that step. This keeps boosting a ranking nudge rather than a hammer that can hallucinate a phrase the model never considered. Default top-k is 25.
 - **Boost strength**: a global multiplier applied on top of every phrase's weight. Ranges from -10 to 10; set it to 0 to disable boosting without clearing your list. A negative strength inverts every phrase at once (boosts become penalties).
 
 Your phrase list and strength are saved locally (IndexedDB) and survive reloads. Like everything else in this app, boosting runs **100% in your browser**: nothing about your phrases is sent anywhere.
 
-**Operator-provided lists (optional, self-hosted):** set the `BOOST_PHRASES_SOURCE` environment variable to a local folder of `.txt` files (one phrase per line, optionally `phrase:weight` or `phrase:weight:topk`) or to an https URL pointing at a single `.txt` file. When at least one list is found, a selector appears above the box so users can pick which list to load; choosing one fills the box with that file's contents. The selector always includes a **Custom** entry for typing your own phrases, and that custom text is saved across sessions independently of the loaded files. When the variable is unset, no selector is shown and the box works exactly as described above (manual entry only).
+**Operator-provided lists (optional, self-hosted):** set the `BOOST_PHRASES_SOURCE` environment variable to a local folder of `.txt` files (one phrase per line, same per-line syntax as the box) or to an https URL pointing at a single `.txt` file. When at least one list is found, a selector appears above the box so users can pick which list to load; choosing one fills the box with that file's contents. The selector always includes a **Custom** entry for typing your own phrases, and that custom text is saved across sessions independently of the loaded files. A served list can ship pre-tuned by carrying its own default strength on a `#!strength N` line, and very large lists can be precompiled to `.pwc` files so visitors' browsers skip the encode step (see the collapsible reference below). When the variable is unset, no selector is shown and the box works exactly as described above (manual entry only).
 
-### How it works
+<details>
+<summary><strong>Full per-line syntax, how boosting works, and precompiled lists</strong></summary>
+
+#### Per-line syntax
+
+Each line is `phrase` followed by up to three optional colon-separated fields, `phrase:WEIGHT:TOPK:CASE`:
+
+- `WEIGHT` (default 1): the boost weight, -10 to 10 (nonzero). Positive nudges *toward* the phrase, negative *away* (a penalty). Out-of-range or zero is ignored with an inline warning and treated as 1.
+- `TOPK` (default 25): the per-phrase top-k gate; the phrase is only nudged when its token is already among the model's top `TOPK` candidates for that step.
+- `CASE`: force casing for this one phrase, `s` (case-sensitive) or `i` (case-insensitive, matches every casing). Omit to use the default.
+
+Leave an earlier field empty to keep its default while setting a later one, e.g. `venlafaxine::50` keeps weight 1 but sets top-k 50, and `venlafaxine:5:50:i` sets all three.
+
+A served list can carry its own default strength on a `#!strength N` line (N in -10 to 10): loading that list forces the strength slider to N, so a curated list ships pre-tuned.
+
+#### How it works
 
 This is a browser port of the *concept* behind NVIDIA NeMo's [GPU-Accelerated Phrase-Boosting](https://github.com/NVIDIA-NeMo/NeMo/pull/14277) (see also issue [#14772](https://github.com/NVIDIA-NeMo/NeMo/issues/14772)). Each phrase is tokenized with a faithful reimplementation of the model's BPE tokenizer and inserted into a token-level **boosting trie**. During decoding, before each token is chosen, the trie adds an additive reward (shallow fusion) in **logit space** to the tokens that would start or continue one of your phrases, with deeper matches rewarded a little more to encourage finishing a phrase once it starts. Adding to a logit is the principled log-domain nudge: it multiplies that token's probability before the softmax renormalizes, rather than crudely scaling the final probability. A **top-k gate** keeps the reward honest: a token is only boosted when its raw logit is already among the model's top candidates for that step (default 25, configurable per phrase), so a strong weight nudges the ranking without forcing a word the model never considered. A negative weight applies the same reward with the opposite sign, penalizing the phrase instead.
 
 By default this app decodes **greedily** (one best token per step), so boosting is best-effort: it biases each step toward your phrases, but it cannot recover a phrase the greedy decoder already discarded on an earlier frame. Raising the **Beam Width** setting (file transcription only; see below) lets the decoder keep several competing hypotheses, so a boosted phrase can survive in a lower-ranked beam until the audio confirms it, which is exactly the case greedy cannot recover. Beam search costs roughly Nx the decode time for width N, so width 1 (greedy) stays the default. Boost strength helps too, but very large values can distort otherwise-correct text, so start small and increase only as needed. Accented Latin text and ligatures (e.g. `isotrétinoïne`, `sœur`) are fully supported. Scripts the tokenizer has no tokens for (e.g. Chinese/Japanese/Korean) collapse to a single unknown token and cannot be boosted; such phrases are automatically skipped and listed in an inline warning rather than silently ignored. This is a tokenizer limitation, not a bug.
+
+#### Precompiled lists (`.pwc`, self-hosted only)
+
+When `LOCAL_MODEL_PATH` is set, the container encodes each operator-provided list to token ids at boot so visitors' browsers skip that work. That encode still runs on **every** container start, which is slow for a very large (10k-100k phrase) list. To avoid it, precompile the list once:
+
+```bash
+node scripts/compile-boost.mjs my-list.txt --model-dir /path/to/model
+```
+
+(use the same model folder you mount at `LOCAL_MODEL_PATH`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The container then reuses the `.pwc` verbatim at boot instead of re-encoding, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
+
+</details>
 
 This feature was implemented with [Claude Code](https://www.anthropic.com/claude-code).
 
