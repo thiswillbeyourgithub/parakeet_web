@@ -3377,7 +3377,22 @@ export default function App() {
   async function transcribeFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
+    // Clear the input up front so the same file can be picked again after a
+    // refusal (the value only changes when a *different* file is chosen).
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    // The model must be fully ready before we accept a file. If it is still
+    // loading (or was never loaded), refuse the file outright with a clear
+    // message instead of stashing it in the player and silently dropping it
+    // when processAudioFile later bails on the same guard.
+    if (!modelRef.current) {
+      alert(status === 'loadingModel' ? t('modelStillLoading') : t('loadModelFirst'));
+      return;
+    }
+
     // Store the file for later transcription
     setPendingAudioFile(file);
     setHasBeenTranscribed(false);
@@ -3399,13 +3414,8 @@ export default function App() {
     } finally {
       setIsProcessingPreview(false);
     }
-    
-    // Clear the file input so the same file can be selected again
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
 
-    // Always transcribe uploaded files immediately — unlike recordings,
+    // Always transcribe uploaded files immediately. Unlike recordings,
     // there's no separate trigger to start transcription for file uploads.
     await processAudioFile(file);
     setHasBeenTranscribed(true);
@@ -4564,9 +4574,9 @@ export default function App() {
       <div className="controls">
         <input 
           ref={fileInputRef}
-          type="file" 
-          accept="audio/*" 
-          onChange={transcribeFile} 
+          type="file"
+          accept="audio/*"
+          onChange={transcribeFile}
           disabled={!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview}
           style={{ display: 'none' }}
           id="audio-file-input"

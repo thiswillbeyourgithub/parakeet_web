@@ -95,3 +95,26 @@ test('transcribes a short clip with the WASM int8 model', async ({ page }) => {
 
   expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
 });
+
+test('refuses a file picked while the model is still loading', async ({ page }) => {
+  await page.goto('/');
+  await seedSettings(page);
+  await page.reload();
+
+  // Capture and dismiss any alert; record its message so we can assert on it.
+  const dialogs = [];
+  page.on('dialog', async (d) => { dialogs.push(d.message()); await d.dismiss(); });
+
+  // Kick off the model load, then immediately feed a file while it is still
+  // loading (the int8 weights take seconds to download/init, so the input is
+  // set well before the ✔ ready marker appears).
+  await page.locator('[data-umami-event="load_model_button"]').click();
+  await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
+
+  // The file must be refused with the "still loading" message, not queued.
+  await expect.poll(() => dialogs.length, { timeout: 30 * 1000 }).toBeGreaterThan(0);
+  expect(dialogs.some((m) => /still loading/i.test(m))).toBe(true);
+
+  // And nothing must appear in the player: no preview container is rendered.
+  await expect(page.locator('.audio-preview-container')).toHaveCount(0);
+});

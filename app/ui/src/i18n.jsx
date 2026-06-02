@@ -254,6 +254,7 @@ const translations = {
     resetConfirmQuestion: 'Are you sure you want to continue?',
     resetFailed: 'Failed to reset data. Please check the console for details.',
     loadModelFirst: 'Load model first',
+    modelStillLoading: 'The model is still loading. Please wait until it finishes, then add the file again. It was not accepted.',
     failedCopyClipboard: 'Failed to copy to clipboard',
 
     // Dictation device
@@ -562,6 +563,7 @@ const translations = {
     resetConfirmQuestion: '\u00cates-vous s\u00fbr de vouloir continuer\u00a0?',
     resetFailed: 'La r\u00e9initialisation a \u00e9chou\u00e9. Veuillez v\u00e9rifier la console pour plus de d\u00e9tails.',
     loadModelFirst: "Chargez d'abord le mod\u00e8le",
+    modelStillLoading: "Le mod\u00e8le est encore en cours de chargement. Patientez jusqu'\u00e0 la fin, puis ajoutez de nouveau le fichier\u00a0: il n'a pas \u00e9t\u00e9 accept\u00e9.",
     failedCopyClipboard: '\u00c9chec de la copie dans le presse-papiers',
 
     // Dictation device
