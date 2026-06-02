@@ -517,6 +517,17 @@ export default function App() {
   const [boostRebuilding, setBoostRebuilding] = useState(false);
   const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
   const boostStrengthRef = useRef(1);
+  // Vocab signature of the currently loaded tokenizer (null when no model is
+  // loaded). This is the *only* model-side input the boost-trie rebuild needs:
+  // it changes when (and only when) the model's vocab does, so the rebuild
+  // effect keys on it instead of `status`. Keying on `status` was the bug
+  // behind the "My Computer tab frozen on load": `status` also flips on every
+  // recording start/stop, file transcribe, and even each chunk-progress tick
+  // (setStatus with a percentage string), and each flip re-ran the heavy
+  // parseBoostPhrases + trie rebuild and pushed fresh boost-warning arrays that
+  // forced the giant phrase-list textarea to reconcile. Now the rebuild fires
+  // once per real model change, not once per status string.
+  const [tokenizerVocabSig, setTokenizerVocabSig] = useState(null);
   // Current verbose-logging flag for use inside the debounced rebuild closure
   // (which captures a stale `verboseLog`); synced by the effect below.
   const verboseLogRef = useRef(false);
@@ -1660,8 +1671,12 @@ export default function App() {
   // is debounced (a large paste shouldn't re-encode per keystroke) and the
   // encode runs in the worker, so the main thread never blocks on tokenizing a
   // big list; only the cheap trie insert happens here. Strength is applied
-  // separately (below) so moving the slider does not force a re-encode. We
-  // rebuild on `status` so a model load/swap refreshes the trie.
+  // separately (below) so moving the slider does not force a re-encode. We key
+  // on `tokenizerVocabSig` (not `status`) so a model load/swap refreshes the
+  // trie exactly once: `status` also flips on every recording/transcribe/chunk
+  // transition, none of which change the vocab, and re-running the parse +
+  // rebuild + warning-state writes on each of those froze the UI on a large
+  // curated list (the textarea reconciled the whole list every time).
   useEffect(() => {
     // parseBoostPhrases is cheap (a line scan) and feeds the inline warnings,
     // so it always runs. The expensive step is expandCasingVariants below, so
@@ -1746,7 +1761,7 @@ export default function App() {
       }
     }, BOOST_REBUILD_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(timer); if (showSpinner) setBoostRebuilding(false); };
-  }, [boostPhrases, boostCaseInsensitive, status, encodeBoostPhrases]);
+  }, [boostPhrases, boostCaseInsensitive, tokenizerVocabSig, encodeBoostPhrases]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {
@@ -1769,6 +1784,9 @@ export default function App() {
       console.log('[App] Disposing existing model before loading new one...');
       modelRef.current.dispose();
       modelRef.current = null;
+      // Drop the old vocab signature so the boost effect clears its trie now
+      // (no tokenizer) and rebuilds once the new model publishes its signature.
+      setTokenizerVocabSig(null);
     }
 
     setStatus('loadingModel');
@@ -1842,6 +1860,11 @@ export default function App() {
       });
 
       console.timeEnd('LoadModel');
+      // Publish the loaded tokenizer's vocab signature so the boost-trie rebuild
+      // effect runs now (model became ready) and on a later vocab-changing swap,
+      // but NOT on the unrelated status churn of recording/transcribing.
+      const tk = modelRef.current?.tokenizer;
+      setTokenizerVocabSig(tk?.id2token ? vocabSignature(tk.id2token) : 'ready');
       setStatus('modelReady');
       setProgressText('');
       setProgressPct(null);
