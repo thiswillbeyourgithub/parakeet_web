@@ -2198,10 +2198,14 @@ export default function App() {
 
     setHasBeenTranscribed(false);
 
-    // Auto-transcribe if enabled
+    // Auto-transcribe if enabled. Feed the recorded 16kHz PCM straight to the
+    // transcription core (not processAudioFile, which would decode+resample the
+    // WAV again at the device rate and back, degrading the signal). The entry
+    // carries this exact PCM + WAV so "Transcribe again" stays lossless.
     if (autoTranscribeRef.current && modelRef.current) {
       console.log('[Record] Auto-transcribing...');
-      processAudioFile(file).then(() => {
+      const safeName = sanitizeDeviceName(file.name, 'file');
+      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob }).then(() => {
         setHasBeenTranscribed(true);
       });
     }
@@ -2746,10 +2750,12 @@ export default function App() {
     setStatus('modelReady');
     setHasBeenTranscribed(false);
 
-    // Auto-transcribe if enabled
+    // Auto-transcribe if enabled. Feed the already-16kHz PCM directly so we
+    // don't decode+resample the WAV a second time (see stopRecording).
     if (autoTranscribeRef.current && modelRef.current) {
       console.log('[RemoteMic] Auto-transcribing...');
-      processAudioFile(file).then(() => {
+      const safeName = sanitizeDeviceName(file.name, 'file');
+      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob }).then(() => {
         setHasBeenTranscribed(true);
       });
     }
@@ -3198,6 +3204,64 @@ export default function App() {
         note: pcm.length > 10000 ? '(min/max from first 10k samples)' : undefined
       });
 
+      // Build a 16 kHz WAV from the resampled PCM so the resulting history
+      // entry can carry a playable copy of exactly what the model heard. Kept
+      // in memory only (never persisted; see slimTranscriptForPersist).
+      const audioBlob = createWavBlob(pcm, targetSampleRate);
+
+      // Hand the already-resampled PCM to the shared transcription core. It
+      // owns the model call, the history entry and auto-copy; this path owns
+      // audio decode + resample. "Transcribe again" calls runTranscription
+      // directly with the stored PCM, skipping a second (lossy) resample.
+      await runTranscription(pcm, { safeName, audioDuration, audioBlob });
+    } catch (error) {
+      // Only the decode/resample stage can throw here: runTranscription owns
+      // (and swallows) model-side errors. Surface decode failures the same way.
+      console.error('[Transcribe] Audio decode/resample failed:', error);
+      setStatus('transcriptionFailed');
+      setIsTranscribing(false);
+      setAwaitingFinal(false);
+      // F-124: file.name is OS-controlled and can contain bidi-override or
+      // control codepoints. safeName is already sanitized above.
+      alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
+    } finally {
+      // If we threw before the explicit close above, the AudioContext is
+      // still holding the decoded buffer + an audio thread. Make sure it
+      // shuts down on every exit path.
+      if (audioCtx) {
+        try { await audioCtx.close(); } catch (_) { /* already closed */ }
+      }
+    }
+  }
+
+  // Format a transcription error into a user-facing alert string. Shared by the
+  // decode path (processAudioFile) and the model path (runTranscription).
+  function transcribeErrorMessage(error) {
+    let errorMsg = 'Unknown error';
+    if (error) {
+      if (error.message) {
+        errorMsg = error.message;
+      } else if (error.name) {
+        errorMsg = `${error.name} - The audio file format may not be supported. Try converting to WAV format.`;
+      } else if (typeof error === 'string') {
+        errorMsg = error;
+      }
+    }
+    return error?.stack
+      ? `${errorMsg}\n\nCheck console for full error details and stack trace.`
+      : errorMsg;
+  }
+
+  // Shared transcription core: runs the model on already-16kHz PCM and either
+  // appends a new history entry or replaces an existing one in place
+  // (replaceId). The caller owns audio decode/resample, so this never touches
+  // an AudioContext: the record/upload path (processAudioFile) and "Transcribe
+  // again" (which feeds stored PCM, skipping a second resample) both reuse it.
+  // audioBlob/pcm are attached to NEW entries only and live in memory.
+  async function runTranscription(pcm, { safeName, audioDuration, audioBlob = null, replaceId = null }) {
+    setIsTranscribing(true);
+    setStatus(`${t('transcribingFile')} "${safeName}"…`);
+    try {
       // Chunk large audio files to avoid "too many function arguments" error
       // This happens when audio is very long and internal operations hit JS engine limits
       // Chunking can be toggled off to send full audio to the model in one pass
@@ -3292,9 +3356,9 @@ export default function App() {
       console.log(transcribeTimeLog);
 
       setLatestMetrics(res.metrics);
-      // Add to transcriptions list
-      const newTranscription = {
-        id: Date.now(),
+
+      // Fields refreshed on every run, whether we append or replace in place.
+      const resultFields = {
         filename: safeName,
         text: res.utterance_text,
         timestamp: new Date().toLocaleTimeString(),
@@ -3305,8 +3369,24 @@ export default function App() {
         words: res.words || [] // Store word-level data with confidence scores
       };
 
-      newestTranscriptionIdRef.current = newTranscription.id;
-      setTranscriptions(prev => [newTranscription, ...prev]);
+      if (replaceId != null) {
+        // "Transcribe again": update the existing entry's text/words/metrics in
+        // place, keeping its id and its attached audio (pcm/audioBlob/duration).
+        newestTranscriptionIdRef.current = replaceId;
+        setTranscriptions(prev => prev.map(tr => tr.id === replaceId ? { ...tr, ...resultFields } : tr));
+      } else {
+        const newTranscription = {
+          id: Date.now(),
+          ...resultFields,
+          // In-memory only: the resampled audio the model heard plus the WAV
+          // blob for the inline player. Dropped on persist and on reload.
+          pcm,
+          audioBlob,
+          audioDuration,
+        };
+        newestTranscriptionIdRef.current = newTranscription.id;
+        setTranscriptions(prev => [newTranscription, ...prev]);
+      }
       setText(res.utterance_text); // Show latest transcription
       setStatus('modelReady'); // Ready for next file
 
@@ -3324,11 +3404,8 @@ export default function App() {
           console.error('[Transcribe] Auto-copy to clipboard failed:', err);
         }
       }
-      
     } catch (error) {
       console.error('[Transcribe] Transcription failed with error:', error);
-      
-      // Log full error details for debugging
       console.error('[Transcribe] Error details:', {
         name: error?.name,
         message: error?.message,
@@ -3336,37 +3413,9 @@ export default function App() {
         type: typeof error,
         errorObject: error
       });
-      
       setStatus('transcriptionFailed');
-      
-      // Handle cases where error.message might be undefined
-      let errorMsg = 'Unknown error';
-      if (error) {
-        if (error.message) {
-          errorMsg = error.message;
-        } else if (error.name) {
-          errorMsg = `${error.name} - The audio file format may not be supported. Try converting to WAV format.`;
-        } else if (typeof error === 'string') {
-          errorMsg = error;
-        }
-      }
-      
-      // Include stack trace in alert for better debugging
-      const detailedMsg = error?.stack 
-        ? `${errorMsg}\n\nCheck console for full error details and stack trace.`
-        : errorMsg;
-      
-      // F-124: file.name is OS-controlled and can contain bidi-override or
-      // control codepoints. Run through sanitizeDeviceName which already
-      // strips C0/C1 + bidi and length-caps to 64 chars.
-      alert(`Failed to transcribe "${safeName}": ${detailedMsg}`);
+      alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
     } finally {
-      // If we threw before the explicit close above, the AudioContext is
-      // still holding the decoded buffer + an audio thread. Make sure it
-      // shuts down on every exit path.
-      if (audioCtx) {
-        try { await audioCtx.close(); } catch (_) { /* already closed */ }
-      }
       setIsTranscribing(false);
       // The final transcription has now been pushed (or the run failed and
       // the user has been alerted). Either way, drop the awaiting indicator.
