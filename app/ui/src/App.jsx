@@ -3879,7 +3879,7 @@ export default function App() {
           <p>{t('infoDescription2')}</p>
           <p style={{ fontSize: '0.85rem', marginTop: '1rem', marginBottom: 0 }}>
             <strong>{t('sourceCode')}:</strong>{' '}
-            <a href={lang === 'fr' ? 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/fork/README_fr.md' : 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/fork/README.md'} target="_blank" rel="noopener noreferrer">ParakeetWeb</a>
+            <a href={lang === 'fr' ? 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/main/README_fr.md' : 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/main/README.md'} target="_blank" rel="noopener noreferrer">ParakeetWeb</a>
           </p>
           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('feedback')}:</strong> {t('feedbackText')}{' '}
