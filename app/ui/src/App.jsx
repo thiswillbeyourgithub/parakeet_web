@@ -336,6 +336,30 @@ const SERVED_FILE_MAX_BYTES = 5 * 1024 * 1024;
 // valid manifest entry (those all end in .txt), so it can never collide.
 const BOOST_SOURCE_CUSTOM = '__custom__';
 
+// Normalise a curated-list name to a manifest entry: manifest entries all end
+// in `.txt`, so a bare name (e.g. "medical", as supplied via the
+// ?phrase_boost= query param or the VITE_PHRASE_BOOST_DEFAULT env default) gets
+// the extension appended. Returns null for an empty/blank value, and passes the
+// Custom sentinel through untouched so ?phrase_boost=__custom__ forces manual
+// entry. Validation against the actual served files happens later (boost-init),
+// so an unknown name simply falls back to Custom rather than erroring.
+function normalizeBoostName(raw) {
+  if (typeof raw !== 'string') return null;
+  const name = raw.trim();
+  if (!name) return null;
+  if (name === BOOST_SOURCE_CUSTOM) return name;
+  return name.endsWith('.txt') ? name : `${name}.txt`;
+}
+
+// A ?phrase_boost=<name> query param lets a shareable link pre-select a curated
+// boost list for first-time visitors. Read once at module load (the query
+// string doesn't change within a session). Per the product decision it does NOT
+// override a returning user's saved boost choice; it only seeds the default when
+// none is saved. See the settings-load and boost-init effects.
+const URL_PHRASE_BOOST = typeof window !== 'undefined'
+  ? normalizeBoostName(new URLSearchParams(window.location.search).get('phrase_boost'))
+  : null;
+
 // Debounce (ms) before rebuilding the boosting trie after the phrase text
 // changes. Pasting or fast-typing a large list (10k-100k phrases) would
 // otherwise trigger an encode per keystroke; we wait for the input to settle.
@@ -1054,7 +1078,11 @@ export default function App() {
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
           loadSetting('boostStrength', 1),
-          loadSetting('boostSource', BOOST_SOURCE_CUSTOM),
+          // Load with `null` (not the Custom sentinel) so the restore below can
+          // tell "user never picked a boost source" apart from "user explicitly
+          // chose Custom". Only the former falls back to the ?phrase_boost= param
+          // / VITE_PHRASE_BOOST_DEFAULT; an explicit Custom choice is honoured.
+          loadSetting('boostSource', null),
           loadSetting('boostCustomText', ''),
           loadSetting('boostCaseInsensitive', false),
         ]);
@@ -1098,6 +1126,12 @@ export default function App() {
         setTranscriptDisplayMode(savedTranscriptDisplayMode);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
+        // Whether the user has an explicit saved boost choice. When they don't
+        // (savedBoostSource is null because it was never persisted), the
+        // boost-init effect falls back to the ?phrase_boost= param / the
+        // VITE_PHRASE_BOOST_DEFAULT env default. An explicit Custom choice is a
+        // string, so it sets this true and is honoured (not overridden).
+        boostSourceSavedRef.current = typeof savedBoostSource === 'string';
         const restoredSource = typeof savedBoostSource === 'string' ? savedBoostSource : BOOST_SOURCE_CUSTOM;
         // For a curated source, deliberately leave boostPhrases empty here: the
         // one-shot init effect below calls applyBoostSource(), which loads the
@@ -1618,17 +1652,30 @@ export default function App() {
   }
 
   // One-shot: once both settings and the manifest have loaded, resolve the
-  // persisted source. A filename that still exists is (re)fetched so the box
-  // shows the canonical list; a filename the operator has since removed falls
-  // back to Custom so the user is never stuck on a dead entry. Custom needs
-  // nothing (boostPhrases was already seeded from the saved custom text).
+  // source to load. A filename that still exists is (re)fetched so the box shows
+  // the canonical list; a filename the operator has since removed falls back to
+  // Custom so the user is never stuck on a dead entry. Custom needs nothing
+  // (boostPhrases was already seeded from the saved custom text).
+  //
+  // When the user has NO saved boost choice (a fresh visitor), seed the default
+  // from the ?phrase_boost= query param, then the VITE_PHRASE_BOOST_DEFAULT env
+  // default. Neither overrides an explicit saved choice (boostSourceSavedRef).
+  // This lives here (not only in the settings restore) because a first-time
+  // visitor's restore takes the version-mismatch fast path that skips the
+  // restore block, so the param/env default must be applied unconditionally.
+  const boostSourceSavedRef = useRef(false);
   const boostInitRef = useRef(false);
   useEffect(() => {
     if (!settingsLoaded || !boostFilesLoaded || boostInitRef.current) return;
     boostInitRef.current = true;
-    if (boostSource !== BOOST_SOURCE_CUSTOM) {
-      if (boostFiles.includes(boostSource)) {
-        applyBoostSource(boostSource);
+    let source = boostSource;
+    if (!boostSourceSavedRef.current && source === BOOST_SOURCE_CUSTOM) {
+      source = URL_PHRASE_BOOST || normalizeBoostName(CONFIG.VITE_PHRASE_BOOST_DEFAULT) || BOOST_SOURCE_CUSTOM;
+    }
+    if (source !== BOOST_SOURCE_CUSTOM) {
+      if (boostFiles.includes(source)) {
+        if (source !== boostSource) setBoostSource(source);
+        applyBoostSource(source);
       } else {
         setBoostSource(BOOST_SOURCE_CUSTOM);
         setBoostPhrases(boostCustomTextRef.current);

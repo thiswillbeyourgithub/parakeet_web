@@ -230,6 +230,7 @@ echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boo
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
 echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
+echo "[entrypoint] VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-(not set, no default curated list)}"
 # F-142: surface the resolved HSTS / CSP override values so operators can
 # confirm at startup that their docker/.env overrides are actually in the
 # container. Empty values mean the Caddyfile's baked-in defaults apply.
@@ -448,6 +449,36 @@ else
   echo "[entrypoint] BOOST_PHRASES_SOURCE not set — no boost phrase lists served."
 fi
 
+# VITE_PHRASE_BOOST_DEFAULT (optional) names the curated list the UI pre-selects
+# for a fresh visitor. It must name a list this container is actually serving,
+# otherwise the link silently falls back to manual entry and the operator never
+# notices the typo. So validate it at boot and refuse to start on a mismatch.
+# The browser normalises a bare name to "<name>.txt"; mirror that here, and
+# require a safe leaf filename (no path separators / traversal) since the value
+# is also echoed into the served config and used to build a fetch URL.
+if [ -n "${VITE_PHRASE_BOOST_DEFAULT:-}" ]; then
+  _BOOST_DEFAULT="$VITE_PHRASE_BOOST_DEFAULT"
+  case "$_BOOST_DEFAULT" in
+    *.txt) ;;
+    *) _BOOST_DEFAULT="${_BOOST_DEFAULT}.txt" ;;
+  esac
+  case "$_BOOST_DEFAULT" in
+    */*|*..*|*[!A-Za-z0-9._-]*)
+      echo "[entrypoint] ERROR: VITE_PHRASE_BOOST_DEFAULT must be a bare list name"
+      echo "[entrypoint] (letters, digits, '.', '_', '-'); got: $VITE_PHRASE_BOOST_DEFAULT"
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$BOOST_DIR/$_BOOST_DEFAULT" ]; then
+    echo "[entrypoint] ERROR: VITE_PHRASE_BOOST_DEFAULT=\"$VITE_PHRASE_BOOST_DEFAULT\" names a boost"
+    echo "[entrypoint] list this container is not serving ($BOOST_DIR/$_BOOST_DEFAULT missing)."
+    echo "[entrypoint] Set BOOST_PHRASES_SOURCE to a folder/URL that provides it, or unset"
+    echo "[entrypoint] VITE_PHRASE_BOOST_DEFAULT. Refusing to start so the typo is not silent."
+    exit 1
+  fi
+  echo "[entrypoint] Default curated boost list: $_BOOST_DEFAULT"
+fi
+
 # ---------- Runtime VITE_* config injection --------------------------------
 # /srv is read-only at runtime, so config.js lives on a tmpfs at /run/config
 # and Caddy serves it via the matching `handle /config.js` route.
@@ -474,6 +505,7 @@ VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
 VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
 VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
 VITE_RELAY_ENABLE="${VITE_RELAY_ENABLE:-}" \
+VITE_PHRASE_BOOST_DEFAULT="${VITE_PHRASE_BOOST_DEFAULT:-}" \
 node -e '
   const keys = [
     "VITE_DEV_MODE",
@@ -485,6 +517,7 @@ node -e '
     "VITE_ANALYTICS_WEBSITE_ID",
     "VITE_ANALYTICS_SRI",
     "VITE_RELAY_ENABLE",
+    "VITE_PHRASE_BOOST_DEFAULT",
   ];
   const obj = {};
   for (const k of keys) obj[k] = process.env[k] ?? "";

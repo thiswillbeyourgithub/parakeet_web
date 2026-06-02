@@ -20,6 +20,12 @@ export const CONFIG = {
   // (anything else, including unset, keeps it enabled). Server-side
   // RELAY_ENABLE remains the master gate.
   VITE_RELAY_ENABLE: runtime.VITE_RELAY_ENABLE ?? import.meta.env.VITE_RELAY_ENABLE,
+  // Default curated phrase-boost list to pre-select for a fresh visitor (no
+  // saved boost choice yet). A bare name or a "<name>.txt"; the UI normalises
+  // and validates it against the served manifest. Overridable per-link via the
+  // ?phrase_boost= query param. Never overrides a returning user's saved choice.
+  // The container fails to start if this names a list it isn't serving.
+  VITE_PHRASE_BOOST_DEFAULT: runtime.VITE_PHRASE_BOOST_DEFAULT ?? import.meta.env.VITE_PHRASE_BOOST_DEFAULT,
   // Not operator-settable: the docker entrypoint stamps this with the container
   // start time (ISO 8601) when it generates /config.js, so the dev banner can
   // tell visitors how long ago the instance was last restarted. Absent outside

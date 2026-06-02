@@ -78,6 +78,10 @@ services:
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
       # Optional phrase-boosting lists: folder of .txt files or https URL to one .txt
       - BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-}
+      # Optional default boost list to pre-select for new visitors (bare name or
+      # <name>.txt). Must match a served list or the container refuses to start.
+      # Per-link override: ?phrase_boost=<name>. Neither overrides a saved choice.
+      - VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}
