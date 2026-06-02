@@ -418,6 +418,12 @@ export default function App() {
   // still be unavailable (blocklisted GPU, headless Chromium, etc.), so we
   // actually request one. null = still probing, true/false = resolved.
   const [webgpuAvailable, setWebgpuAvailable] = useState(null);
+  // Why WebGPU is unavailable, so the UI can explain the grey-out instead of
+  // showing a bare "(unavailable)". null while probing/available, else one of
+  // 'insecure' (not an https/localhost context), 'unsupported' (no
+  // navigator.gpu, e.g. Firefox today) or 'noAdapter' (requestAdapter failed,
+  // e.g. blocklisted GPU or hardware acceleration off).
+  const [webgpuUnavailableReason, setWebgpuUnavailableReason] = useState(null);
   // Tracks whether the backend reflects an explicit choice (restored from a
   // saved setting or picked in the UI) vs. our automatic default. The RAM-based
   // default heuristic only applies when this is false.
@@ -1282,15 +1288,29 @@ export default function App() {
     let cancelled = false;
     (async () => {
       let available = false;
+      let reason = null;
       try {
-        if (navigator.gpu) {
+        if (!window.isSecureContext) {
+          // navigator.gpu is only exposed in secure contexts; a plain http://
+          // LAN address (common for the phone-as-mic flow) hides it entirely.
+          reason = 'insecure';
+        } else if (!navigator.gpu) {
+          // Secure context but the browser doesn't expose WebGPU at all
+          // (e.g. Firefox stable today).
+          reason = 'unsupported';
+        } else {
           const adapter = await navigator.gpu.requestAdapter();
           available = !!adapter;
+          if (!adapter) reason = 'noAdapter';
         }
       } catch {
         available = false;
+        reason = 'noAdapter';
       }
-      if (!cancelled) setWebgpuAvailable(available);
+      if (!cancelled) {
+        setWebgpuAvailable(available);
+        setWebgpuUnavailableReason(available ? null : reason);
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -3912,6 +3932,9 @@ export default function App() {
                 <label className={status === 'modelReady' || webgpuAvailable === false ? 'disabled-option' : ''}>
                   <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => chooseBackend(e.target.value)} disabled={status === 'modelReady' || webgpuAvailable === false} />
                   {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
+                  {webgpuAvailable === false && (
+                    <InfoTooltip text={t(`webgpuReason_${webgpuUnavailableReason || 'noAdapter'}`)} />
+                  )}
                 </label>
               </div>
             </div>
