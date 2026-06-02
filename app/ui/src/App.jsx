@@ -4351,6 +4351,7 @@ export default function App() {
                     width: '100%', boxSizing: 'border-box', resize: 'vertical',
                     fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
                     borderRadius: '4px', border: '1px solid #d1d5db',
+                    background: 'var(--bg-card)', color: 'var(--text)',
                   }}
                 />
               )}
@@ -4392,7 +4393,7 @@ export default function App() {
                       width: '100%', boxSizing: 'border-box', resize: 'vertical',
                       fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
                       borderRadius: '4px', border: '1px solid #d1d5db',
-                      color: 'var(--text)',
+                      background: 'var(--bg-card)', color: 'var(--text)',
                     }}
                   />
                 </details>
