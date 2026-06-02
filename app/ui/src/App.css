@@ -668,24 +668,6 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   flex-wrap: wrap;
 }
 
-.transcribe-again-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.75rem;
-  background: var(--accent);
-  color: white;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s, opacity 0.15s;
-}
-
-.transcribe-again-button:hover:not(:disabled) { filter: brightness(1.05); }
-.transcribe-again-button:disabled { opacity: 0.5; cursor: not-allowed; }
-
 .history-text {
   background: var(--bg-subtle);
   padding: 0.5rem 0.75rem;
@@ -749,7 +731,8 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   color: var(--text-muted);
 }
 
-.kebab-dropdown button:hover { background: var(--bg-subtle); }
+.kebab-dropdown button:hover:not(:disabled) { background: var(--bg-subtle); }
+.kebab-dropdown button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .kebab-dropdown .kebab-delete:hover {
   background: var(--danger-soft-bg);

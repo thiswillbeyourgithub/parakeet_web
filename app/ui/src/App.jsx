@@ -4898,6 +4898,18 @@ export default function App() {
                               {t('copyDictation')}
                             </button>
                           )}
+                          {/* Audio is in-memory only, so this is absent on
+                              entries restored after a reload. */}
+                          {trans.audioBlob && (
+                            <button
+                              disabled={isTranscribing}
+                              onClick={() => transcribeAgain(trans)}
+                              title={t('transcribeAgainHint')}
+                            >
+                              {reTranscribingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
+                              {reTranscribingId === trans.id ? t('transcribingAgain') : t('transcribeAgain')}
+                            </button>
+                          )}
                           <button className="kebab-delete" onClick={() => deleteTranscription(trans.id)}>
                             {t('delete')}
                           </button>
@@ -4906,20 +4918,12 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Inline audio player + Transcribe again (audio is in-memory
-                      only, so this is absent on entries restored after reload). */}
+                  {/* Inline audio player (audio is in-memory only, so this is
+                      absent on entries restored after reload). The Transcribe
+                      again action lives in the per-entry kebab menu above. */}
                   {audioOpen && trans.audioBlob && (
                     <div className="history-audio">
                       <audio controls src={getEntryAudioUrl(trans)} className="audio-player" />
-                      <button
-                        className="transcribe-again-button"
-                        disabled={isTranscribing}
-                        onClick={() => transcribeAgain(trans)}
-                        title={t('transcribeAgainHint')}
-                      >
-                        {reTranscribingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
-                        {reTranscribingId === trans.id ? t('transcribingAgain') : t('transcribeAgain')}
-                      </button>
                     </div>
                   )}
 
