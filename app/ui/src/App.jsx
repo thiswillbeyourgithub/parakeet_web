@@ -357,7 +357,7 @@ const BOOST_PREBUILT_MAX_BYTES = 64 * 1024 * 1024;
 // the whole sidebar lag (every re-render re-passes the giant string). The text
 // still lives in `boostPhrases` for the rebuild/prebuilt path; we just don't
 // render it. Custom text is always editable regardless of size.
-const BOOST_COLLAPSE_MIN_PHRASES = 2000;
+const BOOST_COLLAPSE_MIN_PHRASES = 100;
 
 // Cap on how many skipped (untokenizable) phrases are listed inline. A curated
 // list can drop thousands of terms the model has no tokens for; spelling them
