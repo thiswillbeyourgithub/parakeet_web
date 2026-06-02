@@ -372,19 +372,19 @@ const RAM_THRESHOLD_BYTES = RAM_THRESHOLD_GB * 1024 * 1024 * 1024;
 const MOBILE_UA_RE = /Android|iPhone|iPad|iPod/i;
 
 // Default beam-search width, chosen by device tier. Beam search costs ~Nx the
-// decode, so weaker devices get a lighter default: phones (2), low-RAM
-// computers (5), everything else (10). Phone UA is checked first so a low-RAM
-// phone still gets 2 rather than the 5 the RAM tier would give. Detection
+// decode, so weaker devices get a lighter default: phones (1), low-RAM
+// computers (2), everything else (5). Phone UA is checked first so a low-RAM
+// phone still gets 1 rather than the 2 the RAM tier would give. Detection
 // mirrors the isLowRam heuristic (heap limit, then deviceMemory). Users can
 // still override via the slider.
 function defaultBeamWidth() {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-  if (MOBILE_UA_RE.test(ua)) return 2;
+  if (MOBILE_UA_RE.test(ua)) return 1;
   const heapLimit = typeof performance !== 'undefined' ? performance?.memory?.jsHeapSizeLimit : undefined;
-  if (heapLimit !== undefined) return heapLimit < RAM_THRESHOLD_BYTES ? 5 : 10;
+  if (heapLimit !== undefined) return heapLimit < RAM_THRESHOLD_BYTES ? 2 : 5;
   const mem = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
-  if (mem !== undefined) return mem < RAM_THRESHOLD_GB ? 5 : 10;
-  return 10;
+  if (mem !== undefined) return mem < RAM_THRESHOLD_GB ? 2 : 5;
+  return 5;
 }
 const DEFAULT_BEAM_WIDTH = defaultBeamWidth();
 
