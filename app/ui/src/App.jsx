@@ -22,11 +22,28 @@ import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from 
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
 import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
-import { formatTime, formatDuration, formatBytes } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, relativeAge } from './lib/format.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
 const devMode = CONFIG.VITE_DEV_MODE === 'true';
+
+// Localize relativeAge()'s { value, unit } into a phrase like "3 hours ago".
+// Returns null when there is no parseable container start time so the dev
+// banner can fall back to its generic (no-timestamp) wording.
+function relativeAgePhrase(t, fromIso) {
+  if (!fromIso) return null;
+  const r = relativeAge(fromIso);
+  if (!r) return null;
+  if (r.unit === 'justNow') return t('ageJustNow');
+  const plural = r.value !== 1;
+  const key = {
+    minute: plural ? 'ageMinutesAgo' : 'ageMinuteAgo',
+    hour: plural ? 'ageHoursAgo' : 'ageHourAgo',
+    day: plural ? 'ageDaysAgo' : 'ageDayAgo',
+  }[r.unit];
+  return t(key, { n: r.value });
+}
 const dictationEnabled = CONFIG.VITE_DICTATION_DEVICE_SUPPORT !== 'false';
 // Lazy-loaded on first use to avoid top-level await issues
 let _dictationLib = null;
@@ -1450,6 +1467,10 @@ export default function App() {
     // skip BPE; it is absent on pure-HF deploys or empty lists, in which case
     // the browser encodes the text itself (prebuiltBoostRef stays null).
     const jsonName = src.replace(/\.txt$/, '.json');
+    const fetchT0 = performance.now();
+    if (verboseLogRef.current) {
+      console.log(`[Boost] loading list "${src}" (+ prebuilt "${jsonName}")...`);
+    }
     const [r, pj] = await Promise.all([
       fetchTextCapped(`/boost-phrases/${encodeURIComponent(src)}`),
       // A prebuilt-JSON failure must never break the text load, so swallow it
@@ -1457,6 +1478,12 @@ export default function App() {
       fetchTextCapped(`/boost-phrases/${encodeURIComponent(jsonName)}`, BOOST_PREBUILT_MAX_BYTES)
         .catch(() => ({ ok: false })),
     ]);
+    if (verboseLogRef.current) {
+      const ms = (performance.now() - fetchT0).toFixed(0);
+      console.log(`[Boost] fetched "${src}" in ${ms}ms `
+        + `(text: ${r.ok ? `${r.text.length} chars` : 'FAILED'}, `
+        + `prebuilt JSON: ${pj.ok ? `${pj.text.length} chars` : 'absent (will encode in-browser)'}).`);
+    }
     if (!r.ok) {
       console.warn(`[Boost] could not load phrase list "${src}":`,
         r.oversize ? `oversize ${r.declared} bytes` : `status ${r.status}`);
@@ -1485,6 +1512,16 @@ export default function App() {
       }
     }
     prebuiltBoostRef.current = pre;
+    if (verboseLogRef.current) {
+      if (pre) {
+        console.log(`[Boost] prebuilt encoding ready for "${src}": ${pre.encoded.length} entries, `
+          + `${pre.skipped.length} skipped, vocabSig=${pre.vocabSig}, caseDefault=${pre.caseDefault}. `
+          + `The trie rebuild will reuse this and skip the BPE encode (provided vocab + case toggle match).`);
+      } else {
+        console.log(`[Boost] no usable prebuilt for "${src}"; the trie rebuild will BPE-encode the list in-browser `
+          + `(slow for large lists; runs in a worker when available).`);
+      }
+    }
     // A curated list can ship its own default strength via a `#!strength N`
     // directive line; loading the list forces the strength control to that
     // value (clamped to the slider's range), so the list comes pre-tuned. A
@@ -1602,6 +1639,18 @@ export default function App() {
     // agrees; otherwise the entry set differs, so re-encode.
     const usePrebuilt = !!pre && pre.text === boostPhrases && pre.vocabSig === sig
       && (pre.caseDefault ?? false) === boostCaseInsensitive;
+    // When a prebuilt exists but is rejected, say why: this is the difference
+    // between a fast (prebuilt) rebuild and a slow from-scratch BPE re-encode,
+    // so it is the first thing to check if a curated list is unexpectedly slow.
+    if (verboseLogRef.current && pre && !usePrebuilt) {
+      const reasons = [];
+      if (pre.text !== boostPhrases) reasons.push('list text was edited (no longer matches the prebuilt)');
+      if (pre.vocabSig !== sig) reasons.push(`vocab mismatch (prebuilt for ${pre.vocabSig}, model is ${sig})`);
+      if ((pre.caseDefault ?? false) !== boostCaseInsensitive) {
+        reasons.push(`case toggle differs (prebuilt at caseDefault=${pre.caseDefault ?? false}, UI is ${boostCaseInsensitive})`);
+      }
+      console.log(`[Boost] prebuilt encoding present but NOT used; will BPE-encode in-browser. Reason: ${reasons.join('; ')}.`);
+    }
     // Long lists take long enough to encode+build that the user should see the
     // app is busy; small ones (or prebuilt ones, which only insert) rebuild in
     // a few ms, so a spinner would only flash.
@@ -3609,7 +3658,17 @@ export default function App() {
     <div className="app">
       {devMode && (
         <Banner tone="danger" style={{ fontWeight: 'bold', textAlign: 'center', marginBottom: '1rem' }}>
-          {t('devModeBanner')}
+          {(() => {
+            const age = relativeAgePhrase(t, CONFIG.CONTAINER_STARTED_AT);
+            if (!age) return t('devModeBanner');
+            return (
+              <>
+                {t('devModeBannerIntro', { age })}
+                <a href="https://github.com/thiswillbeyourgithub/parakeet_web/issues" target="_blank" rel="noopener noreferrer">{t('devModeBannerIssueLink')}</a>
+                {t('devModeBannerOutro')}
+              </>
+            );
+          })()}
         </Banner>
       )}
       {showLowRamConfirm && (
