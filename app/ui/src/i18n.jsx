@@ -19,7 +19,6 @@ const translations = {
     recordingClickStop: 'Recording... (click Stop to transcribe)',
     recordingPaused: 'Recording paused \u23f8',
     transcriptionFailed: 'Transcription failed',
-    processingPreview: 'Processing audio preview...',
 
     // Buttons
     loadModel: 'Load Model',
@@ -54,8 +53,6 @@ const translations = {
     remoteMicInvalidConfig: 'Phone reported an invalid audio configuration. Connection closed.',
     cancel: 'Cancel',
     close: 'Close',
-    transcribe: '\ud83c\udfaf Transcribe',
-    transcribing: 'Transcribing...',
     audio: 'Audio',
     transcribeAgain: 'Transcribe again',
     transcribingAgain: 'Transcribing...',
@@ -79,11 +76,6 @@ const translations = {
     speakLouder: '\ud83d\udd09 Speak a bit louder',
     goodLevel: '\ud83d\udd0a Good level',
 
-    // Audio preview
-    processingAudioPreview: '\u23f3 Processing audio preview...',
-    whatModelHears: '(16kHz mono - what the model hears)',
-    clearAudioFile: 'Clear audio file',
-
     // Settings
     model: 'Model',
     backend: 'Backend',
@@ -105,7 +97,6 @@ const translations = {
     defaultTranscriptDisplay: 'Default transcript display',
     dictationRules: 'Dictation',
     dictationRulesExperimental: 'rules) \u2014 experimental',
-    autoTranscribeAfterRecording: 'Auto-transcribe after recording',
     autoCopyToClipboard: 'Auto-copy transcribed text to clipboard (off by default: the system clipboard is readable by other apps and extensions)',
     persistTranscripts: 'Save transcript history locally',
     debugLogging: 'Debug logging',
@@ -122,10 +113,6 @@ const translations = {
     liveStreamingNote: 'Updates every few seconds while recording. The final transcript is still computed on stop.',
     receivingAudio: '⏳ Receiving audio from the recorder…',
     runningFinalTranscription: '⏳ Running final transcription on the full audio…',
-    awaitingTranscribeClick: 'Audio ready. Click Transcribe to run the final pass.',
-    liveTranscriptKept: 'Live preview kept until the final transcription appears.',
-    preparingAudioPreview: 'Preparing audio preview…',
-    preparingAudioHint: 'The audio will appear in the player as soon as it has been received and decoded.',
     settingsGroupAdvanced: 'Advanced',
     settingsGroupBoosting: 'Phrase boosting',
     settingsGroupDebug: 'Debug',
@@ -155,7 +142,6 @@ const translations = {
     tooltipChunking: 'Split audio longer than the chunk duration into overlapping segments before transcribing. Disable to send the full audio to the model in one pass (may use more memory but avoids chunk boundary issues). Default: enabled, 60 s chunk duration.',
     tooltipHeatmap: 'Highlights words with color-coded backgrounds based on transcription confidence. Red = low confidence, yellow = medium, green = high. Default: off.',
     tooltipDisplayMode: 'Choose how transcriptions are displayed by default. Raw = unmodified text. Confidence = word-level confidence heatmap. Dictation = text cleaned with regex rules (punctuation, medical vocab, etc.). Default: Raw.',
-    tooltipAutoTranscribe: 'Automatically starts transcription when a recording is stopped. Disable to review the audio before transcribing. Default: on.',
     tooltipAutoCopy: 'Automatically copies text to clipboard after transcription. Copies the dictation-cleaned transcript when display mode is set to Dictation (and rules are loaded), otherwise copies raw text. Default: on.',
     tooltipPersistTranscripts: 'When OFF (default): transcripts stay only in memory and disappear when you close the tab. When ON: transcripts are written to IndexedDB and survive across sessions. Note that even after you turn this OFF and clear history, residue may remain on disk until the browser compacts its storage. To fully erase, use the browser’s "Clear site data" option.',
     tooltipDebugLogging: 'Off (default): minimal console output, no extra UI metrics. Full logs: shows system memory/heap, per-transcription performance metrics (RTF, timings), detailed audio metadata, and the most verbose level in the browser devtools console.',
@@ -192,7 +178,6 @@ const translations = {
     shortcutStopRecording: 'Stop recording (while recording)',
     shortcutStartRecording: 'Start recording',
     shortcutSelectFile: 'Select audio file',
-    shortcutTranscribe: 'Start transcription',
     shortcutLoadModel: 'Load model',
     shortcutsDisabledInInputs: 'Shortcuts are disabled while typing in input fields.',
 
@@ -332,7 +317,6 @@ const translations = {
     recordingClickStop: 'Enregistrement... (cliquez Stop pour transcrire)',
     recordingPaused: 'Enregistrement en pause \u23f8',
     transcriptionFailed: '\u00c9chec de la transcription',
-    processingPreview: "Traitement de l'aper\u00e7u audio...",
 
     // Buttons
     loadModel: 'Charger le mod\u00e8le',
@@ -367,8 +351,6 @@ const translations = {
     remoteMicInvalidConfig: 'Le t\u00e9l\u00e9phone a indiqu\u00e9 une configuration audio invalide. Connexion ferm\u00e9e.',
     cancel: 'Annuler',
     close: 'Fermer',
-    transcribe: '\ud83c\udfaf Transcrire',
-    transcribing: 'Transcription en cours...',
     audio: 'Audio',
     transcribeAgain: 'Retranscrire',
     transcribingAgain: 'Transcription en cours...',
@@ -392,11 +374,6 @@ const translations = {
     speakLouder: '\ud83d\udd09 Parlez un peu plus fort',
     goodLevel: '\ud83d\udd0a Bon niveau',
 
-    // Audio preview
-    processingAudioPreview: "\u23f3 Traitement de l'aper\u00e7u audio...",
-    whatModelHears: "(16kHz mono - ce que le mod\u00e8le entend)",
-    clearAudioFile: "Supprimer le fichier audio",
-
     // Settings
     model: 'Mod\u00e8le',
     backend: 'Moteur',
@@ -418,7 +395,6 @@ const translations = {
     defaultTranscriptDisplay: 'Affichage par d\u00e9faut',
     dictationRules: 'Dict\u00e9e',
     dictationRulesExperimental: 'r\u00e8gles) \u2014 exp\u00e9rimental',
-    autoTranscribeAfterRecording: "Transcrire automatiquement apr\u00e8s l'enregistrement",
     autoCopyToClipboard: 'Copier automatiquement le texte dans le presse-papiers (désactivé par défaut : le presse-papiers système est lisible par d\'autres applications et extensions)',
     persistTranscripts: 'Sauvegarder l’historique des transcriptions localement',
     debugLogging: 'Journalisation de d\u00e9bogage',
@@ -435,10 +411,6 @@ const translations = {
     liveStreamingNote: "Mise \u00e0 jour toutes les quelques secondes pendant l'enregistrement. La transcription finale est calcul\u00e9e \u00e0 l'arr\u00eat.",
     receivingAudio: "\u23f3 R\u00e9ception de l'audio depuis l'enregistreur\u2026",
     runningFinalTranscription: "\u23f3 Transcription finale sur l'audio complet en cours\u2026",
-    awaitingTranscribeClick: 'Audio pr\u00eat. Cliquez sur Transcrire pour lancer la passe finale.',
-    liveTranscriptKept: "Aper\u00e7u en direct conserv\u00e9 jusqu'\u00e0 l'apparition de la transcription finale.",
-    preparingAudioPreview: "Pr\u00e9paration de l'aper\u00e7u audio\u2026",
-    preparingAudioHint: "L'audio appara\u00eetra dans le lecteur d\u00e8s qu'il aura \u00e9t\u00e9 re\u00e7u et d\u00e9cod\u00e9.",
     settingsGroupAdvanced: 'Avanc\u00e9',
     settingsGroupBoosting: 'Renforcement de phrases',
     settingsGroupDebug: 'D\u00e9bogage',
@@ -468,7 +440,6 @@ const translations = {
     tooltipChunking: "D\u00e9coupe l'audio plus long que la dur\u00e9e du segment en morceaux chevauchants avant la transcription. D\u00e9sactivez pour envoyer l'audio complet au mod\u00e8le en une passe. D\u00e9faut : activ\u00e9, 60 s par segment.",
     tooltipHeatmap: 'Colore les mots selon la confiance de la transcription. Rouge = faible confiance, jaune = moyen, vert = \u00e9lev\u00e9. D\u00e9faut : d\u00e9sactiv\u00e9.',
     tooltipDisplayMode: "Choisissez l'affichage par d\u00e9faut. Brut = texte non modifi\u00e9. Confiance = carte de confiance par mot. Dict\u00e9e = texte nettoy\u00e9 par r\u00e8gles regex. D\u00e9faut : Brut.",
-    tooltipAutoTranscribe: "D\u00e9marre automatiquement la transcription \u00e0 l'arr\u00eat de l'enregistrement. D\u00e9sactivez pour r\u00e9\u00e9couter avant de transcrire. Défaut : activé.",
     tooltipAutoCopy: "Copie automatiquement le texte dans le presse-papiers apr\u00e8s la transcription. Copie le texte nettoy\u00e9 en mode Dict\u00e9e si les r\u00e8gles sont charg\u00e9es. D\u00e9faut : activ\u00e9.",
     tooltipPersistTranscripts: "Quand d\u00e9sactiv\u00e9 (d\u00e9faut) : les transcriptions restent en m\u00e9moire et disparaissent \u00e0 la fermeture de l\u2019onglet. Quand activ\u00e9 : elles sont \u00e9crites dans IndexedDB et survivent aux sessions. M\u00eame apr\u00e8s d\u00e9sactivation et effacement, des r\u00e9sidus peuvent persister sur le disque jusqu\u2019\u00e0 ce que le navigateur compacte son stockage. Pour effacer compl\u00e8tement, utilisez \u00ab Effacer les donn\u00e9es du site \u00bb du navigateur.",
     tooltipDebugLogging: "D\u00e9sactiv\u00e9e (d\u00e9faut) : sortie console minimale, pas de m\u00e9triques suppl\u00e9mentaires. Logs complets : affiche l'utilisation m\u00e9moire, les m\u00e9triques de performance par transcription, les m\u00e9tadonn\u00e9es audio d\u00e9taill\u00e9es, et le niveau de log le plus d\u00e9taill\u00e9 dans la console du navigateur.",
@@ -505,7 +476,6 @@ const translations = {
     shortcutStopRecording: "Arr\u00eater l'enregistrement (pendant l'enregistrement)",
     shortcutStartRecording: "D\u00e9marrer l'enregistrement",
     shortcutSelectFile: 'S\u00e9lectionner un fichier audio',
-    shortcutTranscribe: 'Lancer la transcription',
     shortcutLoadModel: 'Charger le mod\u00e8le',
     shortcutsDisabledInInputs: 'Les raccourcis sont d\u00e9sactiv\u00e9s dans les champs de saisie.',
 

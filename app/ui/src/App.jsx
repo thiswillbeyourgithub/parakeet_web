@@ -600,9 +600,7 @@ export default function App() {
   const [cpuThreads, setCpuThreads] = useState(maxCores);
   const modelRef = useRef(null);
   const fileInputRef = useRef(null);
-  // Ref to access autoTranscribe inside recorder.onstop callback without stale closure
-  const autoTranscribeRef = useRef(true);
-  
+
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false); // pause/resume support for long recordings
@@ -693,29 +691,6 @@ export default function App() {
   const workletNodeRef = useRef(null);   // AudioWorkletNode for cleanup
   const [audioLevel, setAudioLevel] = useState(0);
   const [audioContext, setAudioContext] = useState(null);
-  const [pendingAudioFile, setPendingAudioFile] = useState(null);
-  const [audioPreviewUrl, _setAudioPreviewUrlRaw] = useState(null);
-  // Always go through this setter — it revokes any previously-active blob URL
-  // before swapping in the new one, so they don't accumulate over a session.
-  const setAudioPreviewUrl = useCallback((next) => {
-    _setAudioPreviewUrlRaw((prev) => {
-      if (prev && prev !== next) {
-        try { URL.revokeObjectURL(prev); } catch (_) { /* ignore */ }
-      }
-      return next;
-    });
-  }, []);
-  // Final cleanup when the component unmounts.
-  useEffect(() => () => {
-    _setAudioPreviewUrlRaw((prev) => {
-      if (prev) {
-        try { URL.revokeObjectURL(prev); } catch (_) { /* ignore */ }
-      }
-      return null;
-    });
-  }, []);
-  const [isProcessingPreview, setIsProcessingPreview] = useState(false);
-  const [hasBeenTranscribed, setHasBeenTranscribed] = useState(false);
   // True from the moment recording stops until the final transcription is
   // displayed. Keeps the live transcript and a status indicator on screen so
   // the UI never appears to freeze while audio is being assembled / decoded
@@ -954,8 +929,6 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
-  // Auto-transcribe: when enabled, transcription starts automatically after recording stops
-  const [autoTranscribe, setAutoTranscribe] = useState(true);
 
   // Dictation device (Philips SpeechMike) — WebHID connection state
   const [dictationDevice, setDictationDevice] = useState(null); // connected device name or null
@@ -1041,7 +1014,6 @@ export default function App() {
           savedAutoGainControl,
           savedRemoteMicGain,
           savedShowConfidenceHeatmap,
-          savedAutoTranscribe,
           savedAutoCopyToClipboard,
           savedPersistTranscripts,
           savedShowAdvancedInfo,
@@ -1070,7 +1042,6 @@ export default function App() {
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
           loadSetting('showConfidenceHeatmap', false),
-          loadSetting('autoTranscribe', true),
           loadSetting('autoCopyToClipboard', false),
           // Load with `null` so the F-132 default below can tell "never set"
           // apart from an explicit choice (see the setPersistTranscripts comment).
@@ -1110,7 +1081,6 @@ export default function App() {
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
         setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
-        setAutoTranscribe(savedAutoTranscribe);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
         // F-132: strict privacy-first default. When the toggle key is null
         // (fresh install, profile import without the toggle, manual DevTools
@@ -1202,8 +1172,8 @@ export default function App() {
     // entire DOM + React state is held in memory and restored on Back.
     // For a privacy-sensitive transcript UI on a shared machine this is
     // a cross-actor leak: the next person who hits Back sees the prior
-    // user's transcript. Revoke the audio preview URL eagerly so the
-    // restored page can't replay the recording; then on the matching
+    // user's transcript. Revoke every per-entry audio URL eagerly so the
+    // restored page can't replay any recording; then on the matching
     // pageshow event with event.persisted=true, force a full reload so
     // every visit re-asks for mic permission and starts from a blank UI.
     const handlePageHide = (e) => {
@@ -1216,7 +1186,7 @@ export default function App() {
       // so it is a harmless no-op when nothing is recording or transcribing.
       releaseKeepalive();
       if (e.persisted) {
-        setAudioPreviewUrl(null);
+        for (const id of [...entryAudioUrlsRef.current.keys()]) revokeEntryAudioUrl(id);
       }
     };
     const handlePageShow = (e) => {
@@ -1233,7 +1203,7 @@ export default function App() {
       window.removeEventListener('pagehide', handlePageHide);
       window.removeEventListener('pageshow', handlePageShow);
     };
-  }, [setAudioPreviewUrl]);
+  }, []);
 
   // When local fallback is enabled, verify model files are actually present
   // on the server so the admin gets early feedback about misconfiguration.
@@ -1301,7 +1271,7 @@ export default function App() {
           }
           // After model is loaded: R/Space start recording
           e.preventDefault();
-          if (status === 'modelReady' && !isTranscribing && !pendingAudioFile) {
+          if (status === 'modelReady' && !isTranscribing) {
             startRecordingCountdown();
           }
           break;
@@ -1309,16 +1279,8 @@ export default function App() {
         case 'f':
           // Send a file
           e.preventDefault();
-          if (fileInputRef.current && status === 'modelReady' && !isTranscribing && !isRecording && !pendingAudioFile && !isProcessingPreview) {
+          if (fileInputRef.current && status === 'modelReady' && !isTranscribing && !isRecording) {
             fileInputRef.current.click();
-          }
-          break;
-
-        case 't':
-          // Start transcribing
-          e.preventDefault();
-          if (status === 'modelReady' && !isTranscribing && pendingAudioFile && audioPreviewUrl && !isProcessingPreview && !hasBeenTranscribed) {
-            startTranscription();
           }
           break;
 
@@ -1329,7 +1291,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [status, isRecording, isPaused, isTranscribing, pendingAudioFile, audioPreviewUrl, isProcessingPreview, hasBeenTranscribed, recordingCountdown]);
+  }, [status, isRecording, isPaused, isTranscribing, recordingCountdown]);
 
   // Monitor memory usage and system strain.
   //
@@ -1513,7 +1475,6 @@ export default function App() {
     } catch (_) { /* channel may be closing */ }
   }, [isRemoteMic, noiseSuppression, echoCancellation, autoGainControl, remoteMicGain]);
   usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
-  usePersistedSetting('autoTranscribe', autoTranscribe, settingsLoaded);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
   usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
   usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
@@ -1547,8 +1508,6 @@ export default function App() {
       saveTranscripts(transcriptions);
     }
   }, [transcriptions, settingsLoaded, persistTranscripts]);
-  // Keep ref in sync so recorder.onstop callback always reads the latest value
-  useEffect(() => { autoTranscribeRef.current = autoTranscribe; }, [autoTranscribe]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
   useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
 
@@ -2200,28 +2159,20 @@ export default function App() {
       setAudioContext(null);
     }
 
-    // Build a WAV file from the 16kHz PCM — used for both preview and transcription
+    // Build a WAV from the 16kHz PCM. It travels with the resulting entry as
+    // its in-memory audio (inline player + "Transcribe again").
     const wavBlob = createWavBlob(pcm16k, targetSampleRate);
     const file = new File([wavBlob], `recording-${Date.now()}.wav`, { type: 'audio/wav' });
-
-    // Preview
-    setPendingAudioFile(file);
-    const previewUrl = URL.createObjectURL(wavBlob);
-    setAudioPreviewUrl(previewUrl);
     setStatus('modelReady');
 
-    setHasBeenTranscribed(false);
-
-    // Auto-transcribe if enabled. Feed the recorded 16kHz PCM straight to the
-    // transcription core (not processAudioFile, which would decode+resample the
-    // WAV again at the device rate and back, degrading the signal). The entry
-    // carries this exact PCM + WAV so "Transcribe again" stays lossless.
-    if (autoTranscribeRef.current && modelRef.current) {
-      console.log('[Record] Auto-transcribing...');
+    // Feed the recorded 16kHz PCM straight to the transcription core (not
+    // processAudioFile, which would decode+resample the WAV again at the device
+    // rate and back, degrading the signal). The entry carries this exact PCM +
+    // WAV so "Transcribe again" stays lossless.
+    if (modelRef.current) {
+      console.log('[Record] Transcribing...');
       const safeName = sanitizeDeviceName(file.name, 'file');
-      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob }).then(() => {
-        setHasBeenTranscribed(true);
-      });
+      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob });
     }
   }
 
@@ -2598,7 +2549,7 @@ export default function App() {
           // phone bundle (e.g. a coerced spousal-monitoring build) could
           // skip the audio-config step entirely and stream chunks against
           // the default 16 kHz rate. pcmChunksRef would accumulate and
-          // (with autoTranscribe on) reach the model on the next
+          // reach the model on the next
           // audio-end, but remoteMicRecording would stay false the whole
           // time so the desktop's UI would show no recording indicator.
           // Dropping chunks until audio-config arrives keeps the
@@ -2754,24 +2705,17 @@ export default function App() {
     const pcm16k = await resamplePcmTo16k(rawPcm, sourceSampleRate);
     console.log(`[RemoteMic] Final: ${pcm16k.length} samples at 16kHz (${(pcm16k.length / 16000).toFixed(2)}s)`);
 
-    // Build WAV and feed to existing pipeline
+    // Build WAV and feed to the transcription core. It travels with the entry.
     const wavBlob = createWavBlob(pcm16k, targetSampleRate);
     const file = new File([wavBlob], `remote-mic-${Date.now()}.wav`, { type: 'audio/wav' });
-
-    setPendingAudioFile(file);
-    const previewUrl = URL.createObjectURL(wavBlob);
-    setAudioPreviewUrl(previewUrl);
     setStatus('modelReady');
-    setHasBeenTranscribed(false);
 
-    // Auto-transcribe if enabled. Feed the already-16kHz PCM directly so we
-    // don't decode+resample the WAV a second time (see stopRecording).
-    if (autoTranscribeRef.current && modelRef.current) {
-      console.log('[RemoteMic] Auto-transcribing...');
+    // Feed the already-16kHz PCM directly so we don't decode+resample the WAV a
+    // second time (see stopRecording).
+    if (modelRef.current) {
+      console.log('[RemoteMic] Transcribing...');
       const safeName = sanitizeDeviceName(file.name, 'file');
-      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob }).then(() => {
-        setHasBeenTranscribed(true);
-      });
+      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob });
     }
   }
 
@@ -3026,50 +2970,6 @@ export default function App() {
   }, [dictationEnabled]);
 
   // Helper function to resample audio to 16kHz mono and create a WAV blob for preview
-  async function resampleToPreview(file) {
-    console.log(`[Preview] Resampling "${file.name}" to 16kHz mono...`);
-
-    // The AudioContext owns a real audio thread and the decoded native-rate
-    // AudioBuffer (often hundreds of MB for long files). Without close() it
-    // sits around until GC eventually catches it; repeated previews of large
-    // files would balloon the tab. try/finally guarantees teardown.
-    let audioCtx = null;
-    try {
-      const buf = await file.arrayBuffer();
-
-      // Decode at native sample rate
-      audioCtx = new AudioContext();
-      const decoded = await audioCtx.decodeAudioData(buf);
-
-      // Resample to 16kHz mono using OfflineAudioContext (auto-tears down
-      // after startRendering, no explicit close needed).
-      const targetSampleRate = 16000;
-      const offlineCtx = new OfflineAudioContext(
-        1,  // mono
-        Math.ceil(decoded.duration * targetSampleRate),
-        targetSampleRate
-      );
-
-      const source = offlineCtx.createBufferSource();
-      source.buffer = decoded;
-      source.connect(offlineCtx.destination);
-      source.start();
-
-      const resampled = await offlineCtx.startRendering();
-
-      // Create WAV file from the resampled audio
-      const pcm = resampled.getChannelData(0);
-      const wavBlob = createWavBlob(pcm, targetSampleRate);
-
-      console.log(`[Preview] Resampled to 16kHz mono (${(pcm.length / targetSampleRate).toFixed(2)}s)`);
-
-      return wavBlob;
-    } finally {
-      if (audioCtx) {
-        try { await audioCtx.close(); } catch (_) { /* already closed */ }
-      }
-    }
-  }
 
   // Helper to create a WAV blob from PCM Float32Array
   function createWavBlob(pcmData, sampleRate) {
@@ -3449,59 +3349,17 @@ export default function App() {
 
     // The model must be fully ready before we accept a file. If it is still
     // loading (or was never loaded), refuse the file outright with a clear
-    // message instead of stashing it in the player and silently dropping it
-    // when processAudioFile later bails on the same guard.
+    // message instead of silently dropping it when processAudioFile later
+    // bails on the same guard.
     if (!modelRef.current) {
       alert(status === 'loadingModel' ? t('modelStillLoading') : t('loadModelFirst'));
       return;
     }
 
-    // Store the file for later transcription
-    setPendingAudioFile(file);
-    setHasBeenTranscribed(false);
-    
-    // Process the audio to show what the model will hear (16kHz mono)
-    setIsProcessingPreview(true);
-    setStatus('processingPreview');
-    
-    try {
-      const resampledBlob = await resampleToPreview(file);
-      const previewUrl = URL.createObjectURL(resampledBlob);
-      setAudioPreviewUrl(previewUrl);
-      setStatus('modelReady');
-    } catch (err) {
-      console.error('[Preview] Failed to process audio:', err);
-      // Fallback to original file if processing fails
-      setAudioPreviewUrl(URL.createObjectURL(file));
-      setStatus('modelReady');
-    } finally {
-      setIsProcessingPreview(false);
-    }
-
-    // Always transcribe uploaded files immediately. Unlike recordings,
-    // there's no separate trigger to start transcription for file uploads.
+    // Transcribe the uploaded file immediately. processAudioFile decodes +
+    // resamples to 16kHz, then runTranscription appends a history entry that
+    // carries the resampled audio for inline playback / "Transcribe again".
     await processAudioFile(file);
-    setHasBeenTranscribed(true);
-  }
-
-  function clearPendingAudio() {
-    setPendingAudioFile(null);
-    setAudioPreviewUrl(null); // setter revokes the previous blob URL
-    setHasBeenTranscribed(false);
-    setIsProcessingPreview(false);
-    // The user threw away the just-recorded audio, so there is nothing
-    // left to wait for. Hide the live transcript / "awaiting" UI.
-    setAwaitingFinal(false);
-    setLiveTranscript({ text: '', words: [] });
-  }
-
-  async function startTranscription() {
-    if (!pendingAudioFile) return;
-    
-    await processAudioFile(pendingAudioFile);
-    
-    // Mark as transcribed but keep the audio in the player
-    setHasBeenTranscribed(true);
   }
 
   function clearTranscriptions() {
@@ -3989,7 +3847,7 @@ export default function App() {
           </button>
         </div>
         <p className="app-header__status">
-          {(status === 'loadingModel' || isTranscribing || isProcessingPreview || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
+          {(status === 'loadingModel' || isTranscribing || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
             <span className="spinner spinner--inline" aria-hidden="true" />
           )}
           {t('status')}: {t(status) || status}
@@ -4075,7 +3933,6 @@ export default function App() {
                     ['R / S / Space', t('shortcutStopRecording')],
                     ['R / Space', t('shortcutStartRecording')],
                     ['F', t('shortcutSelectFile')],
-                    ['T', t('shortcutTranscribe')],
                     ['L', t('shortcutLoadModel')],
                   ].map(([key, desc]) => (
                     <tr key={key}>
@@ -4189,14 +4046,6 @@ export default function App() {
                   {t('liveStreamingNote')}
                 </p>
               )}
-            </div>
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={autoTranscribe} onChange={e => setAutoTranscribe(e.target.checked)} />
-                {t('autoTranscribeAfterRecording')}
-                <InfoTooltip text={t('tooltipAutoTranscribe')} />
-              </label>
             </div>
 
             <div className="setting-row">
@@ -4711,16 +4560,16 @@ export default function App() {
           type="file"
           accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.opus,.webm"
           onChange={transcribeFile}
-          disabled={!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview}
+          disabled={!status === 'modelReady' || isTranscribing || isRecording}
           style={{ display: 'none' }}
           id="audio-file-input"
         />
-        <label 
+        <label
           htmlFor="audio-file-input"
           className="file-upload-button"
           style={{
-            opacity: (!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview) ? 0.5 : 1,
-            pointerEvents: (!status === 'modelReady' || isTranscribing || isRecording || isProcessingPreview) ? 'none' : 'auto',
+            opacity: (!status === 'modelReady' || isTranscribing || isRecording) ? 0.5 : 1,
+            pointerEvents: (!status === 'modelReady' || isTranscribing || isRecording) ? 'none' : 'auto',
             flex: 1
           }}
           data-umami-event="upload_file_button"
@@ -4903,16 +4752,8 @@ export default function App() {
         }}>
           {awaitingFinal && (
             <div style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginBottom: '0.35rem', fontStyle: 'italic', display: 'flex', alignItems: 'center' }}>
-              {(!pendingAudioFile || isTranscribing) && (
-                <span className="spinner spinner--inline" aria-hidden="true" />
-              )}
-              {!pendingAudioFile
-                ? t('receivingAudio')
-                : isTranscribing
-                  ? t('runningFinalTranscription')
-                  : !hasBeenTranscribed
-                    ? t('awaitingTranscribeClick')
-                    : t('liveTranscriptKept')}
+              <span className="spinner spinner--inline" aria-hidden="true" />
+              {isTranscribing ? t('runningFinalTranscription') : t('receivingAudio')}
             </div>
           )}
           {liveTranscript.text
@@ -4928,70 +4769,6 @@ export default function App() {
             </div>
           )}
         </div>
-      )}
-
-      {/* Placeholder shown where the audio player will land, so the user
-          sees explicit "waiting for audio" feedback instead of a blank gap
-          between stop and the player appearing. */}
-      {awaitingFinal && !pendingAudioFile && (
-        <div className="audio-preview-container" style={{ opacity: 0.85 }}>
-          <div className="audio-preview-header" style={{ display: 'flex', alignItems: 'center' }}>
-            <span className="spinner spinner--inline" aria-hidden="true" />
-            <strong>{t('preparingAudioPreview')}</strong>
-          </div>
-          <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-subtle)', fontSize: '0.9em' }}>
-            {t('preparingAudioHint')}
-          </div>
-        </div>
-      )}
-
-      {/* Audio preview player */}
-      {pendingAudioFile && (
-        <div className="audio-preview-container">
-          <div className="audio-preview-header">
-            <strong>📎 {pendingAudioFile.name}</strong>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
-              {t('whatModelHears')}
-            </span>
-          </div>
-          {isProcessingPreview ? (
-            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="spinner spinner--inline" aria-hidden="true" />
-              {t('processingAudioPreview')}
-            </div>
-          ) : audioPreviewUrl ? (
-            <div className="audio-player-wrapper">
-              <audio 
-                controls 
-                src={audioPreviewUrl}
-                className="audio-player"
-              />
-              <button
-                onClick={clearPendingAudio}
-                className="clear-audio-button"
-                title={t('clearAudioFile')}
-                aria-label={t('clearAudioFile')}
-              >
-                ✕
-              </button>
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      {/* Transcribe button — only shown while transcribing, or when there is
-          pending audio but auto-transcribe is off (so the user must trigger it manually) */}
-      {(isTranscribing || (pendingAudioFile && !autoTranscribe && !hasBeenTranscribed)) && (
-        <button
-          onClick={startTranscription}
-          disabled={!status === 'modelReady' || isTranscribing || !pendingAudioFile || !audioPreviewUrl || isProcessingPreview || hasBeenTranscribed}
-          className="primary transcribe-button"
-          style={{ marginTop: pendingAudioFile ? '0' : '1rem', marginBottom: '1rem' }}
-          data-umami-event="transcribe_button"
-        >
-          {isTranscribing && <span className="spinner spinner--inline" aria-hidden="true" />}
-          {isTranscribing ? t('transcribing') : t('transcribe')}
-        </button>
       )}
 
       {progressPct!==null && (

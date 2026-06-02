@@ -855,77 +855,8 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   color: var(--text-muted);
 }
 
-/* ─── Audio preview ──────────────────────────────────────────────────────── */
-.audio-preview-container {
-  margin: 1rem 0;
-  padding: 1rem;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.audio-preview-header {
-  font-size: 0.9rem;
-  color: var(--text-muted);
-  margin-bottom: 0.75rem;
-}
-
-.audio-player-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
+/* ─── Audio player (inline, per transcript entry) ────────────────────────── */
 .audio-player { flex: 1; height: 40px; }
-
-.clear-audio-button {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--danger);
-  background: var(--bg-card);
-  color: var(--danger);
-  font-size: 1rem;
-  font-weight: bold;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  transition: background 0.2s, color 0.2s, transform 0.15s;
-  flex-shrink: 0;
-}
-
-.clear-audio-button:hover {
-  background: var(--danger);
-  color: #ffffff;
-  transform: scale(1.1);
-}
-
-.clear-audio-button:active { transform: scale(0.95); }
-
-/* ─── Transcribe button ──────────────────────────────────────────────────── */
-.transcribe-button {
-  width: 100%;
-  padding: 1rem 1.5rem !important;
-  font-size: 1.15rem !important;
-  font-weight: 600;
-  border-radius: var(--radius-lg) !important;
-  box-shadow: var(--shadow-glow);
-  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
-}
-
-.transcribe-button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  filter: brightness(1.05);
-}
-
-.transcribe-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
 
 /* ─── Heatmap + display-mode toggles ────────────────────────────────────── */
 .heatmap-toggle-button {
