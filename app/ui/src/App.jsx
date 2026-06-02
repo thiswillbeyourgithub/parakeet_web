@@ -1004,7 +1004,18 @@ export default function App() {
         setTranscriptDisplayMode(savedTranscriptDisplayMode);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
-        setBoostPhrases(typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
+        const restoredSource = typeof savedBoostSource === 'string' ? savedBoostSource : BOOST_SOURCE_CUSTOM;
+        // For a curated source, deliberately leave boostPhrases empty here: the
+        // one-shot init effect below calls applyBoostSource(), which loads the
+        // list's server-prebuilt encoding (.json) into prebuiltBoostRef *before*
+        // setting boostPhrases. Seeding it from the saved text now would fire the
+        // rebuild effect while prebuiltBoostRef is still null, forcing a full
+        // from-scratch BPE re-encode of the whole list (tens of seconds, and
+        // UI-freezing on the worker-less fallback path) that the prebuilt exists
+        // to avoid; worse, applyBoostSource's later setBoostPhrases(sameText)
+        // would be a no-op, so the prebuilt would never get a chance to apply.
+        setBoostPhrases(restoredSource === BOOST_SOURCE_CUSTOM && typeof savedBoostPhrases === 'string'
+          ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
         setBoostCaseInsensitive(savedBoostCaseInsensitive === true);
         {
@@ -1015,7 +1026,7 @@ export default function App() {
           const seedCustom = customText || (typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
           setBoostCustomText(seedCustom);
           boostCustomTextRef.current = seedCustom;
-          setBoostSource(typeof savedBoostSource === 'string' ? savedBoostSource : BOOST_SOURCE_CUSTOM);
+          setBoostSource(restoredSource);
         }
         setSettingsLoaded(true);
       } catch (e) {
