@@ -401,7 +401,7 @@ function truncateFilename(filename, maxLength = 40) {
 }
 
 export default function App() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const repoId = CONFIG.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
   // Where model weights are served from:
   //   'hf'    : HuggingFace only (default)
@@ -3636,7 +3636,7 @@ export default function App() {
           <p>{t('infoDescription2')}</p>
           <p style={{ fontSize: '0.85rem', marginTop: '1rem', marginBottom: 0 }}>
             <strong>{t('sourceCode')}:</strong>{' '}
-            <a href="https://github.com/thiswillbeyourgithub/parakeet_web" target="_blank" rel="noopener noreferrer">ParakeetWeb</a>
+            <a href={lang === 'fr' ? 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/master/README_fr.md' : 'https://github.com/thiswillbeyourgithub/parakeet_web'} target="_blank" rel="noopener noreferrer">ParakeetWeb</a>
           </p>
           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('feedback')}:</strong> {t('feedbackText')}{' '}
