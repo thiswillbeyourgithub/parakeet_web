@@ -169,7 +169,7 @@ This feature was implemented with [Claude Code](https://www.anthropic.com/claude
 
 ## Remote Microphone (Phone as Mic)
 
-No local microphone? Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
+**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
 
 1. Click the **Phone Mic** button in the app
 2. A QR code appears — scan it with your phone
