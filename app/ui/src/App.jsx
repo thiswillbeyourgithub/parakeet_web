@@ -1262,7 +1262,7 @@ export default function App() {
         case ' ':
         case 'enter':
           // Before model is loaded: Space/Enter trigger model loading
-          if (!status === 'modelReady' && (key === ' ' || key === 'enter')) {
+          if (status !== 'modelReady' && (key === ' ' || key === 'enter')) {
             if ((status === 'failed' || status === 'transcriptionFailed') || status === 'idle') {
               e.preventDefault();
               loadModel();
@@ -3803,6 +3803,14 @@ export default function App() {
     loadModel();
   };
 
+  // The model is fully loaded once its tokenizer vocab signature is published
+  // (set to null at the start of loadModel, non-null on success, and left
+  // untouched through the recording/transcribing status churn). Gating the
+  // record / upload / remote-mic controls on this means they never appear while
+  // the model is still downloading or creating sessions, removing the window in
+  // which a user could click them before the worker is ready.
+  const modelLoaded = tokenizerVocabSig !== null;
+
   return (
     <div className="app">
       {devMode && (
@@ -4554,13 +4562,14 @@ export default function App() {
         <Banner tone="warning">{t('sharedArrayBufferWarning')}</Banner>
       )}
 
+      {modelLoaded && (
       <div className="controls">
-        <input 
+        <input
           ref={fileInputRef}
           type="file"
           accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.opus,.webm"
           onChange={transcribeFile}
-          disabled={!status === 'modelReady' || isTranscribing || isRecording}
+          disabled={isTranscribing || isRecording}
           style={{ display: 'none' }}
           id="audio-file-input"
         />
@@ -4568,8 +4577,8 @@ export default function App() {
           htmlFor="audio-file-input"
           className="file-upload-button"
           style={{
-            opacity: (!status === 'modelReady' || isTranscribing || isRecording) ? 0.5 : 1,
-            pointerEvents: (!status === 'modelReady' || isTranscribing || isRecording) ? 'none' : 'auto',
+            opacity: (isTranscribing || isRecording) ? 0.5 : 1,
+            pointerEvents: (isTranscribing || isRecording) ? 'none' : 'auto',
             flex: 1
           }}
           data-umami-event="upload_file_button"
@@ -4619,7 +4628,7 @@ export default function App() {
             {!remoteMicRecording && (
               <button
                 onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-                disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing}
+                disabled={(status !== 'modelReady' && recordingCountdown === null) || isTranscribing}
                 className="primary record-button"
                 style={{
                   background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
@@ -4642,7 +4651,7 @@ export default function App() {
           <>
             <button
               onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-              disabled={(!status === 'modelReady' && recordingCountdown === null) || isTranscribing || isRemoteMic}
+              disabled={(status !== 'modelReady' && recordingCountdown === null) || isTranscribing || isRemoteMic}
               className="primary record-button"
               style={{
                 background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
@@ -4664,7 +4673,8 @@ export default function App() {
           </>
         )}
       </div>
-      
+      )}
+
       {recordingCountdown !== null && (
         <Banner tone="warning" style={{ marginTop: '0.5rem', fontSize: '1.1em', fontWeight: 'bold', justifyContent: 'center' }}>
           {t('getReadyToSpeak')} {recordingCountdown}...
