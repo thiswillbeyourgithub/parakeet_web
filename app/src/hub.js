@@ -635,6 +635,19 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     encoderQ = 'fp32';
   }
 
+  // The inverse is a hard platform limit, not a missing feature: the fp32
+  // encoder is ~2.4 GB and cannot load on the WASM backend. A single
+  // ArrayBuffer in 32-bit WASM caps at ~2 GB (2^31-1, the same wall that makes
+  // wllama shard its GGUF files), and Chromium's blob-URL fetch caps around
+  // 2 GB too, so an fp32-on-WASM attempt dies with `TypeError: Failed to fetch`
+  // during ORT loadModel. WebGPU sidesteps both because weights go to GPU
+  // memory via the JSEP/WebGPU EP, not the WASM heap. fp32 is therefore
+  // WebGPU-only and has no automated test (the e2e tier is headless == WASM
+  // int8); see CLAUDE.md. We don't auto-downgrade here because the app's
+  // backend/quant defaults never pair fp32 with WASM; if that ever changes,
+  // add a guard (force int8 or throw a clear error) rather than letting it
+  // fail opaquely.
+
   const encoderSuffix = encoderQ === 'int8' ? '.int8.onnx' : '.onnx';
   const decoderSuffix = decoderQ === 'int8' ? '.int8.onnx' : '.onnx';
 
