@@ -632,6 +632,98 @@ export class ParakeetModel {
   }
 
   /**
+   * Emitted-token id sequence of a backpointer hypothesis, oldest-first. Walks
+   * the parent chain (cheap at the small beam widths this decoder targets).
+   * @param {object} hyp
+   * @returns {number[]}
+   */
+  _hypIds(hyp) {
+    const ids = [];
+    for (let node = hyp; node && node.parent; node = node.parent) {
+      if (node.emit) ids.push(node.id);
+    }
+    ids.reverse();
+    return ids;
+  }
+
+  /**
+   * Prefix-search recombination (NeMo's `prefix_search` / `maes_prefix_alpha`).
+   * Run at the start of each round on the current beam: whenever a shorter
+   * hypothesis is a strict prefix of a longer one and they sit on the SAME
+   * encoder frame, fold the probability of extending the short hypothesis into
+   * the long one's tokens (at duration 0, since the extension must not advance
+   * the frame) into the long hypothesis' score via log-sum-exp. This stops the
+   * beam from double-counting the shared prefix and credits the longer path with
+   * the mass it would otherwise lose to its own prefix.
+   *
+   * `maesPrefixAlpha` bounds the length gap considered (NeMo default 1). The
+   * extension is scored on the TRUE model distribution (phrase-boost is a
+   * per-emission search bias applied during expansion, not re-applied here). All
+   * decoder states allocated while scoring are throwaway and disposed; the
+   * hypotheses' own stored states are never touched (scores only are updated).
+   * @param {Array<object>} beam
+   * @param {Float32Array} transposed
+   * @param {number} D
+   * @param {object} opts - { maesPrefixAlpha }
+   */
+  async _prefixSearch(beam, transposed, D, opts) {
+    const { maesPrefixAlpha } = opts;
+    if (maesPrefixAlpha <= 0 || beam.length < 2) return;
+
+    // Only hypotheses on the same frame can recombine (NeMo's last_frame group).
+    const byFrame = new Map();
+    for (const h of beam) {
+      const g = byFrame.get(h.t);
+      if (g) g.push(h); else byFrame.set(h.t, [h]);
+    }
+
+    for (const [t, group] of byFrame) {
+      if (group.length < 2) continue;
+      const entries = group.map(h => ({ hyp: h, ids: this._hypIds(h) }));
+      // Longest first so a long hypothesis can absorb every shorter prefix.
+      entries.sort((a, b) => b.ids.length - a.ids.length);
+      const frameBuf = transposed.subarray(t * D, (t + 1) * D);
+
+      for (let i = 0; i < entries.length; i++) {
+        const longE = entries[i];
+        for (let j = i + 1; j < entries.length; j++) {
+          const shortE = entries[j];
+          const gap = longE.ids.length - shortE.ids.length;
+          if (gap < 1 || gap > maesPrefixAlpha) continue;
+          // shortE must be a strict prefix of longE.
+          let isPrefix = true;
+          for (let k = 0; k < shortE.ids.length; k++) {
+            if (shortE.ids[k] !== longE.ids[k]) { isPrefix = false; break; }
+          }
+          if (!isPrefix) continue;
+
+          // Score the extension tokens (forced) from the short hypothesis'
+          // decoder state, all at duration 0 on frame `t`.
+          const extension = longE.ids.slice(shortE.ids.length);
+          let state = shortE.hyp.state;
+          let prevTok = shortE.hyp.lastTok;
+          let extLogp = 0;
+          for (const tok of extension) {
+            const enc = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
+            const { tokenLogits, durLogits, newState, _logitsTensor } =
+              await this._runCombinedStep(enc, prevTok, state);
+            extLogp += (tokenLogits[tok] - this._logSumExp(tokenLogits))
+              + (durLogits[0] - this._logSumExp(durLogits));
+            _logitsTensor?.dispose?.();
+            enc.dispose?.();
+            if (state !== shortE.hyp.state) this._disposeDecoderState(state);
+            state = newState;
+            prevTok = tok;
+          }
+          if (state !== shortE.hyp.state) this._disposeDecoderState(state);
+
+          longE.hyp.score = this._logAddExp(longE.hyp.score, shortE.hyp.score + extLogp);
+        }
+      }
+    }
+  }
+
+  /**
    * Multi-hypothesis TDT beam search over the encoder frames, using Modified
    * Adaptive Expansion Search (MAES, Kim et al. 2020 — NeMo's `maes` strategy).
    * Returns the winning hypothesis' decoded ids and per-frame/per-token
@@ -646,15 +738,17 @@ export class ParakeetModel {
    * MAES knobs (defaults match NeMo): `beamWidth` is the global beam cap kept
    * after each round; `maesExpansionBeta` over-generates to top-(beamWidth+beta)
    * per hypothesis; `maesExpansionGamma` adaptively prunes those expansions by
-   * log-prob (see `_expandHyp`); `maesNumSteps` caps symbols emitted per frame.
-   * The one MAES feature deliberately omitted is prefix-search recombination
-   * (`maes_prefix_alpha`): faithful prefix merging over this backpointer-node
-   * structure is high-risk for marginal gain on this model, so it is left out.
+   * log-prob (see `_expandHyp`); `maesNumSteps` caps symbols emitted per frame;
+   * `maesPrefixAlpha` bounds prefix-search recombination (see `_prefixSearch`;
+   * 0 disables it). Each round: prefix-search recombination over the current
+   * beam, then per-hypothesis (token, duration) expansion, then duplicate-merge,
+   * then prune to `beamWidth`. The duration index equals the frame advance
+   * throughout (the model's TDT duration head is an identity-indexed skip count).
    * @returns {{ids: number[], tokenTimes: Array, tokenConfs: number[], frameConfs: number[], overallLogProb: number}}
    */
   async _decodeBeam(transposed, D, Tenc, opts) {
     const { beamWidth, frameStride, phraseBoost, returnTimestamps, returnConfidences, timeStride,
-            maesNumSteps, maesExpansionBeta, maesExpansionGamma } = opts;
+            maesNumSteps, maesExpansionBeta, maesExpansionGamma, maesPrefixAlpha } = opts;
 
     if (Tenc <= 0) return { ids: [], tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0 };
 
@@ -676,6 +770,11 @@ export class ParakeetModel {
       while (beam.length) {
         if (round % 25 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         round++;
+
+        // Prefix-search recombination over the current beam (NeMo runs this on
+        // kept_hyps before expansion). Updates scores only; never mutates the
+        // hypotheses' stored decoder states.
+        await this._prefixSearch(beam, transposed, D, { maesPrefixAlpha });
 
         // Decoder-state GC via per-round mark-and-sweep. `disposable` collects
         // every state that *might* become free this round (the consumed parents,
@@ -813,6 +912,7 @@ export class ParakeetModel {
       maesNumSteps = 2,
       maesExpansionBeta = 2,
       maesExpansionGamma = 2.3,
+      maesPrefixAlpha = 1,
     } = opts;
 
     // Beam search is full-file only: a beam of N hypotheses cannot be serialized
@@ -1040,6 +1140,7 @@ export class ParakeetModel {
         maesNumSteps: Math.max(1, Math.floor(maesNumSteps) || 1),
         maesExpansionBeta: Math.max(0, Math.floor(maesExpansionBeta) || 0),
         maesExpansionGamma: Number.isFinite(maesExpansionGamma) ? maesExpansionGamma : 2.3,
+        maesPrefixAlpha: Math.max(0, Math.floor(maesPrefixAlpha) || 0),
       });
       ids = out.ids;
       tokenTimes = out.tokenTimes;

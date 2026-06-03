@@ -46,6 +46,8 @@ function makeModel(script) {
     _logAddExp: proto._logAddExp,
     _topK: proto._topK,
     _expandHyp: proto._expandHyp,
+    _prefixSearch: proto._prefixSearch,
+    _hypIds: proto._hypIds,
     _decodeBeam: proto._decodeBeam,
     _disposeDecoderState: () => { statesDisposed++; },
     _runCombinedStep: async (encTensor) => {
@@ -167,7 +169,11 @@ const Tenc = script.length;
 // context-free script makes greedy globally optimal, so beam == greedy holds.
 // (The decoder gained MAES after the original script was written, which is why
 // the migrated test must thread these through; without them expandK is NaN.)
-const MAES = { maesNumSteps: 10, maesExpansionBeta: V, maesExpansionGamma: 100 };
+// maesPrefixAlpha: 0 keeps prefix-search recombination OFF for the equivalence,
+// duration-branching and merge tests (recombination legitimately changes scores
+// and is covered by its own test below); the other knobs disable pruning so the
+// beam is free to find the globally-optimal path.
+const MAES = { maesNumSteps: 10, maesExpansionBeta: V, maesExpansionGamma: 100, maesPrefixAlpha: 0 };
 
 async function runBeam(model, beamWidth, { phraseBoost = null, temperature = 1.0 } = {}) {
   phraseBoost?.reset();
@@ -259,6 +265,59 @@ describe('duplicate-hypothesis merging (#3)', () => {
     });
     assert.ok(eqArr(out.ids, [0, 1, 1]), 'merged X,Z path wins (would be [0,2,1] without merging)');
     assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak across the merge');
+  });
+});
+
+describe('prefix-search recombination (#2)', () => {
+  // Frame 3's joiner output (the only frame the prefix scorer touches here).
+  const pScript = [];
+  pScript[3] = { logits: [-1.0, 0.5, -2.0, -20, -20, -20], step: 1, durLogits: [0.0, -0.7, -20] };
+
+  // Two beam hypotheses on the SAME frame: short "X" (ids [0]) is a strict
+  // prefix of long "X,Y" (ids [0,1]). The expected extension log-prob is the
+  // duration-0 emission of Y from X's state at frame 3.
+  function makeBeam(longScore = -1.2, shortScore = -0.4) {
+    const root = { parent: null, emit: false, id: null };
+    const short = { parent: root, emit: true, id: 0, t: 3, lastTok: 0, state: { tag: 'S' }, score: shortScore };
+    const long = { parent: short, emit: true, id: 1, t: 3, lastTok: 1, state: { tag: 'L' }, score: longScore };
+    return { root, short, long, beam: [long, short] };
+  }
+  function expectedExtLogp(model) {
+    const lg = Float32Array.from(pScript[3].logits);
+    const dl = Float32Array.from(pScript[3].durLogits);
+    return (lg[1] - model._logSumExp(lg)) + (dl[0] - model._logSumExp(dl));
+  }
+
+  test('folds the prefix score into its extension via log-sum-exp', async () => {
+    const model = makeModel(pScript);
+    const { short, long } = makeBeam();
+    const longOrig = long.score, shortOrig = short.score;
+    statesCreated = statesDisposed = 0;
+    await model._prefixSearch([long, short], makeTransposed(4), D, { maesPrefixAlpha: 1 });
+    const expected = model._logAddExp(longOrig, shortOrig + expectedExtLogp(model));
+    assert.ok(close(long.score, expected), 'long score is recombined with short + extension');
+    assert.ok(close(short.score, shortOrig), 'short (prefix) score is unchanged');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'extension state disposed, short.state kept');
+  });
+
+  test('maesPrefixAlpha=0 disables recombination', async () => {
+    const model = makeModel(pScript);
+    const { short, long } = makeBeam();
+    const longOrig = long.score;
+    await model._prefixSearch([long, short], makeTransposed(4), D, { maesPrefixAlpha: 0 });
+    assert.ok(close(long.score, longOrig), 'no recombination when alpha is 0');
+  });
+
+  test('non-prefix pair is left untouched', async () => {
+    const model = makeModel(pScript);
+    // hypB ids [3] is NOT a prefix of hypA ids [0,1], so nothing recombines.
+    const root = { parent: null, emit: false, id: null };
+    const hypB = { parent: root, emit: true, id: 3, t: 3, lastTok: 3, state: {}, score: -0.4 };
+    const xNode = { parent: root, emit: true, id: 0, t: 3, lastTok: 0, state: {}, score: -0.5 };
+    const hypA = { parent: xNode, emit: true, id: 1, t: 3, lastTok: 1, state: {}, score: -1.2 };
+    const aOrig = hypA.score, bOrig = hypB.score;
+    await model._prefixSearch([hypA, hypB], makeTransposed(4), D, { maesPrefixAlpha: 1 });
+    assert.ok(close(hypA.score, aOrig) && close(hypB.score, bOrig), 'unrelated sequences are not recombined');
   });
 });
 
