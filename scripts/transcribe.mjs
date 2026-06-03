@@ -38,6 +38,25 @@ import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
 import { getModelConfig, DEFAULT_MODEL, listModels, INT8_SAFE_CHUNK_DURATION_SEC } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
+
+// Resolve the ORT module for the requested backend. 'wasm' (default) uses the
+// vendored onnxruntime-web Node build, the same engine family as the browser,
+// so the CLI and the tier-3 e2e behave identically. 'node' uses the native
+// onnxruntime-node binding (a devDependency): same JS Tensor/InferenceSession
+// API, so parakeet.js runs unchanged, but 64-bit memory, so it can load the
+// fp16 (~1.2 GB) and fp32 (~2.4 GB external) encoders that overflow the 32-bit
+// WASM heap. Native CPU upcasts fp16 to fp32 for compute, so it is a faithful
+// proxy for fp16 *quality* (the WebGPU path users would actually hit), not for
+// WASM memory limits. Lazy-imported so the default path never requires the
+// native package.
+async function getOrt(backend) {
+  if (backend === 'node') {
+    const m = await import('onnxruntime-node');
+    return m.default || m;
+  }
+  return ort;
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const BPE_MERGES = resolve(ROOT, 'app/ui/public/tokenizer/bpe-merges.json');
@@ -75,6 +94,7 @@ function parseArgs(argv) {
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',
+    ortBackend: 'wasm',
     threads: 0,            // 0 => ORT default
     timestamps: false,
     json: false,
@@ -107,6 +127,7 @@ function parseArgs(argv) {
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quant = val(flag); break;
+      case '--ort': a.ortBackend = val(flag); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
       case '--ffmpeg': a.ffmpeg = val(flag); break;
       case '--timestamps': a.timestamps = true; break;
@@ -119,7 +140,8 @@ function parseArgs(argv) {
     }
   }
   if (!a.audio) throw new Error('No audio file given. See --help.');
-  if (a.quant !== 'int8' && a.quant !== 'fp32') throw new Error(`--quant must be int8 or fp32 (got ${a.quant})`);
+  if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
+  if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ortBackend})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
   if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 25) throw new Error('--beam-width must be an integer in [1, 25]');
   if (!Number.isInteger(a.maesNumSteps) || a.maesNumSteps < 1) throw new Error('--maes-num-steps must be an integer >= 1');
@@ -205,7 +227,14 @@ Options:
                            Default: ${DEFAULT_MODEL}.
       --model-dir DIR      Directory holding the .onnx files + vocab.txt.
                            Defaults to the HuggingFace cache for the model.
-      --quant int8|fp32    Encoder/decoder quantisation. Default int8.
+      --quant int8|fp16|fp32
+                           Encoder/decoder quantisation. Default int8. fp16 files
+                           come from scripts/quantize-fp16.py (~1.2 GB encoder,
+                           near-lossless vs fp32).
+      --ort wasm|node      ORT backend. Default wasm (onnxruntime-web, the engine
+                           the browser/e2e use). node = native onnxruntime-node
+                           (64-bit memory), required to load fp16/fp32 encoders
+                           that overflow the 32-bit WASM heap.
       --threads N          WASM thread count (default: ORT chooses).
       --timestamps         Include word timestamps and confidences in output.
       --json               Print the full result object as JSON.
@@ -299,9 +328,16 @@ export function resolveModelDir(cliDir, repoId) {
   return snap;
 }
 
+// Per-quant filename suffix. fp16 files are produced by scripts/quantize-fp16.py
+// from the fp32 pieces; fp32 is the plain name (with an external .onnx.data for
+// the encoder); int8 is the onnxruntime-quantized variant shipped on HF.
+const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
+
 export function resolveFiles(dir, quant) {
-  const enc = quant === 'int8' ? 'encoder-model.int8.onnx' : 'encoder-model.onnx';
-  const dec = quant === 'int8' ? 'decoder_joint-model.int8.onnx' : 'decoder_joint-model.onnx';
+  const suffix = QUANT_SUFFIX[quant];
+  if (!suffix) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
+  const enc = `encoder-model${suffix}`;
+  const dec = `decoder_joint-model${suffix}`;
   const vocab = 'vocab.txt';
   for (const f of [enc, dec, vocab]) {
     if (!existsSync(join(dir, f))) {
@@ -315,17 +351,24 @@ export function resolveFiles(dir, quant) {
   };
 }
 
-// Create an ORT session from a model file. For fp32 encoders with external
-// weights (encoder-model.onnx.data), pass the sidecar via externalData so the
-// WASM runtime can resolve the tensors it references.
-export async function createSession(modelPath, opts) {
+// Create an ORT session from a model file.
+//   - Native ('node'): pass the file PATH so the binding resolves any external
+//     encoder-model.onnx.data from disk itself, and we avoid reading multi-GB
+//     weights into a JS Buffer (Node Buffers cap at 2 GB, which is exactly why
+//     the fp32 encoder can't be buffered).
+//   - WASM: the build can't read from disk, so it gets the bytes as a Buffer
+//     plus an explicit externalData entry for the fp32 sidecar.
+export async function createSession(modelPath, opts, { ortMod = ort, fromPath = false } = {}) {
+  if (fromPath) {
+    return ortMod.InferenceSession.create(modelPath, opts);
+  }
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
   const dataPath = modelPath + '.data';
   if (existsSync(dataPath)) {
     sessionOpts.externalData = [{ path: basename(dataPath), data: await readFile(dataPath) }];
   }
-  return ort.InferenceSession.create(buf, sessionOpts);
+  return ortMod.InferenceSession.create(buf, sessionOpts);
 }
 
 // --- audio decode ---------------------------------------------------------
@@ -385,6 +428,7 @@ export async function loadParakeetModel({
   quant = 'int8',
   threads = 0,
   verbose = false,
+  ortBackend = 'wasm',
 } = {}) {
   const cfg = getModelConfig(modelKey);
   if (!cfg) throw new Error(`Unknown model "${modelKey}". Known: ${listModels().join(', ')}`);
@@ -392,14 +436,20 @@ export async function loadParakeetModel({
   const dir = resolveModelDir(modelDir, cfg.repoId);
   const { encoderPath, decoderPath, vocabPath } = resolveFiles(dir, quant);
 
-  // ORT WASM config.
-  if (threads > 0) ort.env.wasm.numThreads = threads;
-  ort.env.wasm.proxy = false;
-  ort.env.logLevel = verbose ? 'verbose' : 'error';
+  const ortMod = await getOrt(ortBackend);
+  const fromPath = ortBackend === 'node';
+  const executionProviders = fromPath ? ['cpu'] : ['wasm'];
 
+  if (ortBackend === 'wasm') {
+    if (threads > 0) ortMod.env.wasm.numThreads = threads;
+    ortMod.env.wasm.proxy = false;
+  }
+  ortMod.env.logLevel = verbose ? 'verbose' : 'error';
+
+  const sessOpts = { executionProviders, logSeverityLevel: verbose ? 0 : 3 };
   const [encoderSession, joinerSession, tokenizer] = await Promise.all([
-    createSession(encoderPath, { executionProviders: ['wasm'], logSeverityLevel: verbose ? 0 : 3 }),
-    createSession(decoderPath, { executionProviders: ['wasm'], logSeverityLevel: verbose ? 0 : 3 }),
+    createSession(encoderPath, sessOpts, { ortMod, fromPath }),
+    createSession(decoderPath, sessOpts, { ortMod, fromPath }),
     ParakeetTokenizer.fromUrl(vocabPath),
   ]);
 
@@ -409,7 +459,7 @@ export async function loadParakeetModel({
     encoderSession,
     joinerSession,
     preprocessor,
-    ort,
+    ort: ortMod,
     subsampling: cfg.subsampling,
     windowStride: 0.01,
     verbose,
@@ -500,8 +550,9 @@ async function main() {
     quant: args.quant,
     threads: args.threads,
     verbose: args.verbose,
+    ortBackend: args.ortBackend,
   });
-  console.error(`[transcribe] model: ${args.model} (${args.quant})`);
+  console.error(`[transcribe] model: ${args.model} (${args.quant}, ort=${args.ortBackend})`);
   console.error(`[transcribe] dir:   ${dir}`);
 
   const ffmpeg = findFfmpeg(args.ffmpeg);
