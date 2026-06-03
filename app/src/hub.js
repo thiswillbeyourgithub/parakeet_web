@@ -593,13 +593,65 @@ export async function checkLocalModelFiles(baseUrl) {
   }
 }
 
+// Map a resolved quant to its ONNX filename suffix. fp16 files are produced by
+// scripts/quantize-fp16.py and must be hosted in the model repo to be selected.
+export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
+
+/**
+ * Resolve the effective encoder/decoder quantisation for a backend, given what
+ * the repo actually ships. Pure (no I/O) so it can be unit-tested.
+ *
+ *   - Non-WebGPU (WASM): pinned to int8. The fp16 (~1.2 GB) and fp32 (~2.4 GB)
+ *     encoders overflow the 32-bit WASM heap: the CPU/WASM EP upcasts fp16 to
+ *     fp32, a single ArrayBuffer caps at ~2 GB, and Chromium's blob fetch caps
+ *     near 2 GB, so loading them dies with bad_alloc / "Failed to fetch".
+ *   - WebGPU: the GPU EP has no int8 encoder kernel, so it needs fp16 or fp32.
+ *     Prefer fp16 when the repo ships encoder-model.fp16.onnx (near-lossless vs
+ *     fp32, ~half the download, and unlike int8 it does not drop content past
+ *     ~20 s per chunk), else fall back to fp32. An explicit fp32 request is
+ *     honoured. The tiny decoder follows to fp16 only when fp16 was requested
+ *     and decoder_joint-model.fp16.onnx exists, otherwise stays int8 (which the
+ *     GPU EP runs fine).
+ *
+ * @param {Object} args
+ * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').
+ * @param {('int8'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
+ * @param {('int8'|'fp16'|'fp32')} args.decoderQuant Requested decoder quant.
+ * @param {string[]} args.repoFiles Filenames available in the repo.
+ * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, encoderFellBackToFp32: boolean}}
+ */
+export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles }) {
+  if (!backend.startsWith('webgpu')) {
+    return {
+      encoderQ: 'int8',
+      decoderQ: 'int8',
+      pinnedToInt8: encoderQuant !== 'int8' || decoderQuant !== 'int8',
+      encoderFellBackToFp32: false,
+    };
+  }
+  const hasFp16Enc = repoFiles.includes('encoder-model.fp16.onnx');
+  const hasFp16Dec = repoFiles.includes('decoder_joint-model.fp16.onnx');
+  let encoderQ = encoderQuant;
+  // int8/fp16 requests resolve to fp16-if-shipped-else-fp32; explicit fp32 stays.
+  if (encoderQ === 'int8' || encoderQ === 'fp16') {
+    encoderQ = hasFp16Enc ? 'fp16' : 'fp32';
+  }
+  const decoderQ = (decoderQuant === 'fp16' && hasFp16Dec) ? 'fp16' : 'int8';
+  return {
+    encoderQ,
+    decoderQ,
+    pinnedToInt8: false,
+    encoderFellBackToFp32: encoderQ === 'fp32' && encoderQuant !== 'fp32',
+  };
+}
+
 /**
  * Convenience function to get all Parakeet model files for a given architecture.
  * Accepts either a HuggingFace repo ID or a known model key from the registry.
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
  * @param {Object} [options]
- * @param {('int8'|'fp32')} [options.encoderQuant='int8'] Encoder quantization
- * @param {('int8'|'fp32')} [options.decoderQuant='int8'] Decoder quantization
+ * @param {('int8'|'fp16'|'fp32')} [options.encoderQuant='int8'] Requested encoder quant (resolved per backend/availability by resolveModelQuant)
+ * @param {('int8'|'fp16'|'fp32')} [options.decoderQuant='int8'] Requested decoder quant
  * @param {('nemo80'|'nemo128')} [options.preprocessor] Preprocessor variant (auto-detected from model config if not specified)
  * @param {('js'|'onnx')} [options.preprocessorBackend='js'] Preprocessor backend selection.
  *   'js' uses the pure-JS mel.js (no ONNX download needed, supports streaming).
@@ -625,38 +677,10 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // 'main' branch.
   const effectiveRevision = options.revision || modelConfig?.revision || 'main';
 
-  // Decide quantisation per component
-  let encoderQ = encoderQuant;
-  let decoderQ = decoderQuant;
-
-  // WebGPU currently doesn't support int8 quantized encoder
-  if (backend.startsWith('webgpu') && encoderQ === 'int8') {
-    console.warn('[Hub] Forcing encoder to fp32 on WebGPU (int8 unsupported)');
-    encoderQ = 'fp32';
-  }
-
-  // The inverse is a hard platform limit, not a missing feature: the fp32
-  // encoder is ~2.4 GB and cannot load on the WASM backend. A single
-  // ArrayBuffer in 32-bit WASM caps at ~2 GB (2^31-1, the same wall that makes
-  // wllama shard its GGUF files), and Chromium's blob-URL fetch caps around
-  // 2 GB too, so an fp32-on-WASM attempt dies with `TypeError: Failed to fetch`
-  // during ORT loadModel. WebGPU sidesteps both because weights go to GPU
-  // memory via the JSEP/WebGPU EP, not the WASM heap. fp32 is therefore
-  // WebGPU-only and has no automated test (the e2e tier is headless == WASM
-  // int8); see CLAUDE.md. We don't auto-downgrade here because the app's
-  // backend/quant defaults never pair fp32 with WASM; if that ever changes,
-  // add a guard (force int8 or throw a clear error) rather than letting it
-  // fail opaquely.
-
-  const encoderSuffix = encoderQ === 'int8' ? '.int8.onnx' : '.onnx';
-  const decoderSuffix = decoderQ === 'int8' ? '.int8.onnx' : '.onnx';
-
-  const encoderName = `encoder-model${encoderSuffix}`;
-  const decoderName = `decoder_joint-model${decoderSuffix}`;
-
-  // When using local fallback, skip the HF API call (it would fail anyway).
-  // HEAD-probe the optional .data files so we don't fire noisy 404s on the
-  // main GET path when the model has none.
+  // List the repo's files first: quant resolution below prefers fp16 when the
+  // repo actually ships it, and the .data inclusion checks need the listing too.
+  // Local fallback can't hit the HF API, so HEAD-probe the specific candidates
+  // we care about (the fp16 variants and the fp32 external-data sidecars).
   let repoFiles;
   if (localFallbackBaseUrl) {
     const probe = async (name) => {
@@ -665,11 +689,30 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         return res.ok ? name : null;
       } catch { return null; }
     };
-    const probed = await Promise.all([probe(`${encoderName}.data`), probe(`${decoderName}.data`)]);
-    repoFiles = probed.filter(Boolean);
+    const candidates = [
+      'encoder-model.fp16.onnx',
+      'decoder_joint-model.fp16.onnx',
+      'encoder-model.onnx.data',
+      'decoder_joint-model.onnx.data',
+    ];
+    repoFiles = (await Promise.all(candidates.map(probe))).filter(Boolean);
   } else {
     repoFiles = await listRepoFiles(repoId, effectiveRevision);
   }
+
+  // Resolve the effective quantisation per backend and per availability.
+  const { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
+    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles });
+  if (pinnedToInt8) {
+    console.warn(`[Hub] ${backend} backend is pinned to int8; ignoring requested `
+      + `encoder=${encoderQuant}/decoder=${decoderQuant} (fp16/fp32 overflow the WASM heap)`);
+  }
+  if (encoderFellBackToFp32) {
+    console.warn('[Hub] No fp16 encoder in repo; using the fp32 encoder on WebGPU');
+  }
+
+  const encoderName = `encoder-model${QUANT_SUFFIX[encoderQ]}`;
+  const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
   const filesToGet = [
     { key: 'encoderUrl', name: encoderName },

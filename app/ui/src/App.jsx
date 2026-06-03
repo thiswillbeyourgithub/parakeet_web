@@ -1966,13 +1966,18 @@ export default function App() {
       };
 
       // 1. Download all model files (from HF or local fallback).
-      // Pass `backend` so hub.js can pick the right encoder quant: WebGPU
-      // forces fp32 (~2.4 GB, no int8 support on the GPU EP), while WASM
-      // can use the int8 encoder (~600 MB) and stays under Chromium's
-      // ~2 GB blob URL fetch limit.
+      // Pass `backend` and a per-backend quant preference; hub.js resolves the
+      // final quant against what the repo actually ships (resolveModelQuant):
+      //   - WASM: int8 encoder (~600 MB), the only one that fits the 32-bit WASM
+      //     heap / Chromium's ~2 GB blob limit.
+      //   - WebGPU: prefer the fp16 encoder (~1.2 GB, near-lossless vs fp32 and,
+      //     unlike int8, no content loss past ~20 s per chunk) when the repo
+      //     ships encoder-model.fp16.onnx, else fp32 (~2.4 GB). The GPU EP has
+      //     no int8 encoder kernel.
+      const wantWebgpu = backend.startsWith('webgpu');
       const downloadOpts = {
-        encoderQuant: 'int8',
-        decoderQuant: 'int8',
+        encoderQuant: wantWebgpu ? 'fp16' : 'int8',
+        decoderQuant: wantWebgpu ? 'fp16' : 'int8',
         preprocessor,
         backend,
         progress: progressCallback,

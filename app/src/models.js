@@ -140,10 +140,12 @@ export function listModels() {
 // Default chunk window (seconds) for long-audio chunking, by backend. The WASM
 // backend runs the int8 encoder, which loses long-range information past ~20 s
 // within a single chunk and so silently drops content from a larger window; the
-// WebGPU backend runs the fp32 encoder, which transcribes the full window
+// WebGPU backend runs the fp16/fp32 encoder, which transcribes the full window
 // (parakeet-tdt v3 supports very long audio). So the default chunk window is
 // backend-aware. Verified by the fleurs-chunking e2e (int8 recovery at a 60 s
-// window is ~0.69 vs ~0.85 at 20 s; fp32 at 60 s is ~0.83). See ARCHITECTURE.md.
+// window is ~0.69 vs ~0.85 at 20 s; fp32 at 60 s is ~0.83) and by
+// scripts/wer-bench.mjs (int8 WER jumps 27.6% -> 43.9% from a 20 s to a 60 s
+// window, while fp16 and fp32 hold at 18.6%). See ARCHITECTURE.md.
 export const DEFAULT_CHUNK_DURATION_SEC = 60;
 export const INT8_SAFE_CHUNK_DURATION_SEC = 20;
 
