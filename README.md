@@ -8,7 +8,7 @@
 
 > ⚠️ **EXPERIMENTAL WIP** – Made with care but with AI. Expect bugs, breaking changes, and rough edges.
 
-**Try it now: [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/)** — no installation required.
+**Try it now at [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/):** nothing to install, no account to create, no ads, and no personal or cross-site tracking. It runs anywhere Chrome is installed, with all transcription happening locally in your browser.
 
 Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://olicorne.org)).
 

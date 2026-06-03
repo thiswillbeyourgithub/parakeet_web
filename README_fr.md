@@ -8,7 +8,7 @@
 
 > ⚠️ **PROJET EXPÉRIMENTAL EN COURS** – Réalisé avec soin mais avec l'IA. Attendez-vous à des bugs, des changements cassants et des aspérités.
 
-**Essayez-le maintenant : [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/)** — aucune installation requise.
+**Essayez-le maintenant sur [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/) :** rien à installer, aucun compte à créer, aucune publicité, aucun pistage personnel ni intersites. Fonctionne partout où Chrome est installé, et toute la transcription se fait localement dans votre navigateur.
 
 Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bio](https://olicorne.org)).
 

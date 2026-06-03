@@ -3939,8 +3939,11 @@ export default function App() {
           <p style={{ fontSize: '1.1rem', fontWeight: 'bold', textAlign: 'center', margin: '0.5rem 0 1rem', color: 'var(--accent)' }}>
             🔒 {t('tagline')}
           </p>
-          <p style={{ textAlign: 'center', fontSize: '0.95rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
+          <p style={{ textAlign: 'center', fontSize: '0.95rem', marginBottom: '0.5rem', color: 'var(--text-muted)' }}>
             {t('privacyEmphasis')}
+          </p>
+          <p style={{ textAlign: 'center', fontSize: '0.95rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
+            {t('instancePerks')}
           </p>
           <h4 style={{ marginBottom: '0.5rem' }}>{t('whatIsThis')}</h4>
           <p>{t('infoDescription1')}</p>
@@ -4627,8 +4630,11 @@ export default function App() {
           <p style={{ fontSize: '1.05rem', fontWeight: 'bold', textAlign: 'center', margin: '0 0 0.75rem', color: 'var(--accent)' }}>
             🔒 {t('tagline')}
           </p>
-          <p style={{ fontSize: '0.85rem', textAlign: 'center', margin: '0 0 1rem', color: 'var(--text-muted)' }}>
+          <p style={{ fontSize: '0.85rem', textAlign: 'center', margin: '0 0 0.5rem', color: 'var(--text-muted)' }}>
             {t('privacyEmphasis')}
+          </p>
+          <p style={{ fontSize: '0.85rem', textAlign: 'center', margin: '0 0 1rem', color: 'var(--text-muted)' }}>
+            {t('instancePerks')}
           </p>
           <button
             onClick={handleLoadModelClick}
