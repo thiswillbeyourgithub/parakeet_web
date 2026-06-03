@@ -202,6 +202,7 @@ slow, model-loading tier run separately.
 | `test/http/helpers.mjs` | Spawn/teardown helper for the signaling server, shared by the tier-2 tests. |
 | `test/e2e/transcription.spec.js` | **Tier 3** Playwright happy-path: loads the WASM int8 model in real headless Chromium and transcribes each clip in a fixture list (French `sample.aac` + English `jfk.mp3`) end to end against its golden. |
 | `test/e2e/chunking.spec.js` | **Tier 3** long-audio path: seeds a 5 s chunk window and feeds the ~11 s `jfk.mp3` so `transcribeChunked` splits into several chunks, asserting chunking engaged and the stitched transcript recovers the golden content. |
+| `test/e2e/fleurs-regression.spec.js` | **Tier 3** multilingual regression: loads the model ONCE and loops the 10 en + 10 fr FLEURS clips through the file input, asserting each transcript against both the committed int8 golden and the FLEURS human reference (word-overlap). |
 | `test/e2e/seed.mjs` | Shared `seedSettings(page, extra)` helper: writes the app's settings IndexedDB so a spec boots with a known config (local WASM model source + spec-specific keys). |
 | `test/e2e/text-overlap.mjs` | Shared `words()` / `overlap()` transcript-comparison helpers used by the transcription + chunking specs. |
 | `test/e2e/serve.mjs` | Static server for the E2E (serves the built UI + weights with the cross-origin-isolation headers ORT needs). |
@@ -209,6 +210,7 @@ slow, model-loading tier run separately.
 | `test/support/bpe-fixture.mjs` | Loader for the BPE cross-check fixture. |
 | `test/support/load-browser-module.mjs` | Helper to unit-test browser files that attach to a bare `window` (evaluated in a `vm` context). |
 | `test/fixtures/` | Committed test inputs/goldens: `bpe-fixture.json`, `sample.aac` + `sample.expected.txt` (French clinical clip), `jfk.mp3` + `jfk.expected.txt` (public-domain JFK English clip). Audio goldens are produced by `scripts/transcribe.mjs` against the int8 weights. |
+| `test/fixtures/fleurs/` | FLEURS regression set built by `scripts/gen-fleurs-fixtures.mjs`: 10 en + 10 fr validation clips (mp3) + a stitched long clip, with `manifest.json` carrying each clip's human reference and int8 golden. |
 
 ---
 
