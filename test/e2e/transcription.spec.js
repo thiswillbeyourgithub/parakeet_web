@@ -14,51 +14,12 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
+import { seedSettings } from './seed.mjs';
+import { words, overlap } from './text-overlap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AUDIO = resolve(here, '../fixtures/sample.aac');
 const GOLDEN = readFileSync(resolve(here, '../fixtures/sample.expected.txt'), 'utf-8').trim();
-
-// Normalize for a diacritic/punctuation/case-insensitive word comparison so the
-// assertion is robust to trivial rendering differences but still pins the words.
-function words(s) {
-  return s
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip accents
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-function overlap(a, b) {
-  const setB = new Set(b);
-  const hit = a.filter((w) => setB.has(w)).length;
-  return hit / Math.max(a.length, 1);
-}
-
-// Seed the app's settings DB so it loads the model from /models with WASM.
-async function seedSettings(page) {
-  await page.evaluate(async () => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store', PREFIX = 'parakeetweb_';
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      os.put('local', PREFIX + 'modelSource');
-      os.put('wasm', PREFIX + 'backend');
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  });
-}
 
 test('transcribes a short clip with the WASM int8 model', async ({ page }) => {
   const errors = [];

@@ -18,41 +18,21 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
+import { seedSettings } from './seed.mjs';
 
-// Seed the settings DB so the app boots with the curated list selected and the
-// WASM backend (no model is loaded in this test, but the backend must be a sane
-// value so the app initialises). The one-shot boost-init effect then fetches the
-// list + its prebuilt JSON on load.
-async function seedSettings(page) {
-  await page.evaluate(async () => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store', PREFIX = 'parakeetweb_';
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      os.put('local', PREFIX + 'modelSource');
-      os.put('wasm', PREFIX + 'backend');
-      os.put(true, PREFIX + 'verboseLog');
-      os.put('clinical-cjk.txt', PREFIX + 'boostSource');
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  });
-}
+// Boot with the curated list selected (no model is loaded in this test, but the
+// seeded WASM backend keeps the app initialising sanely). The one-shot boost-init
+// effect then fetches the list + its prebuilt JSON on load.
+const seed = (page) => seedSettings(page, {
+  verboseLog: true,
+  boostSource: 'clinical-cjk.txt',
+});
 
 test('curated list untokenizable terms warning shows before any model is loaded', async ({ page }) => {
   // First load creates the settings DB/store; seed it, then reload so the app
   // picks up the curated boost source.
   await page.goto('/');
-  await seedSettings(page);
+  await seed(page);
   await page.reload();
 
   // Deliberately do NOT click "Load model": the warning must not depend on it.

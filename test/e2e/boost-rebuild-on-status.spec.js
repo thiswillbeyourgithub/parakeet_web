@@ -20,39 +20,19 @@
 import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
+import { seedSettings } from './seed.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AUDIO = resolve(here, '../fixtures/sample.aac');
 
-// Seed the settings DB so the app loads the model from /models with WASM, with
-// verbose logging on and a Custom boost list present (a few phrases is enough to
-// build a trie and emit the rebuild log; the bug is about *how often* it
-// rebuilds, not list size).
-async function seedSettings(page) {
-  await page.evaluate(async () => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store', PREFIX = 'parakeetweb_';
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      os.put('local', PREFIX + 'modelSource');
-      os.put('wasm', PREFIX + 'backend');
-      os.put(true, PREFIX + 'verboseLog');
-      os.put('__custom__', PREFIX + 'boostSource');
-      os.put('venlafaxine\nacetaminophen\nmetoprolol', PREFIX + 'boostPhrases');
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  });
-}
+// Boot with verbose logging on and a Custom boost list present (a few phrases is
+// enough to build a trie and emit the rebuild log; the bug is about *how often*
+// it rebuilds, not list size).
+const seed = (page) => seedSettings(page, {
+  verboseLog: true,
+  boostSource: '__custom__',
+  boostPhrases: 'venlafaxine\nacetaminophen\nmetoprolol',
+});
 
 test('boost trie does not rebuild on transcribe status churn', async ({ page }) => {
   let boostRebuilds = 0;
@@ -63,7 +43,7 @@ test('boost trie does not rebuild on transcribe status churn', async ({ page }) 
   // First load creates the settings DB/store; seed it, then reload so the app
   // picks up local model source + wasm backend + the boost list.
   await page.goto('/');
-  await seedSettings(page);
+  await seed(page);
   await page.reload();
 
   await page.locator('[data-umami-event="load_model_button"]').click();
