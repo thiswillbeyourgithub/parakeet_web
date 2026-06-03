@@ -35,7 +35,7 @@ import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
 import { BoostingTrie, parseBoostFields, expandCasingVariants, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
-import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
+import { getModelConfig, DEFAULT_MODEL, listModels, INT8_SAFE_CHUNK_DURATION_SEC } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -525,6 +525,14 @@ async function main() {
   const willChunk = args.chunking && pcm.length > args.chunkDuration * 16000;
   if (willChunk) {
     console.error(`[transcribe] chunking: ${args.chunkDuration}s chunks, ${args.overlap}s overlap`);
+    // The int8 encoder loses long-range information past ~20s within a single
+    // chunk and silently drops content from a larger window (the web app caps
+    // the int8/WASM default to INT8_SAFE_CHUNK_DURATION_SEC for this reason).
+    // The CLI honours --chunk-duration verbatim, so just warn.
+    if (args.quant === 'int8' && args.chunkDuration > INT8_SAFE_CHUNK_DURATION_SEC) {
+      console.error(`[transcribe] WARNING: int8 encoder drops content past ~${INT8_SAFE_CHUNK_DURATION_SEC}s per chunk; `
+        + `a ${args.chunkDuration}s window will lose most of a long clip. Use --chunk-duration ${INT8_SAFE_CHUNK_DURATION_SEC} or --quant fp32.`);
+    }
   }
 
   // Same chunking/stitching path the web UI uses (ParakeetModel.transcribeChunked).

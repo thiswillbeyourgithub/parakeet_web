@@ -22,6 +22,7 @@ import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from 
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
 import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, selectPrebuilt, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache } from '../../src/hub.js';
+import { defaultChunkDurationForBackend, DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, relativeAge } from './lib/format.js';
 import { requestPersistentStorage } from './lib/persistStorage.js';
 
@@ -545,7 +546,14 @@ export default function App() {
   const [maesPrefixAlpha, setMaesPrefixAlpha] = useState(1);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
-  const [chunkDuration, setChunkDuration] = useState(60); // seconds
+  const [chunkDuration, setChunkDuration] = useState(DEFAULT_CHUNK_DURATION_SEC); // seconds
+  // Like backendChosenByUserRef: tracks whether chunkDuration reflects an
+  // explicit user choice (restored from a saved value or typed in the UI) vs.
+  // our backend-aware default. While false, the default follows the backend
+  // (int8/WASM needs a shorter window than fp32/WebGPU, see
+  // defaultChunkDurationForBackend) and is NOT persisted, so it can keep
+  // tracking the backend until the user actually picks a value.
+  const chunkChosenByUserRef = useRef(false);
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
   const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
@@ -1082,7 +1090,9 @@ export default function App() {
           loadSetting('showAdvancedInfo', false),
           loadSetting('keyboardShortcutsEnabled', false),
           loadSetting('enableChunking', true),
-          loadSetting('chunkDuration', 60),
+          // Load with `null` so the backend-aware default below can tell "never
+          // set" apart from an explicit choice (mirrors the backend handling).
+          loadSetting('chunkDuration', null),
           loadSetting('transcriptDisplayMode', 'raw'),
           loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
@@ -1134,7 +1144,14 @@ export default function App() {
         setShowAdvancedInfo(savedShowAdvancedInfo);
         setKeyboardShortcutsEnabled(savedKeyboardShortcutsEnabled === true);
         setEnableChunking(savedEnableChunking);
-        setChunkDuration(savedChunkDuration);
+        // A saved value means the user previously picked a chunk window
+        // explicitly; honour it. When absent, leave chunkDuration to follow the
+        // backend-aware default (the effect below), so int8/WASM gets the
+        // shorter window without freezing fp32/WebGPU users at it.
+        if (savedChunkDuration != null) {
+          chunkChosenByUserRef.current = true;
+          setChunkDuration(savedChunkDuration);
+        }
         setTranscriptDisplayMode(savedTranscriptDisplayMode);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
@@ -1529,7 +1546,19 @@ export default function App() {
   usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
   usePersistedSetting('keyboardShortcutsEnabled', keyboardShortcutsEnabled, settingsLoaded);
   usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
-  usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
+  // chunkDuration is persisted ONLY once the user has explicitly chosen it (see
+  // chunkChosenByUserRef); an auto default derived from the backend is left
+  // unpersisted so it keeps following the backend instead of freezing as a
+  // saved choice on the next load.
+  useEffect(() => {
+    if (settingsLoaded && chunkChosenByUserRef.current) saveSetting('chunkDuration', chunkDuration);
+  }, [chunkDuration, settingsLoaded]);
+  // Backend-aware default chunk window: until the user picks a value, follow the
+  // backend (int8/WASM loses content past ~20 s per chunk, fp32/WebGPU does not).
+  useEffect(() => {
+    if (!settingsLoaded || chunkChosenByUserRef.current) return;
+    setChunkDuration(defaultChunkDurationForBackend(backend));
+  }, [backend, settingsLoaded]);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
@@ -4221,7 +4250,10 @@ export default function App() {
                     value={chunkDuration}
                     onChange={e => {
                       const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setChunkDuration(Math.max(15, Math.min(300, v)));
+                      if (Number.isFinite(v)) {
+                        chunkChosenByUserRef.current = true; // explicit choice: now persisted + stops following the backend
+                        setChunkDuration(Math.max(15, Math.min(300, v)));
+                      }
                     }}
                     style={{ width: '5rem' }}
                   />
