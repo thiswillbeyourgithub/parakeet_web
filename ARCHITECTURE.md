@@ -182,6 +182,7 @@ git-only). Not documented file-by-file here:
 | `compile-boost.mjs` | Compiles a boost `.txt` into a `.pwc` artifact so the container skips re-encoding on boot (operator-run counterpart of `prebuild-boost.mjs`). |
 | `distill-bpe-merges.py` | Distills the small `bpe-merges.json` asset from the upstream `tokenizer.json`. |
 | `gen-bpe-fixture.py` | Emits the BPE cross-check fixture (ground-truth ids from real HuggingFace `tokenizers`) consumed by the unit tests. |
+| `gen-fleurs-fixtures.mjs` | One-time local tool that builds the FLEURS regression fixtures (`test/fixtures/fleurs/`): samples en+fr validation clips, transcodes them to mp3, transcribes each with the int8 pipeline (reusing `transcribe.mjs`), keeps the ones the model reproduces well, stitches them into one long clip, and writes `manifest.json` with both the human reference and the model golden. |
 | `fetch-e2e-models.mjs` | Downloads just the int8 model files the tier-3 E2E needs into the E2E model dir (skips files already present). |
 | `download-dictation-regex.sh` | Fetches dictation regex CSVs from Murmure for non-Docker local dev. |
 | `update-vendored.sh` | Refreshes the npm-vendored deps (version query, download, SHA verify, rewrite `SOURCE.md`). Run only on explicit request. |
