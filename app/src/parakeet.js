@@ -632,6 +632,53 @@ export class ParakeetModel {
   }
 
   /**
+   * NeMo's last-mAES-step blank closure (the `n == maes_num_steps - 1` branch of
+   * `modified_adaptive_expansion_search`). A non-blank zero-duration emission
+   * that exhausts the per-frame symbol budget (`maesNumSteps`) cannot emit again
+   * on this frame, so NeMo does not just advance it one frame: it closes the
+   * hypothesis with an implicit blank, advancing by the argmax (forced non-zero)
+   * TDT duration and folding `logp(blank) + logp(best_dur)` into the score.
+   * Without this the hypothesis would carry only its own (token, duration-0)
+   * score and land on `t + frameStride`, leaving its score incomparable to
+   * NeMo's and its landing frame wrong whenever the argmax duration is > 1.
+   *
+   * Mutates `child` in place: bumps `score` and resets `t` to the closure frame.
+   * `overallLogProb` (the token-only confidence accumulator) is left untouched
+   * because the closing blank emits no token, matching greedy semantics. The
+   * joiner state minted here is a throwaway (a blank does not advance the
+   * decoder), so it is disposed; `child` keeps its post-emit state.
+   * @param {object} child Post-emit child hypothesis (carries the new state/lastTok).
+   * @param {number} parentT Frame the emission happened on (the closure frame).
+   * @param {Float32Array} transposed
+   * @param {number} D
+   */
+  async _applyBlankClosure(child, parentT, transposed, D) {
+    const frameBuf = transposed.subarray(parentT * D, (parentT + 1) * D);
+    const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
+    const { tokenLogits, durLogits, newState, _logitsTensor } =
+      await this._runCombinedStep(encTensor, child.lastTok, child.state);
+
+    const blankLogp = tokenLogits[this.blankId] - this._logSumExp(tokenLogits);
+
+    // Argmax duration, forced to the smallest non-zero index so the closing
+    // blank always advances the frame (NeMo's min_non_zero_duration_idx == 1
+    // under this model's identity-indexed duration head).
+    let bestIdx = 0, bestVal = -Infinity;
+    for (let d = 0; d < durLogits.length; d++) {
+      if (durLogits[d] > bestVal) { bestVal = durLogits[d]; bestIdx = d; }
+    }
+    if (bestIdx === 0) bestIdx = durLogits.length > 1 ? 1 : 0;
+    const durLogp = durLogits[bestIdx] - this._logSumExp(durLogits);
+
+    child.score += blankLogp + durLogp;
+    child.t = parentT + bestIdx;
+
+    _logitsTensor?.dispose?.();
+    encTensor.dispose?.();
+    if (newState) this._disposeDecoderState(newState);
+  }
+
+  /**
    * Emitted-token id sequence of a backpointer hypothesis, oldest-first. Walks
    * the parent chain (cheap at the small beam widths this decoder targets).
    * @param {object} hyp
@@ -741,8 +788,10 @@ export class ParakeetModel {
    *
    * Per frame: prefix-search recombination over the due hypotheses; then an inner
    * expansion loop (up to `maesNumSteps`) that re-expands zero-duration emissions
-   * on the same frame while sending duration>0 children to the future pool; then
-   * duplicate-merge over the pool and prune to `beamWidth`.
+   * on the same frame while sending duration>0 children to the future pool; a
+   * zero-duration emission that exhausts the `maesNumSteps` budget is closed with
+   * NeMo's implicit best-duration blank (see `_applyBlankClosure`) rather than a
+   * bare advance; then duplicate-merge over the pool and prune to `beamWidth`.
    *
    * MAES knobs (defaults match NeMo): `beamWidth` is the global beam cap;
    * `maesExpansionBeta` over-generates to top-(beamWidth+beta) per hypothesis;
@@ -828,6 +877,15 @@ export class ParakeetModel {
             if (newState) disposable.add(newState);
             for (const c of cands) {
               const child = makeChild(hyp, c, newState);
+              // Last-mAES-step blank closure (NeMo): a non-blank zero-duration
+              // emission that hits the per-frame symbol cap is closed with an
+              // implicit best-duration blank instead of a bare one-frame advance,
+              // so its score and landing frame match
+              // modified_adaptive_expansion_search. The cap condition mirrors
+              // _advanceDecision's forced-advance branch exactly.
+              if (c.emit && c.step === 0 && hyp.emittedAtFrame + 1 >= maesNumSteps) {
+                await this._applyBlankClosure(child, hyp.t, transposed, D);
+              }
               if (child.t >= Tenc) {
                 // Finished: keep only the running best (finished scores are final).
                 if (best === null || child.score > best.score) {

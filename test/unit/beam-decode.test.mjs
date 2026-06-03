@@ -46,6 +46,7 @@ function makeModel(script) {
     _logAddExp: proto._logAddExp,
     _topK: proto._topK,
     _expandHyp: proto._expandHyp,
+    _applyBlankClosure: proto._applyBlankClosure,
     _prefixSearch: proto._prefixSearch,
     _hypIds: proto._hypIds,
     _decodeBeam: proto._decodeBeam,
@@ -318,6 +319,96 @@ describe('prefix-search recombination (#2)', () => {
     const aOrig = hypA.score, bOrig = hypB.score;
     await model._prefixSearch([hypA, hypB], makeTransposed(4), D, { maesPrefixAlpha: 1 });
     assert.ok(close(hypA.score, aOrig) && close(hypB.score, bOrig), 'unrelated sequences are not recombined');
+  });
+});
+
+describe('last-mAES-step blank closure (#closure)', () => {
+  // _applyBlankClosure implements NeMo's modified_adaptive_expansion_search
+  // n == maes_num_steps-1 branch: a non-blank zero-duration emission that
+  // exhausts the per-frame symbol budget is closed with an implicit blank. The
+  // closure must (a) advance by the argmax (forced non-zero) TDT duration and
+  // (b) add logp(blank)+logp(best_dur) to the score, while leaving
+  // overallLogProb (token-only confidence) untouched. A bare one-frame advance
+  // (the pre-fix behaviour) gets both the score and the landing frame wrong.
+  const PARENT_T = 3;
+
+  // NeMo-faithful expected (scoreDelta, bestIdx) for a frame's token+duration
+  // logits. Reads from Float32Array (as the implementation does) so the expected
+  // score is bit-identical, not off by a float32-rounding epsilon.
+  function expectClosure(model, lg, dl) {
+    const lgf = Float32Array.from(lg), dlf = Float32Array.from(dl);
+    const blankLogp = lgf[BLANK] - model._logSumExp(lgf);
+    let bestIdx = 0, bestVal = -Infinity;
+    dlf.forEach((v, i) => { if (v > bestVal) { bestVal = v; bestIdx = i; } });
+    if (bestIdx === 0) bestIdx = dlf.length > 1 ? 1 : 0;
+    const durLogp = dlf[bestIdx] - model._logSumExp(dlf);
+    return { scoreDelta: blankLogp + durLogp, bestIdx };
+  }
+
+  // A post-emit child: lands on PARENT_T+frameStride before the closure runs.
+  const makeChildAt = (score = -1.7, overall = -0.9) => ({
+    emit: true, id: 1, lastTok: 1, state: { tag: 'C' },
+    t: PARENT_T + 1, score, overallLogProb: overall,
+  });
+
+  test('argmax non-zero duration: advances by that duration and adds blank+dur logp', async () => {
+    const lg = [-1.0, 0.5, -2.0, -20, -20, -0.3]; // BLANK (id 5) logit -0.3
+    const dl = [0.0, 0.2, 2.5];                    // argmax index 2 (a >1 advance)
+    const script = []; script[PARENT_T] = { logits: lg, durLogits: dl, step: 0 };
+    const model = makeModel(script);
+    const child = makeChildAt();
+    const origScore = child.score, origOverall = child.overallLogProb;
+    statesCreated = statesDisposed = 0;
+
+    await model._applyBlankClosure(child, PARENT_T, makeTransposed(PARENT_T + 1), D);
+
+    const { scoreDelta, bestIdx } = expectClosure(model, lg, dl);
+    assert.equal(bestIdx, 2, 'argmax duration is index 2');
+    assert.ok(close(child.score, origScore + scoreDelta), 'score gains logp(blank)+logp(best_dur)');
+    assert.equal(child.t, PARENT_T + 2, 'advances by the argmax duration (2), not frameStride');
+    assert.ok(close(child.overallLogProb, origOverall), 'overallLogProb untouched (closing blank emits no token)');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'closure joiner state disposed');
+  });
+
+  test('argmax zero duration: falls back to the min non-zero duration (index 1)', async () => {
+    const lg = [-1.0, 0.5, -2.0, -20, -20, -0.3];
+    const dl = [3.0, 0.4, -1.0]; // argmax index 0 (zero) -> must fall back to index 1
+    const script = []; script[PARENT_T] = { logits: lg, durLogits: dl, step: 0 };
+    const model = makeModel(script);
+    const child = makeChildAt();
+    const origScore = child.score;
+    statesCreated = statesDisposed = 0;
+
+    await model._applyBlankClosure(child, PARENT_T, makeTransposed(PARENT_T + 1), D);
+
+    const { scoreDelta, bestIdx } = expectClosure(model, lg, dl);
+    assert.equal(bestIdx, 1, 'zero-duration argmax falls back to min non-zero index 1');
+    assert.ok(close(child.score, origScore + scoreDelta), 'score uses the fallback (index 1) duration logp');
+    assert.equal(child.t, PARENT_T + 1, 'advances by 1 frame (the min non-zero duration)');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'closure joiner state disposed');
+  });
+
+  test('fires within _decodeBeam on a zero-duration burst and stays leak-safe', async () => {
+    // durLogits favour duration 0, so the beam emits a zero-duration token that
+    // re-expands on the same frame; the second emission hits the maesNumSteps=2
+    // cap and triggers the closure. (The context-free joiner means the burst
+    // never wins the beam, but the closure code path must run and free the
+    // throwaway joiner state it mints.)
+    const burst = [
+      { logits: [4.0, -20, -20, -20, -20, 1.0], step: 0, durLogits: [2.0, 1.0, -20] }, // f0: token0, dur0 argmax
+      { logits: [-20, -20, -20, -20, -20, 4.0], step: 1, durLogits: [-20, 2.0, -20] }, // f1: blank, dur1 -> finish
+    ];
+    const model = makeModel(burst);
+    let closureCalls = 0;
+    model._applyBlankClosure = (...args) => { closureCalls++; return proto._applyBlankClosure.apply(model, args); };
+    statesCreated = statesDisposed = 0;
+    await model._decodeBeam(makeTransposed(2), D, 2, {
+      beamWidth: 4, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+      maesNumSteps: 2, maesExpansionBeta: V, maesExpansionGamma: 100, maesPrefixAlpha: 0,
+    });
+    assert.ok(closureCalls > 0, 'the blank closure was exercised inside _decodeBeam');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'closure joiner states freed (no leak)');
   });
 });
 
