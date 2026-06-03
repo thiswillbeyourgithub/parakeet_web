@@ -43,6 +43,7 @@ function makeModel(script) {
     _frameConfidence: proto._frameConfidence,
     _advanceDecision: proto._advanceDecision,
     _logSumExp: proto._logSumExp,
+    _logAddExp: proto._logAddExp,
     _topK: proto._topK,
     _expandHyp: proto._expandHyp,
     _decodeBeam: proto._decodeBeam,
@@ -119,6 +120,15 @@ describe('pure helpers', () => {
   test('_frameConfidence temp 1 in (0,1)', () => {
     const c1 = m._frameConfidence.call(m, lg, 3.0, 1.0);
     assert.ok(c1 > 0 && c1 < 1);
+  });
+  test('_logAddExp matches log(exp(a)+exp(b))', () => {
+    assert.ok(close(m._logAddExp.call(m, -1, -1), -1 + Math.log(2)));
+    assert.ok(close(m._logAddExp.call(m, 0, Math.log(3)), Math.log(4)));
+  });
+  test('_logAddExp is symmetric and handles -Infinity identity', () => {
+    assert.ok(close(m._logAddExp.call(m, -2, -5), m._logAddExp.call(m, -5, -2)));
+    assert.equal(m._logAddExp.call(m, -Infinity, -3), -3);
+    assert.equal(m._logAddExp.call(m, -3, -Infinity), -3);
   });
   test('_advanceDecision step>0 advances by step', () => {
     const d1 = m._advanceDecision.call(m, 4, 0, 2, 3, 1);
@@ -216,6 +226,40 @@ describe('duration branching (#1)', () => {
       assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak');
     });
   }
+});
+
+describe('duplicate-hypothesis merging (#3)', () => {
+  // Two routes reach the same emitted sequence "X,Z" at the same frame in the
+  // same round, so the decoder merges them and log-sum-exps their scores. The
+  // construction makes either single route LOSE to a competitor "X,W", while the
+  // recombined merge WINS, so the emitted ids prove recombination happened:
+  //   - frame 0: emit X (id 0); durations 1 and 2 are equally likely, so X
+  //     branches to frame 1 and frame 2.
+  //   - frame 1 (X@t1): emit Z (id 1) duration 2 -> frame 3  [route R2]
+  //                     emit W (id 2) duration 2 -> frame 3  [competitor]
+  //   - frame 2 (X@t2): emit Z (id 1) duration 1 -> frame 3  [route R1]
+  //   - both "X,Z" routes collide at frame 3 in the same round and merge.
+  // Single-route X,Z score ~= -1.667 < X,W ~= -1.167, but merged X,Z ~= -0.974,
+  // so X,Z wins only because of recombination. Without merging, ids would be
+  // [0, 2, 1] (X,W,Z); with merging they are [0, 1, 1] (X,Z,Z).
+  const NEG = -20;
+  const mergeScript = [
+    { logits: [0, NEG, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, 0] },     // f0: X, dur 1==2
+    { logits: [NEG, -1.0, -0.5, NEG, NEG, NEG], step: 2, durLogits: [-Infinity, NEG, 0] }, // f1: Z/W, dur 2
+    { logits: [NEG, -1.0, NEG, -0.5, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] }, // f2: Z/filler, dur 1
+    { logits: [NEG, 0, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },      // f3: Z, dur 1 -> finish
+  ];
+
+  test('recombined duplicate wins over a single-route competitor', async () => {
+    statesCreated = statesDisposed = joinerCalls = 0;
+    const model = makeModel(mergeScript);
+    const out = await model._decodeBeam(makeTransposed(4), D, 4, {
+      beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: false, returnConfidences: false, timeStride: 0.08, ...MAES,
+    });
+    assert.ok(eqArr(out.ids, [0, 1, 1]), 'merged X,Z path wins (would be [0,2,1] without merging)');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak across the merge');
+  });
 });
 
 describe('phrase boosting steers the beam', () => {

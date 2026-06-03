@@ -444,6 +444,20 @@ export class ParakeetModel {
   }
 
   /**
+   * Numerically stable log(exp(a) + exp(b)). Used by the beam decoder to
+   * recombine the scores (log-probabilities) of merged duplicate hypotheses.
+   * @param {number} a
+   * @param {number} b
+   * @returns {number}
+   */
+  _logAddExp(a, b) {
+    if (a === -Infinity) return b;
+    if (b === -Infinity) return a;
+    const m = Math.max(a, b);
+    return m + Math.log(Math.exp(a - m) + Math.exp(b - m));
+  }
+
+  /**
    * Indices of the `k` largest values in `logits` (unordered). O(V*k), cheap for
    * the small beam widths this decoder targets, and avoids sorting the whole
    * vocab each step.
@@ -653,7 +667,7 @@ export class ParakeetModel {
     let beam = [{
       parent: null, emit: false, id: null, confVal: null, tokenTime: null,
       state: null, t: 0, emittedAtFrame: 0, overallLogProb: 0, score: 0,
-      active: rootActive, lastTok: this.blankId,
+      active: rootActive, lastTok: this.blankId, seqKey: '',
     }];
     let best = null; // highest-scoring finished hypothesis (t >= Tenc)
     let round = 0;
@@ -693,6 +707,9 @@ export class ParakeetModel {
               score: hyp.score + c.rankDelta,
               active: c.active,
               lastTok: c.emit ? c.id : hyp.lastTok,
+              // Incremental emitted-token sequence identity (blank leaves it
+              // unchanged). Used to detect duplicate hypotheses for merging.
+              seqKey: c.emit ? hyp.seqKey + c.id + ',' : hyp.seqKey,
             };
             if (child.t >= Tenc) {
               // Finished: keep only the running best (finished scores are final).
@@ -706,8 +723,30 @@ export class ParakeetModel {
           }
         }
 
-        pool.sort((a, b) => b.score - a.score);
-        beam = pool.slice(0, beamWidth);
+        // Merge duplicate hypotheses (NeMo's merge_duplicate_hypotheses): any two
+        // live children with the same emitted-token sequence AND frame pointer are
+        // the same hypothesis reached by different routes, so collapse them into
+        // one whose score is the log-sum-exp of the group (recombining their
+        // probability mass). The highest-scoring member is the representative and
+        // keeps its chain/state/accumulators; the others simply never enter the
+        // beam, so the mark-and-sweep below frees any state they alone held.
+        const merged = new Map();
+        for (const child of pool) {
+          const key = `${child.seqKey}@${child.t}`;
+          const rep = merged.get(key);
+          if (rep === undefined) {
+            merged.set(key, child);
+          } else if (child.score > rep.score) {
+            child.score = this._logAddExp(child.score, rep.score);
+            merged.set(key, child);
+          } else {
+            rep.score = this._logAddExp(rep.score, child.score);
+          }
+        }
+
+        const representatives = [...merged.values()];
+        representatives.sort((a, b) => b.score - a.score);
+        beam = representatives.slice(0, beamWidth);
 
         // Sweep: free every disposable state no surviving hypothesis (or best)
         // still points at.
