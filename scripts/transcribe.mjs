@@ -67,6 +67,7 @@ function parseArgs(argv) {
     maesNumSteps: 2,       // MAES: max symbols emitted per frame
     maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
     maesExpansionGamma: 2.3, // MAES: log-prob prune threshold
+    maesPrefixAlpha: 1,    // MAES: prefix-search length gap (0 = off)
     frameStride: 1,        // sidebar: decimate encoder frames (1 = none)
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: 60,     // sidebar: max chunk length, seconds
@@ -98,6 +99,7 @@ function parseArgs(argv) {
       case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
       case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
       case '--maes-expansion-gamma': a.maesExpansionGamma = Number(val(flag)); break;
+      case '--maes-prefix-alpha': a.maesPrefixAlpha = parseInt(val(flag), 10); break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--chunk-duration': a.chunkDuration = Number(val(flag)); break;
       case '--overlap': a.overlap = Number(val(flag)); break;
@@ -123,6 +125,7 @@ function parseArgs(argv) {
   if (!Number.isInteger(a.maesNumSteps) || a.maesNumSteps < 1) throw new Error('--maes-num-steps must be an integer >= 1');
   if (!Number.isInteger(a.maesExpansionBeta) || a.maesExpansionBeta < 0) throw new Error('--maes-expansion-beta must be an integer >= 0');
   if (!Number.isFinite(a.maesExpansionGamma) || a.maesExpansionGamma <= 0) throw new Error('--maes-expansion-gamma must be a positive number');
+  if (!Number.isInteger(a.maesPrefixAlpha) || a.maesPrefixAlpha < 0) throw new Error('--maes-prefix-alpha must be an integer >= 0');
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) throw new Error('--frame-stride must be an integer in [1, 4]');
   if (!Number.isFinite(a.chunkDuration) || a.chunkDuration <= 0) throw new Error('--chunk-duration must be a positive number');
   if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
@@ -183,6 +186,12 @@ Options:
                            dropped; smaller = more aggressive pruning / faster,
                            larger = wider search. Default 2.3. Only used when
                            --beam-width > 1.
+      --maes-prefix-alpha N
+                           MAES: prefix-search recombination length gap (integer
+                           >= 0). For a shorter hypothesis that is a prefix of a
+                           longer one within N tokens, the longer one's score
+                           absorbs the prefix's continuation probability. 0
+                           disables it. Default 1. Only used when --beam-width > 1.
       --frame-stride N     Decimate encoder frames before decoding (integer in
                            [1, 4]). 1 = use every frame (default). Sidebar knob.
       --chunk-duration N   Max chunk length in seconds for long audio. Default
@@ -511,7 +520,7 @@ async function main() {
   });
 
   if (args.beamWidth > 1) {
-    console.error(`[transcribe] MAES beam search: width ${args.beamWidth}, num-steps ${args.maesNumSteps}, expansion-beta ${args.maesExpansionBeta}, expansion-gamma ${args.maesExpansionGamma}`);
+    console.error(`[transcribe] MAES beam search: width ${args.beamWidth}, num-steps ${args.maesNumSteps}, expansion-beta ${args.maesExpansionBeta}, expansion-gamma ${args.maesExpansionGamma}, prefix-alpha ${args.maesPrefixAlpha}`);
   }
   const willChunk = args.chunking && pcm.length > args.chunkDuration * 16000;
   if (willChunk) {
@@ -529,6 +538,7 @@ async function main() {
     maesNumSteps: args.maesNumSteps,
     maesExpansionBeta: args.maesExpansionBeta,
     maesExpansionGamma: args.maesExpansionGamma,
+    maesPrefixAlpha: args.maesPrefixAlpha,
     frameStride: args.frameStride,
     // Hardcoded 0 to mirror the web UI, where the temperature slider is
     // intentionally hidden and the state pinned at 0.0: temperature never

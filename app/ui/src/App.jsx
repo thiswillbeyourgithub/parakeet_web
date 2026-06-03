@@ -542,6 +542,7 @@ export default function App() {
   const [maesNumSteps, setMaesNumSteps] = useState(3);
   const [maesExpansionBeta, setMaesExpansionBeta] = useState(4);
   const [maesExpansionGamma, setMaesExpansionGamma] = useState(4.0);
+  const [maesPrefixAlpha, setMaesPrefixAlpha] = useState(1);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
   const [chunkDuration, setChunkDuration] = useState(60); // seconds
@@ -1032,6 +1033,7 @@ export default function App() {
           savedMaesNumSteps,
           savedMaesExpansionBeta,
           savedMaesExpansionGamma,
+          savedMaesPrefixAlpha,
           savedCpuThreads,
           savedNoiseSuppression,
           savedEchoCancellation,
@@ -1060,6 +1062,7 @@ export default function App() {
           loadSetting('maesNumSteps', 3),
           loadSetting('maesExpansionBeta', 4),
           loadSetting('maesExpansionGamma', 4.0),
+          loadSetting('maesPrefixAlpha', 1),
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),
@@ -1103,6 +1106,7 @@ export default function App() {
         setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 3);
         setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 4);
         setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 4.0);
+        setMaesPrefixAlpha(Number.isInteger(savedMaesPrefixAlpha) && savedMaesPrefixAlpha >= 0 ? savedMaesPrefixAlpha : 1);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
         setEchoCancellation(savedEchoCancellation);
@@ -1482,6 +1486,7 @@ export default function App() {
   usePersistedSetting('maesNumSteps', maesNumSteps, settingsLoaded);
   usePersistedSetting('maesExpansionBeta', maesExpansionBeta, settingsLoaded);
   usePersistedSetting('maesExpansionGamma', maesExpansionGamma, settingsLoaded);
+  usePersistedSetting('maesPrefixAlpha', maesPrefixAlpha, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
@@ -3274,6 +3279,7 @@ export default function App() {
         maesNumSteps,
         maesExpansionBeta,
         maesExpansionGamma,
+        maesPrefixAlpha,
         enableProfiling: beamWidth > 1,
         phraseBoost: phraseBoostRef.current,
       }, async ({ chunkNum, totalChunks, result, partialText, elapsedMs }) => {
@@ -4333,6 +4339,25 @@ export default function App() {
                     onChange={e=>{
                       const v = Number(e.target.value);
                       if (Number.isFinite(v) && v > 0) setMaesExpansionGamma(Math.min(20, v));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesPrefixAlpha')}:
+                    <InfoTooltip text={t('tooltipMaesPrefixAlpha')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max="5"
+                    value={maesPrefixAlpha}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setMaesPrefixAlpha(Math.max(0, Math.min(5, Math.round(v))));
                     }}
                     style={{ width: '4.5rem' }}
                   />
