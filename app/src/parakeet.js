@@ -730,20 +730,27 @@ export class ParakeetModel {
    * accumulators. Full-file only: never returns a decoder state, and disposes
    * every ORT state tensor it allocates via refcounting (PLAN.md Q1).
    *
-   * Hypotheses are backpointer nodes (parent chain) so per-step accumulators are
-   * reconstructed once at the end instead of copied every round. Because TDT
-   * durations desync hypotheses in time, this is label-looping (each hyp owns
-   * its frame pointer) rather than a single shared frame counter.
+   * Frame-synchronous (matches NeMo's `maes` loop): an outer pass over encoder
+   * frames `timeIdx`, with a global `keptHyps` pool partitioned each step into
+   * the hypotheses due at this frame (`t === timeIdx`) and the future ones
+   * (`t > timeIdx`) that wait their turn. Hypotheses are backpointer nodes
+   * (parent chain) so per-step accumulators are reconstructed once at the end.
+   * Processing all hypotheses on a frame together is what lets duplicate-merge
+   * and prefix-search recombination actually co-occur, unlike a label-synchronous
+   * loop (each hyp owning its own frame pointer) where they rarely line up.
    *
-   * MAES knobs (defaults match NeMo): `beamWidth` is the global beam cap kept
-   * after each round; `maesExpansionBeta` over-generates to top-(beamWidth+beta)
-   * per hypothesis; `maesExpansionGamma` adaptively prunes those expansions by
-   * log-prob (see `_expandHyp`); `maesNumSteps` caps symbols emitted per frame;
-   * `maesPrefixAlpha` bounds prefix-search recombination (see `_prefixSearch`;
-   * 0 disables it). Each round: prefix-search recombination over the current
-   * beam, then per-hypothesis (token, duration) expansion, then duplicate-merge,
-   * then prune to `beamWidth`. The duration index equals the frame advance
-   * throughout (the model's TDT duration head is an identity-indexed skip count).
+   * Per frame: prefix-search recombination over the due hypotheses; then an inner
+   * expansion loop (up to `maesNumSteps`) that re-expands zero-duration emissions
+   * on the same frame while sending duration>0 children to the future pool; then
+   * duplicate-merge over the pool and prune to `beamWidth`.
+   *
+   * MAES knobs (defaults match NeMo): `beamWidth` is the global beam cap;
+   * `maesExpansionBeta` over-generates to top-(beamWidth+beta) per hypothesis;
+   * `maesExpansionGamma` adaptively prunes those expansions by log-prob (see
+   * `_expandHyp`); `maesNumSteps` caps symbols emitted per frame; `maesPrefixAlpha`
+   * bounds prefix-search recombination (see `_prefixSearch`; 0 disables it). The
+   * duration index equals the frame advance throughout (the model's TDT duration
+   * head is an identity-indexed skip count).
    * @returns {{ids: number[], tokenTimes: Array, tokenConfs: number[], frameConfs: number[], overallLogProb: number}}
    */
   async _decodeBeam(transposed, D, Tenc, opts) {
@@ -757,80 +764,97 @@ export class ParakeetModel {
     const expandK = beamWidth + maesExpansionBeta;
     const expandOpts = { temperature: opts.temperature, phraseBoost, expandK, maesExpansionGamma };
 
+    // Build one backpointer child node from a parent hypothesis and one of its
+    // (token, duration) expansion candidates.
+    const makeChild = (hyp, c, newState) => {
+      const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, c.id, c.step, frameStride, maesNumSteps);
+      return {
+        parent: hyp,
+        emit: c.emit,
+        id: c.emit ? c.id : null,
+        confVal: c.confVal,
+        tokenTime: (c.emit && returnTimestamps)
+          ? [hyp.t * timeStride, (hyp.t + (c.step > 0 ? c.step : 1)) * timeStride]
+          : null,
+        state: c.emit ? newState : hyp.state,
+        t: dec.nextT,
+        emittedAtFrame: dec.nextEmitted,
+        overallLogProb: hyp.overallLogProb + Math.log(c.confVal),
+        score: hyp.score + c.rankDelta,
+        active: c.active,
+        lastTok: c.emit ? c.id : hyp.lastTok,
+        // Incremental emitted-token sequence identity (blank leaves it
+        // unchanged). Used to detect duplicate hypotheses for merging.
+        seqKey: c.emit ? hyp.seqKey + c.id + ',' : hyp.seqKey,
+      };
+    };
+
     const rootActive = phraseBoost ? phraseBoost.active : null; // caller already reset()
-    let beam = [{
+    let keptHyps = [{
       parent: null, emit: false, id: null, confVal: null, tokenTime: null,
       state: null, t: 0, emittedAtFrame: 0, overallLogProb: 0, score: 0,
       active: rootActive, lastTok: this.blankId, seqKey: '',
     }];
-    let best = null; // highest-scoring finished hypothesis (t >= Tenc)
-    let round = 0;
+    let best = null;     // highest-scoring finished hypothesis (t >= Tenc)
+    let workFrames = 0;  // frames that actually carried hypotheses (for yield cadence)
 
     try {
-      while (beam.length) {
-        if (round % 25 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-        round++;
+      for (let timeIdx = 0; timeIdx < Tenc && keptHyps.length; timeIdx++) {
+        const current = keptHyps.filter(h => h.t === timeIdx);
+        if (!current.length) continue; // no hypothesis is due here; skip cheaply
+        if (workFrames++ % 25 === 0) await new Promise(resolve => setTimeout(resolve, 0));
 
-        // Prefix-search recombination over the current beam (NeMo runs this on
-        // kept_hyps before expansion). Updates scores only; never mutates the
-        // hypotheses' stored decoder states.
-        await this._prefixSearch(beam, transposed, D, { maesPrefixAlpha });
+        const futures = keptHyps.filter(h => h.t > timeIdx); // wait for their frame
 
-        // Decoder-state GC via per-round mark-and-sweep. `disposable` collects
-        // every state that *might* become free this round (the consumed parents,
-        // each fresh newState, and any best-state displaced by a better finish);
-        // `keep` collects states still referenced after pruning. Set semantics
-        // make shared states (blank children reuse the parent's state, emit
-        // siblings share one newState) safe with no refcount bookkeeping.
+        // Prefix-search recombination over the due hypotheses (scores only;
+        // never mutates their stored decoder states). NeMo runs this once per
+        // frame, before expansion.
+        await this._prefixSearch(current, transposed, D, { maesPrefixAlpha });
+
+        // Per-frame mark-and-sweep seed: every decoder state in play this frame
+        // (all current + future hypotheses), plus every newState minted below.
+        // Anything not referenced by the post-frame keptHyps (or best) is freed
+        // at the end. Set semantics make shared states (blank children reuse the
+        // parent's state; emit siblings share one newState) safe without refcounts.
         const disposable = new Set();
-        for (const hyp of beam) disposable.add(hyp.state);
+        for (const h of keptHyps) disposable.add(h.state);
 
-        const pool = [];
-        for (const hyp of beam) {
-          const { cands, newState } = await this._expandHyp(hyp, transposed, D, expandOpts);
-          if (newState) disposable.add(newState);
-          for (const c of cands) {
-            const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, c.id, c.step, frameStride, maesNumSteps);
-            const child = {
-              parent: hyp,
-              emit: c.emit,
-              id: c.emit ? c.id : null,
-              confVal: c.confVal,
-              tokenTime: (c.emit && returnTimestamps)
-                ? [hyp.t * timeStride, (hyp.t + (c.step > 0 ? c.step : 1)) * timeStride]
-                : null,
-              state: c.emit ? newState : hyp.state,
-              t: dec.nextT,
-              emittedAtFrame: dec.nextEmitted,
-              overallLogProb: hyp.overallLogProb + Math.log(c.confVal),
-              score: hyp.score + c.rankDelta,
-              active: c.active,
-              lastTok: c.emit ? c.id : hyp.lastTok,
-              // Incremental emitted-token sequence identity (blank leaves it
-              // unchanged). Used to detect duplicate hypotheses for merging.
-              seqKey: c.emit ? hyp.seqKey + c.id + ',' : hyp.seqKey,
-            };
-            if (child.t >= Tenc) {
-              // Finished: keep only the running best (finished scores are final).
-              if (best === null || child.score > best.score) {
-                if (best) disposable.add(best.state); // old best may now be free
-                best = child;
+        const produced = []; // duration>0 children, advancing to a future frame
+        let working = current; // hypotheses still emitting at this frame
+        for (let n = 0; n < maesNumSteps && working.length; n++) {
+          const stayed = []; // zero-duration emissions, re-expanded on this frame
+          for (const hyp of working) {
+            const { cands, newState } = await this._expandHyp(hyp, transposed, D, expandOpts);
+            if (newState) disposable.add(newState);
+            for (const c of cands) {
+              const child = makeChild(hyp, c, newState);
+              if (child.t >= Tenc) {
+                // Finished: keep only the running best (finished scores are final).
+                if (best === null || child.score > best.score) {
+                  if (best) disposable.add(best.state); // old best may now be free
+                  best = child;
+                }
+              } else if (child.t > timeIdx) {
+                produced.push(child);
+              } else {
+                stayed.push(child); // emitted at duration 0: still on this frame
               }
-            } else {
-              pool.push(child);
             }
           }
+          // Bound the zero-duration fan-out the same way the beam is bounded.
+          stayed.sort((a, b) => b.score - a.score);
+          working = stayed.slice(0, beamWidth);
         }
 
-        // Merge duplicate hypotheses (NeMo's merge_duplicate_hypotheses): any two
-        // live children with the same emitted-token sequence AND frame pointer are
-        // the same hypothesis reached by different routes, so collapse them into
-        // one whose score is the log-sum-exp of the group (recombining their
-        // probability mass). The highest-scoring member is the representative and
-        // keeps its chain/state/accumulators; the others simply never enter the
-        // beam, so the mark-and-sweep below frees any state they alone held.
+        // Merge duplicate hypotheses (NeMo's merge_duplicate_hypotheses) over the
+        // surviving futures + this frame's new children: any two with the same
+        // emitted-token sequence AND frame are the same hypothesis reached by
+        // different routes, so collapse them into one whose score is the
+        // log-sum-exp of the group (recombining their probability mass). The
+        // highest-scoring member is the representative; the others never enter
+        // keptHyps, so the sweep below frees any state they alone held.
         const merged = new Map();
-        for (const child of pool) {
+        for (const child of futures.concat(produced)) {
           const key = `${child.seqKey}@${child.t}`;
           const rep = merged.get(key);
           if (rep === undefined) {
@@ -843,24 +867,21 @@ export class ParakeetModel {
           }
         }
 
-        const representatives = [...merged.values()];
-        representatives.sort((a, b) => b.score - a.score);
-        beam = representatives.slice(0, beamWidth);
+        keptHyps = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, beamWidth);
 
-        // Sweep: free every disposable state no surviving hypothesis (or best)
-        // still points at.
+        // Sweep: free every in-play state no surviving hypothesis (or best) points at.
         const keep = new Set();
-        for (const h of beam) keep.add(h.state);
+        for (const h of keptHyps) keep.add(h.state);
         if (best) keep.add(best.state);
         for (const s of disposable) if (s && !keep.has(s)) this._disposeDecoderState(s);
       }
     } finally {
-      // Dispose whatever is still live (the beam never returns a decoder state).
-      // On the normal path the loop ends with beam=[] so this just frees best;
-      // on an error mid-decode it frees the live beam too. Deduped so a shared
-      // state is never double-disposed.
+      // Dispose whatever is still live (the decoder never returns a state). On
+      // the normal path keptHyps empties as hypotheses finish, so this just frees
+      // best; on an error mid-decode it frees the live pool too. Deduped so a
+      // shared state is never double-disposed.
       const live = new Set();
-      for (const h of beam) if (h.state) live.add(h.state);
+      for (const h of keptHyps) if (h.state) live.add(h.state);
       if (best && best.state) live.add(best.state);
       for (const s of live) this._disposeDecoderState(s);
     }

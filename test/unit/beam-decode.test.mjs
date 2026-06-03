@@ -351,6 +351,37 @@ describe('phrase boosting steers the beam', () => {
   });
 });
 
+describe('frame-synchronous state GC (#frame-sync)', () => {
+  // A longer, deterministic utterance with varied tokens and TDT durations so
+  // hypotheses skip ahead and linger in the future pool across many frames. This
+  // exercises the frame-synchronous loop's per-frame mark-and-sweep against
+  // long-lived future hypotheses: every decoder state allocated must be disposed,
+  // at every beam width, with prefix-search and merging both active.
+  const longScript = [];
+  for (let t = 0; t < 16; t++) {
+    const logits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
+    logits[t % 5] = 2.0 + (t % 3) * 0.3;     // a varying argmax token
+    logits[(t + 2) % 5] = 1.0;               // a runner-up so the beam branches
+    if (t % 4 === 3) logits[BLANK] = 2.5;    // occasional blank-dominant frame
+    longScript.push({ logits, step: (t % 3) + 1 }); // durations cycle 1,2,3
+  }
+
+  for (const width of [2, 4, 8]) {
+    test(`width ${width}: no decoder-state leak across 16 frames (prefix+merge on)`, async () => {
+      statesCreated = statesDisposed = joinerCalls = 0;
+      const model = makeModel(longScript);
+      const out = await model._decodeBeam(makeTransposed(16), D, 16, {
+        beamWidth: width, temperature: 1.0, frameStride: 1, phraseBoost: null,
+        returnTimestamps: true, returnConfidences: true, timeStride: 0.08,
+        maesNumSteps: 3, maesExpansionBeta: 4, maesExpansionGamma: 4.0, maesPrefixAlpha: 1,
+      });
+      assert.ok(out.ids.length > 0, 'produced a non-empty transcript');
+      assert.equal(out.tokenTimes.length, out.ids.length, 'one timestamp per token');
+      assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak');
+    });
+  }
+});
+
 describe('degenerate input', () => {
   test('Tenc=0 returns empty result', async () => {
     const model = makeModel(script);
