@@ -954,6 +954,11 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
+  // Global keyboard shortcuts (R/S/F/Space/Enter for record/settings/file/load).
+  // Default OFF: the single-letter bindings fire on any keypress outside an
+  // input, which surprises users who expect plain typing/navigation. Opt in
+  // from Settings.
+  const [keyboardShortcutsEnabled, setKeyboardShortcutsEnabled] = useState(false);
 
   // Dictation device (Philips SpeechMike) — WebHID connection state
   const [dictationDevice, setDictationDevice] = useState(null); // connected device name or null
@@ -1043,6 +1048,7 @@ export default function App() {
           savedAutoCopyToClipboard,
           savedPersistTranscripts,
           savedShowAdvancedInfo,
+          savedKeyboardShortcutsEnabled,
           savedEnableChunking,
           savedChunkDuration,
           savedTranscriptDisplayMode,
@@ -1074,6 +1080,7 @@ export default function App() {
           // apart from an explicit choice (see the setPersistTranscripts comment).
           loadSetting('persistTranscripts', null),
           loadSetting('showAdvancedInfo', false),
+          loadSetting('keyboardShortcutsEnabled', false),
           loadSetting('enableChunking', true),
           loadSetting('chunkDuration', 60),
           loadSetting('transcriptDisplayMode', 'raw'),
@@ -1125,6 +1132,7 @@ export default function App() {
         // explicitly in Settings.
         setPersistTranscripts(savedPersistTranscripts === true);
         setShowAdvancedInfo(savedShowAdvancedInfo);
+        setKeyboardShortcutsEnabled(savedKeyboardShortcutsEnabled === true);
         setEnableChunking(savedEnableChunking);
         setChunkDuration(savedChunkDuration);
         setTranscriptDisplayMode(savedTranscriptDisplayMode);
@@ -1266,6 +1274,9 @@ export default function App() {
 
   // Keyboard shortcuts
   useEffect(() => {
+    // Opt-in: when disabled (the default), don't bind the global handler at all
+    // so plain typing/navigation outside inputs never triggers record/settings.
+    if (!keyboardShortcutsEnabled) return;
     const handleKeyPress = (e) => {
       // Don't trigger shortcuts if user is typing in an input/textarea
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
@@ -1329,7 +1340,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [status, isRecording, isPaused, isTranscribing, recordingCountdown]);
+  }, [keyboardShortcutsEnabled, status, isRecording, isPaused, isTranscribing, recordingCountdown]);
 
   // Monitor memory usage and system strain.
   //
@@ -1516,6 +1527,7 @@ export default function App() {
   usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
   usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
+  usePersistedSetting('keyboardShortcutsEnabled', keyboardShortcutsEnabled, settingsLoaded);
   usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
   usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
@@ -3981,6 +3993,18 @@ export default function App() {
         <p>
           <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: 'var(--text-subtle)'}}>(nemo128)</span>
         </p>
+
+          <div className="setting-row" style={{ marginBottom: '0.5rem' }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={keyboardShortcutsEnabled}
+                onChange={e => setKeyboardShortcutsEnabled(e.target.checked)}
+              />
+              {t('enableKeyboardShortcuts')}
+              <InfoTooltip text={t('tooltipKeyboardShortcuts')} />
+            </label>
+          </div>
 
           <button
             onClick={() => setShowShortcuts(prev => !prev)}
