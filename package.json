@@ -15,6 +15,7 @@
     "fixture:bpe": "python scripts/gen-bpe-fixture.py > test/fixtures/bpe-fixture.json"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1"
+    "@playwright/test": "^1.59.1",
+    "onnxruntime-node": "^1.26.0"
   }
 }
