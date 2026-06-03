@@ -364,11 +364,31 @@ export async function createSession(modelPath, opts, { ortMod = ort, fromPath = 
   }
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
-  const dataPath = modelPath + '.data';
-  if (existsSync(dataPath)) {
-    sessionOpts.externalData = [{ path: basename(dataPath), data: await readFile(dataPath) }];
-  }
+  // External weights live either in a single <model>.data sidecar (the upstream
+  // fp32 layout) or, for a sharded fp32 encoder (scripts/shard-fp32.py), in
+  // <model>.data.000, .001, ... each kept under 2 GB so no externalData buffer
+  // trips the WASM ArrayBuffer / blob caps. Mount every matching file; the `path`
+  // must equal the location string baked into the graph (the shard basename).
+  const externalData = await collectExternalData(modelPath);
+  if (externalData.length) sessionOpts.externalData = externalData;
   return ortMod.InferenceSession.create(buf, sessionOpts);
+}
+
+// Find the external-data file(s) sitting next to a model and read each into its
+// own Buffer (every shard is < 2 GB by construction, so no single read hits the
+// Node Buffer / WASM ArrayBuffer 2 GB wall). Returns ORT externalData entries
+// [{ path, data }]; empty when the model has no external weights.
+async function collectExternalData(modelPath) {
+  const dir = dirname(modelPath);
+  const stem = basename(modelPath);             // e.g. encoder-model.onnx
+  const single = stem + '.data';                // encoder-model.onnx.data
+  const shardRe = new RegExp(`^${stem.replace(/[.]/g, '\\.')}\\.data\\.\\d+$`);
+  const names = readdirSync(dir)
+    .filter((n) => n === single || shardRe.test(n))
+    .sort();                                     // .data before .data.000; shards lexically ordered
+  return Promise.all(
+    names.map(async (n) => ({ path: n, data: await readFile(join(dir, n)) })),
+  );
 }
 
 // --- audio decode ---------------------------------------------------------
