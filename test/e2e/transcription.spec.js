@@ -39,7 +39,14 @@ for (const fx of FIXTURES) {
     const GOLDEN = readFileSync(fixture(fx.golden), 'utf-8').trim();
 
     const errors = [];
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    // The shared transcription pipeline logs this line once per completed run
+    // (initial upload + each "Transcribe again"); counting it is a deterministic
+    // completion signal that does not depend on any transient UI.
+    let transcribeRuns = 0;
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+      if (m.text().includes('[Transcribe] Total time for entire audio')) transcribeRuns += 1;
+    });
 
     // First load creates the settings DB/store; seed it, then reload so the app
     // picks up local model source + wasm backend.
@@ -75,14 +82,18 @@ for (const fx of FIXTURES) {
     await page.locator('.history-modes button', { hasText: 'Audio' }).first().click();
     await expect(page.locator('.history-audio audio').first()).toBeVisible({ timeout: 10 * 1000 });
 
-    // "Transcribe again" re-runs the pipeline on the stored audio and replaces
-    // the entry's text in place (no new entry is appended).
+    // "Transcribe again" lives in the per-entry kebab (⋮) "More actions" menu.
+    // Open the menu, then click it to re-run the pipeline on the stored audio;
+    // the re-run replaces the entry's text in place (no new entry is appended).
+    // The click also dismisses the kebab (a global click handler closes it), so
+    // the menu item is gone immediately; track the run via the header spinner,
+    // which is shown only while a transcription is in flight.
     const before = (await historyText.innerText()).trim();
+    const runsBefore = transcribeRuns;
+    await page.getByRole('button', { name: 'More actions' }).first().click();
     await page.getByRole('button', { name: 'Transcribe again' }).first().click();
-    // The button label flips to a transient "Transcribing..." while running, then
-    // back; waiting for it to return proves the re-run completed.
-    await expect(page.getByRole('button', { name: 'Transcribe again' }).first())
-      .toBeVisible({ timeout: 6 * 60 * 1000 });
+    // Wait for the pipeline to log a second completion (the re-run finished).
+    await expect.poll(() => transcribeRuns, { timeout: 6 * 60 * 1000 }).toBeGreaterThan(runsBefore);
     await expect(page.locator('.history-item')).toHaveCount(1);
     await expect(historyText).not.toBeEmpty();
     const after = (await historyText.innerText()).trim();
