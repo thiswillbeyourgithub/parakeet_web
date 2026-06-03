@@ -1,0 +1,217 @@
+{
+  "generatedBy": "scripts/gen-fleurs-fixtures.mjs",
+  "note": "FLEURS validation clips (en+fr). expected = this repo int8 pipeline transcript; reference = FLEURS human label. See scripts/gen-fleurs-fixtures.mjs.",
+  "model": "parakeet-tdt-0.6b-v3 (int8, greedy)",
+  "seed": 1234,
+  "minOverlap": 0.85,
+  "clips": [
+    {
+      "id": "14384287797588585122",
+      "lang": "en",
+      "audio": "en/14384287797588585122.mp3",
+      "duration": 9.92,
+      "reference": "new kingdom ancient egyptians marvelled at their predecessors monuments which were then well over a thousand year old",
+      "expected": "New Kingdom ancient Egyptians marveled at their predecessors' monuments which were then, well, over a thousand years old.",
+      "refOverlap": 0.889
+    },
+    {
+      "id": "7915535714920570360",
+      "lang": "en",
+      "audio": "en/7915535714920570360.mp3",
+      "duration": 9.3,
+      "reference": "if you visit the arctic or antarctic areas in the winter you will experience the polar night which means that the sun doesn't rise above the horizon",
+      "expected": "If you visit the Arctic or Antarctic areas in the winter, you will experience the Polar night, which means that the sun doesn't rise above the horizon.",
+      "refOverlap": 1
+    },
+    {
+      "id": "17358079166744661933",
+      "lang": "en",
+      "audio": "en/17358079166744661933.mp3",
+      "duration": 4.68,
+      "reference": "most of the life of the hebrew family happened in the open air",
+      "expected": "Most of the life of the Hebrew family happened in the open air.",
+      "refOverlap": 1
+    },
+    {
+      "id": "5468754726824062194",
+      "lang": "en",
+      "audio": "en/5468754726824062194.mp3",
+      "duration": 11.52,
+      "reference": "in a partnership of npws and the sporting shooters association of australia nsw inc qualified volunteers were recruited under the sporting shooters association's hunting program",
+      "expected": "In partnership with NPWS and the Sporting Shooters Association of Australia, NSW, Inc., qualified volunteers were recruited under the Sporting Shooters Association's hunting program.",
+      "refOverlap": 0.962
+    },
+    {
+      "id": "14073676806876183541",
+      "lang": "en",
+      "audio": "en/14073676806876183541.mp3",
+      "duration": 10.44,
+      "reference": "research in ai involves making machines to automate tasks that require intelligent behavior",
+      "expected": "Research in AI involves making machines to automate tasks that require intelligent behavior.",
+      "refOverlap": 1
+    },
+    {
+      "id": "4240392157002027036",
+      "lang": "en",
+      "audio": "en/4240392157002027036.mp3",
+      "duration": 6.58,
+      "reference": "safaris are perhaps the greatest tourism draw in africa and the highlight for many visitors",
+      "expected": "Safaris are perhaps the greatest tourism draw in Africa and the highlight for many visitors.",
+      "refOverlap": 1
+    },
+    {
+      "id": "401178120420083523",
+      "lang": "en",
+      "audio": "en/401178120420083523.mp3",
+      "duration": 8.76,
+      "reference": "some reports put the official death toll at eight and official reports confirm that up to 30 were injured but final numbers are not yet known",
+      "expected": "Some reports put the official death toll at 8, and official reports confirmed that up to 30 were injured, but final numbers are not yet known.",
+      "refOverlap": 0.923
+    },
+    {
+      "id": "10630374883688952860",
+      "lang": "en",
+      "audio": "en/10630374883688952860.mp3",
+      "duration": 8.16,
+      "reference": "some reports put the official death toll at eight and official reports confirm that up to 30 were injured but final numbers are not yet known",
+      "expected": "Some reports put the official death toll at 8, and official reports confirmed that up to 30 were injured, but final numbers are not yet known.",
+      "refOverlap": 0.923
+    },
+    {
+      "id": "1329002535244170064",
+      "lang": "en",
+      "audio": "en/1329002535244170064.mp3",
+      "duration": 13.18,
+      "reference": "in many cases enrolling on a gap-year course abroad can actually improve your chances of moving into higher education back in your home country",
+      "expected": "In many cases enrolling on a gap year course abroad can actually improve your chances into higher education back in your home country.",
+      "refOverlap": 0.92
+    },
+    {
+      "id": "11527336559557410281",
+      "lang": "en",
+      "audio": "en/11527336559557410281.mp3",
+      "duration": 10.92,
+      "reference": "courier companies are well paid for delivering things quickly frequently time is very important with business documents merchandise or spare parts for an urgent repair",
+      "expected": "Courier companies are well paid for delivering things quickly, frequently, time is very important with business documents, merchandise or spare parts for an urgent repair.",
+      "refOverlap": 1
+    },
+    {
+      "id": "6786980018992157426",
+      "lang": "fr",
+      "audio": "fr/6786980018992157426.mp3",
+      "duration": 11.22,
+      "reference": "ils voient très bien dans l'obscurité grâce à leur vision nocturne et se déplacent aussi très furtivement les ocelots traquent leurs proies en se fondant dans leur environnement avant de se jeter sur elles",
+      "expected": "Ils vont très bien dans l'obscurité grâce à leur vision nocturne, se déplacent aussi très furtivement, les Ocelots traquent leur proie en se fondant dans leur environnement avant de se jeter sur elles.",
+      "refOverlap": 0.886
+    },
+    {
+      "id": "7856890929576275663",
+      "lang": "fr",
+      "audio": "fr/7856890929576275663.mp3",
+      "duration": 12.36,
+      "reference": "des produits artisanaux peuvent être considérés comme des antiquités même s'ils sont moins anciens que des produits industriels similaires",
+      "expected": "Des produits artisanaux peuvent être considérés comme des antiquités, même s'ils sont moins anciens que des produits industriels similaires.",
+      "refOverlap": 1
+    },
+    {
+      "id": "3065756655073387723",
+      "lang": "fr",
+      "audio": "fr/3065756655073387723.mp3",
+      "duration": 10.32,
+      "reference": "l'argent peut être échangé à la seule banque des îles située à stanley en face du magasin fic west",
+      "expected": "L'argent peut être échangé à la seule banque des îles située à Stanley, en face du magasin FIC Ouest.",
+      "refOverlap": 0.95
+    },
+    {
+      "id": "7316050675841835050",
+      "lang": "fr",
+      "audio": "fr/7316050675841835050.mp3",
+      "duration": 12,
+      "reference": "un ancien policier philippin a pris en otage des touristes de hong kong en détournant leur bus à manille la capitale des philippines",
+      "expected": "Un ancien policier philippin a pris en otage les touristes de Hong Kong en détournant leur bus à Manille, la capitale des Philippines.",
+      "refOverlap": 1
+    },
+    {
+      "id": "1528829748755272987",
+      "lang": "fr",
+      "audio": "fr/1528829748755272987.mp3",
+      "duration": 6.9,
+      "reference": "l'onu espère également finaliser un fonds pour aider les pays touchés par le réchauffement climatique à faire face aux impacts",
+      "expected": "L'ONU espère également finaliser un fonds pour aider les pays touchés par le réchauffement climatique à faire face aux impacts.",
+      "refOverlap": 1
+    },
+    {
+      "id": "9577382764311883081",
+      "lang": "fr",
+      "audio": "fr/9577382764311883081.mp3",
+      "duration": 10.44,
+      "reference": "combiné à sa relative inaccessibilité « tombouctou » est devenu une métaphore pour les pays lointains et exotiques",
+      "expected": "Combiné à sa relative inaccessibilité, Tombouctou est devenue une métaphore pour les pays loin et exotiques.",
+      "refOverlap": 0.875
+    },
+    {
+      "id": "11562112963864972357",
+      "lang": "fr",
+      "audio": "fr/11562112963864972357.mp3",
+      "duration": 14.04,
+      "reference": "elle est arrivée à cette conclusion grâce aux multiples commentaires positifs et encouragements qu'elle a reçus aussi bien des femmes que des hommes sur l'importance de considérer la contraception comme une nécessité",
+      "expected": "Elle est arrivée à cette conclusion grâce aux multiples commentaires positifs et encouragements qu'elle a reçus aussi bien des femmes que des hommes sur l'importance de considérer la contraception comme une nécessité.",
+      "refOverlap": 1
+    },
+    {
+      "id": "10895602731915140601",
+      "lang": "fr",
+      "audio": "fr/10895602731915140601.mp3",
+      "duration": 7.92,
+      "reference": "les naturalistes et les philosophes se sont concentrés sur les textes anciens et en particulier sur la bible en latin",
+      "expected": "Les naturalistes et les philosophes se sont concentrés sur les textes anciens et en particulier sur la Bible en latin.",
+      "refOverlap": 1
+    },
+    {
+      "id": "7710081235851472968",
+      "lang": "fr",
+      "audio": "fr/7710081235851472968.mp3",
+      "duration": 4.98,
+      "reference": "cela vaut la peine de se promener pendant une demi-heure dans ce village fascinant",
+      "expected": "Cela vaut la peine de se promener pendant une demi-heure dans ce village fascinant.",
+      "refOverlap": 1
+    },
+    {
+      "id": "13960926483805890602",
+      "lang": "fr",
+      "audio": "fr/13960926483805890602.mp3",
+      "duration": 10.74,
+      "reference": "le pillage généralisé se serait poursuivi pendant la nuit les forces de l'ordre n'étant pas présentes dans les rues de bichkek",
+      "expected": "Le pillage généralisé se serait poursuivi pendant la nuit, les forces de l'ordre n'étant pas présentes dans les rues de Bishkek.",
+      "refOverlap": 0.957
+    }
+  ],
+  "stitched": {
+    "audio": "stitched.mp3",
+    "gapSec": 0.4,
+    "order": [
+      "14384287797588585122",
+      "7915535714920570360",
+      "17358079166744661933",
+      "5468754726824062194",
+      "14073676806876183541",
+      "4240392157002027036",
+      "401178120420083523",
+      "10630374883688952860",
+      "1329002535244170064",
+      "11527336559557410281",
+      "6786980018992157426",
+      "7856890929576275663",
+      "3065756655073387723",
+      "7316050675841835050",
+      "1528829748755272987",
+      "9577382764311883081",
+      "11562112963864972357",
+      "10895602731915140601",
+      "7710081235851472968",
+      "13960926483805890602"
+    ],
+    "reference": "new kingdom ancient egyptians marvelled at their predecessors monuments which were then well over a thousand year old if you visit the arctic or antarctic areas in the winter you will experience the polar night which means that the sun doesn't rise above the horizon most of the life of the hebrew family happened in the open air in a partnership of npws and the sporting shooters association of australia nsw inc qualified volunteers were recruited under the sporting shooters association's hunting program research in ai involves making machines to automate tasks that require intelligent behavior safaris are perhaps the greatest tourism draw in africa and the highlight for many visitors some reports put the official death toll at eight and official reports confirm that up to 30 were injured but final numbers are not yet known some reports put the official death toll at eight and official reports confirm that up to 30 were injured but final numbers are not yet known in many cases enrolling on a gap-year course abroad can actually improve your chances of moving into higher education back in your home country courier companies are well paid for delivering things quickly frequently time is very important with business documents merchandise or spare parts for an urgent repair ils voient très bien dans l'obscurité grâce à leur vision nocturne et se déplacent aussi très furtivement les ocelots traquent leurs proies en se fondant dans leur environnement avant de se jeter sur elles des produits artisanaux peuvent être considérés comme des antiquités même s'ils sont moins anciens que des produits industriels similaires l'argent peut être échangé à la seule banque des îles située à stanley en face du magasin fic west un ancien policier philippin a pris en otage des touristes de hong kong en détournant leur bus à manille la capitale des philippines l'onu espère également finaliser un fonds pour aider les pays touchés par le réchauffement climatique à faire face aux impacts combiné à sa relative inaccessibilité « tombouctou » est devenu une métaphore pour les pays lointains et exotiques elle est arrivée à cette conclusion grâce aux multiples commentaires positifs et encouragements qu'elle a reçus aussi bien des femmes que des hommes sur l'importance de considérer la contraception comme une nécessité les naturalistes et les philosophes se sont concentrés sur les textes anciens et en particulier sur la bible en latin cela vaut la peine de se promener pendant une demi-heure dans ce village fascinant le pillage généralisé se serait poursuivi pendant la nuit les forces de l'ordre n'étant pas présentes dans les rues de bichkek",
+    "expected": "New Kingdom ancient Egyptians marveled at their predecessors' monuments which were then, well, over a thousand years old. If you visit the Arctic or Antarctic areas in the winter, you will experience the Polar night, which means that the sun doesn't rise above the horizon. Most of the life of the Hebrew family happened in the open air. In partnership with NPWS and the Sporting Shooters Association of Australia, NSW, Inc., qualified volunteers were recruited under the Sporting Shooters Association's hunting program. Research in AI involves making machines to automate tasks that require intelligent behavior. Safaris are perhaps the greatest tourism draw in Africa and the highlight for many visitors. Some reports put the official death toll at 8, and official reports confirmed that up to 30 were injured, but final numbers are not yet known. Some reports put the official death toll at 8, and official reports confirmed that up to 30 were injured, but final numbers are not yet known. In many cases enrolling on a gap year course abroad can actually improve your chances into higher education back in your home country. Courier companies are well paid for delivering things quickly, frequently, time is very important with business documents, merchandise or spare parts for an urgent repair. Ils vont très bien dans l'obscurité grâce à leur vision nocturne, se déplacent aussi très furtivement, les Ocelots traquent leur proie en se fondant dans leur environnement avant de se jeter sur elles. Des produits artisanaux peuvent être considérés comme des antiquités, même s'ils sont moins anciens que des produits industriels similaires. L'argent peut être échangé à la seule banque des îles située à Stanley, en face du magasin FIC Ouest. Un ancien policier philippin a pris en otage les touristes de Hong Kong en détournant leur bus à Manille, la capitale des Philippines. L'ONU espère également finaliser un fonds pour aider les pays touchés par le réchauffement climatique à faire face aux impacts. Combiné à sa relative inaccessibilité, Tombouctou est devenue une métaphore pour les pays loin et exotiques. Elle est arrivée à cette conclusion grâce aux multiples commentaires positifs et encouragements qu'elle a reçus aussi bien des femmes que des hommes sur l'importance de considérer la contraception comme une nécessité. Les naturalistes et les philosophes se sont concentrés sur les textes anciens et en particulier sur la Bible en latin. Cela vaut la peine de se promener pendant une demi-heure dans ce village fascinant. Le pillage généralisé se serait poursuivi pendant la nuit, les forces de l'ordre n'étant pas présentes dans les rues de Bishkek."
+  }
+}
