@@ -282,7 +282,11 @@ export class ParakeetModel {
 
     // Expose the logits tensor so callers can dispose it after consuming the
     // subarray views (prevents WASM/GPU memory leaks in long decode loops).
-    return { tokenLogits, step, newState, _logitsTensor: logits };
+    // `durLogits` is the raw per-duration logit view: the greedy path uses the
+    // pre-argmaxed `step`, while the MAES beam path scores over it (the duration
+    // index equals the frame advance, so durLogits[i] is the log-weight of
+    // advancing `i` frames).
+    return { tokenLogits, step, durLogits, newState, _logitsTensor: logits };
   }
 
   /**
@@ -468,24 +472,37 @@ export class ParakeetModel {
    * of the MAES decoder). Returns the candidate continuations and the shared next
    * decoder state.
    *
-   * MAES adaptive expansion happens here in two stages:
+   * MAES adaptive expansion happens here in three stages, matching NeMo's
+   * `modified_adaptive_expansion_search`, which expands over (token, duration)
+   * pairs rather than a single argmaxed duration:
    *   - Over-generation (`maes_expansion_beta`): the caller's `expandK` is
    *     `beamWidth + beta`, so we pull the top-(beamWidth+beta) tokens, plus a
    *     forced blank so the hypothesis can always advance in time.
-   *   - Adaptive prune (`maes_expansion_gamma`): non-blank candidates whose
-   *     log-probability is more than `maesExpansionGamma` below the best
-   *     candidate are dropped. On a confident frame one token dominates and every
-   *     other expansion falls below the threshold, so the hypothesis branches
-   *     like greedy; on an ambiguous frame several survive and the beam widens.
-   *     This is what makes the effective width adapt per token.
+   *   - Duration branching: every kept token is crossed with every TDT duration,
+   *     scoring `token_logp + duration_logp` (both temperature-1 log-softmax).
+   *     The top-`expandK` (token, duration) pairs over that flattened space
+   *     survive, so the beam can pick a non-argmax duration when its joint
+   *     log-prob wins. Blank with duration 0 is forced to duration 1
+   *     (`min_non_zero_duration_idx`) so it still advances a frame.
+   *   - Adaptive prune (`maes_expansion_gamma`): non-blank pairs whose joint
+   *     log-probability is more than `maesExpansionGamma` below the best pair are
+   *     dropped. On a confident frame one pair dominates and every other falls
+   *     below the threshold, so the hypothesis branches like greedy; on an
+   *     ambiguous frame several survive and the beam widens. This is what makes
+   *     the effective width adapt per token.
+   *
+   * Fan-out per hypothesis is `expandK * |durations|` pairs before the topk and
+   * gamma prune; `|durations|` is small (typically 5) so the extra cost is modest.
    *
    * Each candidate carries:
-   *   - id / isBlank / emit / step (TDT duration)
+   *   - id / isBlank / emit / step (the branched TDT duration, per candidate)
    *   - confVal: frame confidence at the UI temperature on the TRUE (unboosted)
-   *     logits, for output confidence_scores (matches greedy semantics).
-   *   - rankDelta: boosted log-probability at temperature 1, for pruning. It is
-   *     independent of the UI temperature so ranking still discriminates at
-   *     temperature 0 (where confVal collapses to 1.0).
+   *     token logits, for output confidence_scores (matches greedy semantics;
+   *     duration does not enter confVal so overallLogProb stays token-only).
+   *   - rankDelta: boosted joint (token+duration) log-probability at temperature
+   *     1, for ranking/pruning. It is independent of the UI temperature so
+   *     ranking still discriminates at temperature 0 (where confVal collapses to
+   *     1.0).
    *   - active: the boosting trie's active-node set for the child (advanced for
    *     emitted tokens, inherited for blank). The trie's `active` field is
    *     borrowed per-hyp via assignment so phraseBoost.js needs no change.
@@ -498,7 +515,9 @@ export class ParakeetModel {
     const { temperature, expandK, maesExpansionGamma, phraseBoost } = opts;
     const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
     const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
-    const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
+    // The beam scores over the raw duration logits (see below), so it ignores
+    // the pre-argmaxed `step` the greedy path consumes.
+    const { tokenLogits, durLogits, newState, _logitsTensor } = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
 
     // Boost selection: borrow the trie's active set for this hypothesis.
     if (phraseBoost) phraseBoost.active = hyp.active;
@@ -516,34 +535,79 @@ export class ParakeetModel {
     for (const id of topIds) boostedVal.set(id, tokenLogits[id]);
     if (boostSaved) phraseBoost.restore(tokenLogits, boostSaved);
 
-    const logZ = this._logSumExp(tokenLogits); // temperature-1 partition
+    const logZ = this._logSumExp(tokenLogits);   // temperature-1 token partition
+    const durZ = this._logSumExp(durLogits);     // temperature-1 duration partition
+    const nDur = durLogits.length;
+    // Blank with duration 0 cannot advance time; force it to the smallest
+    // non-zero duration (NeMo's min_non_zero_duration_idx == 1 under the
+    // duration-index == frame-advance convention this codebase uses).
+    const minNonZeroDur = nDur > 1 ? 1 : 0;
 
-    // First pass: boosted log-prob (rankDelta) per candidate, and the best one
-    // for the MAES gamma threshold. Defer confidence + trie advance to the
-    // survivors so pruned candidates cost nothing extra.
-    const scored = [];
-    let maxRankDelta = -Infinity;
+    // Per-token boosted log-prob (rankDelta's token term), computed once and
+    // reused across every duration that token is crossed with.
+    const tokenLP = new Map();
     for (const id of topIds) {
-      const isBlank = (id === this.blankId);
       const trueLogit = tokenLogits[id];
       const boostBonus = boostedVal.get(id) - trueLogit;
-      const rankDelta = (trueLogit - logZ) + boostBonus;
-      if (rankDelta > maxRankDelta) maxRankDelta = rankDelta;
-      scored.push({ id, isBlank, trueLogit, rankDelta });
+      tokenLP.set(id, { trueLogit, logp: (trueLogit - logZ) + boostBonus });
     }
 
-    // Adaptive (MAES) prune: keep only non-blank candidates within `gamma`
-    // log-prob of the best. Blank is always kept so the hypothesis can advance.
-    const threshold = maxRankDelta - maesExpansionGamma;
+    // Cross every kept token with every TDT duration; score the joint
+    // (token+duration) log-prob. Pairs with zero probability (a -Infinity
+    // duration logit) carry no mass, so skip them.
+    const pairs = [];
+    let maxTotal = -Infinity;
+    for (const id of topIds) {
+      const isBlank = (id === this.blankId);
+      const { trueLogit, logp: tlp } = tokenLP.get(id);
+      for (let d = 0; d < nDur; d++) {
+        const total = tlp + (durLogits[d] - durZ);
+        if (!Number.isFinite(total)) continue;
+        // The score keeps duration `d`'s log-prob even when blank's frame
+        // advance is forced off 0 (NeMo forces the advance, not the score).
+        const stepEff = (isBlank && d === 0) ? minNonZeroDur : d;
+        pairs.push({ id, isBlank, trueLogit, rankDelta: total, step: stepEff });
+        if (total > maxTotal) maxTotal = total;
+      }
+    }
+
+    // Keep the top-`expandK` (token, duration) pairs (NeMo topks the flattened
+    // space to max_candidates), then guarantee a blank advance survives even if
+    // it fell outside that cut, so the hypothesis can always move forward in time.
+    pairs.sort((a, b) => b.rankDelta - a.rankDelta);
+    const kept = pairs.slice(0, expandK);
+    if (!kept.some(p => p.isBlank)) {
+      const bestBlank = pairs.find(p => p.isBlank); // pairs is sorted desc
+      if (bestBlank) kept.push(bestBlank);
+    }
+
+    // Adaptive (MAES) prune: drop non-blank pairs more than `gamma` log-prob
+    // below the best pair. Blank pairs always survive (advance guarantee).
+    // Confidence + trie advance are token-only, so cache them per token id.
+    const threshold = maxTotal - maesExpansionGamma;
     const cands = [];
-    for (const { id, isBlank, trueLogit, rankDelta } of scored) {
+    const confCache = new Map();
+    const activeCache = new Map();
+    for (const { id, isBlank, trueLogit, rankDelta, step } of kept) {
       if (!isBlank && rankDelta < threshold) continue;
-      const confVal = this._frameConfidence(tokenLogits, trueLogit, temperature);
+      let confVal = confCache.get(id);
+      if (confVal === undefined) {
+        confVal = this._frameConfidence(tokenLogits, trueLogit, temperature);
+        confCache.set(id, confVal);
+      }
       let active = hyp.active;
-      if (!isBlank && phraseBoost) {
-        phraseBoost.active = hyp.active;
-        phraseBoost.advance(id);
-        active = phraseBoost.active;
+      if (!isBlank) {
+        active = activeCache.get(id);
+        if (active === undefined) {
+          if (phraseBoost) {
+            phraseBoost.active = hyp.active;
+            phraseBoost.advance(id);
+            active = phraseBoost.active;
+          } else {
+            active = hyp.active;
+          }
+          activeCache.set(id, active);
+        }
       }
       cands.push({ id, isBlank, emit: !isBlank, step, confVal, rankDelta, active });
     }

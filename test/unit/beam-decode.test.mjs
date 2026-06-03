@@ -55,6 +55,13 @@ function makeModel(script) {
       return {
         tokenLogits: Float32Array.from(spec.logits),
         step: spec.step,
+        // Duration logits: one-hot at spec.step (chosen) so the beam's (token,
+        // duration) branching picks the same duration the greedy argmax would,
+        // keeping the context-free script greedy-optimal. Tests that exercise
+        // duration branching override this by supplying spec.durLogits.
+        durLogits: spec.durLogits
+          ? Float32Array.from(spec.durLogits)
+          : Float32Array.from({ length: spec.step + 1 }, (_, i) => (i === spec.step ? 0 : -Infinity)),
         newState: { state1: {}, state2: {} },
         _logitsTensor: { dispose() {} },
       };
@@ -177,6 +184,35 @@ describe('beam == greedy (context-free)', () => {
       assert.ok(eqArr(out.ids, [0, 1, 2, 4]), 'emitted tokens are 0,1,2,4');
       assert.equal(out.tokenConfs.length, out.ids.length);
       assert.equal(out.tokenTimes.length, out.ids.length);
+      assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak');
+    });
+  }
+});
+
+describe('duration branching (#1)', () => {
+  // The beam must score/select the TDT duration from the duration logits, not
+  // from the pre-argmaxed `step` the greedy path uses. Here frame 0's `step`
+  // field says duration 1, but its durLogits strongly favour duration 2. A beam
+  // that reads durLogits jumps from frame 0 straight to frame 2 (== Tenc),
+  // emitting only token 0; a beam still keyed on `step` would land on frame 1
+  // and emit token 3 as well. So ids == [0] and the token spans 2 frames proves
+  // duration is sourced from the logits.
+  const durScript = [
+    { logits: [4.0, 0, 0, 0, 0, -1.0], step: 1, durLogits: [-Infinity, 0.0, 5.0] }, // token 0; durLogits argmax = 2
+    { logits: [0, 0, 0, 4.0, 0, -1.0], step: 1 }, // token 3, only reached if duration 1 were chosen
+  ];
+  const ts = 0.08; // subsampling(8) * windowStride(0.01)
+
+  for (const width of [2, 4]) {
+    test(`width ${width} selects the high-logp duration (skips frame 1)`, async () => {
+      statesCreated = statesDisposed = joinerCalls = 0;
+      const model = makeModel(durScript);
+      const out = await model._decodeBeam(makeTransposed(2), D, 2, {
+        beamWidth: width, temperature: 1.0, frameStride: 1, phraseBoost: null,
+        returnTimestamps: true, returnConfidences: true, timeStride: ts, ...MAES,
+      });
+      assert.ok(eqArr(out.ids, [0]), 'only token 0 is emitted (duration 2 skipped frame 1)');
+      assert.ok(eqFloatArr(out.tokenTimes[0], [0, 2 * ts]), 'token 0 spans 2 frames (duration 2)');
       assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak');
     });
   }
