@@ -28,7 +28,7 @@
 //
 // It also transcodes the FULL speech to a compact mp3 in the cache
 // (test/e2e/.cache/jfk-moon/full.mp3); that file is NOT committed and is used by
-// the manual WebGPU memory-leak harness (scripts/webgpu-memcheck.mjs), which
+// the manual WebGPU harness (scripts/webgpu-check.mjs), which
 // imports the ensure* helpers below so the download/transcode logic lives in one
 // place.
 //
@@ -53,7 +53,7 @@ import { INT8_SAFE_CHUNK_DURATION_SEC } from '../app/src/models.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
-// --- shared constants + helpers (also imported by webgpu-memcheck.mjs) -------
+// --- shared constants + helpers (also imported by webgpu-check.mjs) -------
 
 // Miller Center digitisation on the Internet Archive (public-domain US-gov work).
 // The lossless FLAC is the master; we downsample/crop from it so the committed
