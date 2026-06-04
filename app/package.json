@@ -18,7 +18,7 @@
     "onnxruntime-web": "1.26.0"
   },
   "overrides": {
-    "protobufjs": "^7.5.5"
+    "protobufjs": "^7.5.8"
   },
   "author": "Olivier Cornelis",
   "license": "AGPL-3.0",
