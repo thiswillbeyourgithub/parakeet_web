@@ -601,10 +601,15 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.on
  * Resolve the effective encoder/decoder quantisation for a backend, given what
  * the repo actually ships. Pure (no I/O) so it can be unit-tested.
  *
- *   - Non-WebGPU (WASM): pinned to int8. The fp16 (~1.2 GB) and fp32 (~2.4 GB)
- *     encoders overflow the 32-bit WASM heap: the CPU/WASM EP upcasts fp16 to
- *     fp32, a single ArrayBuffer caps at ~2 GB, and Chromium's blob fetch caps
- *     near 2 GB, so loading them dies with bad_alloc / "Failed to fetch".
+ *   - Non-WebGPU (WASM): pinned to int8 by default. fp16 overflows the WASM heap
+ *     (the CPU/WASM EP upcasts fp16 to fp32, doubling it, and has no fp16 kernel)
+ *     and a single 2.4 GB fp32 sidecar trips the ~2 GB ArrayBuffer / blob-fetch
+ *     caps. The one exception is an explicit opt-in: when `allowWasmFp32` is set,
+ *     `encoderQuant` is 'fp32', AND the repo ships the fp32 encoder as <2GB
+ *     shards (encoder-model.onnx.data.NNN, from scripts/shard-fp32.py), the
+ *     encoder resolves to fp32 (the shards clear both caps and the 2.4 GB fits
+ *     the ~4 GB wasm32 heap). The decoder stays int8 (tiny, runs fine on WASM).
+ *     Without all three the int8 pin stands.
  *   - WebGPU: the GPU EP has no int8 encoder kernel, so it needs fp16 or fp32.
  *     Prefer fp16 when the repo ships encoder-model.fp16.onnx (near-lossless vs
  *     fp32, ~half the download, and unlike int8 it does not drop content past
@@ -618,10 +623,23 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.on
  * @param {('int8'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
  * @param {('int8'|'fp16'|'fp32')} args.decoderQuant Requested decoder quant.
  * @param {string[]} args.repoFiles Filenames available in the repo.
+ * @param {boolean} [args.allowWasmFp32=false] Opt-in: allow sharded fp32 on WASM
+ *   when the repo ships encoder-model.onnx.data.NNN shards and fp32 is requested.
  * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, encoderFellBackToFp32: boolean}}
  */
-export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles }) {
+export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 = false }) {
   if (!backend.startsWith('webgpu')) {
+    // Opt-in sharded fp32 on WASM: needs the explicit flag, an fp32 request, and
+    // the repo to actually ship the <2GB shards. Anything missing keeps int8.
+    const hasFp32Shards = repoFiles.some((f) => /^encoder-model\.onnx\.data\.\d+$/.test(f));
+    if (allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
+      return {
+        encoderQ: 'fp32',
+        decoderQ: 'int8',
+        pinnedToInt8: false,
+        encoderFellBackToFp32: false,
+      };
+    }
     return {
       encoderQ: 'int8',
       decoderQ: 'int8',
@@ -657,10 +675,13 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
  *   'js' uses the pure-JS mel.js (no ONNX download needed, supports streaming).
  *   'onnx' downloads the preprocessor ONNX model from the repo.
  * @param {('webgpu'|'webgpu-hybrid'|'webgpu-strict'|'wasm')} [options.backend='webgpu'] Backend mode
+ * @param {boolean} [options.allowWasmFp32=false] Opt-in: on WASM, select the
+ *   sharded fp32 encoder (instead of the int8 pin) when fp32 is requested and the
+ *   repo ships encoder-model.onnx.data.NNN shards. Off by default (2.4 GB download).
  * @param {(progress: {loaded: number, total: number, file: string}) => void} [options.progress] Progress callback
  * @param {string} [options.localFallbackBaseUrl] When set, download files from this local
  *   base URL instead of HuggingFace (e.g., '/models'). Used as a fallback when HF is blocked.
- * @returns {Promise<{urls: {encoderUrl: string, decoderUrl: string, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
+ * @returns {Promise<{urls: {encoderUrl: string, decoderUrl: string, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|Array<{path:string,data:string}>|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
  */
 export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Resolve model key to repo ID and get config from the registry
@@ -670,7 +691,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, allowWasmFp32 = false } = options;
 
   // Resolve the effective revision: operator override (options.revision)
   // wins, otherwise the per-model pin in models.js, otherwise the moving
@@ -696,13 +717,21 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       'decoder_joint-model.onnx.data',
     ];
     repoFiles = (await Promise.all(candidates.map(probe))).filter(Boolean);
+    // The HF API lists shard files automatically; local fallback can't, so probe
+    // the contiguous fp32 encoder shards (scripts/shard-fp32.py) until the first
+    // gap so resolveModelQuant and the download loop can see them.
+    for (let i = 0; ; i++) {
+      const name = `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
+      if (!(await probe(name))) break;
+      repoFiles.push(name);
+    }
   } else {
     repoFiles = await listRepoFiles(repoId, effectiveRevision);
   }
 
   // Resolve the effective quantisation per backend and per availability.
   const { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
-    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles });
+    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 });
   if (pinnedToInt8) {
     console.warn(`[Hub] ${backend} backend is pinned to int8; ignoring requested `
       + `encoder=${encoderQuant}/decoder=${decoderQuant} (fp16/fp32 overflow the WASM heap)`);
@@ -730,8 +759,16 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Preprocessor: JS (mel.js) — skipping ${preprocessor}.onnx download`);
   }
 
-  // Conditionally include external data files only if they exist in the repo file list.
-  if (repoFiles.includes(`${encoderName}.data`)) {
+  // External encoder weights come in one of two layouts. A sharded fp32 encoder
+  // (scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
+  // < 2 GB so it clears the WASM ArrayBuffer / Chromium blob-fetch caps; a plain
+  // export keeps a single <name>.data sidecar. Prefer shards when the repo ships
+  // them (they also let WebGPU fp32 dodge the 2 GB fetch cap), else the sidecar.
+  // Shards are downloaded after the main loop into an array of { path, data }
+  // entries (parakeet.js buildExternalData mounts that form directly).
+  const shardRe = new RegExp(`^${encoderName.replace(/[.]/g, '\\.')}\\.data\\.\\d+$`);
+  const encoderShards = repoFiles.filter((f) => shardRe.test(f)).sort();
+  if (encoderShards.length === 0 && repoFiles.includes(`${encoderName}.data`)) {
     filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data` });
   }
 
@@ -750,20 +787,20 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       preprocessorBackend,  // Pass through so callers know which backend to use
   };
 
+  // One place that knows how to fetch a single file (HF or local fallback),
+  // reused by both the main file loop and the shard loop below so the two can
+  // never diverge in revision/progress handling.
+  const downloadFile = (name) => {
+    const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
+    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress };
+    return localFallbackBaseUrl
+      ? getLocalModelFile(localFallbackBaseUrl, repoId, name, perFileOpts)
+      : getModelFile(repoId, name, perFileOpts);
+  };
+
   for (const { key, name } of filesToGet) {
     try {
-        const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
-        const perFileOpts = {
-          ...options,
-          revision: effectiveRevision,
-          progress: wrappedProgress,
-        };
-        if (localFallbackBaseUrl) {
-          // Local fallback mode: download from the instance instead of HuggingFace
-          results.urls[key] = await getLocalModelFile(localFallbackBaseUrl, repoId, name, perFileOpts);
-        } else {
-          results.urls[key] = await getModelFile(repoId, name, perFileOpts);
-        }
+        results.urls[key] = await downloadFile(name);
     } catch (e) {
         if (key.endsWith('DataUrl')) {
             console.warn(`[Hub] Optional external data file not found: ${name}. This is expected if the model is small.`);
@@ -771,6 +808,17 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         } else {
             throw e;
         }
+    }
+  }
+
+  // Sharded fp32 encoder weights: fetch each <2GB shard and hand parakeet.js an
+  // array of { path, data } entries, where path is the shard basename baked into
+  // the graph's external_data location (see buildExternalData in parakeet.js).
+  if (encoderShards.length) {
+    console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
+    results.urls.encoderDataUrl = [];
+    for (const name of encoderShards) {
+      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name) });
     }
   }
 

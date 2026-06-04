@@ -12,6 +12,8 @@ import { resolveModelQuant } from '../../app/src/hub.js';
 
 const WITH_FP16 = ['encoder-model.fp16.onnx', 'decoder_joint-model.fp16.onnx', 'encoder-model.int8.onnx', 'encoder-model.onnx'];
 const NO_FP16 = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.int8.onnx'];
+// A repo that ships the fp32 encoder as <2GB shards (scripts/shard-fp32.py).
+const WITH_FP32_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'decoder_joint-model.int8.onnx'];
 
 describe('resolveModelQuant: WASM is pinned to int8', () => {
   for (const backend of ['wasm']) {
@@ -33,6 +35,32 @@ describe('resolveModelQuant: WASM is pinned to int8', () => {
       assert.equal(r.pinnedToInt8, true);
     });
   }
+});
+
+describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
+  test('opt-in + fp32 request + shards shipped -> fp32 encoder, int8 decoder, not pinned', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+  });
+
+  test('opt-in OFF (default) + fp32 request + shards shipped -> still int8 pin', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+  });
+
+  test('opt-in + fp32 request but NO shards shipped -> int8 pin (single 2.4GB sidecar cannot load on WASM)', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: NO_FP16, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+  });
+
+  test('opt-in + int8 request -> int8 (opt-in never forces fp32 on an int8 request)', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+  });
 });
 
 describe('resolveModelQuant: WebGPU prefers fp16 when the repo ships it', () => {
