@@ -891,12 +891,27 @@ export async function listLocalRepoFiles(baseUrl) {
     'decoder_joint-model.onnx.data',
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
-  // Probe the contiguous fp32 encoder shards until the first gap so
-  // resolveModelQuant and the download loop can see them.
+  // Probe the contiguous fp32 encoder shards (scripts/shard-fp32.py) until the
+  // first gap so resolveModelQuant and the download loop can see them. The
+  // shards (plus the rewritten encoder-model.onnx that points at them) sit
+  // either flat under baseUrl or in a `sharded/` subfolder: shard-fp32.py's
+  // DEFAULT output is `<model-dir>/sharded`, so an operator who runs it over an
+  // `hf download` mirror and bind-mounts the parent serves the shards at
+  // `/models/sharded/...`, not flat. Probe flat first, then under sharded/, and
+  // report basenames either way so resolveModelQuant stays oblivious to the
+  // layout; getParakeetModel re-probes the physical subfolder to fetch the
+  // encoder graph + shards from the right place (vocab + the int8 decoder, which
+  // shard-fp32.py does NOT copy into sharded/, still come from the flat root).
+  const shardName = (i) => `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
   for (let i = 0; ; i++) {
-    const name = `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
-    if (!(await probe(name))) break;
-    files.push(name);
+    if (!(await probe(shardName(i)))) break;
+    files.push(shardName(i));
+  }
+  if (!files.some((f) => /^encoder-model\.onnx\.data\.\d+$/.test(f))) {
+    for (let i = 0; ; i++) {
+      if (!(await probe(`sharded/${shardName(i)}`))) break;
+      files.push(shardName(i));
+    }
   }
   return files;
 }
@@ -1121,6 +1136,34 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const encoderName = `encoder-model${QUANT_SUFFIX[encoderQ]}`;
   const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
+  // External encoder weights come in one of two layouts. A sharded fp32 encoder
+  // (scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
+  // < 2 GB so it clears the WASM ArrayBuffer / Chromium blob-fetch caps; a plain
+  // export keeps a single <name>.data sidecar. Detect the shards here (before the
+  // download list is built) so the encoder graph fetch can be routed to wherever
+  // the shards actually live.
+  const shardRe = new RegExp(`^${encoderName.replace(/[.]/g, '\\.')}\\.data\\.\\d+$`);
+  const encoderShards = repoFiles.filter((f) => shardRe.test(f)).sort();
+
+  // shard-fp32.py's default output is a `sharded/` subfolder holding the rewritten
+  // encoder-model.onnx (its graph points at .data.NNN, not a single .data sidecar)
+  // plus the shards. On a local mirror those may sit under sharded/ rather than
+  // flat; HEAD-probe once to find out and reroute the encoder graph + shard
+  // fetches there. vocab.txt and the int8 decoder stay at the flat root (the
+  // sharded/ dir does NOT carry the int8 decoder), so only the encoder pieces are
+  // rerouted. Mirrors the file-specific routing in test/e2e/serve.mjs.
+  let encoderSubdir = '';
+  if (effectiveLocalBase && encoderShards.length) {
+    const reachable = async (rel) => {
+      try { return (await fetch(`${effectiveLocalBase}/${rel}`, { method: 'HEAD' })).ok; }
+      catch { return false; }
+    };
+    if (!(await reachable(encoderShards[0])) && (await reachable(`sharded/${encoderShards[0]}`))) {
+      encoderSubdir = 'sharded/';
+    }
+  }
+  const encoderFetchName = `${encoderSubdir}${encoderName}`;
+
   // The big encoder/decoder weights are handed to ORT as bytes (not a blob URL)
   // on WebGPU, where they are fp16/fp32 (>1 GB) and a blob-URL fetch OOMs (see
   // blobToBytes). vocab + external-data sidecars stay as URLs.
@@ -1129,7 +1172,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // cached bytes get deserialized at session-create time; evictModelFiles
   // targets exactly these on a corrupt-cache recovery (results.cacheInfo below).
   const filesToGet = [
-    { key: 'encoderUrl', name: encoderName, asBytes: loadAsBytes, weight: true },
+    { key: 'encoderUrl', name: encoderFetchName, asBytes: loadAsBytes, weight: true },
     { key: 'decoderUrl', name: decoderName, asBytes: loadAsBytes, weight: true },
     { key: 'tokenizerUrl', name: 'vocab.txt' },
   ];
@@ -1144,15 +1187,10 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Preprocessor: JS (mel.js) — skipping ${preprocessor}.onnx download`);
   }
 
-  // External encoder weights come in one of two layouts. A sharded fp32 encoder
-  // (scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
-  // < 2 GB so it clears the WASM ArrayBuffer / Chromium blob-fetch caps; a plain
-  // export keeps a single <name>.data sidecar. Prefer shards when the repo ships
-  // them (they also let WebGPU fp32 dodge the 2 GB fetch cap), else the sidecar.
-  // Shards are downloaded after the main loop into an array of { path, data }
-  // entries (parakeet.js buildExternalData mounts that form directly).
-  const shardRe = new RegExp(`^${encoderName.replace(/[.]/g, '\\.')}\\.data\\.\\d+$`);
-  const encoderShards = repoFiles.filter((f) => shardRe.test(f)).sort();
+  // Prefer the shards detected above (they also let WebGPU fp32 dodge the 2 GB
+  // fetch cap) when present; otherwise mount the single <name>.data sidecar. The
+  // shards themselves are downloaded after the main loop into an array of
+  // { path, data } entries (parakeet.js buildExternalData mounts that directly).
   if (encoderShards.length === 0 && repoFiles.includes(`${encoderName}.data`)) {
     filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data`, weight: true });
   }
@@ -1234,7 +1272,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
     for (const name of encoderShards) {
-      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name, true, true) });
+      // Fetch from wherever the shards physically live (flat or sharded/), but
+      // mount under the bare basename the graph's external_data location names.
+      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(`${encoderSubdir}${name}`, true, true) });
     }
   }
 

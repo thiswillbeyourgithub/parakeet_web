@@ -48,6 +48,42 @@ describe('listLocalRepoFiles', () => {
     ]);
   });
 
+  test('finds shards under a sharded/ subfolder and reports them as basenames', async () => {
+    // shard-fp32.py's default output puts the shards (and the rewritten encoder
+    // graph) under sharded/. They are NOT flat under the base, so the flat probe
+    // finds nothing and the sharded/ probe must pick them up, reported as bare
+    // basenames so resolveModelQuant stays oblivious to the physical layout.
+    const present = new Set([
+      'sharded/encoder-model.onnx.data.000',
+      'sharded/encoder-model.onnx.data.001',
+    ]);
+    globalThis.fetch = async (url) => {
+      const rel = String(url).slice('/models/'.length);
+      return { ok: present.has(rel) };
+    };
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(files, [
+      'encoder-model.onnx.data.000',
+      'encoder-model.onnx.data.001',
+    ]);
+  });
+
+  test('prefers flat shards and does not also probe sharded/ when flat shards exist', async () => {
+    // When the shards ARE flat, the sharded/ fallback must not run (a flat layout
+    // is complete on its own); a sharded/ duplicate must not be double-counted.
+    const probed = [];
+    globalThis.fetch = async (url) => {
+      const rel = String(url).slice('/models/'.length);
+      probed.push(rel);
+      const flat = ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001'];
+      const sharded = ['sharded/encoder-model.onnx.data.000'];
+      return { ok: flat.includes(rel) || sharded.includes(rel) };
+    };
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(files, ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.ok(!probed.some((p) => p.startsWith('sharded/')), 'sharded/ must not be probed when flat shards exist');
+  });
+
   test('empty when the mirror serves none of the candidates (no local model)', async () => {
     mockServer([]);
     const files = await listLocalRepoFiles('/models');

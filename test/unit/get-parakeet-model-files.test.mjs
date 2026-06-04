@@ -131,6 +131,60 @@ describe('getParakeetModel file selection: WASM', () => {
   });
 });
 
+describe('getParakeetModel: sharded fp32 from a local mirror with a sharded/ subfolder', () => {
+  // shard-fp32.py's default output is a `sharded/` subfolder. A real Caddy mirror
+  // serves it at /models/sharded/... (the e2e serve.mjs fakes a flat rewrite that
+  // production does NOT have). So the encoder graph + shards must be fetched from
+  // sharded/ while vocab + the int8 decoder (which shard-fp32.py does not copy
+  // into sharded/) stay at the flat root.
+  let originalFetch2;
+  beforeEach(() => { originalFetch2 = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = originalFetch2; });
+
+  // Path-aware local mirror: vocab + int8 decoder + the single fp32 sidecar live
+  // flat; the rewritten encoder graph + shards live ONLY under sharded/.
+  function mockLocalMirror() {
+    const present = new Set([
+      'vocab.txt',
+      'decoder_joint-model.int8.onnx',
+      'encoder-model.onnx',          // root: the single-sidecar 2.4 GB graph (WASM can't load)
+      'encoder-model.onnx.data',     // root: its sidecar
+      'sharded/encoder-model.onnx',  // rewritten graph pointing at the shards
+      'sharded/encoder-model.onnx.data.000',
+      'sharded/encoder-model.onnx.data.001',
+    ]);
+    const downloaded = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const rel = String(url).slice('/models/'.length).split('?')[0];
+      if (opts.method === 'HEAD') return new Response(null, { status: present.has(rel) ? 200 : 404 });
+      if (!present.has(rel)) return new Response('not found', { status: 404 });
+      downloaded.push(rel);
+      return bodyResponse();
+    };
+    return downloaded;
+  }
+
+  test('fetches the encoder graph + shards from sharded/, vocab + decoder from root', async () => {
+    const downloaded = mockLocalMirror();
+    const r = await getParakeetModel('test/local-sharded', {
+      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8',
+      allowWasmFp32: true, localFallbackBaseUrl: '/models',
+    });
+    // The returned filename stays the bare basename the graph references.
+    assert.equal(r.filenames.encoder, 'encoder-model.onnx');
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path), ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    // Encoder graph + shards came from sharded/ (the rewritten graph), NOT the
+    // flat single-sidecar graph at the root.
+    assert.ok(downloaded.includes('sharded/encoder-model.onnx'), 'must fetch the rewritten encoder graph from sharded/');
+    assert.ok(!downloaded.includes('encoder-model.onnx'), 'must NOT fetch the flat single-sidecar graph');
+    assert.ok(downloaded.includes('sharded/encoder-model.onnx.data.000') && downloaded.includes('sharded/encoder-model.onnx.data.001'));
+    // vocab + int8 decoder stay flat at the root.
+    assert.ok(downloaded.includes('vocab.txt') && downloaded.includes('decoder_joint-model.int8.onnx'));
+    assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'the flat 2.4 GB sidecar must never be fetched');
+  });
+});
+
 describe('getParakeetModel file selection: WebGPU', () => {
   test('fp16 request + fp16 in repo -> fp16 encoder/decoder, no sidecar', async () => {
     const downloaded = mockHf(REPO_FP16);
