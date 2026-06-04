@@ -796,25 +796,62 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 }
 
 /**
+ * Resolve the effective base URL for a locally-served model mirror, tolerating
+ * either layout the operator may have bind-mounted:
+ *   - flat:   the ONNX files + vocab.txt sit directly under baseUrl
+ *             (`/models/vocab.txt`), the documented LOCAL_MODEL_PATH contract.
+ *   - nested: a HuggingFace-style tree where the files live under the repo id
+ *             (`/models/istupakov/parakeet-tdt-0.6b-v3-onnx/vocab.txt`), e.g.
+ *             when the operator mounted a parent folder of one or more repos.
+ * Probes vocab.txt (small, always present) flat first, then nested under repoId,
+ * and returns whichever base resolves so every downstream fetch (listing,
+ * weights, canary) targets the same place. Returns null when neither resolves.
+ *
+ * @param {string} baseUrl Local base URL serving the model files (e.g. '/models').
+ * @param {string} [repoId] Repo id to try as a nested subfolder (e.g. 'istupakov/parakeet-tdt-0.6b-v3-onnx').
+ * @returns {Promise<string|null>} The working base URL, or null if vocab.txt is reachable under neither.
+ */
+export async function resolveLocalModelBase(baseUrl, repoId) {
+  const canary = 'vocab.txt';
+  const reachable = async (base) => {
+    try {
+      const res = await fetch(`${base}/${canary}`, { method: 'HEAD' });
+      return res.ok;
+    } catch { return false; }
+  };
+  if (await reachable(baseUrl)) return baseUrl;
+  if (repoId) {
+    const nested = `${baseUrl}/${repoId}`;
+    if (await reachable(nested)) return nested;
+  }
+  return null;
+}
+
+/**
  * Verify that local fallback model files are accessible on the server.
  * Performs a HEAD request against a small, required file (vocab.txt) to confirm
  * the model directory is properly set up. Call this at startup when local
  * fallback is enabled so the admin gets early feedback about missing files.
+ * Tolerates both the flat and the nested-by-repoId layout (resolveLocalModelBase).
  *
  * @param {string} baseUrl Local base URL (e.g., '/models')
+ * @param {string} [repoId] Repo id to also try as a nested subfolder.
  * @returns {Promise<{ok: boolean, message: string}>} Result with ok=true if the
  *   file is reachable, or ok=false with a descriptive message otherwise.
  */
-export async function checkLocalModelFiles(baseUrl) {
+export async function checkLocalModelFiles(baseUrl, repoId) {
   // vocab.txt is small and always required — a good canary file.
   const testFile = 'vocab.txt';
+  const resolved = await resolveLocalModelBase(baseUrl, repoId);
+  if (resolved) {
+    return { ok: true, message: 'Local model files are accessible.' };
+  }
+  // Neither layout served the canary: re-probe the flat path purely to build a
+  // precise status/error message (the nested path is best-effort, so we report
+  // against the documented flat location the operator is expected to provide).
   const url = `${baseUrl}/${testFile}`;
-
   try {
     const res = await fetch(url, { method: 'HEAD' });
-    if (res.ok) {
-      return { ok: true, message: 'Local model files are accessible.' };
-    }
     return {
       ok: false,
       message: `Local fallback is enabled but ${testFile} returned ${res.status} at ${url}.`,
@@ -1011,7 +1048,13 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
   // primary (HF) source cannot serve the requested quant and the local mirror
   // can. `let` because of that pre-download switch.
-  let effectiveLocalBase = localFallbackBaseUrl;
+  // resolveLocalModelBase tolerates a nested HF-style mirror (files under
+  // <base>/<repoId>/) as well as the documented flat layout, so a mount of a
+  // parent folder doesn't 404 every fetch. Falls back to the raw base when the
+  // canary is reachable under neither (preserves the prior missing-file flow).
+  let effectiveLocalBase = localFallbackBaseUrl
+    ? (await resolveLocalModelBase(localFallbackBaseUrl, repoId)) || localFallbackBaseUrl
+    : localFallbackBaseUrl;
 
   // Resolve the effective revision: operator override (options.revision)
   // wins, otherwise the per-model pin in models.js, otherwise the moving
@@ -1038,11 +1081,14 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // path (no explicit localFallbackBaseUrl) and only when a probe target was
   // provided by the caller (localUpgradeBaseUrl).
   if (localUpgradeBaseUrl && !localFallbackBaseUrl && (pinnedToInt8 || encoderFellBackToFp32)) {
-    const localFiles = await listLocalRepoFiles(localUpgradeBaseUrl).catch(() => []);
+    // Resolve flat-vs-nested once so the listing and the later weight fetches
+    // both target the layout the operator actually mounted.
+    const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId)) || localUpgradeBaseUrl;
+    const localFiles = await listLocalRepoFiles(resolvedUpgrade).catch(() => []);
     if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, allowWasmFp32 })) {
       console.log(`[Hub] HuggingFace cannot serve the requested quant (encoder=${encoderQuant}); `
-        + `the local mirror at ${localUpgradeBaseUrl} can — switching the load to it`);
-      effectiveLocalBase = localUpgradeBaseUrl;
+        + `the local mirror at ${resolvedUpgrade} can — switching the load to it`);
+      effectiveLocalBase = resolvedUpgrade;
       repoFiles = localFiles;
       ({ encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
         resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 }));

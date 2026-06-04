@@ -1293,7 +1293,7 @@ export default function App() {
   // on the server so the admin gets early feedback about misconfiguration.
   useEffect(() => {
     if (!localFallbackEnabled) return;
-    checkLocalModelFiles('/models').then((result) => {
+    checkLocalModelFiles('/models', repoId).then((result) => {
       if (result.ok) {
         console.log('[App] Local fallback check passed:', result.message);
       } else {
@@ -2025,7 +2025,8 @@ export default function App() {
         downloadOpts.revision = CONFIG.VITE_MODEL_REVISION;
       }
       if (useLocalFallback) {
-        // Serve weights from this instance under /models/<repoId>/
+        // Serve weights from this instance under /models/ (hub.js auto-detects a
+        // flat layout or a nested /models/<repoId>/ tree via resolveLocalModelBase).
         downloadOpts.localFallbackBaseUrl = '/models';
         console.log('[App] Using local fallback for model download');
       } else {
@@ -2104,7 +2105,7 @@ export default function App() {
         // fallback (then we'd retry regardless); avoids a needless HEAD request.
         let localReachable = false;
         if (!localFallbackEnabled) {
-          const probe = await checkLocalModelFiles('/models').catch(() => null);
+          const probe = await checkLocalModelFiles('/models', repoId).catch(() => null);
           localReachable = !!probe?.ok;
         }
         if (shouldRetryLocally({
