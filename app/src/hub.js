@@ -884,6 +884,11 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  * @param {(progress: {loaded: number, total: number, file: string}) => void} [options.progress] Progress callback
  * @param {string} [options.localFallbackBaseUrl] When set, download files from this local
  *   base URL instead of HuggingFace (e.g., '/models'). Used as a fallback when HF is blocked.
+ * @param {string} [options.localUpgradeBaseUrl] When set (and localFallbackBaseUrl is NOT),
+ *   the HF path probes this local base URL (e.g. '/models') and switches the whole load to it
+ *   BEFORE downloading when HF cannot serve the requested quant but the mirror can (WASM fp32
+ *   shards, WebGPU fp16 encoder). Lets a user get a precision HF doesn't host without first
+ *   downloading the downgraded weights. Ignored once localFallbackBaseUrl is set.
  * @returns {Promise<{urls: {encoderUrl: string|Uint8Array, decoderUrl: string|Uint8Array, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|Array<{path:string,data:string}>|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
  */
 export async function getParakeetModel(repoIdOrModelKey, options = {}) {
@@ -894,7 +899,12 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, allowWasmFp32 = false } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, allowWasmFp32 = false } = options;
+  // The base URL all files are actually fetched from. Starts as the explicit
+  // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
+  // primary (HF) source cannot serve the requested quant and the local mirror
+  // can. `let` because of that pre-download switch.
+  let effectiveLocalBase = localFallbackBaseUrl;
 
   // Resolve the effective revision: operator override (options.revision)
   // wins, otherwise the per-model pin in models.js, otherwise the moving
@@ -905,13 +915,33 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // repo actually ships it, and the .data inclusion checks need the listing too.
   // Local fallback can't hit the HF API, so HEAD-probe the specific candidates
   // we care about (the fp16 variants and the fp32 external-data sidecars).
-  const repoFiles = localFallbackBaseUrl
-    ? await listLocalRepoFiles(localFallbackBaseUrl)
+  let repoFiles = effectiveLocalBase
+    ? await listLocalRepoFiles(effectiveLocalBase)
     : await listRepoFiles(repoId, effectiveRevision);
 
   // Resolve the effective quantisation per backend and per availability.
-  const { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
+  let { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
     resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 });
+
+  // Pre-download upgrade: the primary (HF) source could not serve the requested
+  // quant (WASM fp32 with no shards -> int8 pin, or WebGPU fp16 with no fp16
+  // files -> fp32), but a locally-served /models mirror may ship the missing
+  // pieces. Probe it BEFORE downloading the wrong (downgraded) weights; if it
+  // can satisfy the request, switch the whole load to local. Only on the HF
+  // path (no explicit localFallbackBaseUrl) and only when a probe target was
+  // provided by the caller (localUpgradeBaseUrl).
+  if (localUpgradeBaseUrl && !localFallbackBaseUrl && (pinnedToInt8 || encoderFellBackToFp32)) {
+    const localFiles = await listLocalRepoFiles(localUpgradeBaseUrl).catch(() => []);
+    if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, allowWasmFp32 })) {
+      console.log(`[Hub] HuggingFace cannot serve the requested quant (encoder=${encoderQuant}); `
+        + `the local mirror at ${localUpgradeBaseUrl} can — switching the load to it`);
+      effectiveLocalBase = localUpgradeBaseUrl;
+      repoFiles = localFiles;
+      ({ encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
+        resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 }));
+    }
+  }
+
   if (pinnedToInt8) {
     // fp16 always overflows the WASM heap (no fp16 kernels, upcast doubles it).
     // fp32 only overflows as a single 2.4 GB sidecar; the SHARDED fp32 encoder
@@ -1002,8 +1032,8 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const downloadFile = (name, asBytes = false, noCache = false) => {
     const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
     const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes, noCache };
-    return localFallbackBaseUrl
-      ? getLocalModelFile(localFallbackBaseUrl, repoId, name, perFileOpts)
+    return effectiveLocalBase
+      ? getLocalModelFile(effectiveLocalBase, repoId, name, perFileOpts)
       : getModelFile(repoId, name, perFileOpts);
   };
 
