@@ -1,0 +1,9 @@
+{
+  "generatedBy": "scripts/gen-jfk-moon-fixtures.mjs",
+  "note": "JFK \"We choose to go to the Moon\", Rice University, 1962-09-12 (public domain US-gov work). audio = first cropSec of the speech; expected = this repo int8 pipeline transcript at the int8-safe chunk window.",
+  "sourceUrl": "https://archive.org/download/jfks19620912/jfk_1962_0912_spaceeffort.flac",
+  "cropStartSec": 0,
+  "cropDurationSec": 180,
+  "model": "int8",
+  "chunkDurationSec": 20
+}
