@@ -258,16 +258,26 @@ async function blobToBytes(blob) {
  *   a blob URL. Used for the big WebGPU encoder/decoder to dodge the blob OOM.
  * @returns {Promise<string|Uint8Array>} Blob URL, or bytes when asBytes is set
  */
-async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRetries = MAX_RETRIES, asBytes = false) {
+async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRetries = MAX_RETRIES, asBytes = false, noCache = false) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
+
+  // Stream-to-memory mode (noCache): used for the multi-hundred-MB fp32 encoder
+  // shards. The normal path offloads streamed bytes to IndexedDB segment Blobs
+  // (to bound heap) and reassembles a Blob at the end; but a multi-GB Blob is
+  // disk-spilled by Chromium and reading it back via arrayBuffer() can throw
+  // NotReadableError (observed on the sharded fp32 load). So here we touch IDB
+  // not at all: the bytes accumulate in one preallocated Uint8Array (each shard
+  // is < 2 GB by construction, see shard-fp32.py) and are returned directly.
+  // Always returns bytes; noCache callers set asBytes too.
+  let memBuf = null; // preallocated output when total is known under noCache
 
   // Resume metadata is tiny and safe to rewrite frequently. The actual
   // bytes live in append-only segment records (segKey(0..segCount-1)),
   // so each flush only writes the new bytes since the last flush. This
   // keeps total IDB write cost linear in the file size.
   let meta = null;
-  if (typeof indexedDB !== 'undefined') {
+  if (!noCache && typeof indexedDB !== 'undefined') {
     try { meta = await getFileFromDb(partialKey); } catch (_) {}
   }
   // Backwards-compat: an old-format partial record had a `chunks` field.
@@ -314,7 +324,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
   }
 
   async function deleteAllPartial() {
-    if (typeof indexedDB === 'undefined') return;
+    if (noCache || typeof indexedDB === 'undefined') return;
     try {
       const db = await getDb();
       await idbDelete(db, STORE_NAME, partialKey);
@@ -334,8 +344,9 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
   }
 
   // Flush the in-memory tail to a new segment record, then drop it from heap.
+  // No-op under noCache: there the bytes stay in `memBuf` and are never offloaded.
   async function flushTail() {
-    if (typeof indexedDB === 'undefined' || tailBytes === 0) return;
+    if (noCache || typeof indexedDB === 'undefined' || tailBytes === 0) return;
     const segBlob = new Blob(tailChunks, { type: contentType });
     try {
       await saveFileToDb(segKey(segCount), segBlob);
@@ -409,14 +420,24 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
       etag = resp.headers.get('etag') || resp.headers.get('last-modified') || etag;
       contentType = resp.headers.get('content-type') || contentType;
 
+      // noCache + known length: stream straight into one preallocated buffer so
+      // we never hold the bytes twice (chunks + concat). A range-resume keeps
+      // writing at `received`. If the length is unknown we fall back to
+      // collecting chunks in tailChunks and concatenating at the end.
+      if (noCache && total > 0 && !memBuf) memBuf = new Uint8Array(total);
+
       const reader = resp.body.getReader();
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           resetWatchdog();
-          tailChunks.push(value);
-          tailBytes += value.length;
+          if (noCache && memBuf) {
+            memBuf.set(value, received);
+          } else {
+            tailChunks.push(value);
+            tailBytes += value.length;
+          }
           received += value.length;
           if (progress && total > 0) progress({ loaded: received, total, file: filename, resumed: resumedFrom > 0, resumedFrom });
           if (tailBytes >= FLUSH_INTERVAL) {
@@ -435,6 +456,17 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
       await new Promise(r => setTimeout(r, delay));
       attempt += 1;
     }
+  }
+
+  // noCache: return the bytes straight from memory, no Blob, no IDB. memBuf is
+  // exactly `received` bytes when the length was known; otherwise concatenate
+  // the collected chunks.
+  if (noCache) {
+    if (memBuf) return received === memBuf.length ? memBuf : memBuf.subarray(0, received);
+    const out = new Uint8Array(received);
+    let off = 0;
+    for (const c of tailChunks) { out.set(c, off); off += c.length; }
+    return out;
   }
 
   // Final assembly: segments on disk plus the trailing in-memory chunks.
@@ -464,7 +496,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
 }
 
 export async function getModelFile(repoId, filename, options = {}) {
-  const { revision = 'main', subfolder = '', progress, asBytes = false } = options;
+  const { revision = 'main', subfolder = '', progress, asBytes = false, noCache = false } = options;
 
   // Encode the path components so slash-containing branch names (e.g.
   // 'refs/pr/1') and any URL-reserved characters in subfolder/filename
@@ -489,7 +521,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   // Check IndexedDB first
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
 
-  if (typeof indexedDB !== 'undefined') {
+  if (!noCache && typeof indexedDB !== 'undefined') {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
@@ -516,7 +548,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   // the default retry count.
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
-    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', 1, asBytes);
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', 1, asBytes, noCache);
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
@@ -551,11 +583,11 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress, revision = 'main', subfolder = '', asBytes = false } = options;
+  const { progress, revision = 'main', subfolder = '', asBytes = false, noCache = false } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
-  if (typeof indexedDB !== 'undefined') {
+  if (!noCache && typeof indexedDB !== 'undefined') {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
@@ -569,7 +601,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]', MAX_RETRIES, asBytes);
+  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]', MAX_RETRIES, asBytes, noCache);
 }
 
 /**
@@ -829,9 +861,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // One place that knows how to fetch a single file (HF or local fallback),
   // reused by both the main file loop and the shard loop below so the two can
   // never diverge in revision/progress handling.
-  const downloadFile = (name, asBytes = false) => {
+  const downloadFile = (name, asBytes = false, noCache = false) => {
     const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
-    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes };
+    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes, noCache };
     return localFallbackBaseUrl
       ? getLocalModelFile(localFallbackBaseUrl, repoId, name, perFileOpts)
       : getModelFile(repoId, name, perFileOpts);
@@ -853,11 +885,26 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Sharded fp32 encoder weights: fetch each <2GB shard and hand parakeet.js an
   // array of { path, data } entries, where path is the shard basename baked into
   // the graph's external_data location (see buildExternalData in parakeet.js).
+  //
+  // Shards are loaded as BYTES and with caching OFF (asBytes + noCache), and the
+  // two together are what make sharded fp32 actually load on WASM:
+  //   - bytes, not a blob: URL: a shard is a multi-hundred-MB to ~1.5 GB fp32
+  //     chunk, and ORT mounts external data by fetching whatever it is handed.
+  //     A blob: URL that size trips Chromium's ~2 GB blob-URL fetch wall and
+  //     dies with "TypeError: Failed to fetch" during session build (the same
+  //     wall that pushed the WebGPU encoder/decoder to bytes in 10e88bb).
+  //   - noCache: the normal path offloads streamed bytes to IndexedDB segment
+  //     Blobs and reassembles a Blob at the end; a multi-GB Blob is disk-spilled
+  //     and reading it back can throw NotReadableError (observed here). Streaming
+  //     straight to a Uint8Array skips IDB entirely. Not caching the shards is
+  //     fine: they are huge and re-downloaded rarely, and the sharded encoder is
+  //     an explicit opt-in. Each shard is < 2 GB by construction (shard-fp32.py),
+  //     so the single Uint8Array clears the ArrayBuffer cap.
   if (encoderShards.length) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
     for (const name of encoderShards) {
-      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name) });
+      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name, true, true) });
     }
   }
 
