@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, listLocalRepoFiles, quantSatisfiable, HubDownloadError, shouldRetryLocally } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, shouldRetryLocally } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -2023,37 +2023,16 @@ export default function App() {
         // Serve weights from this instance under /models/<repoId>/
         downloadOpts.localFallbackBaseUrl = '/models';
         console.log('[App] Using local fallback for model download');
+      } else {
+        // First (HuggingFace) attempt: let hub.js transparently switch to the
+        // locally-served /models mirror BEFORE downloading when HF cannot
+        // deliver the requested quant but /models can (the user picked WASM fp32
+        // and only /models ships the shards, or WebGPU fp16 and only /models
+        // ships the fp16 encoder). Detecting it pre-download avoids fetching the
+        // wrong (downgraded) weights only to throw them away.
+        downloadOpts.localUpgradeBaseUrl = '/models';
       }
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
-
-      // The chosen source (HF on this first attempt) could not deliver the
-      // requested quant: WASM fp32 fell back to int8 (no shards), or WebGPU
-      // fp16 fell back to fp32 (no fp16 files). HF download didn't *fail* (int8/
-      // fp32 loaded fine), so the HubDownloadError retry below never fires — but
-      // a locally-served /models mirror may still ship the missing pieces (the
-      // fp32 shards, the fp16 encoder). If it does, reload from there so the
-      // user actually gets the precision they asked for. Skipped once we are
-      // already on local weights (guards against a reload loop).
-      const requestedDowngraded = modelUrls.pinnedToInt8 || modelUrls.encoderFellBackToFp32;
-      if (requestedDowngraded && !useLocalFallback) {
-        // Cheap canary first (one HEAD on vocab.txt) so the common case of no
-        // local mirror doesn't pay for the fuller per-file probe.
-        const canary = await checkLocalModelFiles('/models').catch(() => null);
-        if (canary?.ok) {
-          const localFiles = await listLocalRepoFiles('/models').catch(() => []);
-          if (quantSatisfiable({
-            backend,
-            encoderQuant: downloadOpts.encoderQuant,
-            decoderQuant: downloadOpts.decoderQuant,
-            allowWasmFp32: downloadOpts.allowWasmFp32,
-            repoFiles: localFiles,
-          })) {
-            console.log('[App] Requested quant not available on HuggingFace but the local '
-              + '/models mirror can serve it; reloading from /models');
-            return loadModel({ useLocalFallback: true });
-          }
-        }
-      }
 
       // Show compiling sessions stage
       setStatus('creatingSessions');
