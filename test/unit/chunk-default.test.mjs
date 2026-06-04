@@ -3,7 +3,7 @@
 // long-range content past ~20 s within a chunk, so its default window must be
 // the shorter int8-safe value; every other (WebGPU/fp32) backend keeps the full
 // 60 s window. This pins that mapping so a future edit can't silently re-expose
-// the int8 long-audio drop. See the fleurs-chunking e2e for the integration side.
+// the int8 long-audio drop. See the long-audio-chunking e2e for the integration side.
 //
 // Built with Claude Code.
 

@@ -1,21 +1,30 @@
 // Tier-3 realistic long-audio chunking E2E. chunking.spec.js stresses the
 // chunk/stitch path with a tiny 5 s window on the ~11 s JFK clip; this is the
-// complementary realistic case: a ~3 minute clip built by stitching the
-// committed FLEURS en+fr fixtures (scripts/gen-fleurs-fixtures.mjs), run through
-// the app at its DEFAULT chunk window.
+// complementary realistic case: a ~3 minute continuous speech run through the
+// app at its DEFAULT chunk window.
+//
+// The clip is the first 3 minutes of JFK's "We choose to go to the Moon" Rice
+// University address (1962, public domain), cropped + transcribed by
+// scripts/gen-jfk-moon-fixtures.mjs. It replaced the stitched-FLEURS fixture
+// this spec used to feed: that clip was independent sentences glued together
+// with silence between them, so its seams fell on convenient sentence
+// boundaries; one continuous speech makes the chunk/overlap stitcher recover
+// content across seams that land mid-sentence, a more honest stress. (The
+// stitched FLEURS clip is still used as the default WER-bench subject; only this
+// e2e was repointed.)
 //
 // On the WASM backend (which headless Chromium forces, and which runs the int8
-// encoder) that default is the int8-safe ~20 s window, NOT 60 s: the int8
+// encoder) the default chunk window is the int8-safe ~20 s, NOT 60 s: the int8
 // encoder loses long-range content past ~20 s within a single chunk, so a 60 s
-// window silently drops most of a long recording (recovery ~0.69 vs ~0.85 at
-// 20 s). See defaultChunkDurationForBackend in app/src/models.js and the
-// chunk-default unit test. This spec leaves chunkDuration UNSEEDED so it
-// exercises that backend-aware default end to end: the ~3 min clip must split
-// into many chunks and the stitched transcript must recover the content.
+// window silently drops most of a long recording. See
+// defaultChunkDurationForBackend in app/src/models.js and the chunk-default unit
+// test. This spec leaves chunkDuration UNSEEDED so it exercises that
+// backend-aware default end to end: the 3 min clip must split into many chunks
+// and the stitched transcript must recover the content.
 //
-// The golden (manifest.stitched.expected) is the in-order concatenation of the
-// per-clip int8 goldens; each clip is an independent sentence, so the stitched
-// run must recover those words across the seams.
+// The golden (jfk-moon-3min.expected.txt) is this repo's own int8 pipeline
+// transcript of the same crop at the same int8-safe window, so the live WASM run
+// must reproduce it across the seams.
 //
 // Built with Claude Code.
 
@@ -27,12 +36,11 @@ import { seedSettings } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const FX = resolve(here, '../fixtures/fleurs');
-const manifest = JSON.parse(readFileSync(resolve(FX, 'manifest.json'), 'utf-8'));
-const STITCHED = resolve(FX, manifest.stitched.audio);
-const GOLDEN = manifest.stitched.expected;
+const FX = resolve(here, '../fixtures');
+const AUDIO = resolve(FX, 'jfk-moon-3min.mp3');
+const GOLDEN = readFileSync(resolve(FX, 'jfk-moon-3min.expected.txt'), 'utf-8').trim();
 
-test('chunks and stitches the long real FLEURS clip at the int8-safe default window', async ({ page }) => {
+test('chunks and stitches the 3 min JFK moon speech at the int8-safe default window', async ({ page }) => {
   // A few minutes of audio split into ~a dozen chunks; well over the default cap.
   test.setTimeout(20 * 60 * 1000);
 
@@ -56,7 +64,7 @@ test('chunks and stitches the long real FLEURS clip at the int8-safe default win
   await page.locator('[data-umami-event="load_model_button"]').click();
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
 
-  await page.locator('#audio-file-input').setInputFiles(STITCHED);
+  await page.locator('#audio-file-input').setInputFiles(AUDIO);
 
   const historyText = page.locator('.history-text').first();
   await expect(historyText).toBeVisible({ timeout: 6 * 60 * 1000 });
@@ -64,16 +72,17 @@ test('chunks and stitches the long real FLEURS clip at the int8-safe default win
   await expect(historyText).not.toContainText('transcribing', { timeout: 6 * 60 * 1000 });
 
   // Chunking really engaged at the int8-safe (~20 s) default: a single consistent
-  // total, and MANY chunks. At the old 60 s default this ~3 min clip would split
-  // into only ~4 chunks; the backend-aware default pushes it to ~a dozen, so a
-  // high chunk count is what proves the default actually shrank.
+  // total, and MANY chunks. A 3 min clip at a 20 s window splits into ~10 chunks;
+  // at the old 60 s default it would be only ~3, so a high chunk count is what
+  // proves the backend-aware default actually shrank the window.
   const total = [...chunkTotals][0];
   expect(chunkTotals.size, `inconsistent chunk totals: ${[...chunkTotals]}`).toBe(1);
-  expect(total, 'expected the int8-safe default to split the ~3 min clip into many chunks').toBeGreaterThanOrEqual(6);
+  expect(total, 'expected the int8-safe default to split the 3 min clip into many chunks').toBeGreaterThanOrEqual(6);
   expect(chunkLogs, `expected ${total} chunk-complete logs, saw ${chunkLogs}`).toBe(total);
 
-  // The stitched transcript recovered the spoken content across all seams. At the
-  // int8-safe window recovery is ~0.85; 0.75 leaves margin for run-to-run jitter.
+  // The stitched transcript recovered the spoken content across all seams. Golden
+  // and live run are both the int8 pipeline at the same window, so recovery is
+  // high; 0.75 leaves margin for wasm-node (golden) vs wasm-browser (app) jitter.
   await expect(async () => {
     const got = (await historyText.innerText()).trim();
     const o = overlap(words(GOLDEN), words(got));
@@ -82,7 +91,8 @@ test('chunks and stitches the long real FLEURS clip at the int8-safe default win
 
   // Guard against runaway boundary duplication: a broken stitch that re-emits
   // whole overlapped chunks would still pass the overlap check (every golden word
-  // present, just repeated), so cap the length too.
+  // present, just repeated), so cap the length too. The golden already carries
+  // the normal seam repetition, so 1.5x it is a healthy ceiling.
   const got = (await historyText.innerText()).trim();
   expect(words(got).length,
     `stitched output is ${words(got).length} words vs golden ${words(GOLDEN).length}; runaway seam duplication?`)
