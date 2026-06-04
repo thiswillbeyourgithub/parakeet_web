@@ -120,7 +120,7 @@ function parseArgs(argv) {
     }
   }
   if (!a.manifest) throw new Error('No --manifest given. See --help.');
-  if (a.quant !== 'int8' && a.quant !== 'fp32') throw new Error(`--quant must be int8 or fp32 (got ${a.quant})`);
+  if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
     throw new Error('--beam-width must be a comma-separated list of integers in [1, 25]');
   }
@@ -158,7 +158,10 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            omitted, the HuggingFace cache for --model is used.
   --model KEY              Model key for the architecture config (features /
                            subsampling). Default: the pipeline's default model.
-  --quant int8|fp32        Encoder/decoder quantisation. Default int8.
+  --quant int8|fp16|fp32   Encoder/decoder quantisation. Default int8. fp16 files
+                           come from scripts/quantize-fp16.py (~1.2 GB encoder,
+                           near-lossless vs fp32; native CPU upcasts to fp32 for
+                           compute, a faithful proxy for WebGPU fp16 quality).
 
 Decoding sweep (each is a comma-separated list; the grid is their product):
   -w, --beam-width LIST    Beam widths to test, e.g. "1,2,4,8". 1 = greedy.
