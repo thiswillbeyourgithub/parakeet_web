@@ -3272,7 +3272,8 @@ export default function App() {
       await new Promise(resolve => setTimeout(resolve, 0));
       setStatus(`${t('processingResampling')} "${safeName}"`);
       setProgressText(t('resamplingTo16k'));
-      
+
+      const resampleStart = performance.now();
       const offlineCtx = new OfflineAudioContext(
         1,  // mono
         Math.ceil(decoded.duration * targetSampleRate),
@@ -3301,7 +3302,8 @@ export default function App() {
       try { await audioCtx.close(); } catch (_) { /* already closed */ }
       audioCtx = null;
 
-      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz`);
+      const resampleSeconds = (performance.now() - resampleStart) / 1000;
+      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz in ${resampleSeconds.toFixed(2)}s`);
       const audioDuration = pcm.length / 16000;
       
       // Find min/max without spreading to avoid "too many arguments" error
