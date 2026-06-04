@@ -4,6 +4,33 @@ import { OnnxPreprocessor } from './preprocessor.js';
 import { JsPreprocessor } from './mel.js';
 
 /**
+ * Normalise an external-weights source into the ORT `externalData` array.
+ *
+ * A model's weights live either in a single `<model>.data` sidecar or, for a
+ * sharded fp32 encoder (scripts/shard-fp32.py), across several
+ * `<model>.data.000/.001/...` files, each kept under the 2 GB WASM ArrayBuffer
+ * and Chromium blob-fetch caps so the ~2.4 GB fp32 encoder can load on WASM.
+ *
+ * @param {string|ArrayBuffer|Uint8Array|Array<{path:string,data:*}>|null} source
+ *   Single sidecar (URL/buffer) OR an array of `{ path, data }` shard entries.
+ *   For shards each `path` MUST equal the basename baked into the graph's
+ *   external_data `location` (e.g. `encoder-model.onnx.data.000`).
+ * @param {string} [modelFilename] Model graph filename, used to derive the
+ *   single-sidecar path (`<modelFilename>.data`). Ignored for the array form.
+ * @returns {Array<{path:string,data:*}>|undefined} ORT externalData, or
+ *   undefined when there is nothing to mount.
+ */
+export function buildExternalData(source, modelFilename) {
+  if (!source) return undefined;
+  // Sharded form: caller already paired each shard's bytes with its baked-in
+  // location, so pass the entries straight through.
+  if (Array.isArray(source)) return source.length ? source : undefined;
+  // Single-sidecar form: needs the model filename to name the `.data` path.
+  if (!modelFilename) return undefined;
+  return [{ data: source, path: modelFilename + '.data' }];
+}
+
+/**
  * Lightweight Parakeet model wrapper designed for browser usage.
  * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
  * transformerjs style) exported by parakeet TDT.
@@ -147,22 +174,17 @@ export class ParakeetModel {
         console.log('[Parakeet.js] Verbose logging enabled for ONNX Runtime.');
     }
 
-    // Create separate options for sessions that might have external data
+    // Create separate options for sessions that might have external data. Each
+    // source is either a single <model>.data sidecar (URL/buffer) or, for a
+    // sharded fp32 encoder (scripts/shard-fp32.py), an array of { path, data }
+    // shard entries; buildExternalData normalises both into the ORT array.
     const encoderSessionOptions = { ...baseSessionOptions };
-    if (encoderDataUrl && filenames?.encoder) {
-        encoderSessionOptions.externalData = [{
-            data: encoderDataUrl,
-            path: filenames.encoder + '.data',
-        }];
-    }
+    const encoderExternalData = buildExternalData(encoderDataUrl, filenames?.encoder);
+    if (encoderExternalData) encoderSessionOptions.externalData = encoderExternalData;
 
     const decoderSessionOptions = { ...baseSessionOptions };
-    if (decoderDataUrl && filenames?.decoder) {
-        decoderSessionOptions.externalData = [{
-            data: decoderDataUrl,
-            path: filenames.decoder + '.data',
-        }];
-    }
+    const decoderExternalData = buildExternalData(decoderDataUrl, filenames?.decoder);
+    if (decoderExternalData) decoderSessionOptions.externalData = decoderExternalData;
 
     // In hybrid mode, the decoder is always run on WASM to avoid per-step
     // stalls. In pure WASM mode, both EPs are WASM anyway.
