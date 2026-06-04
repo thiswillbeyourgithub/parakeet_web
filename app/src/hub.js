@@ -7,7 +7,7 @@
  */
 
 import { MODELS, getModelConfig } from './models.js';
-import { openIdb, idbGet, idbPut, idbDelete, idbClear } from './idb.js';
+import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbGetAllKeys } from './idb.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
 
 /**
@@ -298,6 +298,95 @@ export async function evictModelFiles({ repoId, revision = 'main', subfolder = '
   }
   console.warn(`[Hub] Evicted ${filenames.length} cached model file(s) for ${repoId} to recover from a corrupt cache`);
   return filenames;
+}
+
+/**
+ * Reduce any cache record key back to the base blob cacheKey it belongs to.
+ * One cached file occupies up to three record kinds, all derived from the same
+ * makeCacheKey value:
+ *   - the completed blob:      `hf-...`
+ *   - its validation sibling:  `meta-hf-...`     (META_PREFIX)
+ *   - resumable partial state: `partial-hf-...`  (PARTIAL_PREFIX), plus
+ *     append-only byte segments `partial-hf-...-seg-N` (SEGMENT_INFIX + index)
+ * Stripping the prefix/suffix groups all of them under one identity so the
+ * orphan sweep can decide per-file, not per-record. Pure / no IDB.
+ * @param {string} key A raw IndexedDB key from the model-cache store.
+ * @returns {string} The base blob cacheKey (unchanged if the key is none of the above).
+ */
+export function baseCacheKey(key) {
+  let base = key;
+  if (base.startsWith(META_PREFIX)) {
+    base = base.slice(META_PREFIX.length);
+  } else if (base.startsWith(PARTIAL_PREFIX)) {
+    base = base.slice(PARTIAL_PREFIX.length);
+    // Drop a trailing `-seg-N` only when N is all digits, so a repoId/filename
+    // that happens to contain the literal "-seg-" is never mis-truncated.
+    const i = base.lastIndexOf(SEGMENT_INFIX);
+    if (i !== -1 && /^\d+$/.test(base.slice(i + SEGMENT_INFIX.length))) {
+      base = base.slice(0, i);
+    }
+  }
+  return base;
+}
+
+/**
+ * Given every key in the model-cache store and the set of base cacheKeys that
+ * belong to the just-loaded model, return the keys to delete: model records
+ * (base starts with the `hf-` cacheKey prefix) that are NOT part of the live
+ * set. Non-model keys (anything whose base does not start with `hf-`) are left
+ * untouched so the sweep can never clobber unrelated data. Pure / no IDB, so
+ * the orphan-selection logic is unit-testable without a browser.
+ * @param {Array<string|*>} allKeys Every key currently in the store.
+ * @param {Set<string>} liveBaseKeys Base cacheKeys of the current model's files.
+ * @returns {string[]} Keys safe to delete.
+ */
+export function selectOrphanKeys(allKeys, liveBaseKeys) {
+  return allKeys.filter((k) => {
+    if (typeof k !== 'string') return false;
+    const base = baseCacheKey(k);
+    return base.startsWith('hf-') && !liveBaseKeys.has(base);
+  });
+}
+
+/**
+ * Generational cache sweep: keep only the live set. After a model loads, every
+ * file it needs is cached under the current (repoId, revision, subfolder) keys;
+ * any other `hf-...` record in the store belongs to a model the user has since
+ * switched away from (different repo, revision, or quant) and is dead weight.
+ * Nothing else prunes these: a re-download overwrites in place, evictModelFiles
+ * only targets a known-corrupt file, and clearCache is the user's all-or-nothing
+ * "Reset All". Without this sweep, trying several quants/repos silently stacks
+ * gigabytes of orphaned weights in IndexedDB forever.
+ *
+ * Best-effort and fully guarded: a sweep failure must never fail the load, so
+ * any IDB error resolves to "swept nothing". A failed individual delete is
+ * swallowed so one stuck record never strands the rest.
+ * @param {Object} live The just-loaded model's cache identity.
+ * @param {string} live.repoId
+ * @param {string} [live.revision='main']
+ * @param {string} [live.subfolder='']
+ * @param {string[]} [live.filenames=[]] Every filename cached for this model.
+ * @returns {Promise<string[]>} The orphan keys it deleted.
+ */
+export async function sweepOrphanedFiles({ repoId, revision = 'main', subfolder = '', filenames = [] } = {}) {
+  if (typeof indexedDB === 'undefined' || !repoId || filenames.length === 0) return [];
+  let db, allKeys;
+  try {
+    db = await getDb();
+    allKeys = await idbGetAllKeys(db, STORE_NAME);
+  } catch (e) {
+    console.warn('[Hub] Orphaned-cache sweep could not read IndexedDB (non-fatal):', e);
+    return [];
+  }
+  const liveBaseKeys = new Set(filenames.map((f) => makeCacheKey(repoId, revision, subfolder, f)));
+  const orphans = selectOrphanKeys(allKeys, liveBaseKeys);
+  for (const k of orphans) {
+    try { await idbDelete(db, STORE_NAME, k); } catch (_) {}
+  }
+  if (orphans.length) {
+    console.log(`[Hub] Swept ${orphans.length} orphaned cache record(s) not part of ${repoId}@${revision}`);
+  }
+  return orphans;
 }
 
 /**
@@ -1075,6 +1164,17 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name, true, true) });
     }
   }
+
+  // Every file for this model is now cached under the current (repoId,
+  // effectiveRevision) keys, so prune any other model's records left behind by
+  // a previous repo/revision/quant. cachedFilenames must list everything that
+  // actually persisted to IDB, or the sweep would delete a file we just stored:
+  // that is every entry in the main download loop (sharded fp32 weights are
+  // loaded noCache, so they are NOT cached and are intentionally excluded here).
+  // Keyed by repoId for both HF and local-mirror loads, matching downloadFile's
+  // cacheKey scheme. sweepOrphanedFiles never throws.
+  const cachedFilenames = filesToGet.map((f) => f.name);
+  await sweepOrphanedFiles({ repoId, revision: effectiveRevision, subfolder: '', filenames: cachedFilenames });
 
   return results;
 }
