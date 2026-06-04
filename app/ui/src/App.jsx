@@ -3466,7 +3466,10 @@ export default function App() {
       // width is visible: only the decode phase scales with beam width, so the
       // estimate keeps the beam-independent wall time and divides decode by it.
       const transcribeElapsedMs = performance.now() - transcribeStartTime;
-      let transcribeTimeLog = `[Transcribe] Total time for entire audio: ${formatDuration(transcribeElapsedMs / 1000)}`;
+      // RTF = Real-Time Factor: processing time / audio duration. RTF < 1 means
+      // faster than real time (e.g. 0.25 = a 60s clip transcribed in 15s).
+      const rtf = audioDuration > 0 ? (transcribeElapsedMs / 1000) / audioDuration : 0;
+      let transcribeTimeLog = `[Transcribe] Total time for entire audio: ${formatDuration(transcribeElapsedMs / 1000)} (RTF ${rtf.toFixed(3)})`;
       if (beamWidth > 1 && totalDecodeMs > 0) {
         const nonDecodeMs = Math.max(0, transcribeElapsedMs - totalDecodeMs);
         const singleBeamMs = nonDecodeMs + totalDecodeMs / beamWidth;
