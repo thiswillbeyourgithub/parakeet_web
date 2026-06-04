@@ -148,9 +148,16 @@ async function main() {
     let crashed = false;
     let sessionMode = null;        // "[Parakeet.js] Creating ONNX sessions with execution mode '...'"
     let lastChunk = 0, chunkTotal = 0;
+    const debug = !!process.env.WEBGPU_DEBUG; // forward all page console to stderr
+    // Benign console noise to ignore: with local source, hub.js HEAD-probes
+    // candidate weights that may not exist locally (decoder fp16/fp32 sidecars,
+    // fp32 shards), and Chromium logs each probe miss as a "Failed to load
+    // resource ... 404" console error. Those are by-design, not failures.
+    const benign = (t) => /Failed to load resource.*\b404\b/i.test(t);
     page.on('console', (m) => {
       const txt = m.text();
-      if (m.type() === 'error') errors.push(txt);
+      if (debug) console.error(`  [page:${m.type()}] ${txt}`);
+      if (m.type() === 'error' && !benign(txt)) errors.push(txt);
       const md = /Creating ONNX sessions with execution mode '([^']+)'/.exec(txt);
       if (md) sessionMode = md[1];
       const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(txt);
@@ -158,6 +165,14 @@ async function main() {
     });
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     page.on('crash', () => { crashed = true; });
+
+    // Force the LOCAL model source (serve.mjs /models), which is where the fp16
+    // weights live: the upstream HF repo ships no encoder-model.fp16.onnx, so on
+    // 'hf' the app falls back to the 2.4 GB fp32 encoder. modelSource is a CONFIG
+    // value the docker entrypoint writes into window.__CONFIG__ (NOT a settings-DB
+    // key), so we inject it the same way before any app script runs. With local
+    // source, hub.js HEAD-probes /models and resolves the fp16 encoder.
+    await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
     await page.goto(baseURL);
 

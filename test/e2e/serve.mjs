@@ -49,9 +49,17 @@ function setHeaders(res, filePath) {
   res.setHeader('Content-Type', MIME[extname(filePath).toLowerCase()] || 'application/octet-stream');
 }
 
-function sendFile(res, filePath, status = 200) {
+function sendFile(req, res, filePath, status = 200) {
   setHeaders(res, filePath);
   res.statusCode = status;
+  // HEAD: headers only, no body. The local-fallback model resolver (hub.js)
+  // HEAD-probes candidate weights (fp16 ~1.2 GB, fp32 sidecar ~2.4 GB) to decide
+  // the quant; streaming the file would read the whole thing off disk for a
+  // metadata-only request, so short-circuit with Content-Length and end.
+  if (req.method === 'HEAD') {
+    try { res.setHeader('Content-Length', statSync(filePath).size); } catch { /* ignore */ }
+    return res.end();
+  }
   createReadStream(filePath).on('error', () => { res.statusCode = 500; res.end('read error'); }).pipe(res);
 }
 
@@ -69,7 +77,7 @@ const server = http.createServer((req, res) => {
   // Model weights: flat layout under /models, served from MODEL_DIR.
   if (pathname.startsWith('/models/')) {
     const filePath = safeJoin(MODEL_DIR, pathname.slice('/models'.length));
-    if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(res, filePath);
+    if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
     res.statusCode = 404;
     setHeaders(res, '.txt');
     return res.end(`model file not found: ${pathname} (looked in ${MODEL_DIR})`);
@@ -80,7 +88,7 @@ const server = http.createServer((req, res) => {
   // soft-miss handling kicks in, exactly as in production.
   if (pathname.startsWith('/boost-phrases/')) {
     const filePath = safeJoin(BOOST_DIR, pathname.slice('/boost-phrases'.length));
-    if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(res, filePath);
+    if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
     res.statusCode = 404;
     setHeaders(res, '.txt');
     return res.end(`boost-phrases file not found: ${pathname}`);
@@ -89,8 +97,8 @@ const server = http.createServer((req, res) => {
   // Static app, with SPA fallback to index.html.
   const rel = pathname === '/' ? '/index.html' : pathname;
   const filePath = safeJoin(DIST, rel);
-  if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(res, filePath);
-  return sendFile(res, join(DIST, 'index.html'));
+  if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
+  return sendFile(req, res, join(DIST, 'index.html'));
 });
 
 server.listen(PORT, '127.0.0.1', () => {
