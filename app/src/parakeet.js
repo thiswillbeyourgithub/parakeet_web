@@ -993,7 +993,109 @@ export class ParakeetModel {
   }
 
   /**
+   * Run preprocessing + the encoder over 16-kHz mono PCM and return the
+   * transposed encoder output [Tenc, D] (the only thing the decoder consumes),
+   * its dims, and the preprocess/encode timings (ms; 0 unless profiling is on).
+   *
+   * The returned object is plain JS memory: every ORT tensor allocated here is
+   * disposed before returning, so the result can be cached and fed back to
+   * transcribe() via `opts.encoded` to decode the SAME utterance many times
+   * without re-running the encoder. transcribe() itself calls this for its
+   * encode stage, so the encode path lives in exactly one place.
+   *
+   * This is what makes the WER benchmark efficient: the encoder dominates
+   * runtime yet is identical across every grid cell (beam width / phrase boost
+   * only affect decoding) for a given utterance, so the benchmark encodes each
+   * utterance once and reuses the result across the whole sweep.
+   */
+  async encode(audio, sampleRate = 16000, opts = {}) {
+    const { enableProfiling = false } = opts;
+    const perfEnabled = this.verbose || enableProfiling;
+    let tPreproc = 0, tEncode = 0;
+    let input = null, lenTensor = null, enc = null;
+    try {
+      // 1. Feature extraction (ONNX pre-processor)
+      let features, T, melBins;
+      if (perfEnabled) {
+        const s = performance.now();
+        ({ features, T, melBins } = await this.computeFeatures(audio, sampleRate));
+        tPreproc = performance.now() - s;
+      } else {
+        ({ features, T, melBins } = await this.computeFeatures(audio, sampleRate));
+      }
+
+      // 2. Encode entire utterance
+      input = new this.ort.Tensor('float32', features, [1, melBins, T]);
+      lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(T)]), [1]);
+      let encOut;
+      if (perfEnabled) {
+        const s = performance.now();
+        encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
+        tEncode = performance.now() - s;
+      } else {
+        encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
+      }
+      enc = encOut['outputs'] ?? Object.values(encOut)[0];
+      // Some encoder ONNX exports emit auxiliary outputs (e.g. encoded_length).
+      // Dispose anything other than the main `enc` tensor; otherwise those
+      // tensors leak into the WASM heap, one per encode() call.
+      for (const v of Object.values(encOut)) {
+        if (v !== enc) v?.dispose?.();
+      }
+      // Free encoder input tensors now that the encoder has produced its output —
+      // long sessions (continuous recording) would otherwise accumulate them.
+      input.dispose?.(); input = null;
+      lenTensor.dispose?.(); lenTensor = null;
+
+      // Transpose encoder output [B, D, T] ➔ [T, D] for B=1.
+      // t-outer / d-inner gives sequential writes to `transposed`, and the
+      // d-loop is unrolled 8x to cut V8's bounds-checking overhead. See
+      // upstream commit 85cf1fc for the benchmark notes.
+      const [ , D, Tenc ] = enc.dims;
+      const transposed = new Float32Array(Tenc * D);
+      const encData = enc.data;
+      for (let t = 0; t < Tenc; t++) {
+        const tOffset = t * D;
+        let d = 0;
+        for (; d <= D - 8; d += 8) {
+          const srcOffset = d * Tenc + t;
+          transposed[tOffset + d]     = encData[srcOffset];
+          transposed[tOffset + d + 1] = encData[srcOffset + Tenc];
+          transposed[tOffset + d + 2] = encData[srcOffset + 2 * Tenc];
+          transposed[tOffset + d + 3] = encData[srcOffset + 3 * Tenc];
+          transposed[tOffset + d + 4] = encData[srcOffset + 4 * Tenc];
+          transposed[tOffset + d + 5] = encData[srcOffset + 5 * Tenc];
+          transposed[tOffset + d + 6] = encData[srcOffset + 6 * Tenc];
+          transposed[tOffset + d + 7] = encData[srcOffset + 7 * Tenc];
+        }
+        for (; d < D; d++) {
+          transposed[tOffset + d] = encData[d * Tenc + t];
+        }
+      }
+
+      // Encoder output has been copied into `transposed`; free its WASM/GPU
+      // buffer. With chunked long-audio transcription this single dispose is the
+      // biggest leak fix in the file.
+      enc.dispose?.(); enc = null;
+
+      // Raw (unrounded) timings so transcribe() rounds identically to before.
+      return { transposed, D, Tenc, preprocess_ms: tPreproc, encode_ms: tEncode };
+    } finally {
+      // Best-effort cleanup if an await above threw mid-encode (mirrors
+      // transcribe()'s function-scope tensor tracking).
+      input?.dispose?.();
+      lenTensor?.dispose?.();
+      enc?.dispose?.();
+    }
+  }
+
+  /**
    * Transcribe 16-kHz mono PCM. Returns full rich output (timestamps/confidences opt-in).
+   *
+   * Pass `opts.encoded` (the object returned by encode() for this same audio) to
+   * skip preprocessing + the encoder and decode a precomputed encoder output;
+   * `audio` is then used only for its length (RTF reporting). This lets callers
+   * sweep decode knobs over a fixed encoding without re-encoding (see encode()).
    */
   async transcribe(audio, sampleRate = 16000, opts = {}) {
     const {
@@ -1034,12 +1136,9 @@ export class ParakeetModel {
 
     // ORT-allocated resources tracked at function scope so the finally block
     // can free them if any await between here and the normal dispose calls
-    // throws. Without this, an encoder/joiner failure mid-run pins encoder
-    // outputs and per-frame tensors in the WASM/GPU heap until the page
-    // reloads, which is fatal for chunked long-audio sessions.
-    let input = null;
-    let lenTensor = null;
-    let enc = null;
+    // throws. Without this, a joiner failure mid-run pins per-frame tensors in
+    // the WASM/GPU heap until the page reloads, which is fatal for chunked
+    // long-audio sessions. (Encoder-side tensors are owned by encode().)
     let inFlightEncTensor = null;
     let decoderState = null;
     let externalInitialState = null;
@@ -1047,69 +1146,14 @@ export class ParakeetModel {
 
     try {
 
-    // 1. Feature extraction (ONNX pre-processor)
-    let features, T, melBins;
-    if (perfEnabled) {
-      const s = performance.now();
-      ({ features, T, melBins } = await this.computeFeatures(audio, sampleRate));
-      tPreproc = performance.now() - s;
-    } else {
-      ({ features, T, melBins } = await this.computeFeatures(audio, sampleRate));
-    }
-
-    // 2. Encode entire utterance
-    input = new this.ort.Tensor('float32', features, [1, melBins, T]);
-    lenTensor = new this.ort.Tensor('int64', BigInt64Array.from([BigInt(T)]), [1]);
-    let encOut;
-    if (perfEnabled) {
-      const s = performance.now();
-      encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
-      tEncode = performance.now() - s;
-    } else {
-      encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
-    }
-    enc = encOut['outputs'] ?? Object.values(encOut)[0];
-    // Some encoder ONNX exports emit auxiliary outputs (e.g. encoded_length).
-    // Dispose anything other than the main `enc` tensor; otherwise those
-    // tensors leak into the WASM heap, one per transcribe() call.
-    for (const v of Object.values(encOut)) {
-      if (v !== enc) v?.dispose?.();
-    }
-    // Free encoder input tensors now that the encoder has produced its output —
-    // long sessions (continuous recording) would otherwise accumulate them.
-    input.dispose?.(); input = null;
-    lenTensor.dispose?.(); lenTensor = null;
-
-    // Transpose encoder output [B, D, T] ➔ [T, D] for B=1.
-    // t-outer / d-inner gives sequential writes to `transposed`, and the
-    // d-loop is unrolled 8x to cut V8's bounds-checking overhead. See
-    // upstream commit 85cf1fc for the benchmark notes.
-    const [ , D, Tenc ] = enc.dims;
-    const transposed = new Float32Array(Tenc * D);
-    const encData = enc.data;
-    for (let t = 0; t < Tenc; t++) {
-      const tOffset = t * D;
-      let d = 0;
-      for (; d <= D - 8; d += 8) {
-        const srcOffset = d * Tenc + t;
-        transposed[tOffset + d]     = encData[srcOffset];
-        transposed[tOffset + d + 1] = encData[srcOffset + Tenc];
-        transposed[tOffset + d + 2] = encData[srcOffset + 2 * Tenc];
-        transposed[tOffset + d + 3] = encData[srcOffset + 3 * Tenc];
-        transposed[tOffset + d + 4] = encData[srcOffset + 4 * Tenc];
-        transposed[tOffset + d + 5] = encData[srcOffset + 5 * Tenc];
-        transposed[tOffset + d + 6] = encData[srcOffset + 6 * Tenc];
-        transposed[tOffset + d + 7] = encData[srcOffset + 7 * Tenc];
-      }
-      for (; d < D; d++) {
-        transposed[tOffset + d] = encData[d * Tenc + t];
-      }
-    }
-
-    // Encoder output has been copied into `transposed`; free its WASM/GPU
-    // buffer before entering the decode loop. With chunked long-audio
-    // transcription this single dispose is the biggest leak fix in the file.
-    enc.dispose?.(); enc = null;
+    // 1+2. Preprocess + encode. Reuse a precomputed encoder output when the
+    // caller passes one (opts.encoded), otherwise encode now. encode() owns and
+    // disposes its ORT tensors and returns the transposed output as plain JS
+    // memory, so this path holds no encoder tensors to clean up.
+    const encoded = opts.encoded ?? await this.encode(audio, sampleRate, { enableProfiling: perfEnabled });
+    const { transposed, D, Tenc } = encoded;
+    tPreproc = encoded.preprocess_ms ?? 0;
+    tEncode = encoded.encode_ms ?? 0;
 
     // --- Decode -------------------------------------------------------
     // Phrase boosting: reset the trie's active state per decode window (Q4) so
@@ -1369,12 +1413,9 @@ export class ParakeetModel {
     } finally {
       // Best-effort cleanup. On the success path each tensor is disposed and
       // nulled as soon as it's no longer needed, so these are no-ops. If an
-      // await between the encoder run and the end of the decode loop threw,
-      // the still-live tensors are freed here. Skip `externalInitialState` —
-      // it's caller-owned.
-      input?.dispose?.();
-      lenTensor?.dispose?.();
-      enc?.dispose?.();
+      // await in the decode loop threw, the still-live per-frame tensor is freed
+      // here. Skip `externalInitialState` — it's caller-owned. (Encoder-side
+      // tensors are owned and freed by encode().)
       inFlightEncTensor?.dispose?.();
       if (decoderState && decoderState !== externalInitialState) {
         try { this._disposeDecoderState(decoderState); } catch (_) { /* ignore */ }
