@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Pre-push hook: run the fast tiers (tier 1 unit + tier 2 http integration).
-# Tier 3 (Playwright full-transcription E2E) is intentionally skipped — it loads
-# a ~600 MB model and is far too slow for pre-push. Run it with `npm run test:e2e`.
-# Bypass this hook with `git push --no-verify` if you must.
+# Pre-push hook: run the fast tiers (tier 1 unit + tier 2 http integration),
+# then interactively offer to also run tier 3 (Playwright full-transcription
+# E2E). Tier 3 loads a ~600 MB model and is slow, so it is opt-in per push.
+# Bypass this hook entirely with `git push --no-verify` if you must.
 #
 # Activated automatically by the root package.json `prepare` script, which runs
 # `git config core.hooksPath .githooks` on `npm install`.
@@ -13,7 +13,38 @@ cd "$repo_root"
 
 echo "[pre-push] Running npm test (tier 1 unit + tier 2 http)..."
 if ! npm test --silent; then
-  echo "[pre-push] Tests failed — push aborted. (override with --no-verify)" >&2
+  echo "[pre-push] Tests failed, push aborted. (override with --no-verify)" >&2
   exit 1
 fi
 echo "[pre-push] All fast-tier tests passed."
+
+# Offer the heavy tier-3 E2E. git feeds the ref list on the hook's stdin, so
+# read the answer from the controlling terminal instead. With no terminal
+# (non-interactive push, e.g. CI), skip tier 3 rather than block the push.
+if [ -e /dev/tty ]; then
+  printf "[pre-push] Run tier 3 (Playwright E2E) too? [y/n] " >&2
+  read -r answer < /dev/tty
+  case "$answer" in
+    y|Y)
+      # Tier 3 runs against the BUILT app at app/ui/dist; a stale dist silently
+      # tests an old UI, so rebuild first (see CLAUDE.md).
+      echo "[pre-push] Building UI (app/ui) before tier 3..."
+      ( cd app/ui && npm run build )
+      echo "[pre-push] Running tier 3 E2E..."
+      if ! npm run test:e2e; then
+        echo "[pre-push] Tier 3 failed, push aborted. (override with --no-verify)" >&2
+        exit 1
+      fi
+      echo "[pre-push] Tier 3 E2E passed."
+      ;;
+    n|N)
+      echo "[pre-push] Skipping tier 3."
+      ;;
+    *)
+      echo "[pre-push] Unrecognised answer '$answer' (expected y or n), push aborted." >&2
+      exit 1
+      ;;
+  esac
+else
+  echo "[pre-push] No terminal available, skipping tier 3."
+fi
