@@ -17,6 +17,14 @@ nemo128.onnx (the ONNX preprocessor) is intentionally skipped: the web app and
 scripts/transcribe.mjs use the pure-JS mel preprocessor (mel.js), so the ONNX
 preprocessor is never loaded.
 
+Useful reference: https://huggingface.co/grikdotnet/parakeet-tdt-0.6b-fp16
+documents the same conversion (same pieces, same keep_io_types=True /
+disable_shape_infer=True settings). It uses onnxconverter_common.float16 plus a
+separate post-processing pass to rewrite leftover internal Cast(to=FLOAT) nodes
+to Cast(to=FLOAT16). We instead use onnxruntime.transformers.float16, the
+evolved fork of that same converter, which handles those internal casts itself,
+so no separate cast-fixing pass is needed (a topological_sort below is enough).
+
 keep_io_types=True is deliberate and load-bearing: the encoder/decoder graphs
 take and return float32 tensors (audio_signal, outputs, encoder_outputs, and
 the decoder's LSTM input_states_*/output_states_*). Keeping the I/O boundary at
