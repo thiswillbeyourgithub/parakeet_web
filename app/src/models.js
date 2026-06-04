@@ -46,19 +46,6 @@ export const LANGUAGE_NAMES = {
  * @type {Object.<string, ModelConfig>}
  */
 export const MODELS = {
-  'parakeet-tdt-0.6b-v2': {
-    repoId: 'ysdede/parakeet-tdt-0.6b-v2-onnx',
-    displayName: 'Parakeet TDT 0.6B v2 (English)',
-    languages: ['en'],
-    defaultLanguage: 'en',
-    vocabSize: 1025,  // 1024 tokens + blank
-    featuresSize: 128,
-    preprocessor: 'nemo128',
-    subsampling: 8,
-    predHidden: 640,
-    predLayers: 2,
-    revision: 'main',
-  },
   'parakeet-tdt-0.6b-v3': {
     repoId: 'istupakov/parakeet-tdt-0.6b-v3-onnx',
     displayName: 'Parakeet TDT 0.6B v3 (Multilingual)',

@@ -216,7 +216,7 @@ def parse_args(argv):
              "the encoder aborts past ~400 s / 5000 frames).",
     )
     p.add_argument("--quants", default="int8,fp16,fp32")
-    p.add_argument("--model", default="nemo-parakeet-tdt-0.6b-v2")
+    p.add_argument("--model", default="nemo-parakeet-tdt-0.6b-v3")
     p.add_argument("--model-dir", default=str(ROOT / "fallback_models"))
     # internal: child dispatch
     p.add_argument("--_child", dest="child", choices=["full", "oracle"], help=argparse.SUPPRESS)
