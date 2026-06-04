@@ -68,12 +68,13 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   await page.reload();
 
   // Opt into the fp32 encoder through the real control rather than a seeded
-  // value: the encoder-precision radio lives in Settings and only renders on the
-  // WASM backend. Driving it directly is both race-free (synchronous React
+  // value: the encoder-precision radios live in Settings (fp32 is offered on
+  // both WASM and WebGPU; here we are on WASM). Driving it directly is both
+  // race-free (synchronous React
   // state, unlike the async settings restore) and a faithful test of the actual
   // UI path a user takes.
   await page.locator('.settings-toggle').click();
-  const fp32Radio = page.locator('input[name="wasmEncoderQuant"][value="fp32"]');
+  const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
   await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await fp32Radio.check();
   await expect(fp32Radio).toBeChecked();

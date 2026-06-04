@@ -518,6 +518,12 @@ export default function App() {
   // ships the fp32 shards, else hub.js falls back to int8 (resolveModelQuant).
   // Ignored on WebGPU, which has its own fp16/fp32 selection.
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
+  // Encoder precision for the WebGPU backend: 'fp16' (default; ~1.2 GB,
+  // near-lossless, fast) or 'fp32' (~2.4 GB, full quality, ~2x slower). int8 is
+  // not offered here: the GPU EP has no int8 encoder kernel. Resolved against
+  // what the repo ships by resolveModelQuant (fp16 needs encoder-model.fp16.onnx,
+  // else it falls back to fp32). Ignored on WASM, which uses wasmEncoderQuant.
+  const [webgpuEncoderQuant, setWebgpuEncoderQuant] = useState('fp16');
   // WebGPU availability. `navigator.gpu` existing isn't enough: an adapter may
   // still be unavailable (blocklisted GPU, headless Chromium, etc.), so we
   // actually request one. null = still probing, true/false = resolved.
@@ -1058,6 +1064,7 @@ export default function App() {
         const [
           savedBackend,
           savedWasmEncoderQuant,
+          savedWebgpuEncoderQuant,
           savedPreprocessor,
           savedVerboseLog,
           savedFrameStride,
@@ -1089,6 +1096,7 @@ export default function App() {
         ] = await Promise.all([
           loadSetting('backend', null),
           loadSetting('wasmEncoderQuant', 'int8'),
+          loadSetting('webgpuEncoderQuant', 'fp16'),
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
@@ -1137,6 +1145,7 @@ export default function App() {
           setBackend(savedBackend);
         }
         setWasmEncoderQuant(savedWasmEncoderQuant === 'fp32' ? 'fp32' : 'int8');
+        setWebgpuEncoderQuant(savedWebgpuEncoderQuant === 'fp32' ? 'fp32' : 'fp16');
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
@@ -1524,6 +1533,8 @@ export default function App() {
 
   // Persist the WASM encoder-precision choice (int8 / fp32).
   usePersistedSetting('wasmEncoderQuant', wasmEncoderQuant, settingsLoaded);
+  // Persist the WebGPU encoder-precision choice (fp16 / fp32).
+  usePersistedSetting('webgpuEncoderQuant', webgpuEncoderQuant, settingsLoaded);
 
   // Save settings to IndexedDB whenever they change (only after initial load).
   // usePersistedSetting (defined at module scope below) is a thin wrapper
@@ -2011,9 +2022,14 @@ export default function App() {
       // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
       // stays int8 on WASM regardless (tiny, runs fine).
       const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
+      // On WebGPU the user picks fp16 (default) or fp32; int8 is not offered
+      // (no GPU int8 encoder kernel). The decoder follows to fp16 only when the
+      // encoder is fp16 (and the repo ships decoder_joint-model.fp16.onnx);
+      // otherwise it stays int8, which the GPU EP runs fine.
+      const webgpuFp32 = wantWebgpu && webgpuEncoderQuant === 'fp32';
       const downloadOpts = {
-        encoderQuant: wantWebgpu ? 'fp16' : (wasmWantsFp32 ? 'fp32' : 'int8'),
-        decoderQuant: wantWebgpu ? 'fp16' : 'int8',
+        encoderQuant: wantWebgpu ? (webgpuFp32 ? 'fp32' : 'fp16') : (wasmWantsFp32 ? 'fp32' : 'int8'),
+        decoderQuant: (wantWebgpu && !webgpuFp32) ? 'fp16' : 'int8',
         allowWasmFp32: wasmWantsFp32,
         preprocessor,
         backend,
@@ -4384,24 +4400,40 @@ export default function App() {
               </div>
             </div>
 
-            {backend === 'wasm' && (
-              <div className="setting-row">
-                <span className="setting-label">
-                  {t('encoderPrecision')}:
-                  <InfoTooltip text={t('tooltipEncoderPrecision')} />
-                </span>
-                <div className="setting-options">
-                  <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                    <input type="radio" name="wasmEncoderQuant" value="int8" checked={wasmEncoderQuant === 'int8'} onChange={e => setWasmEncoderQuant(e.target.value)} disabled={status === 'modelReady'} />
-                    {t('precisionInt8')}
-                  </label>
-                  <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                    <input type="radio" name="wasmEncoderQuant" value="fp32" checked={wasmEncoderQuant === 'fp32'} onChange={e => setWasmEncoderQuant(e.target.value)} disabled={status === 'modelReady'} />
-                    {t('precisionFp32')}
-                  </label>
+            {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
+              // Single fixed list (int8 / fp16 / fp32); only the greying moves
+              // with the backend. int8 has no GPU encoder kernel (unavailable on
+              // WebGPU); fp16 overflows the WASM heap (unavailable on WASM); fp32
+              // runs on both. The remembered selection is per-backend, so WASM
+              // keeps its int8<->fp32 choice and WebGPU its fp16<->fp32 choice.
+              const isWebgpu = backend.startsWith('webgpu');
+              const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
+              const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
+              const rows = [
+                { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
+                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu, note: t('precisionUnavailableWasm') },
+                { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
+              ];
+              return (
+                <div className="setting-row">
+                  <span className="setting-label">
+                    {t('encoderPrecision')}:
+                    <InfoTooltip text={t('tooltipEncoderPrecision')} />
+                  </span>
+                  <div className="setting-options">
+                    {rows.map(r => {
+                      const disabled = status === 'modelReady' || !r.available;
+                      return (
+                        <label key={r.value} className={disabled ? 'disabled-option' : ''}>
+                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && currentQuant === r.value} onChange={e => setQuant(e.target.value)} disabled={disabled} />
+                          {r.label}{!r.available ? ` ${r.note}` : ''}
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (
               <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
