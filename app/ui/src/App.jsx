@@ -4451,6 +4451,7 @@ export default function App() {
                 )}
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap', marginLeft: boostFiles.length > 0 ? 0 : 'auto' }}>
                   {t('boostStrength')}:
+                  <InfoTooltip text={t('tooltipBoostStrength')} />
                   <input
                     type="number"
                     inputMode="decimal"
