@@ -150,14 +150,19 @@ export const DEFAULT_CHUNK_DURATION_SEC = 60;
 export const INT8_SAFE_CHUNK_DURATION_SEC = 20;
 
 /**
- * Default long-audio chunk window (seconds) for a given backend. The int8
- * encoder (WASM) needs a shorter window than the fp32 encoder (WebGPU) to avoid
- * dropping content past ~20 s per chunk.
+ * Default long-audio chunk window (seconds) for a given backend + encoder quant.
+ * Only the int8 encoder drops content past ~20 s per chunk, so it gets the short
+ * window; fp32 (whether on WebGPU or sharded on WASM) and fp16 get the full
+ * window. The short window therefore keys off the *quant*, not the backend: a
+ * WASM-fp32 (sharded) session is fine at 60 s.
  * @param {string} backend - 'wasm' | 'webgpu' | 'webgpu-hybrid' | ...
+ * @param {('int8'|'fp16'|'fp32')} [encoderQuant='int8'] - resolved encoder quant
  * @returns {number} Default chunk window in seconds
  */
-export function defaultChunkDurationForBackend(backend) {
-  return backend === 'wasm' ? INT8_SAFE_CHUNK_DURATION_SEC : DEFAULT_CHUNK_DURATION_SEC;
+export function defaultChunkDurationForBackend(backend, encoderQuant = 'int8') {
+  return backend === 'wasm' && encoderQuant === 'int8'
+    ? INT8_SAFE_CHUNK_DURATION_SEC
+    : DEFAULT_CHUNK_DURATION_SEC;
 }
 
 /**

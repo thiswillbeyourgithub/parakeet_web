@@ -500,6 +500,12 @@ export default function App() {
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
+  // Encoder precision for the WASM/CPU backend: 'int8' (default; ~600 MB, fast,
+  // but drops content past ~20 s per chunk) or 'fp32' (sharded ~2.4 GB, full
+  // quality, no long-chunk loss). Opt-in: only honoured when the repo actually
+  // ships the fp32 shards, else hub.js falls back to int8 (resolveModelQuant).
+  // Ignored on WebGPU, which has its own fp16/fp32 selection.
+  const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
   // WebGPU availability. `navigator.gpu` existing isn't enough: an adapter may
   // still be unavailable (blocklisted GPU, headless Chromium, etc.), so we
   // actually request one. null = still probing, true/false = resolved.
@@ -1039,6 +1045,7 @@ export default function App() {
         // restore or trip the watchdog.
         const [
           savedBackend,
+          savedWasmEncoderQuant,
           savedPreprocessor,
           savedVerboseLog,
           savedFrameStride,
@@ -1069,6 +1076,7 @@ export default function App() {
           savedBoostCaseInsensitive,
         ] = await Promise.all([
           loadSetting('backend', null),
+          loadSetting('wasmEncoderQuant', 'int8'),
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
@@ -1116,6 +1124,7 @@ export default function App() {
           backendChosenByUserRef.current = true;
           setBackend(savedBackend);
         }
+        setWasmEncoderQuant(savedWasmEncoderQuant === 'fp32' ? 'fp32' : 'int8');
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
@@ -1501,6 +1510,9 @@ export default function App() {
     saveSetting('backend', backend);
   }, [backend, settingsLoaded]);
 
+  // Persist the WASM encoder-precision choice (int8 / fp32).
+  usePersistedSetting('wasmEncoderQuant', wasmEncoderQuant, settingsLoaded);
+
   // Save settings to IndexedDB whenever they change (only after initial load).
   // usePersistedSetting (defined at module scope below) is a thin wrapper
   // around useEffect that fires once per setting, only after `loaded`
@@ -1554,11 +1566,14 @@ export default function App() {
     if (settingsLoaded && chunkChosenByUserRef.current) saveSetting('chunkDuration', chunkDuration);
   }, [chunkDuration, settingsLoaded]);
   // Backend-aware default chunk window: until the user picks a value, follow the
-  // backend (int8/WASM loses content past ~20 s per chunk, fp32/WebGPU does not).
+  // resolved encoder quant (only int8/WASM loses content past ~20 s per chunk;
+  // fp32/WebGPU and WASM-fp32 do not). The WASM precision choice feeds in so a
+  // switch to fp32 lifts the default window to 60 s.
   useEffect(() => {
     if (!settingsLoaded || chunkChosenByUserRef.current) return;
-    setChunkDuration(defaultChunkDurationForBackend(backend));
-  }, [backend, settingsLoaded]);
+    const encQ = backend.startsWith('webgpu') ? 'fp32' : wasmEncoderQuant;
+    setChunkDuration(defaultChunkDurationForBackend(backend, encQ));
+  }, [backend, wasmEncoderQuant, settingsLoaded]);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
@@ -1975,9 +1990,15 @@ export default function App() {
       //     ships encoder-model.fp16.onnx, else fp32 (~2.4 GB). The GPU EP has
       //     no int8 encoder kernel.
       const wantWebgpu = backend.startsWith('webgpu');
+      // On WASM the user may opt into the sharded fp32 encoder (full quality, no
+      // >20 s chunk loss); hub.js only honours it when the repo ships the shards
+      // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
+      // stays int8 on WASM regardless (tiny, runs fine).
+      const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
       const downloadOpts = {
-        encoderQuant: wantWebgpu ? 'fp16' : 'int8',
+        encoderQuant: wantWebgpu ? 'fp16' : (wasmWantsFp32 ? 'fp32' : 'int8'),
         decoderQuant: wantWebgpu ? 'fp16' : 'int8',
+        allowWasmFp32: wasmWantsFp32,
         preprocessor,
         backend,
         progress: progressCallback,
@@ -4285,6 +4306,25 @@ export default function App() {
                 </label>
               </div>
             </div>
+
+            {backend === 'wasm' && (
+              <div className="setting-row">
+                <span className="setting-label">
+                  {t('encoderPrecision')}:
+                  <InfoTooltip text={t('tooltipEncoderPrecision')} />
+                </span>
+                <div className="setting-options">
+                  <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                    <input type="radio" name="wasmEncoderQuant" value="int8" checked={wasmEncoderQuant === 'int8'} onChange={e => setWasmEncoderQuant(e.target.value)} disabled={status === 'modelReady'} />
+                    {t('precisionInt8')}
+                  </label>
+                  <label className={status === 'modelReady' ? 'disabled-option' : ''}>
+                    <input type="radio" name="wasmEncoderQuant" value="fp32" checked={wasmEncoderQuant === 'fp32'} onChange={e => setWasmEncoderQuant(e.target.value)} disabled={status === 'modelReady'} />
+                    {t('precisionFp32')}
+                  </label>
+                </div>
+              </div>
+            )}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (
               <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>

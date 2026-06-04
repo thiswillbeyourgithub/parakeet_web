@@ -32,4 +32,13 @@ describe('defaultChunkDurationForBackend', () => {
     assert.equal(defaultChunkDurationForBackend(undefined), DEFAULT_CHUNK_DURATION_SEC);
     assert.equal(defaultChunkDurationForBackend('something-else'), DEFAULT_CHUNK_DURATION_SEC);
   });
+
+  test('the short window keys off the quant, not the backend: WASM-fp32 keeps the full window', () => {
+    // The sharded fp32 encoder on WASM has no >20 s chunk loss, so it must get
+    // the full window even though the backend is wasm.
+    assert.equal(defaultChunkDurationForBackend('wasm', 'fp32'), DEFAULT_CHUNK_DURATION_SEC);
+    // int8 on WASM still gets the short window (explicit and default-arg forms).
+    assert.equal(defaultChunkDurationForBackend('wasm', 'int8'), INT8_SAFE_CHUNK_DURATION_SEC);
+    assert.equal(defaultChunkDurationForBackend('wasm'), INT8_SAFE_CHUNK_DURATION_SEC);
+  });
 });

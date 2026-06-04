@@ -81,6 +81,9 @@ const translations = {
     model: 'Model',
     backend: 'Backend',
     wasmCpu: 'WASM (CPU)',
+    encoderPrecision: 'Encoder precision',
+    precisionInt8: 'int8 (fast, ~600 MB)',
+    precisionFp32: 'fp32 (full quality, ~2.4 GB)',
     webgpu: 'WebGPU',
     webgpuUnavailable: 'WebGPU (unavailable)',
     webgpuReason_insecure: 'WebGPU needs a secure context. You are likely on a plain http:// address (e.g. a LAN IP); reopen the app over https:// or http://localhost to enable it.',
@@ -135,6 +138,7 @@ const translations = {
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
+    tooltipEncoderPrecision: 'int8 is the small, fast default but drops content past ~20 s per chunk. fp32 is full quality with no long-chunk loss, but needs a ~2.4 GB download (shipped as <2GB shards) and only applies if the model repo provides it; otherwise it falls back to int8.',
     tooltipFrameStride: 'Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed. Default: 1.',
     tooltipBeamWidth: 'Beam search width. 1 = greedy (default, fastest). Above 1 runs MAES (Modified Adaptive Expansion Search): this is the global beam cap, but the effective width adapts per token (see the gamma setting), so confident tokens stay near-greedy speed and only ambiguous ones widen the search. Higher values let phrase boosting recover words greedy would discard. Applies to file transcription only (live transcription always uses width 1). Default: 1.',
     tooltipMaesNumSteps: 'MAES: maximum number of tokens emitted per audio frame before the decoder is forced to advance in time. Only used when Beam Width is above 1. Default: 3.',
@@ -385,6 +389,9 @@ const translations = {
     model: 'Mod\u00e8le',
     backend: 'Moteur',
     wasmCpu: 'WASM (CPU)',
+    encoderPrecision: "Précision de l'encodeur",
+    precisionInt8: 'int8 (rapide, ~600 Mo)',
+    precisionFp32: 'fp32 (qualité maximale, ~2,4 Go)',
     webgpu: 'WebGPU',
     webgpuUnavailable: 'WebGPU (indisponible)',
     webgpuReason_insecure: "WebGPU nécessite un contexte sécurisé. Vous êtes probablement sur une adresse http:// simple (par ex. une IP de réseau local) ; rouvrez l'application via https:// ou http://localhost pour l'activer.",
@@ -439,6 +446,7 @@ const translations = {
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
+    tooltipEncoderPrecision: "int8 est le d\u00e9faut, petit et rapide, mais perd du contenu au-del\u00e0 de ~20\u00a0s par segment. fp32 offre la qualit\u00e9 maximale sans perte sur les longs segments, mais n\u00e9cessite un t\u00e9l\u00e9chargement de ~2,4\u00a0Go (livr\u00e9 en fragments de moins de 2\u00a0Go) et ne s'applique que si le d\u00e9p\u00f4t du mod\u00e8le le fournit\u00a0; sinon il revient \u00e0 int8.",
     tooltipFrameStride: "Nombre de trames \u00e0 sauter pendant le d\u00e9codage. Des valeurs plus \u00e9lev\u00e9es sont plus rapides mais peuvent r\u00e9duire la pr\u00e9cision. Recommand\u00e9\u00a0: 1-2 pour la qualit\u00e9, 3-4 pour la vitesse. Défaut : 1.",
     tooltipBeamWidth: "Largeur de la recherche en faisceau. 1 = glouton (par défaut, le plus rapide). Au-dessus de 1, utilise MAES (recherche par expansion adaptative modifiée) : c'est le plafond global du faisceau, mais la largeur effective s'adapte à chaque jeton (voir le réglage gamma), de sorte que les jetons sûrs restent proches de la vitesse gloutonne et que seuls les jetons ambigus élargissent la recherche. Des valeurs plus élevées permettent au renforcement de phrases de récupérer des mots que le mode glouton écarterait. S'applique uniquement à la transcription de fichiers (la transcription en direct utilise toujours une largeur de 1). Défaut : 1.",
     tooltipMaesNumSteps: "MAES : nombre maximal de jetons \u00e9mis par trame audio avant que le d\u00e9codeur ne soit forc\u00e9 d'avancer dans le temps. Utilis\u00e9 uniquement lorsque la largeur de faisceau est sup\u00e9rieure \u00e0 1. D\u00e9faut : 3.",
