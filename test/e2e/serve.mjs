@@ -75,9 +75,25 @@ const server = http.createServer((req, res) => {
   catch { res.statusCode = 400; return res.end('bad request'); }
 
   // Model weights: flat layout under /models, served from MODEL_DIR.
+  //
+  // The sharded fp32 encoder (scripts/shard-fp32.py) lives in MODEL_DIR/sharded/:
+  // a rewritten encoder-model.onnx graph whose tensors point at the
+  // encoder-model.onnx.data.NNN shards (each < 2 GB so the fp32 encoder can
+  // ingest on WASM, exercised by transcription-fp32-wasm.spec.js). For exactly
+  // those files we look in sharded/ FIRST, because the root also holds a
+  // single-sidecar encoder-model.onnx (external_data -> one 2.4 GB file WASM
+  // cannot load); the sharded graph must win. Every other request (int8 weights,
+  // vocab) is served straight from the root. When MODEL_DIR/sharded/ is absent
+  // (CI, or a checkout where shard-fp32.py was never run) the lookup falls
+  // through to the root and the fp32 spec finds no shards and skips itself.
   if (pathname.startsWith('/models/')) {
-    const filePath = safeJoin(MODEL_DIR, pathname.slice('/models'.length));
-    if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
+    const rel = pathname.slice('/models'.length);
+    const preferSharded = /^\/(encoder-model\.onnx|encoder-model\.onnx\.data\.\d+)$/.test(rel);
+    const dirs = preferSharded ? [join(MODEL_DIR, 'sharded'), MODEL_DIR] : [MODEL_DIR];
+    for (const dir of dirs) {
+      const filePath = safeJoin(dir, rel);
+      if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
+    }
     res.statusCode = 404;
     setHeaders(res, '.txt');
     return res.end(`model file not found: ${pathname} (looked in ${MODEL_DIR})`);
