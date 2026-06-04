@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, shouldRetryLocally } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -2044,13 +2044,30 @@ export default function App() {
       setProgressPct(null);
     } catch (e) {
       console.error(e);
-      // If HuggingFace is blocked and local fallback is available, retry silently
-      // against the locally-served weights. The startup healthcheck (see the
-      // checkLocalModelFiles effect) already surfaces a banner if those files
-      // are missing, so we don't need to ask the user here.
-      if (e instanceof HubDownloadError && localFallbackEnabled && !useLocalFallback) {
-        console.log('[App] HuggingFace unreachable, falling back to local weights');
-        return loadModel({ useLocalFallback: true });
+      // Recover from an HF download failure (HF blocked/unreachable, or the repo
+      // simply doesn't host the requested model/files) by retrying against the
+      // locally-served /models weights instead of crashing. When the operator
+      // configured local fallback (VITE_MODEL_SOURCE=local|both) we retry
+      // unconditionally; otherwise (default 'hf') we probe /models first and only
+      // retry when the files are actually there, so we never swap a clear HF
+      // error for a confusing "local folder missing" failure.
+      if (e instanceof HubDownloadError && !useLocalFallback) {
+        // Only probe /models when the operator hasn't already enabled local
+        // fallback (then we'd retry regardless); avoids a needless HEAD request.
+        let localReachable = false;
+        if (!localFallbackEnabled) {
+          const probe = await checkLocalModelFiles('/models').catch(() => null);
+          localReachable = !!probe?.ok;
+        }
+        if (shouldRetryLocally({
+          isHubError: true,
+          alreadyLocal: false,
+          localConfigured: localFallbackEnabled,
+          localReachable,
+        })) {
+          console.log('[App] HuggingFace download failed; retrying against local /models weights');
+          return loadModel({ useLocalFallback: true });
+        }
       }
       setStatus('failed');
       setProgress('');

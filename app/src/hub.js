@@ -664,6 +664,30 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
 }
 
 /**
+ * Decide whether a failed HuggingFace model load should be retried against the
+ * locally-served /models weights instead of surfacing as a failure. Pure (no
+ * I/O) so it can be unit-tested; the caller does the actual /models probe.
+ *
+ * Retry locally when the failure was an HF download error, this attempt did not
+ * already use local weights (so we can't loop), AND either the operator
+ * configured local fallback (VITE_MODEL_SOURCE=local|both) or a probe found the
+ * files actually present at /models. The probe gate means the default 'hf'
+ * source recovers from "model not on HF" when local weights exist, without
+ * swapping a clear HF error for a confusing "local folder missing" one.
+ *
+ * @param {Object} a
+ * @param {boolean} a.isHubError    The error was a HubDownloadError.
+ * @param {boolean} a.alreadyLocal  This attempt already used local weights.
+ * @param {boolean} a.localConfigured  Operator enabled local fallback.
+ * @param {boolean} a.localReachable   /models actually has the files (probe result).
+ * @returns {boolean}
+ */
+export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, localReachable }) {
+  if (!isHubError || alreadyLocal) return false;
+  return Boolean(localConfigured || localReachable);
+}
+
+/**
  * Convenience function to get all Parakeet model files for a given architecture.
  * Accepts either a HuggingFace repo ID or a known model key from the registry.
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
