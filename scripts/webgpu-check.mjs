@@ -58,23 +58,34 @@ const LEAK_MIN_CHUNKS = 6; // need this many chunks to bucket early/late heap
 
 // --- args --------------------------------------------------------------------
 function parseArgs(argv) {
-  const a = { full: false, headless: false, maxGrowth: 1.5, port: 4179, pollMs: 2000, channel: 'chrome' };
-  for (const arg of argv) {
+  // Default to the bundled Playwright Chromium ('chromium'): it is always present,
+  // whereas system Google Chrome ('chrome') may not be installed on a given box.
+  const a = { full: false, headless: false, maxGrowth: 1.5, port: 4179, pollMs: 2000, channel: 'chromium' };
+  // Flags that take a value, accepted as either --flag=value or --flag value.
+  const takesValue = new Set(['--max-growth', '--port', '--poll-ms', '--channel']);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     const eq = arg.indexOf('=');
-    const [k, v] = eq === -1 ? [arg, null] : [arg.slice(0, eq), arg.slice(eq + 1)];
+    let k = arg, v = null;
+    if (eq !== -1) {
+      k = arg.slice(0, eq);
+      v = arg.slice(eq + 1);
+    } else if (takesValue.has(arg)) {
+      v = argv[++i]; // space-separated form: consume the next token as the value
+    }
     switch (k) {
       case '--full': a.full = true; break;
       case '--headless': a.headless = true; break;
       case '--max-growth': a.maxGrowth = Number(v); break;
       case '--port': a.port = Number(v); break;
       case '--poll-ms': a.pollMs = Number(v); break;
-      case '--channel': a.channel = v; break; // 'chrome' | 'chromium' (bundled)
+      case '--channel': a.channel = v; break; // 'chrome' (installed) | 'chromium' (bundled)
       case '-h': case '--help':
         console.log(`Usage: node scripts/webgpu-check.mjs [options]
   --full             Run the full ~17 min speech (memory-leak mode) instead of the 3 min crop
   --headless         Run headless (WebGPU is more reliable headed on a GPU box)
   --max-growth F     Max late/early JS-heap median ratio before it is a leak (default: 1.5)
-  --channel C        Browser channel: 'chrome' (installed) or 'chromium' (bundled) (default: chrome)
+  --channel C        Browser channel: 'chrome' (installed) or 'chromium' (bundled) (default: chromium)
   --port N           Static server port (default: 4179)
   --poll-ms N        JS-heap sampling interval (default: 2000)`);
         process.exit(0);
