@@ -239,10 +239,13 @@ def main(argv):
                  "  node scripts/gen-jfk-moon-fixtures.mjs\n"
                  "or pass --audio <file>.")
 
-    quants = [q.strip() for q in args.quants.split(",") if q.strip()]
-    for q in quants:
+    requested = [q.strip() for q in args.quants.split(",") if q.strip()]
+    for q in requested:
         if q not in QUANT_ARG:
             sys.exit(f"unknown quant {q!r} (choose from {list(QUANT_ARG)})")
+    # Always process in the canonical order int8 -> fp16 -> fp32, whatever the
+    # order they were given in.
+    quants = [q for q in QUANT_ARG if q in requested]
 
     print(f"audio: {args.audio}")
     print(f"       single pass, NO chunking; quants = {', '.join(quants)}; "
@@ -251,18 +254,20 @@ def main(argv):
           f"is ~400s / 5000 frames; a longer pass aborts)\n")
     print("transcribing (each pass in its own process):", file=sys.stderr)
 
-    # Per-section oracle reference: independent short-clip transcription per window.
-    oracle = spawn(args, "oracle", args.reference_quant)
-    sections = oracle["sections"]
-    audio_sec = oracle["audio_sec"]
-
-    # One full single-pass transcription per quant under test.
+    # Single full pass per quant first, in canonical int8 -> fp16 -> fp32 order so
+    # the cheapest/fastest result lands first.
     results = {}
     for q in quants:
         try:
             results[q] = spawn(args, "full", q)
         except Exception as e:  # one bad quant should not kill the others
             results[q] = {"error": str(e)}
+
+    # Then the per-section oracle reference: independent short-clip transcription
+    # per window (order does not affect results; tables are built below).
+    oracle = spawn(args, "oracle", args.reference_quant)
+    sections = oracle["sections"]
+    audio_sec = oracle["audio_sec"]
 
     # ---- Table 1: overall WER + time + RAM ----
     if args.reference is not None:
