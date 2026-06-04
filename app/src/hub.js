@@ -1105,13 +1105,14 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       // Everything evictModelFiles needs to drop these exact cached blobs and
       // re-download them when a corrupt file fails to deserialize at session
       // create. Derived from the `weight` flag so it can't drift from the
-      // download list. Sharded fp32 weights are noCache (never cached) so they
-      // are not listed. subfolder is always '' for the Parakeet repos.
+      // download list, plus the fp32 shards (now cached per shard, so a corrupt
+      // shard must be evictable too). subfolder is always '' for the Parakeet
+      // repos.
       cacheInfo: {
           repoId,
           revision: effectiveRevision,
           subfolder: '',
-          filenames: filesToGet.filter((f) => f.weight).map((f) => f.name),
+          filenames: [...filesToGet.filter((f) => f.weight).map((f) => f.name), ...encoderShards],
       },
   };
 
@@ -1143,25 +1144,27 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // array of { path, data } entries, where path is the shard basename baked into
   // the graph's external_data location (see buildExternalData in parakeet.js).
   //
-  // Shards are loaded as BYTES and with caching OFF (asBytes + noCache), and the
-  // two together are what make sharded fp32 actually load on WASM:
+  // Shards are loaded as BYTES (asBytes) but, unlike the single fp32 sidecar,
+  // ARE cached (noCache stays false), and both choices are what make sharded
+  // fp32 actually load AND persist on WASM:
   //   - bytes, not a blob: URL: a shard is a multi-hundred-MB to ~1.5 GB fp32
   //     chunk, and ORT mounts external data by fetching whatever it is handed.
   //     A blob: URL that size trips Chromium's ~2 GB blob-URL fetch wall and
   //     dies with "TypeError: Failed to fetch" during session build (the same
   //     wall that pushed the WebGPU encoder/decoder to bytes in 10e88bb).
-  //   - noCache: the normal path offloads streamed bytes to IndexedDB segment
-  //     Blobs and reassembles a Blob at the end; a multi-GB Blob is disk-spilled
-  //     and reading it back can throw NotReadableError (observed here). Streaming
-  //     straight to a Uint8Array skips IDB entirely. Not caching the shards is
-  //     fine: they are huge and re-downloaded rarely, and the sharded encoder is
-  //     an explicit opt-in. Each shard is < 2 GB by construction (shard-fp32.py),
-  //     so the single Uint8Array clears the ArrayBuffer cap.
+  //   - caching ON, per shard: the NotReadableError that forced the single fp32
+  //     sidecar to noCache only struck the *reassembled multi-GB* Blob. Each
+  //     shard is < 2 GB by construction (DEFAULT_MAX_SHARD_BYTES = 1.5 GB in
+  //     shard-fp32.py), so its reassembled Blob stays under the wall and reads
+  //     back fine via blobToBytes. Caching per shard turns the ~2.4 GB sharded
+  //     encoder from a re-download-on-every-load into a one-time cost, and the
+  //     shards join the generational sweep (cacheInfo + cachedFilenames below)
+  //     so they are pruned like every other weight instead of leaking.
   if (encoderShards.length) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
     for (const name of encoderShards) {
-      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name, true, true) });
+      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(name, true) });
     }
   }
 
@@ -1169,11 +1172,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // effectiveRevision) keys, so prune any other model's records left behind by
   // a previous repo/revision/quant. cachedFilenames must list everything that
   // actually persisted to IDB, or the sweep would delete a file we just stored:
-  // that is every entry in the main download loop (sharded fp32 weights are
-  // loaded noCache, so they are NOT cached and are intentionally excluded here).
-  // Keyed by repoId for both HF and local-mirror loads, matching downloadFile's
-  // cacheKey scheme. sweepOrphanedFiles never throws.
-  const cachedFilenames = filesToGet.map((f) => f.name);
+  // every entry in the main download loop PLUS the fp32 shards (now cached per
+  // shard, see the shard loop above). Keyed by repoId for both HF and
+  // local-mirror loads, matching downloadFile's cacheKey scheme.
+  // sweepOrphanedFiles never throws.
+  const cachedFilenames = [...filesToGet.map((f) => f.name), ...encoderShards];
   await sweepOrphanedFiles({ repoId, revision: effectiveRevision, subfolder: '', filenames: cachedFilenames });
 
   return results;

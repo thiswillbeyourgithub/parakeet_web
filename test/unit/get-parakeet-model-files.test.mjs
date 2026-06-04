@@ -183,14 +183,16 @@ describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
     assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx.data'), 'fp32 sidecar must be evictable too');
   });
 
-  test('sharded fp32 (noCache): shards are NOT listed (never cached)', async () => {
+  test('sharded fp32: shards ARE listed (now cached per shard)', async () => {
     mockHf(REPO_FP32_SHARDS);
     const r = await getParakeetModel('test/wasm-fp32-shards', {
       backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
     });
     assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx'));
-    assert.ok(!r.cacheInfo.filenames.some((f) => f.startsWith('encoder-model.onnx.data')),
-      'noCache shards are never in IndexedDB, so must not be in cacheInfo');
+    // Shards are now cached per shard (each < 2 GB clears the readback wall), so
+    // a corrupt shard must be evictable: every shard belongs in cacheInfo.
+    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx.data.000'), 'shard 000 must be evictable');
+    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx.data.001'), 'shard 001 must be evictable');
   });
 });
 
