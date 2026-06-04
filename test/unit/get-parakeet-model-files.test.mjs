@@ -19,7 +19,7 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getParakeetModel } from '../../app/src/hub.js';
+import { getParakeetModel, QuantUnavailableError } from '../../app/src/hub.js';
 
 // A streaming body so _streamAndCache's reader loop runs; content is irrelevant
 // here (we assert on which files were selected, not their bytes).
@@ -115,14 +115,19 @@ describe('getParakeetModel file selection: WASM', () => {
     assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'shards win: the single sidecar must not also be fetched');
   });
 
-  test('fp32 request without the opt-in stays pinned to int8 (no shards fetched)', async () => {
+  test('fp32 request without the opt-in throws rather than silently pinning to int8', async () => {
+    // Even with the shards in the repo, omitting allowWasmFp32 means fp32 is not
+    // satisfiable on WASM. Rather than silently swap in int8 (which made it
+    // impossible to tell which precision actually loaded), getParakeetModel now
+    // throws QuantUnavailableError, and nothing is downloaded.
     const downloaded = mockHf(REPO_FP32_SHARDS);
-    const r = await getParakeetModel('test/wasm-fp32-noflag', {
-      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', // allowWasmFp32 omitted
-    });
-    assert.equal(r.filenames.encoder, 'encoder-model.int8.onnx');
-    assert.equal(r.quantisation.encoder, 'int8');
-    assert.ok(!downloaded.some((f) => f.startsWith('encoder-model.onnx.data')), 'no fp32 shard should be fetched without the opt-in');
+    await assert.rejects(
+      getParakeetModel('test/wasm-fp32-noflag', {
+        backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', // allowWasmFp32 omitted
+      }),
+      (err) => err instanceof QuantUnavailableError && err.requested.encoder === 'fp32',
+    );
+    assert.ok(!downloaded.some((f) => f.startsWith('encoder-model.onnx.data')), 'no fp32 shard should be fetched when the request is rejected');
   });
 });
 

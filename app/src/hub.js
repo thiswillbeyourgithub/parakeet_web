@@ -23,6 +23,24 @@ export class HubDownloadError extends Error {
   }
 }
 
+/**
+ * Raised when the requested quantisation cannot be served by ANY source tried
+ * (the primary HF repo and, when probed, the local /models mirror), so honouring
+ * it would mean silently swapping in a different quant (e.g. fp32-on-WASM with no
+ * shards anywhere -> int8). We refuse that silent downgrade and surface this
+ * instead, so it is always obvious which quant actually loaded. NOT a
+ * HubDownloadError: the bytes were reachable, the request was just unsatisfiable,
+ * so the UI must not retry the local-fallback download (which hits the same wall).
+ */
+export class QuantUnavailableError extends Error {
+  constructor({ backend, requested, message }) {
+    super(message);
+    this.name = 'QuantUnavailableError';
+    this.backend = backend;
+    this.requested = requested;
+  }
+}
+
 const DB_NAME = 'parakeet-cache-db';
 const STORE_NAME = 'file-store';
 
@@ -1032,14 +1050,23 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   }
 
   if (pinnedToInt8) {
+    // The user asked for a non-int8 quant on WASM and NO source we tried (the HF
+    // repo, plus the local /models mirror when localUpgradeBaseUrl was probed
+    // above) could serve it. We refuse to silently fall back to int8: a silent
+    // quant swap makes it impossible to tell which precision actually loaded.
     // fp16 always overflows the WASM heap (no fp16 kernels, upcast doubles it).
     // fp32 only overflows as a single 2.4 GB sidecar; the SHARDED fp32 encoder
-    // (scripts/shard-fp32.py + allowWasmFp32) loads fine, so the int8 pin here
-    // means the requested quant's files were not available, not that fp32 is
-    // categorically impossible on WASM.
-    console.warn(`[Hub] ${backend} backend pinned to int8; ignoring requested `
-      + `encoder=${encoderQuant}/decoder=${decoderQuant} `
-      + `(fp16 cannot run on WASM; fp32 needs the <2 GB shards, which this source does not ship)`);
+    // (scripts/shard-fp32.py + allowWasmFp32) loads fine, so this means the
+    // requested quant's files were not available, not that fp32 is categorically
+    // impossible on WASM. Throw so the caller surfaces it instead of proceeding.
+    throw new QuantUnavailableError({
+      backend,
+      requested: { encoder: encoderQuant, decoder: decoderQuant },
+      message: `Requested encoder=${encoderQuant}/decoder=${decoderQuant} cannot run on the `
+        + `${backend} backend from any available source. fp16 cannot run on WASM at all; `
+        + `fp32 needs the <2 GB shards (encoder-model.onnx.data.NNN from scripts/shard-fp32.py), `
+        + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`,
+    });
   }
   if (encoderFellBackToFp32) {
     console.warn('[Hub] No fp16 encoder in repo; using the fp32 encoder on WebGPU');

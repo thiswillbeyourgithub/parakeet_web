@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, shouldRetryLocally } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -507,6 +507,10 @@ export default function App() {
   // rather than a one-off truncated download.
   const modelCorruptionRecoveriesRef = useRef(0);
   const [modelCorruptionWarning, setModelCorruptionWarning] = useState(null);
+  // Human-readable reason the last model load failed, shown under the "Failed"
+  // status so the user can tell WHY (e.g. fp32 requested on WASM but no shards
+  // are hosted) instead of being silently downgraded to a different quant.
+  const [modelLoadError, setModelLoadError] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~600 MB, fast,
   // but drops content past ~20 s per chunk) or 'fp32' (sharded ~2.4 GB, full
@@ -1964,6 +1968,7 @@ export default function App() {
     setProgress('');
     setProgressText('');
     setProgressPct(0);
+    setModelLoadError(null);
     // The corrupt-cache retry re-enters loadModel; keep the original timer
     // running across it instead of restarting (which logs a duplicate-timer
     // warning) so console.timeEnd still reports the full load duration.
@@ -2111,6 +2116,12 @@ export default function App() {
           console.log('[App] HuggingFace download failed; retrying against local /models weights');
           return loadModel({ useLocalFallback: true });
         }
+      }
+      // The requested quant couldn't be served by ANY source (e.g. fp32 on WASM
+      // with no shards hosted). hub.js refuses to silently downgrade to int8, so
+      // tell the user exactly why rather than leaving a bare "Failed".
+      if (e instanceof QuantUnavailableError) {
+        setModelLoadError(t('quantUnavailable'));
       }
       setStatus('failed');
       setProgress('');
@@ -4806,6 +4817,18 @@ export default function App() {
           >
             {t('loadModel')}
           </button>
+          {/* Error banner: the requested precision couldn't be served by any
+              source, so the load failed instead of silently downgrading to a
+              different quant. Rendered here (inside the idle/failed block) so it
+              is visible alongside the Load Model button after a failed load. */}
+          {modelLoadError && (
+            <div className="fallback-prompt" style={{ borderColor: 'var(--danger)' }}>
+              <p>⚠ {modelLoadError}</p>
+              <button onClick={() => setModelLoadError(null)} style={{ marginTop: '0.5em' }}>
+                {t('dismiss')}
+              </button>
+            </div>
+          )}
         </>
       )}
 
