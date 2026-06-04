@@ -62,6 +62,7 @@ function parseArgs(argv) {
     model: null,            // null => loadParakeetModel uses its DEFAULT_MODEL
     modelDir: null,
     quant: 'int8',
+    ort: null,              // null => auto: 'wasm' for int8, 'node' for fp16/fp32
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
     boosts: [],             // --phrase-boost specs (repeatable); inline / .txt / .pwc
@@ -98,6 +99,7 @@ function parseArgs(argv) {
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quant = val(flag); break;
+      case '--ort': a.ort = val(flag); break;
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
@@ -121,6 +123,13 @@ function parseArgs(argv) {
   }
   if (!a.manifest) throw new Error('No --manifest given. See --help.');
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
+  // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
+  // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
+  // fp32 encoder and any fp16 model can only load on the native onnxruntime-node
+  // backend (it resolves external data from disk, no buffering). Auto-pick node
+  // for fp16/fp32 unless the user forces a backend; int8 stays on wasm.
+  if (a.ort === null) a.ort = a.quant === 'int8' ? 'wasm' : 'node';
+  if (a.ort !== 'wasm' && a.ort !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ort})`);
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
     throw new Error('--beam-width must be a comma-separated list of integers in [1, 25]');
   }
@@ -162,6 +171,14 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            come from scripts/quantize-fp16.py (~1.2 GB encoder,
                            near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
+  --ort wasm|node          ORT execution backend. Default: auto (wasm for int8,
+                           node for fp16/fp32). The WASM EP reads each weight file
+                           into a <2 GiB Node Buffer and has no fp16 CPU kernels,
+                           so the single-sidecar fp32 encoder ("File size > 2 GiB")
+                           and any fp16 model need the native node backend, which
+                           streams external data from disk. wasm can still load
+                           fp32 if the model dir is pre-sharded (scripts/shard-fp32.py,
+                           each shard <2 GB).
 
 Decoding sweep (each is a comma-separated list; the grid is their product):
   -w, --beam-width LIST    Beam widths to test, e.g. "1,2,4,8". 1 = greedy.
@@ -450,10 +467,11 @@ async function main() {
     model: args.model ?? undefined,
     modelDir: args.modelDir,
     quant: args.quant,
+    ortBackend: args.ort,
     threads: args.threads,
     verbose: args.verbose,
   });
-  console.error(`[bench] model dir: ${dir} (${args.quant})`);
+  console.error(`[bench] model dir: ${dir} (${args.quant}, ${args.ort})`);
 
   // Build the boost dimension of the sweep:
   //   - always a no-boost baseline (unless --no-baseline AND boosts given), and
