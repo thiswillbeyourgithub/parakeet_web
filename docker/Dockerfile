@@ -20,22 +20,23 @@ WORKDIR /build
 
 # Each `npm ci` runs with --ignore-scripts so a compromised dep's
 # postinstall (the standard malware delivery channel) cannot execute
-# arbitrary code during build. The single legitimate exception is
-# esbuild (vite's bundler), which needs its install.js to expose its
-# platform-specific binary; we explicitly `npm rebuild esbuild` to
-# allowlist exactly that one package.
+# arbitrary code during build. The vite 8 toolchain needs NO install
+# scripts at all, so there is no allowlisted exception any more.
 #
-# F-105: esbuild's install.js, when invoked, first probes
-# `require.resolve('@esbuild/<platform>/bin/esbuild')` and only falls
-# through to `downloadDirectlyFromNPM` (an unverified `https.get` to
-# `registry.npmjs.org`) if the optional dep is not on disk. With the
-# F-104 lockfile fix the `@esbuild/linux-x64` optional dep is now
-# integrity-verified at `npm ci` time, so the on-disk path is taken
-# and the unverified download branch is unreachable. We pin
-# ESBUILD_BINARY_PATH below as belt-and-braces so a future lockfile
-# regeneration that drops the optional dep cannot silently reintroduce
-# the download path: install.js will exit cleanly when the env-var
-# points at an extant binary, and fail loudly if it does not.
+# (History: vite 4's esbuild shipped an install.js that, if its
+# platform binary was missing, fell through to an unverified
+# `https.get` download from `registry.npmjs.org`, so it had to be
+# allowlisted via `npm rebuild esbuild` with ESBUILD_BINARY_PATH
+# pinned as belt-and-braces. vite 8 drops esbuild for rolldown:
+# rolldown (the bundler) and lightningcss (the CSS transformer) ship
+# their platform binaries as prebuilt, integrity-pinned optional
+# dependencies, e.g. `@rolldown/binding-linux-x64-musl` and
+# `lightningcss-linux-x64-musl`. `npm ci` extracts those `.node`
+# files directly and `detect-libc` require()s the right one at
+# runtime; none of them have an install script (`hasInstallScript`
+# is false for the whole chain) and there is no download-fallback
+# branch to defend against. So --ignore-scripts now blocks nothing
+# legitimate and the rebuild/allowlist is gone entirely.)
 #
 # `npm ci` (not `npm install`) refuses to mutate the lockfile, so the
 # install set is exactly what's recorded in the committed
@@ -45,7 +46,7 @@ WORKDIR /build
 # F-104: refuse to build if any lockfile is missing the per-package
 # `integrity` field. Without it `npm ci` falls back to range resolution
 # against the (untrusted) registry, so a compromised mirror can ship
-# attacker-controlled bytes of the bundler itself (vite/esbuild/rollup).
+# attacker-controlled bytes of the bundler itself (vite/rolldown/lightningcss).
 # The bundler then sees every source file and emits the JS browsers run,
 # so every supply-chain hardening downstream is moot. Each lockfile
 # legitimately ships >0 integrity entries; absence means the lockfile
@@ -64,16 +65,22 @@ RUN for f in /tmp/lock-app.json /tmp/lock-ui.json /tmp/lock-signaling.json; do \
 COPY app/package.json app/package-lock.json ./app/
 RUN cd app && npm ci --ignore-scripts --no-audit --no-fund
 
-# UI app
+# UI app. The alpine base is musl, so `npm ci` installs the musl
+# variants of the prebuilt native bindings. Assert both landed on disk:
+# a missing platform optional-dep would otherwise surface as an opaque
+# require() error deep inside `vite build` below. The globs stay
+# arch/libc-agnostic (musl or gnu, x64 or arm64) so the check survives a
+# build on a different host platform.
 COPY app/ui/package.json app/ui/package-lock.json ./app/ui/
 RUN cd app/ui && npm ci --ignore-scripts --no-audit --no-fund && \
-    if [ ! -x /build/app/ui/node_modules/@esbuild/linux-x64/bin/esbuild ]; then \
-      echo "[Dockerfile] FATAL: @esbuild/linux-x64 optional dep missing after npm ci; refusing to fall through to install.js downloadDirectlyFromNPM (unverified https.get)"; \
+    if ! ls node_modules/@rolldown/binding-*/rolldown-binding.*.node >/dev/null 2>&1; then \
+      echo "[Dockerfile] FATAL: rolldown native binding missing after npm ci (platform optional dep not installed)"; \
       exit 1; \
     fi && \
-    ESBUILD_BINARY_PATH=/build/app/ui/node_modules/@esbuild/linux-x64/bin/esbuild \
-      npm rebuild esbuild
-ENV ESBUILD_BINARY_PATH=/build/app/ui/node_modules/@esbuild/linux-x64/bin/esbuild
+    if ! ls node_modules/lightningcss-*/lightningcss.*.node >/dev/null 2>&1; then \
+      echo "[Dockerfile] FATAL: lightningcss native binding missing after npm ci (platform optional dep not installed)"; \
+      exit 1; \
+    fi
 
 # Signaling server
 COPY signaling/package.json signaling/package-lock.json ./signaling/
