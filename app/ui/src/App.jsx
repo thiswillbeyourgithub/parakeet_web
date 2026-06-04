@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, shouldRetryLocally } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, listLocalRepoFiles, quantSatisfiable, HubDownloadError, shouldRetryLocally } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -21,7 +21,7 @@ import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
 import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandCasingVariants, selectPrebuilt, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
-import { clearCache as clearModelCache } from '../../src/hub.js';
+import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { defaultChunkDurationForBackend, DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, relativeAge } from './lib/format.js';
 import { requestPersistentStorage } from './lib/persistStorage.js';
@@ -499,6 +499,14 @@ export default function App() {
   const localFallbackEnabled = modelSource === 'local' || modelSource === 'both';
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
+  // Corrupt-cached-model recovery. A cached weight file that fails ONNX
+  // deserialization at session-create time is evicted + re-downloaded once,
+  // silently. The ref counts recoveries across this whole browser session;
+  // from the second one on we surface `modelCorruptionWarning` because a repeat
+  // points at unreliable storage (failing disk, AV interference, bad quota)
+  // rather than a one-off truncated download.
+  const modelCorruptionRecoveriesRef = useRef(0);
+  const [modelCorruptionWarning, setModelCorruptionWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~600 MB, fast,
   // but drops content past ~20 s per chunk) or 'fp32' (sharded ~2.4 GB, full
@@ -1941,7 +1949,7 @@ export default function App() {
    * @param {boolean} [opts.useLocalFallback=false] When true, download weights
    *   from this instance (/models/) instead of HuggingFace.
    */
-  async function loadModel({ useLocalFallback = forceLocalFallback } = {}) {
+  async function loadModel({ useLocalFallback = forceLocalFallback, corruptionRetried = false } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');
@@ -1956,7 +1964,10 @@ export default function App() {
     setProgress('');
     setProgressText('');
     setProgressPct(0);
-    console.time('LoadModel');
+    // The corrupt-cache retry re-enters loadModel; keep the original timer
+    // running across it instead of restarting (which logs a duplicate-timer
+    // warning) so console.timeEnd still reports the full load duration.
+    if (!corruptionRetried) console.time('LoadModel');
 
     try {
       const progressCallback = ({ loaded, total, file, resumed, attempt, maxAttempts }) => {
@@ -2015,6 +2026,35 @@ export default function App() {
       }
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
+      // The chosen source (HF on this first attempt) could not deliver the
+      // requested quant: WASM fp32 fell back to int8 (no shards), or WebGPU
+      // fp16 fell back to fp32 (no fp16 files). HF download didn't *fail* (int8/
+      // fp32 loaded fine), so the HubDownloadError retry below never fires — but
+      // a locally-served /models mirror may still ship the missing pieces (the
+      // fp32 shards, the fp16 encoder). If it does, reload from there so the
+      // user actually gets the precision they asked for. Skipped once we are
+      // already on local weights (guards against a reload loop).
+      const requestedDowngraded = modelUrls.pinnedToInt8 || modelUrls.encoderFellBackToFp32;
+      if (requestedDowngraded && !useLocalFallback) {
+        // Cheap canary first (one HEAD on vocab.txt) so the common case of no
+        // local mirror doesn't pay for the fuller per-file probe.
+        const canary = await checkLocalModelFiles('/models').catch(() => null);
+        if (canary?.ok) {
+          const localFiles = await listLocalRepoFiles('/models').catch(() => []);
+          if (quantSatisfiable({
+            backend,
+            encoderQuant: downloadOpts.encoderQuant,
+            decoderQuant: downloadOpts.decoderQuant,
+            allowWasmFp32: downloadOpts.allowWasmFp32,
+            repoFiles: localFiles,
+          })) {
+            console.log('[App] Requested quant not available on HuggingFace but the local '
+              + '/models mirror can serve it; reloading from /models');
+            return loadModel({ useLocalFallback: true });
+          }
+        }
+      }
+
       // Show compiling sessions stage
       setStatus('creatingSessions');
       setProgressText(t('compilingModel'));
@@ -2023,15 +2063,39 @@ export default function App() {
       // 2. Create the model instance with all file URLs
       // Determine mel bin count from model config (nemo128 → 128, nemo80 → 80)
       const nMels = modelUrls.modelConfig?.featuresSize || 128;
-      modelRef.current = await ParakeetModel.fromUrls({
-        ...modelUrls.urls,
-        filenames: modelUrls.filenames,
-        backend,
-        verbose: verboseLog,
-        cpuThreads,
-        preprocessorBackend: modelUrls.preprocessorBackend,
-        nMels,
-      });
+      try {
+        modelRef.current = await ParakeetModel.fromUrls({
+          ...modelUrls.urls,
+          filenames: modelUrls.filenames,
+          backend,
+          verbose: verboseLog,
+          cpuThreads,
+          preprocessorBackend: modelUrls.preprocessorBackend,
+          nMels,
+        });
+      } catch (sessErr) {
+        // A cached weight file that fails ONNX deserialization (truncated
+        // download, disk error, quota corruption) is recoverable: drop the bad
+        // bytes from IndexedDB and re-download once. Count every occurrence this
+        // session; the first recovers silently, a repeat warns the user that
+        // their storage looks unreliable. Non-deserialize errors (network, OOM,
+        // missing WebGPU) are not cache problems, so rethrow them unchanged.
+        if (!isModelDeserializeError(sessErr)) throw sessErr;
+        modelCorruptionRecoveriesRef.current += 1;
+        if (modelCorruptionRecoveriesRef.current > 1) {
+          setModelCorruptionWarning(t('modelCorruptionRepeated'));
+        }
+        if (corruptionRetried) {
+          // Freshly re-downloaded bytes still won't deserialize: not a stale
+          // cache. Surface it as a normal load failure (and the warning above).
+          console.error('[App] Re-downloaded model still failed to deserialize; storage may be unreliable.', sessErr);
+          throw sessErr;
+        }
+        console.warn('[App] Session create failed (corrupt cached model?); evicting cached weights and re-downloading.', sessErr);
+        await evictModelFiles(modelUrls.cacheInfo || { repoId })
+          .catch((err) => console.warn('[App] evictModelFiles failed:', err));
+        return loadModel({ useLocalFallback, corruptionRetried: true });
+      }
 
       console.timeEnd('LoadModel');
       // Publish the loaded tokenizer's vocab signature so the boost-trie rebuild
@@ -5003,6 +5067,17 @@ export default function App() {
         <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
           <p>⚠ {fallbackWarning}</p>
           <button onClick={() => setFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
+            {t('dismiss')}
+          </button>
+        </div>
+      )}
+
+      {/* Warning banner: the cached model had to be re-downloaded more than once
+          this session because it kept failing to deserialize (unreliable storage). */}
+      {modelCorruptionWarning && (
+        <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
+          <p>⚠ {modelCorruptionWarning}</p>
+          <button onClick={() => setModelCorruptionWarning(null)} style={{ marginTop: '0.5em' }}>
             {t('dismiss')}
           </button>
         </div>
