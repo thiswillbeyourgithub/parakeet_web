@@ -37,6 +37,16 @@ export async function idbGet(db, storeName, key) {
   });
 }
 
+export async function idbGetAllKeys(db, storeName) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([storeName], 'readonly');
+    const store = tx.objectStore(storeName);
+    const request = store.getAllKeys();
+    request.onerror = () => reject(request.error || new Error('Error reading keys from DB'));
+    request.onsuccess = () => resolve(request.result || []);
+  });
+}
+
 export async function idbPut(db, storeName, key, value) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([storeName], 'readwrite');
