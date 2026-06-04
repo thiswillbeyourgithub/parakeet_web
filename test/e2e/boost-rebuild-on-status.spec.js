@@ -36,8 +36,19 @@ const seed = (page) => seedSettings(page, {
 
 test('boost trie does not rebuild on transcribe status churn', async ({ page }) => {
   let boostRebuilds = 0;
+  // This spec's whole signal (the rebuild log) is gated on the seeded
+  // `verboseLog` + boost list actually being applied. If the app instead boots
+  // on DEFAULTS (verbose off, empty list) the rebuild log never fires and the
+  // test would time out at 0 with no clue why. Two boots-on-defaults paths can
+  // strike: the settings-load watchdog timing out, and the version-mismatch
+  // PURGE wiping the seed (the flake this guards). Watch for both so a
+  // regression fails loudly here, not as a cryptic 6-minute timeout below.
+  let settingsPurges = 0, settingsTimeouts = 0;
   page.on('console', (m) => {
-    if (m.type() === 'log' && m.text().includes('[Boost] rebuilding trie')) boostRebuilds += 1;
+    const text = m.text();
+    if (m.type() === 'log' && text.includes('[Boost] rebuilding trie')) boostRebuilds += 1;
+    if (text.includes('[App] Version mismatch')) settingsPurges += 1;
+    if (text.includes('[App] Settings restore timed out')) settingsTimeouts += 1;
   });
 
   // First load creates the settings DB/store; seed it, then reload so the app
@@ -50,6 +61,18 @@ test('boost trie does not rebuild on transcribe status churn', async ({ page }) 
 
   // Model ready: the app renders a ✔ once weights are loaded and initialised.
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+
+  // Precondition check: the seeded verbose + boost settings must have survived
+  // the reload. A purge of the seeded data (or a watchdog timeout) boots on
+  // defaults, which is the actual cause of the historic flake here; assert it
+  // did NOT happen so the failure is self-explaining rather than a 0-rebuilds
+  // timeout. The model still loads on defaults (its source is env-driven, not
+  // an IndexedDB setting), so ✔ alone does not prove the seed took. The fresh
+  // DB legitimately purges exactly once on the very first boot (seedSettings
+  // waits for that to finish before writing); the reload must NOT purge again,
+  // so a second purge means the seed was wiped.
+  expect(settingsTimeouts, 'settings-load watchdog fired; seeded settings were not applied').toBe(0);
+  expect(settingsPurges, 'seeded settings were purged on reload (version stamp missing/stale)').toBeLessThanOrEqual(1);
 
   // Let the post-model-ready rebuild (and its 300ms debounce) settle, then take
   // the baseline: this is the one legitimate rebuild (the vocab became known).
