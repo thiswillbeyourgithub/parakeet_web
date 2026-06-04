@@ -216,6 +216,90 @@ export async function clearCache() {
   console.log('[Hub] Cleared cached model files and partial downloads');
 }
 
+// ONNX Runtime messages we treat as "the cached model bytes are unusable"
+// (truncated download, disk error, quota corruption) rather than a transient or
+// environmental failure. When InferenceSession.create throws one of these the
+// weights in IndexedDB are almost certainly damaged, so the caller evicts them
+// (evictModelFiles) and re-downloads instead of failing outright. Matching is
+// substring + case-insensitive because ORT phrases the same fault differently
+// across versions/builds ("Failed to load model", "Deserialize tensor X
+// failed", "Protobuf parsing failed", "Can't create a session because ...",
+// "ORT_INVALID_PROTOBUF", "ModelProto does not have ...").
+const DESERIALIZE_ERROR_PATTERNS = [
+  'deserialize',
+  'protobuf',
+  'failed to load model',
+  'load model from',
+  "can't create a session",
+  'cannot create a session',
+  'invalid model',
+  'invalid_protobuf',
+  'corrupt',
+  'modelproto',
+  'no graph was found',
+];
+
+/**
+ * True when an InferenceSession.create error looks like a corrupt/undecodable
+ * model file (see DESERIALIZE_ERROR_PATTERNS) as opposed to a network, memory,
+ * or backend-capability error. Pure and side-effect-free for easy unit testing.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isModelDeserializeError(err) {
+  if (!err) return false;
+  const msg = ((err.message || err.toString?.() || err) + '').toLowerCase();
+  return DESERIALIZE_ERROR_PATTERNS.some((p) => msg.includes(p));
+}
+
+/**
+ * The three IndexedDB record keys that together hold one cached model file: the
+ * completed blob (makeCacheKey), its validation metadata (META_PREFIX), and its
+ * resumable-download record (PARTIAL_PREFIX). Pure so it can be unit-tested
+ * without IndexedDB; evictModelFiles deletes exactly these (plus any partial
+ * byte-segments named by the partial record).
+ * @returns {{ blob: string, meta: string, partial: string }}
+ */
+export function modelFileCacheKeys(repoId, filename, { revision = 'main', subfolder = '' } = {}) {
+  const base = makeCacheKey(repoId, revision, subfolder, filename);
+  return { blob: base, meta: META_PREFIX + base, partial: PARTIAL_PREFIX + base };
+}
+
+/**
+ * Delete the cached blob (and its meta + partial-download records) for each
+ * given model weight file so the next getParakeetModel re-downloads it. Used to
+ * recover from a corrupt cached file that fails ONNX deserialization at
+ * session-create time (see isModelDeserializeError). Best-effort per key: one
+ * failed delete never strands the rest. Returns the filenames it processed.
+ *
+ * @param {Object} info Shape of getParakeetModel's results.cacheInfo.
+ * @param {string} info.repoId
+ * @param {string} [info.revision='main']
+ * @param {string} [info.subfolder='']
+ * @param {string[]} [info.filenames=[]] Weight filenames to evict.
+ * @returns {Promise<string[]>}
+ */
+export async function evictModelFiles({ repoId, revision = 'main', subfolder = '', filenames = [] } = {}) {
+  if (typeof indexedDB === 'undefined' || !repoId || filenames.length === 0) return [];
+  const db = await getDb();
+  const del = async (k) => { try { await idbDelete(db, STORE_NAME, k); } catch (_) {} };
+  for (const filename of filenames) {
+    const { blob, meta, partial } = modelFileCacheKeys(repoId, filename, { revision, subfolder });
+    // A resumable partial may have spilled byte-segments to disk; their count
+    // lives in the partial record. Delete those before the records that name them.
+    try {
+      const pmeta = await getFileFromDb(partial);
+      const segCount = pmeta?.segCount || 0;
+      for (let i = 0; i < segCount; i++) await del(`${partial}${SEGMENT_INFIX}${i}`);
+    } catch (_) {}
+    await del(blob);
+    await del(meta);
+    await del(partial);
+  }
+  console.warn(`[Hub] Evicted ${filenames.length} cached model file(s) for ${repoId} to recover from a corrupt cache`);
+  return filenames;
+}
+
 /**
  * Download a file from HuggingFace Hub with caching support.
  * @param {string} repoId Model repo ID (e.g., 'nvidia/parakeet-tdt-1.1b')
@@ -636,6 +720,43 @@ export async function checkLocalModelFiles(baseUrl) {
   }
 }
 
+/**
+ * List the quant-relevant files a locally-served model directory actually has.
+ * The HuggingFace API lists a repo's files for us; a local mirror (served flat
+ * under `baseUrl`, e.g. '/models') can't be listed, so we HEAD-probe the
+ * specific candidates resolveModelQuant cares about: the fp16 variants, the
+ * single fp32 sidecar, and the contiguous fp32 encoder shards
+ * (scripts/shard-fp32.py) up to the first gap. Returned in the same shape as
+ * listRepoFiles so resolveModelQuant and the download loop treat both sources
+ * identically.
+ *
+ * @param {string} baseUrl Local base URL serving the model files (e.g. '/models').
+ * @returns {Promise<string[]>} Filenames present under baseUrl (subset of the probed candidates).
+ */
+export async function listLocalRepoFiles(baseUrl) {
+  const probe = async (name) => {
+    try {
+      const res = await fetch(`${baseUrl}/${name}`, { method: 'HEAD' });
+      return res.ok ? name : null;
+    } catch { return null; }
+  };
+  const candidates = [
+    'encoder-model.fp16.onnx',
+    'decoder_joint-model.fp16.onnx',
+    'encoder-model.onnx.data',
+    'decoder_joint-model.onnx.data',
+  ];
+  const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
+  // Probe the contiguous fp32 encoder shards until the first gap so
+  // resolveModelQuant and the download loop can see them.
+  for (let i = 0; ; i++) {
+    const name = `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
+    if (!(await probe(name))) break;
+    files.push(name);
+  }
+  return files;
+}
+
 // Map a resolved quant to its ONNX filename suffix. fp16 files are produced by
 // scripts/quantize-fp16.py and must be hosted in the model repo to be selected.
 export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
@@ -707,6 +828,21 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
 }
 
 /**
+ * Whether a given file set can fully satisfy the requested encoder quant for a
+ * backend (i.e. resolveModelQuant returns NO downgrade: no int8 pin, no fp16->
+ * fp32 fall-back). Pure wrapper over resolveModelQuant, used to decide whether a
+ * locally-served /models mirror can deliver a quant the primary (HF) repo could
+ * not: e.g. WASM fp32 needs the shards, WebGPU fp16 needs encoder-model.fp16.onnx.
+ *
+ * @param {Object} args Same shape as resolveModelQuant's args.
+ * @returns {boolean} true when the request resolves with no downgrade.
+ */
+export function quantSatisfiable(args) {
+  const r = resolveModelQuant(args);
+  return !r.pinnedToInt8 && !r.encoderFellBackToFp32;
+}
+
+/**
  * Decide whether a failed HuggingFace model load should be retried against the
  * locally-served /models weights instead of surfacing as a failure. Pure (no
  * I/O) so it can be unit-tested; the caller does the actual /models probe.
@@ -769,39 +905,22 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // repo actually ships it, and the .data inclusion checks need the listing too.
   // Local fallback can't hit the HF API, so HEAD-probe the specific candidates
   // we care about (the fp16 variants and the fp32 external-data sidecars).
-  let repoFiles;
-  if (localFallbackBaseUrl) {
-    const probe = async (name) => {
-      try {
-        const res = await fetch(`${localFallbackBaseUrl}/${name}`, { method: 'HEAD' });
-        return res.ok ? name : null;
-      } catch { return null; }
-    };
-    const candidates = [
-      'encoder-model.fp16.onnx',
-      'decoder_joint-model.fp16.onnx',
-      'encoder-model.onnx.data',
-      'decoder_joint-model.onnx.data',
-    ];
-    repoFiles = (await Promise.all(candidates.map(probe))).filter(Boolean);
-    // The HF API lists shard files automatically; local fallback can't, so probe
-    // the contiguous fp32 encoder shards (scripts/shard-fp32.py) until the first
-    // gap so resolveModelQuant and the download loop can see them.
-    for (let i = 0; ; i++) {
-      const name = `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
-      if (!(await probe(name))) break;
-      repoFiles.push(name);
-    }
-  } else {
-    repoFiles = await listRepoFiles(repoId, effectiveRevision);
-  }
+  const repoFiles = localFallbackBaseUrl
+    ? await listLocalRepoFiles(localFallbackBaseUrl)
+    : await listRepoFiles(repoId, effectiveRevision);
 
   // Resolve the effective quantisation per backend and per availability.
   const { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
     resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 });
   if (pinnedToInt8) {
-    console.warn(`[Hub] ${backend} backend is pinned to int8; ignoring requested `
-      + `encoder=${encoderQuant}/decoder=${decoderQuant} (fp16/fp32 overflow the WASM heap)`);
+    // fp16 always overflows the WASM heap (no fp16 kernels, upcast doubles it).
+    // fp32 only overflows as a single 2.4 GB sidecar; the SHARDED fp32 encoder
+    // (scripts/shard-fp32.py + allowWasmFp32) loads fine, so the int8 pin here
+    // means the requested quant's files were not available, not that fp32 is
+    // categorically impossible on WASM.
+    console.warn(`[Hub] ${backend} backend pinned to int8; ignoring requested `
+      + `encoder=${encoderQuant}/decoder=${decoderQuant} `
+      + `(fp16 cannot run on WASM; fp32 needs the <2 GB shards, which this source does not ship)`);
   }
   if (encoderFellBackToFp32) {
     console.warn('[Hub] No fp16 encoder in repo; using the fp32 encoder on WebGPU');
@@ -814,9 +933,12 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // on WebGPU, where they are fp16/fp32 (>1 GB) and a blob-URL fetch OOMs (see
   // blobToBytes). vocab + external-data sidecars stay as URLs.
   const loadAsBytes = backend.startsWith('webgpu');
+  // `weight` marks the big ONNX files (and their external-data sidecars) whose
+  // cached bytes get deserialized at session-create time; evictModelFiles
+  // targets exactly these on a corrupt-cache recovery (results.cacheInfo below).
   const filesToGet = [
-    { key: 'encoderUrl', name: encoderName, asBytes: loadAsBytes },
-    { key: 'decoderUrl', name: decoderName, asBytes: loadAsBytes },
+    { key: 'encoderUrl', name: encoderName, asBytes: loadAsBytes, weight: true },
+    { key: 'decoderUrl', name: decoderName, asBytes: loadAsBytes, weight: true },
     { key: 'tokenizerUrl', name: 'vocab.txt' },
   ];
 
@@ -840,11 +962,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const shardRe = new RegExp(`^${encoderName.replace(/[.]/g, '\\.')}\\.data\\.\\d+$`);
   const encoderShards = repoFiles.filter((f) => shardRe.test(f)).sort();
   if (encoderShards.length === 0 && repoFiles.includes(`${encoderName}.data`)) {
-    filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data` });
+    filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data`, weight: true });
   }
 
   if (repoFiles.includes(`${decoderName}.data`)) {
-    filesToGet.push({ key: 'decoderDataUrl', name: `${decoderName}.data` });
+    filesToGet.push({ key: 'decoderDataUrl', name: `${decoderName}.data`, weight: true });
   }
 
   const results = {
@@ -854,8 +976,24 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           decoder: decoderName
       },
       quantisation: { encoder: encoderQ, decoder: decoderQ },
+      // Downgrade flags: true when this source could not satisfy the requested
+      // quant (WASM int8 pin, or WebGPU fp16->fp32 fall-back). The caller uses
+      // them to decide whether a local /models mirror should be tried instead.
+      pinnedToInt8,
+      encoderFellBackToFp32,
       modelConfig: modelConfig || null,  // Include model config for downstream use
       preprocessorBackend,  // Pass through so callers know which backend to use
+      // Everything evictModelFiles needs to drop these exact cached blobs and
+      // re-download them when a corrupt file fails to deserialize at session
+      // create. Derived from the `weight` flag so it can't drift from the
+      // download list. Sharded fp32 weights are noCache (never cached) so they
+      // are not listed. subfolder is always '' for the Parakeet repos.
+      cacheInfo: {
+          repoId,
+          revision: effectiveRevision,
+          subfolder: '',
+          filenames: filesToGet.filter((f) => f.weight).map((f) => f.name),
+      },
   };
 
   // One place that knows how to fetch a single file (HF or local fallback),

@@ -4,7 +4,7 @@ import { ParakeetModel } from './parakeet.js';
 import { getParakeetModel } from './hub.js';
 
 export { ParakeetModel } from './parakeet.js';
-export { getModelFile, getModelText, getParakeetModel, getLocalModelFile, checkLocalModelFiles, HubDownloadError, shouldRetryLocally } from './hub.js';
+export { getModelFile, getModelText, getParakeetModel, getLocalModelFile, checkLocalModelFiles, listLocalRepoFiles, resolveModelQuant, quantSatisfiable, HubDownloadError, shouldRetryLocally, evictModelFiles, isModelDeserializeError, modelFileCacheKeys } from './hub.js';
 
 /**
  * Convenience factory to load from a local path.

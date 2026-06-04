@@ -157,6 +157,43 @@ describe('getParakeetModel file selection: WebGPU', () => {
   });
 });
 
+describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
+  // cacheInfo lists the cached weight files evictModelFiles drops + re-downloads
+  // when one fails to deserialize. It must name exactly the deserialized ONNX
+  // blobs (+ their .data sidecars), never vocab/preprocessor, and carry the
+  // repoId/revision/subfolder needed to rebuild the IndexedDB keys.
+  test('int8 WASM: encoder + decoder only (no sidecar, no vocab)', async () => {
+    mockHf(REPO_NO_FP16);
+    const r = await getParakeetModel('test/wasm-int8', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    assert.deepEqual(r.cacheInfo.filenames, ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx']);
+    assert.equal(r.cacheInfo.repoId, 'test/wasm-int8');
+    assert.equal(r.cacheInfo.revision, 'main');
+    assert.equal(r.cacheInfo.subfolder, '');
+    assert.ok(!r.cacheInfo.filenames.includes('vocab.txt'), 'vocab is not a deserialized weight');
+  });
+
+  test('single-file fp32 (WebGPU fallback): the .data sidecar is included', async () => {
+    mockHf(REPO_NO_FP16);
+    const r = await getParakeetModel('test/webgpu-fp32', {
+      backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16',
+    });
+    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx'));
+    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx.data'), 'fp32 sidecar must be evictable too');
+  });
+
+  test('sharded fp32 (noCache): shards are NOT listed (never cached)', async () => {
+    mockHf(REPO_FP32_SHARDS);
+    const r = await getParakeetModel('test/wasm-fp32-shards', {
+      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
+    });
+    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx'));
+    assert.ok(!r.cacheInfo.filenames.some((f) => f.startsWith('encoder-model.onnx.data')),
+      'noCache shards are never in IndexedDB, so must not be in cacheInfo');
+  });
+});
+
 describe('getParakeetModel file selection: preprocessor backend', () => {
   test('preprocessorBackend "onnx" selects the preprocessor ONNX named for the model', async () => {
     const downloaded = mockHf(REPO_NO_FP16);
