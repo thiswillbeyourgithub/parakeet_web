@@ -247,14 +247,26 @@ echo "[entrypoint] =============================="
 if [ -z "${LOCAL_MODEL_PATH}" ]; then
   echo "[entrypoint] LOCAL_MODEL_PATH not set — skipping fallback model setup."
 else
+  # Accept either layout: a flat folder (vocab.txt + .onnx directly inside) or a
+  # HuggingFace-style nested tree (files under <repoId>/, e.g. what `hf download`
+  # leaves when the operator mounts a parent of one or more repos). When only the
+  # nested layout is present, descend into it so Caddy (/models/*), the boost
+  # prebuild, and the app's flat probe all see the files directly.
+  _LOCAL_REPO="${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}"
+  if [ ! -f "${LOCAL_MODEL_PATH}/vocab.txt" ] && [ -f "${LOCAL_MODEL_PATH}/${_LOCAL_REPO}/vocab.txt" ]; then
+    echo "[entrypoint] Fallback model found nested under ${_LOCAL_REPO}/; using ${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
+    LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
+    export LOCAL_MODEL_PATH
+  fi
   if [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
     echo "[entrypoint] Fallback model present at ${LOCAL_MODEL_PATH}"
   else
     echo "[entrypoint] ERROR: fallback model missing at ${LOCAL_MODEL_PATH}."
     echo "[entrypoint] Bind-mount a folder of ONNX files into the container at"
     echo "[entrypoint] ${LOCAL_MODEL_PATH} (flat layout, vocab.txt and the .onnx"
-    echo "[entrypoint] files directly inside). Pre-populate the host folder with e.g.:"
-    echo "[entrypoint]   hf download istupakov/parakeet-tdt-0.6b-v3-onnx \\"
+    echo "[entrypoint] files directly inside, or nested under ${_LOCAL_REPO}/)."
+    echo "[entrypoint] Pre-populate the host folder with e.g.:"
+    echo "[entrypoint]   hf download ${_LOCAL_REPO} \\"
     echo "[entrypoint]     --local-dir /some/host/path"
     exit 1
   fi

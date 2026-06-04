@@ -38,9 +38,10 @@ services:
       - /data/caddy:uid=1000,gid=1000,mode=0700
     # volumes:
       # Local model fallback: bind-mount a host folder of ONNX files (flat
-      # layout: vocab.txt + .onnx files directly inside) into the container,
-      # then set LOCAL_MODEL_PATH below to the in-container target. Caddy
-      # serves it under /models/. Pre-populate the host folder with e.g.:
+      # layout: vocab.txt + .onnx files directly inside, OR a nested
+      # <repoId>/ subfolder which the entrypoint descends into) into the
+      # container, then set LOCAL_MODEL_PATH below to the in-container target.
+      # Caddy serves it under /models/. Pre-populate the host folder with e.g.:
       #   hf download istupakov/parakeet-tdt-0.6b-v3-onnx --local-dir /host/path
       # - /host/path/to/onnx-files:/models:ro
 
