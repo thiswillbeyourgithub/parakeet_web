@@ -13,7 +13,8 @@
     "test:all": "npm run test && npm run test:e2e",
     "e2e:models": "node scripts/fetch-e2e-models.mjs",
     "fixture:bpe": "python scripts/gen-bpe-fixture.py > test/fixtures/bpe-fixture.json",
-    "fixture:moon": "node scripts/gen-jfk-moon-fixtures.mjs"
+    "fixture:moon": "node scripts/gen-jfk-moon-fixtures.mjs",
+    "webgpu:memcheck": "node scripts/webgpu-memcheck.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
