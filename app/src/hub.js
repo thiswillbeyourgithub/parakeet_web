@@ -226,6 +226,15 @@ export async function clearCache() {
  * @param {Function} [options.progress] Progress callback
  * @returns {Promise<string>} URL to cached file (blob URL)
  */
+// ORT InferenceSession.create accepts a Uint8Array as well as a URL string.
+// For the big WebGPU encoder/decoder we hand it bytes rather than a blob: URL,
+// because fetching a >1 GB blob URL trips Chromium's ERR_BLOB_OUT_OF_MEMORY
+// (the WASM int8 encoder at ~600 MB stays under the cap; fp16/fp32 do not).
+// Caching is unaffected: the blob is still persisted to IndexedDB first.
+async function blobToBytes(blob) {
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 /**
  * Download a URL into a Blob with resume + retry, reporting progress,
  * then persist it to IndexedDB and return a blob URL. Shared between the
@@ -245,9 +254,11 @@ export async function clearCache() {
  * @param {string} logTag - Log prefix, e.g. '[Hub]' or '[Hub:local]'
  * @param {number} [maxRetries=MAX_RETRIES] - Number of retries after the initial
  *   attempt before giving up. Total HTTP attempts = maxRetries + 1.
- * @returns {Promise<string>} Blob URL
+ * @param {boolean} [asBytes=false] - Return the raw bytes (Uint8Array) instead of
+ *   a blob URL. Used for the big WebGPU encoder/decoder to dodge the blob OOM.
+ * @returns {Promise<string|Uint8Array>} Blob URL, or bytes when asBytes is set
  */
-async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRetries = MAX_RETRIES) {
+async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRetries = MAX_RETRIES, asBytes = false) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
 
@@ -449,11 +460,11 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
     await deleteAllPartial();
   }
 
-  return URL.createObjectURL(blob);
+  return asBytes ? blobToBytes(blob) : URL.createObjectURL(blob);
 }
 
 export async function getModelFile(repoId, filename, options = {}) {
-  const { revision = 'main', subfolder = '', progress } = options;
+  const { revision = 'main', subfolder = '', progress, asBytes = false } = options;
 
   // Encode the path components so slash-containing branch names (e.g.
   // 'refs/pr/1') and any URL-reserved characters in subfolder/filename
@@ -490,7 +501,7 @@ export async function getModelFile(repoId, filename, options = {}) {
         const head = meta?.etag ? await headRevalidate(url) : null;
         if (decideCacheAction({ cachedSize: cachedBlob.size, meta, head }) === 'use') {
           console.log(`[Hub] Using cached ${filename} from IndexedDB`);
-          return URL.createObjectURL(cachedBlob);
+          return asBytes ? blobToBytes(cachedBlob) : URL.createObjectURL(cachedBlob);
         }
         console.warn(`[Hub] Cached ${filename} failed validation (stale or corrupt); re-downloading`);
       }
@@ -505,7 +516,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   // the default retry count.
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
-    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', 1);
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', 1, asBytes);
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
@@ -540,7 +551,7 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress, revision = 'main', subfolder = '' } = options;
+  const { progress, revision = 'main', subfolder = '', asBytes = false } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
@@ -549,7 +560,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
         console.log(`[Hub:local] Using cached ${filename} from IndexedDB`);
-        return URL.createObjectURL(cachedBlob);
+        return asBytes ? blobToBytes(cachedBlob) : URL.createObjectURL(cachedBlob);
       }
     } catch (e) {
       console.warn('[Hub:local] IndexedDB cache check failed:', e);
@@ -558,7 +569,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]');
+  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]', MAX_RETRIES, asBytes);
 }
 
 /**
@@ -705,7 +716,7 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  * @param {(progress: {loaded: number, total: number, file: string}) => void} [options.progress] Progress callback
  * @param {string} [options.localFallbackBaseUrl] When set, download files from this local
  *   base URL instead of HuggingFace (e.g., '/models'). Used as a fallback when HF is blocked.
- * @returns {Promise<{urls: {encoderUrl: string, decoderUrl: string, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|Array<{path:string,data:string}>|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
+ * @returns {Promise<{urls: {encoderUrl: string|Uint8Array, decoderUrl: string|Uint8Array, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|Array<{path:string,data:string}>|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
  */
 export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Resolve model key to repo ID and get config from the registry
@@ -767,9 +778,13 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const encoderName = `encoder-model${QUANT_SUFFIX[encoderQ]}`;
   const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
+  // The big encoder/decoder weights are handed to ORT as bytes (not a blob URL)
+  // on WebGPU, where they are fp16/fp32 (>1 GB) and a blob-URL fetch OOMs (see
+  // blobToBytes). vocab + external-data sidecars stay as URLs.
+  const loadAsBytes = backend.startsWith('webgpu');
   const filesToGet = [
-    { key: 'encoderUrl', name: encoderName },
-    { key: 'decoderUrl', name: decoderName },
+    { key: 'encoderUrl', name: encoderName, asBytes: loadAsBytes },
+    { key: 'decoderUrl', name: decoderName, asBytes: loadAsBytes },
     { key: 'tokenizerUrl', name: 'vocab.txt' },
   ];
 
@@ -814,17 +829,17 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // One place that knows how to fetch a single file (HF or local fallback),
   // reused by both the main file loop and the shard loop below so the two can
   // never diverge in revision/progress handling.
-  const downloadFile = (name) => {
+  const downloadFile = (name, asBytes = false) => {
     const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
-    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress };
+    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes };
     return localFallbackBaseUrl
       ? getLocalModelFile(localFallbackBaseUrl, repoId, name, perFileOpts)
       : getModelFile(repoId, name, perFileOpts);
   };
 
-  for (const { key, name } of filesToGet) {
+  for (const { key, name, asBytes } of filesToGet) {
     try {
-        results.urls[key] = await downloadFile(name);
+        results.urls[key] = await downloadFile(name, asBytes);
     } catch (e) {
         if (key.endsWith('DataUrl')) {
             console.warn(`[Hub] Optional external data file not found: ${name}. This is expected if the model is small.`);

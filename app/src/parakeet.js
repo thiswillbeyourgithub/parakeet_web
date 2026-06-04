@@ -79,8 +79,8 @@ export class ParakeetModel {
   /**
    * Create ParakeetModel by downloading all required assets.
    * @param {Object} cfg
-   * @param {string} cfg.encoderUrl URL to encoder-model.onnx
-   * @param {string} cfg.decoderUrl URL to decoder_joint-model.onnx
+   * @param {string|Uint8Array} cfg.encoderUrl URL to encoder-model.onnx, or its raw bytes (WebGPU large models; see hub.js blobToBytes)
+   * @param {string|Uint8Array} cfg.decoderUrl URL to decoder_joint-model.onnx, or its raw bytes
    * @param {string} cfg.tokenizerUrl URL to vocab.txt or tokens.txt
    * @param {string} [cfg.preprocessorUrl] URL to nemo80/128.onnx (required when preprocessorBackend='onnx')
    * @param {('js'|'onnx')} [cfg.preprocessorBackend='js'] 'js' uses pure-JS mel.js, 'onnx' uses ONNX preprocessor
