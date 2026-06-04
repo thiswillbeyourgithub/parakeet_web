@@ -1,4 +1,12 @@
-#!/usr/bin/env python
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "onnx-asr[cpu]",
+#     "librosa",
+#     "jiwer",
+# ]
+# ///
 """Mini WER + timing + RAM bench across encoder quantisations (int8/fp16/fp32).
 
 Unlike scripts/wer-bench.mjs (which drives the repo's own JS pipeline and its
@@ -32,12 +40,13 @@ Quantisation -> files in the model dir:
   fp16 -> encoder-model.fp16.onnx + decoder_joint-model.fp16.onnx
   fp32 -> encoder-model.onnx (+ .data)  + decoder_joint-model.onnx
 
-Usage:
-  python scripts/wer-quants.py
-  python scripts/wer-quants.py --audio clip.mp3 --reference @ref.txt
-  python scripts/wer-quants.py --quants int8,fp16,fp32 --reference-quant fp32
+Usage (deps are declared inline via PEP 723, so uv installs them on first run):
+  uv run scripts/wer-quants.py
+  uv run scripts/wer-quants.py --audio clip.mp3 --reference @ref.txt
+  uv run scripts/wer-quants.py --quants int8,fp16,fp32 --reference-quant fp32
 
-Requires: onnx-asr, librosa, jiwer (pip install onnx-asr librosa jiwer).
+Or with an environment that already has the deps: python scripts/wer-quants.py
+(needs onnx-asr, librosa, jiwer).
 
 Built with Claude Code.
 """
