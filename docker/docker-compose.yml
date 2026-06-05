@@ -36,7 +36,14 @@ services:
       - /run/config:uid=1000,gid=1000,mode=0700
       - /config/caddy:uid=1000,gid=1000,mode=0700
       - /data/caddy:uid=1000,gid=1000,mode=0700
-    # volumes:
+    volumes:
+      # Curated phrase-boosting lists shipped in the repo (french_medical.txt
+      # plus its precompiled french_medical.pwc). Read-only: the entrypoint only
+      # copies these out of BOOST_PHRASES_SOURCE into a tmpfs. Path is relative
+      # to this compose file (docker/), so it points at the repo's
+      # phrase_boosting/ folder. See BOOST_PHRASES_SOURCE / VITE_PHRASE_BOOST_DEFAULT below.
+      - ../phrase_boosting:/boost-defaults:ro
+
       # Local model fallback: bind-mount a host folder of ONNX files (flat
       # layout: vocab.txt + .onnx files directly inside, OR a nested
       # <repoId>/ subfolder which the entrypoint descends into) into the
@@ -77,12 +84,15 @@ services:
       - LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
-      # Optional phrase-boosting lists: folder of .txt files or https URL to one .txt
-      - BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-}
-      # Optional default boost list to pre-select for new visitors (bare name or
+      # Phrase-boosting lists: folder of .txt files or https URL to one .txt.
+      # Defaults to the repo's curated lists bind-mounted at /boost-defaults
+      # above (french_medical). Set to empty in .env to serve no lists.
+      - BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-/boost-defaults}
+      # Default boost list to pre-select for new visitors (bare name or
       # <name>.txt). Must match a served list or the container refuses to start.
-      # Per-link override: ?phrase_boost=<name>. Neither overrides a saved choice.
-      - VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-}
+      # Defaults to the shipped french_medical list. Per-link override:
+      # ?phrase_boost=<name>. Neither overrides a saved choice.
+      - VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-french_medical}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}
