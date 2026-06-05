@@ -81,7 +81,7 @@ function parseArgs(argv) {
     frameStride: 1,
     threads: 0,
     limit: 0,               // 0 => all utterances
-    sortBy: 'wer',          // rank the final table by corpus 'wer' or 'cer'
+    sortBy: 'cer',          // rank the final table by corpus 'cer' or 'wer'
     stripAccents: false,    // WER normalization: fold accents (é -> e)
     jsonl: 'benchmark_results.jsonl', // per-utterance + per-run records (one JSON/line)
     md: 'benchmark_results.md',       // summary tables in markdown
@@ -224,11 +224,15 @@ WER:
 Output / misc:
       --limit N            Only the first N entries of EACH manifest (quick smoke
                            test).
-      --sort-by wer|cer    Rank the final table (best config first) by the
-                           word/char-weighted corpus WER or CER of each cell's
-                           overall row, the same figure shown in the WER %/CER %
-                           column. Default wer. (The WERmean/med/std columns stay
-                           per-utterance and are unaffected.)
+      --sort-by cer|wer    Rank the final table (best config first) by the
+                           word/char-weighted corpus CER or WER of each cell's
+                           overall row, the same figure shown in the CER %/WER %
+                           column. Default cer (smoother, lower-variance signal
+                           than WER between close boost strengths). The
+                           multi-dataset overall is the micro-average (summed
+                           edits / summed refs), so each dataset is weighted by
+                           its size, not averaged. (The WERmean/med/std columns
+                           stay per-utterance and are unaffected.)
       --jsonl FILE         Write results as JSON Lines (one object per line):
                            a "utterance" record per sample (tagged with its
                            dataset, with per-phase timings) and a "summary"
@@ -848,10 +852,12 @@ async function main() {
   model.dispose();
 
   // Emit every cell (resumed + freshly run), sorted ascending by the cell's
-  // word/char-weighted corpus WER (or CER, with --sort-by cer) so the
+  // word/char-weighted corpus CER (default) or WER (--sort-by wer) so the
   // best-scoring config lands at the top of both tables. This is the same
-  // micro-averaged figure shown in the WER %/CER % column, so the ranking
-  // matches the headline number; a cell's per-dataset rows stay grouped under it.
+  // micro-averaged figure shown in the CER %/WER % column (summed edits / summed
+  // refs), so the ranking matches the headline number AND the multi-dataset
+  // overall weights each dataset by its size rather than averaging the two
+  // rates; a cell's per-dataset rows stay grouped under it.
   const summary = grid.map((cell) => summaryByTag.get(tagOf(cell))).filter(Boolean);
   summary.sort((a, b) => cellRate(a, args.sortBy) - cellRate(b, args.sortBy));
 

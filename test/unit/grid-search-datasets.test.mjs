@@ -145,15 +145,19 @@ describe('cellRate: word/char-weighted corpus WER or CER for a cell', () => {
     assert.equal(cellRate(a, 'cer'), 5);
   });
 
-  test('pools datasets by word/char count, not utterance count', () => {
+  test('overall weights datasets by size (micro-average), not a plain mean of rates', () => {
     const perDs = new Map([['med', newAcc()], ['gen', newAcc()]]);
+    // med: 1/10 = 10% WER over 10 words; gen: 2/5 = 40% WER over 5 words.
     addScore(perDs.get('med'), { refWords: 10, hypWords: 10, wordEdits: 1, refChars: 50, charEdits: 5 });
     addScore(perDs.get('gen'), { refWords: 5, hypWords: 5, wordEdits: 2, refChars: 25, charEdits: 1 });
     const row = { datasets: buildDatasets(perDs, ['med', 'gen']) };
-    // Overall WER = (1+2)/(10+5) = 20%; the bigger dataset (med, 10 words) pulls
-    // it more than gen (5 words) would in a plain per-dataset average.
+    // Size-weighted overall WER = (1+2)/(10+5) = 20%, NOT the naive average of
+    // the two per-dataset rates ((10+40)/2 = 25%): the bigger dataset (med, 10
+    // words) pulls the overall toward its lower rate.
     assert.equal(cellRate(row, 'wer'), 20);
-    assert.equal(cellRate(row, 'cer'), +(100 * 6 / 75).toFixed(10));
+    assert.notEqual(cellRate(row, 'wer'), 25);
+    // Same for CER: (5+1)/(50+25) = 8%, not (10+4)/2 = 7%.
+    assert.equal(cellRate(row, 'cer'), 8);
   });
 
   test('--sort-by wer vs cer can reorder cells', () => {
