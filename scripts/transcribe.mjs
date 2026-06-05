@@ -265,10 +265,24 @@ export function isPwcPath(spec) {
 // A non-.pwc spec is either inline phrases or a path to a text file of phrases.
 // When the (trimmed) spec resolves to an existing file we read it and treat its
 // contents as the phrase text; otherwise the spec itself is the phrase text.
+//
+// One hard guard: a spec that unambiguously names a file (ends in .txt or .pwc)
+// MUST resolve to a real readable file. Without this, a mistyped boost path
+// (e.g. medical.txt vs french_medical.txt, or a missing .pwc) silently fell
+// through to "inline phrases", producing an empty/garbage trie and a no-op boost
+// that looked like the feature simply had no effect. Spoken phrases to boost do
+// not end in .txt/.pwc, so the extension is a safe signal of file intent.
 export function expandBoostSpec(spec) {
   const trimmed = spec.trim();
   if (trimmed && existsSync(trimmed) && statSync(trimmed).isFile()) {
     return readFileSync(trimmed, 'utf-8');
+  }
+  if (/\.(txt|pwc)$/i.test(trimmed)) {
+    throw new Error(
+      `--phrase-boost file not found: ${trimmed}\n`
+      + `A spec ending in .txt or .pwc is treated as a file path and must exist `
+      + `(a non-existent file is NOT silently used as an inline phrase).`,
+    );
   }
   return spec;
 }
