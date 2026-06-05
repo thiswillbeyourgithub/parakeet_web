@@ -81,6 +81,7 @@ function parseArgs(argv) {
     frameStride: 1,
     threads: 0,
     limit: 0,               // 0 => all utterances
+    sortBy: 'wer',          // rank the final table by corpus 'wer' or 'cer'
     stripAccents: false,    // WER normalization: fold accents (é -> e)
     jsonl: 'benchmark_results.jsonl', // per-utterance + per-run records (one JSON/line)
     md: 'benchmark_results.md',       // summary tables in markdown
@@ -118,6 +119,7 @@ function parseArgs(argv) {
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
       case '--limit': a.limit = parseInt(val(flag), 10); break;
+      case '--sort-by': a.sortBy = val(flag).toLowerCase(); break;
       case '--strip-accents': a.stripAccents = true; break;
       case '--jsonl': a.jsonl = val(flag); break;
       case '--md': a.md = val(flag); break;
@@ -130,6 +132,7 @@ function parseArgs(argv) {
     }
   }
   if (!a.manifests.length) throw new Error('No --manifest given. See --help.');
+  if (a.sortBy !== 'wer' && a.sortBy !== 'cer') throw new Error(`--sort-by must be wer or cer (got ${a.sortBy})`);
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
   // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
   // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
@@ -221,6 +224,11 @@ WER:
 Output / misc:
       --limit N            Only the first N entries of EACH manifest (quick smoke
                            test).
+      --sort-by wer|cer    Rank the final table (best config first) by the
+                           word/char-weighted corpus WER or CER of each cell's
+                           overall row, the same figure shown in the WER %/CER %
+                           column. Default wer. (The WERmean/med/std columns stay
+                           per-utterance and are unaffected.)
       --jsonl FILE         Write results as JSON Lines (one object per line):
                            a "utterance" record per sample (tagged with its
                            dataset, with per-phase timings) and a "summary"
@@ -425,6 +433,16 @@ function buildDatasets(perDs, datasetNames) {
 // The dataset row that represents a whole grid cell for sorting/summary: the
 // "overall" pool when multiple datasets, else the single dataset.
 function repDataset(row) { return row.datasets[row.datasets.length - 1]; }
+
+// The corpus (word/char-weighted, i.e. micro-averaged) WER or CER for a whole
+// grid cell, read off its representative (overall) row. Because it divides
+// summed edits by summed refs, datasets contribute in proportion to their
+// word/char counts. This is the figure the final table is ranked by; metric is
+// 'wer' or 'cer'.
+function cellRate(row, metric) {
+  const d = repDataset(row);
+  return metric === 'cer' ? pct(d.charEdits, d.refChars) : pct(d.wordEdits, d.refWords);
+}
 
 // The per-phase timings the model reports (key in metrics -> short column label).
 const PHASES = [
@@ -829,11 +847,13 @@ async function main() {
 
   model.dispose();
 
-  // Emit every cell (resumed + freshly run), sorted by the cell's overall
-  // per-utterance median WER ascending so the best-scoring config lands at the
-  // top of both tables (a cell's per-dataset rows stay grouped under it).
+  // Emit every cell (resumed + freshly run), sorted ascending by the cell's
+  // word/char-weighted corpus WER (or CER, with --sort-by cer) so the
+  // best-scoring config lands at the top of both tables. This is the same
+  // micro-averaged figure shown in the WER %/CER % column, so the ranking
+  // matches the headline number; a cell's per-dataset rows stay grouped under it.
   const summary = grid.map((cell) => summaryByTag.get(tagOf(cell))).filter(Boolean);
-  summary.sort((a, b) => median(repDataset(a).werSamples) - median(repDataset(b).werSamples));
+  summary.sort((a, b) => cellRate(a, args.sortBy) - cellRate(b, args.sortBy));
 
   // Final tables: accuracy + per-phase timing (mean/median ms per utterance).
   const accText = renderAligned(ACC_HEAD, accuracyBody(summary));
@@ -880,6 +900,6 @@ if (pathToFileURL(process.argv[1] || '').href === import.meta.url) {
 // Exported for unit testing the pure scoring / per-dataset aggregation logic.
 export {
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
-  newAcc, addScore, buildDatasets, repDataset,
+  newAcc, addScore, buildDatasets, repDataset, cellRate,
   ACC_HEAD, accuracyBody, OVERALL,
 };

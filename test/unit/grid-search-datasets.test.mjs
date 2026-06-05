@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 import {
   parseManifestSpec, datasetNameFor, loadManifests, newAcc, addScore, buildDatasets, repDataset,
-  ACC_HEAD, accuracyBody, OVERALL,
+  cellRate, ACC_HEAD, accuracyBody, OVERALL,
 } from '../../scripts/grid_search_benchmark.mjs';
 
 describe('parseManifestSpec: optional "label=path"', () => {
@@ -128,6 +128,41 @@ describe('buildDatasets: overall row only when more than one dataset', () => {
     // medical was declared first but produced no utterances this cell -> dropped.
     const datasets = buildDatasets(perDs, ['medical', 'general']);
     assert.deepEqual(datasets.map((d) => d.name), ['general']);
+  });
+});
+
+describe('cellRate: word/char-weighted corpus WER or CER for a cell', () => {
+  // Build a single-dataset grid cell with explicit edit/ref totals.
+  const cell = (name, refWords, wordEdits, refChars, charEdits) => {
+    const perDs = new Map([[name, newAcc()]]);
+    addScore(perDs.get(name), { refWords, hypWords: refWords, wordEdits, refChars, charEdits });
+    return { datasets: buildDatasets(perDs, [name]) };
+  };
+
+  test('reads corpus WER/CER off the (overall) representative row', () => {
+    const a = cell('a', 10, 2, 100, 5); // WER 20%, CER 5%
+    assert.equal(cellRate(a, 'wer'), 20);
+    assert.equal(cellRate(a, 'cer'), 5);
+  });
+
+  test('pools datasets by word/char count, not utterance count', () => {
+    const perDs = new Map([['med', newAcc()], ['gen', newAcc()]]);
+    addScore(perDs.get('med'), { refWords: 10, hypWords: 10, wordEdits: 1, refChars: 50, charEdits: 5 });
+    addScore(perDs.get('gen'), { refWords: 5, hypWords: 5, wordEdits: 2, refChars: 25, charEdits: 1 });
+    const row = { datasets: buildDatasets(perDs, ['med', 'gen']) };
+    // Overall WER = (1+2)/(10+5) = 20%; the bigger dataset (med, 10 words) pulls
+    // it more than gen (5 words) would in a plain per-dataset average.
+    assert.equal(cellRate(row, 'wer'), 20);
+    assert.equal(cellRate(row, 'cer'), +(100 * 6 / 75).toFixed(10));
+  });
+
+  test('--sort-by wer vs cer can reorder cells', () => {
+    const a = cell('a', 10, 2, 100, 5);  // WER 20%, CER 5%
+    const b = cell('b', 10, 1, 100, 10); // WER 10%, CER 10%
+    const byWer = [a, b].slice().sort((x, y) => cellRate(x, 'wer') - cellRate(y, 'wer'));
+    const byCer = [a, b].slice().sort((x, y) => cellRate(x, 'cer') - cellRate(y, 'cer'));
+    assert.deepEqual(byWer.map((c) => c.datasets[0].name), ['b', 'a']);
+    assert.deepEqual(byCer.map((c) => c.datasets[0].name), ['a', 'b']);
   });
 });
 
