@@ -267,6 +267,7 @@ AGPLv3 – See LICENSE file
 - **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.js)** – Original project this is forked from
 - **[nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)** – The underlying ASR model by NVIDIA
 - **[istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)** – ONNX conversion of the model
+  - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Python reference implementation
 - **ONNX Runtime Web** – Makes browser inference possible
 
