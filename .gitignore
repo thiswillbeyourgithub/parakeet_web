@@ -21,6 +21,9 @@ framagit_murmure
 TODO.md
 phrase_boosting
 
+# WER bench run history (appended by scripts/wer-bench.mjs)
+bench_wer.md
+
 # E2E (tier 3) artifacts and local model weights (downloaded, never committed)
 fallback_models
 test-results
