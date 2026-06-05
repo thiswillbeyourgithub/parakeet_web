@@ -72,7 +72,7 @@ sudo docker compose -f docker/docker-compose.yml up
 
 Parakeet Web inclut un **mode dictée expérimental** qui post-traite les transcriptions à l'aide de règles regex pour nettoyer la ponctuation dictée, le vocabulaire médical et les abréviations d'unités. C'est particulièrement utile pour la dictée médicale en français.
 
-Les règles regex proviennent du [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) de l'association à but non lucratif [interhop.org](https://interhop.org/), créées à l'origine pour le logiciel [Murmure](https://github.com/Kieirra/murmure). Un unique fichier CSV combiné est téléchargé automatiquement au démarrage du conteneur.
+Les règles regex proviennent du [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) de l'association à but non lucratif [interhop.org](https://interhop.org/), créées à l'origine pour le logiciel [Murmure](https://github.com/Kieirra/murmure). Un unique fichier CSV combiné est téléchargé automatiquement au démarrage du conteneur. J'étudie la possibilité de contribuer à [Murmure](https://github.com/Kieirra/murmure) en amont.
 
 Les règles sont en français et couvrent des catégories telles que la ponctuation, les abréviations d'unités, les modèles d'examen clinique, les corrections de noms de médicaments et les corrections de vocabulaire médical.
 
