@@ -476,11 +476,43 @@ function bar(frac, width = 12) {
   return '[' + '#'.repeat(filled) + '-'.repeat(width - filled) + ']';
 }
 
-// "done/total bar pct% ETA" where ETA extrapolates from elapsed so far.
-function progress(done, total, elapsedMs) {
+// "done/total bar pct% ETA". ETA is the caller-supplied estimate when given
+// (etaMs), else a flat elapsed/done extrapolation. The flat form assumes a
+// uniform pace, which is fine within a single run but wrong across the whole
+// grid (see makeEtaEstimator), so the grid-level bar passes an EMA estimate.
+function progress(done, total, elapsedMs, etaMs) {
   const frac = total > 0 ? done / total : 0;
-  const eta = done > 0 ? (elapsedMs / done) * (total - done) : NaN;
+  const eta = etaMs !== undefined ? etaMs
+    : done > 0 ? (elapsedMs / done) * (total - done) : NaN;
   return `${bar(frac)} ${done}/${total} ${(frac * 100).toFixed(0).padStart(3)}% ETA ${fmtDuration(eta)}`;
+}
+
+// How fast the grid ETA forgets old steps (EMA smoothing factor in (0, 1]):
+// 0.2 keeps the estimate responsive to the last ~5 steps while still smoothing
+// per-utterance noise. Higher = more weight on the most recent steps.
+const ETA_EMA_ALPHA = 0.2;
+
+// Build a stateful ETA estimator for the WHOLE grid. A flat elapsed/done average
+// badly mis-estimates here because the per-utterance cost is NOT uniform across
+// the sweep: the first cell pays the one-time preprocess+encode for every
+// utterance (afterwards encCache serves it for free), and later cells change the
+// beam width, so the pace swings cell to cell. A flat average stays anchored to
+// the slow early cells long after the pace has moved on. Instead we keep an
+// exponential moving average of the per-step duration, so the ETA tracks the
+// CURRENT pace and weights the last few iterations most. Seed `startTime` with
+// the grid start so the very first step already yields an estimate. Returns a
+// function (now, remaining) -> estimated ms left (NaN until the first step).
+function makeEtaEstimator(alpha = ETA_EMA_ALPHA, startTime = null) {
+  let ema = NaN;     // smoothed ms-per-step
+  let last = startTime; // timestamp of the previous step (or the seed start)
+  return (now, remaining) => {
+    if (last !== null) {
+      const dt = Math.max(0, now - last);
+      ema = Number.isNaN(ema) ? dt : alpha * dt + (1 - alpha) * ema;
+    }
+    last = now;
+    return Number.isNaN(ema) ? NaN : ema * remaining;
+  };
 }
 
 // Two renderers over the same (headers, body-of-strings) shape so the console
@@ -769,6 +801,9 @@ async function main() {
   const totalUtts = pending.length * entries.length;
   let doneUtts = 0;
   const gridT0 = Date.now();
+  // EMA-smoothed grid ETA (seeded at the grid start) so the estimate follows the
+  // changing per-utterance pace across cells instead of a flat average.
+  const gridEta = makeEtaEstimator(ETA_EMA_ALPHA, gridT0);
 
   for (let gi = 0; gi < pending.length; gi++) {
     const row = pending[gi];
@@ -806,8 +841,9 @@ async function main() {
       });
       // Progress on a single rewritten line: this run, then the whole grid.
       doneUtts++;
-      const runP = progress(i + 1, entries.length, Date.now() - t0);
-      const gridP = progress(doneUtts, totalUtts, Date.now() - gridT0);
+      const now = Date.now();
+      const runP = progress(i + 1, entries.length, now - t0);
+      const gridP = progress(doneUtts, totalUtts, now - gridT0, gridEta(now, totalUtts - doneUtts));
       process.stderr.write(`\r[bench] run ${gi + 1}/${pending.length} ${tag}  ${runP}  |  all runs ${gridP}   `);
     }
     const timeMs = Date.now() - t0;
@@ -908,4 +944,5 @@ export {
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset, cellRate,
   ACC_HEAD, accuracyBody, OVERALL,
+  makeEtaEstimator, fmtDuration,
 };
