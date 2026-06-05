@@ -252,7 +252,7 @@ else
   # leaves when the operator mounts a parent of one or more repos). When only the
   # nested layout is present, descend into it so Caddy (/models/*), the boost
   # prebuild, and the app's flat probe all see the files directly.
-  _LOCAL_REPO="${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}"
+  _LOCAL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx}"
   if [ ! -f "${LOCAL_MODEL_PATH}/vocab.txt" ] && [ -f "${LOCAL_MODEL_PATH}/${_LOCAL_REPO}/vocab.txt" ]; then
     echo "[entrypoint] Fallback model found nested under ${_LOCAL_REPO}/; using ${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
     LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
@@ -510,7 +510,7 @@ mkdir -p /run/config
 # so that even if a future refactor inlines the config, it stays safe.
 VITE_DEV_MODE="${VITE_DEV_MODE:-false}" \
 VITE_DICTATION_DEVICE_SUPPORT="${VITE_DICTATION_DEVICE_SUPPORT:-true}" \
-VITE_MODEL_REPO="${VITE_MODEL_REPO:-istupakov/parakeet-tdt-0.6b-v3-onnx}" \
+VITE_MODEL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx}" \
 VITE_MODEL_REVISION="${VITE_MODEL_REVISION:-}" \
 VITE_MODEL_SOURCE="${VITE_MODEL_SOURCE:-}" \
 VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \

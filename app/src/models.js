@@ -47,7 +47,7 @@ export const LANGUAGE_NAMES = {
  */
 export const MODELS = {
   'parakeet-tdt-0.6b-v3': {
-    repoId: 'istupakov/parakeet-tdt-0.6b-v3-onnx',
+    repoId: 'Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx',
     displayName: 'Parakeet TDT 0.6B v3 (Multilingual)',
     languages: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'ru', 'uk', 'ja', 'ko', 'zh'],
     defaultLanguage: 'en',
@@ -63,7 +63,7 @@ export const MODELS = {
 
 /**
  * Default model to use when none specified. Matches the web app's own default
- * repo (App.jsx pins istupakov/parakeet-tdt-0.6b-v3-onnx), so the CLI and the
+ * repo (App.jsx pins Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx), so the CLI and the
  * browser default to the same multilingual v3 model.
  * @type {string}
  */

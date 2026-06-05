@@ -202,7 +202,7 @@ it with the ONNX files, bind-mount it into the container, and set
 
 ```bash
 # 1. Populate any host folder with the ONNX files (flat layout):
-hf download istupakov/parakeet-tdt-0.6b-v3-onnx \
+hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx \
     --local-dir /host/path/to/onnx-files
 ```
 

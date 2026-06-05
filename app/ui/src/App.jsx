@@ -488,7 +488,7 @@ function truncateFilename(filename, maxLength = 40) {
 
 export default function App() {
   const { t, lang } = useI18n();
-  const repoId = CONFIG.VITE_MODEL_REPO || 'istupakov/parakeet-tdt-0.6b-v3-onnx';
+  const repoId = CONFIG.VITE_MODEL_REPO || 'Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx';
   // Where model weights are served from:
   //   'hf'    : HuggingFace only (default)
   //   'local' : instance-served /models/ only (skip HF entirely)

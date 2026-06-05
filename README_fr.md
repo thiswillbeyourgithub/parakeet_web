@@ -203,7 +203,7 @@ dans le conteneur :
 
 ```bash
 # 1. Remplissez n'importe quel dossier hôte avec les fichiers ONNX (disposition à plat) :
-hf download istupakov/parakeet-tdt-0.6b-v3-onnx \
+hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx \
     --local-dir /host/path/to/onnx-files
 ```
 
