@@ -19,15 +19,20 @@ TEMP_PLAN.md
 
 framagit_murmure
 TODO.md
-phrase_boosting
+# Local phrase-boosting scratch folder, except the curated lists we ship.
+phrase_boosting/*
+!phrase_boosting/french_medical.txt
+!phrase_boosting/french_medical.pwc
 
 # WER bench run history (appended by scripts/wer-bench.mjs)
 bench_wer.md
 
 # E2E (tier 3) artifacts and local model weights (downloaded, never committed)
 fallback_models
-# Candidate symlink farm built by scripts/quantize-int8-smoothquant.py
+# Candidate symlink farm built by quantize-int8-smoothquant.py
 fallback_models_sq
+# Standalone HF model-repo folder (its own git repo + multi-GB LFS weights)
+parakeet-tdt-0.6b-v3-smoothquant-onnx
 test-results
 playwright-report
 .playwright
