@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// WER benchmark for the Parakeet web pipeline over a NeMo manifest.
+// Grid-search WER benchmark for the Parakeet web pipeline over NeMo manifest(s).
 //
 // It reuses parakeet_web's own decoding code unchanged (the exact model +
 // phrase-boosting trie the web app / scripts/transcribe.mjs build) so the
 // transcripts, beam search and phrase boosting match production. Only the
-// harness around it is new: it loops a NeMo jsonl manifest, transcribes each
-// utterance, and reports word error rate (WER) and Levenshtein distance against
-// the manifest's reference text. No audio preprocessing is done beyond ffmpeg
-// decode to 16 kHz mono float32 (same as transcribe.mjs).
+// harness around it is new: it loops one or more NeMo jsonl manifests,
+// transcribes each utterance, and reports word error rate (WER) and Levenshtein
+// distance against the manifest's reference text. No audio preprocessing is done
+// beyond ffmpeg decode to 16 kHz mono float32 (same as transcribe.mjs).
 //
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
 // grid: beam-width x (no-boost baseline + each boost strength) and prints one
@@ -16,6 +16,13 @@
 // reports the mean/median/stdev of the per-utterance WER alongside the
 // corpus-level rate. It also writes those tables to a .md file and every
 // per-sample/per-run record to a JSON Lines file.
+//
+// --manifest is repeatable: pass it several times to run the SAME grid over
+// several datasets at once. Each manifest is one "dataset" (named after its file
+// basename) and the accuracy table breaks every grid cell down per dataset,
+// plus an "overall" row pooling all utterances when more than one is given. This
+// is how you check that a phrase boost tuned for one domain does not degrade WER
+// on unrelated data.
 //
 // Audio is decoded once and cached across rows, and so is the encoder output:
 // only the decoding (beam width / phrase boost) changes between grid cells, so
@@ -26,13 +33,14 @@
 // encode timings are the shared one-time cost; the per-cell wall time / RTF
 // reflect just the decode work (the encoder is amortized away).
 //
-// Example:
-//   node benchmark_parakeet_web.mjs \
+// Example (two datasets at once):
+//   node grid_search_benchmark.mjs \
 //     --manifest ./perso/oli_spoken_dataset/nemo_manifest_ordered_uncapitaliazedDCI.json \
-//     --audio-root "~/Downloads/parakeet finetuning/NeMo" \
+//     --manifest ./perso/general_dataset/nemo_manifest.json \
+//     --audio-root "$NEMO_ROOT" \
 //     --model-dir  ./perso/onnx_export \
 //     --beam-width 1,2,4 \
-//     --phrase-boost ~/Desktop/Olivier/parakeet_web/phrase_boosting/medical.txt \
+//     --phrase-boost ./phrase_boosting/medical.txt \
 //     --boost-strength 1,2
 //
 // This script lives in parakeet_web/scripts/, so it imports the reusable
@@ -42,7 +50,7 @@
 // Built with Claude Code.
 
 import { readFileSync, existsSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
-import { resolve, isAbsolute, join, dirname } from 'node:path';
+import { resolve, isAbsolute, join, dirname, basename } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -56,7 +64,7 @@ const DEFAULT_PARAKEET_WEB = resolve(dirname(fileURLToPath(import.meta.url)), '.
 // --- arg parsing ----------------------------------------------------------
 function parseArgs(argv) {
   const a = {
-    manifest: null,
+    manifests: [],          // repeatable: each is one dataset
     audioRoot: process.cwd(),
     parakeetWeb: process.env.PARAKEET_WEB || DEFAULT_PARAKEET_WEB,
     model: null,            // null => loadParakeetModel uses its DEFAULT_MODEL
@@ -93,7 +101,7 @@ function parseArgs(argv) {
     const val = (name) => { if (inlineVal !== null) return inlineVal; i++; return need(i - 1, name); };
     switch (flag) {
       case '-h': case '--help': printHelp(); process.exit(0); break;
-      case '--manifest': a.manifest = val(flag); break;
+      case '--manifest': a.manifests.push(val(flag)); break;
       case '--audio-root': a.audioRoot = val(flag); break;
       case '--parakeet-web': a.parakeetWeb = val(flag); break;
       case '--model': a.model = val(flag); break;
@@ -121,7 +129,7 @@ function parseArgs(argv) {
         throw new Error(`Unexpected argument: ${arg}`);
     }
   }
-  if (!a.manifest) throw new Error('No --manifest given. See --help.');
+  if (!a.manifests.length) throw new Error('No --manifest given. See --help.');
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
   // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
   // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
@@ -143,15 +151,21 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Benchmark the Parakeet web pipeline (WER + Levenshtein) over a NeMo manifest.
+  console.log(`Grid-search the Parakeet web pipeline (WER + Levenshtein) over NeMo manifest(s).
 
 Usage:
-  node benchmark_parakeet_web.mjs --manifest <file.json> [options]
+  node grid_search_benchmark.mjs --manifest <file.json> [options]
 
 Required:
   --manifest FILE          NeMo jsonl manifest. One JSON object per line with
                            "audio_filepath" and "text" (reference). "duration"
-                           is read for reporting if present.
+                           is read for reporting if present. Repeatable: pass it
+                           several times to run the same grid over several
+                           datasets at once. Each manifest is one "dataset"
+                           (named after its file basename) and the accuracy table
+                           breaks every grid cell down per dataset, plus an
+                           "overall" row pooling all utterances when more than
+                           one is given. --limit applies per manifest.
 
 Paths:
   --audio-root DIR         Directory that relative "audio_filepath" entries are
@@ -204,12 +218,14 @@ WER:
                            but accents are KEPT. Whitespace is always collapsed.
 
 Output / misc:
-      --limit N            Only the first N manifest entries (quick smoke test).
+      --limit N            Only the first N entries of EACH manifest (quick smoke
+                           test).
       --jsonl FILE         Write results as JSON Lines (one object per line):
-                           a "utterance" record per sample (with per-phase
-                           timings) and a "summary" record per run (with the
-                           corpus WER plus the mean/median/stdev of the
-                           per-utterance WER, and the mean/median of each
+                           a "utterance" record per sample (tagged with its
+                           dataset, with per-phase timings) and a "summary"
+                           record per run (with the overall corpus WER plus the
+                           mean/median/stdev of the per-utterance WER, a
+                           per-dataset breakdown, and the mean/median of each
                            phase). Default benchmark_results.jsonl.
       --md FILE            Write the summary tables (accuracy + per-phase
                            timing) as markdown. Default benchmark_results.md.
@@ -277,29 +293,50 @@ function score(refNorm, hypNorm) {
 }
 
 // --- manifest -------------------------------------------------------------
-function loadManifest(manifestPath, audioRoot, limit) {
-  const raw = readFileSync(manifestPath, 'utf-8');
+// Name a dataset after its manifest's file basename (without extension), so the
+// per-dataset rows are readable. Collisions get a "#2" suffix so two manifests
+// with the same basename in different dirs stay distinct.
+function datasetNameFor(manifestPath, used) {
+  let name = basename(manifestPath).replace(/\.[^.]*$/, '') || manifestPath;
+  if (used.has(name)) { let n = 2; while (used.has(`${name}#${n}`)) n++; name = `${name}#${n}`; }
+  used.add(name);
+  return name;
+}
+
+// Load one or more NeMo manifests into a single flat list of entries, each
+// tagged with its dataset name so per-dataset WER can be reported. --limit
+// applies per manifest. Returns { entries, datasetNames } where datasetNames is
+// in manifest (command-line) order.
+function loadManifests(manifestPaths, audioRoot, limit) {
   const entries = [];
-  let lineNo = 0;
-  for (const line of raw.split('\n')) {
-    lineNo++;
-    const t = line.trim();
-    if (!t) continue;
-    let obj;
-    try {
-      obj = JSON.parse(t);
-    } catch (e) {
-      throw new Error(`manifest line ${lineNo}: invalid JSON (${e.message})`);
+  const datasetNames = [];
+  const used = new Set();
+  for (const manifestPath of manifestPaths) {
+    const dataset = datasetNameFor(manifestPath, used);
+    datasetNames.push(dataset);
+    const raw = readFileSync(manifestPath, 'utf-8');
+    let lineNo = 0, count = 0;
+    for (const line of raw.split('\n')) {
+      lineNo++;
+      const t = line.trim();
+      if (!t) continue;
+      let obj;
+      try {
+        obj = JSON.parse(t);
+      } catch (e) {
+        throw new Error(`manifest ${manifestPath} line ${lineNo}: invalid JSON (${e.message})`);
+      }
+      const audioField = obj.audio_filepath ?? obj.audio_path ?? obj.wav ?? obj.audio;
+      const text = obj.text ?? obj.transcript ?? obj.reference;
+      if (!audioField) throw new Error(`manifest ${manifestPath} line ${lineNo}: missing audio_filepath`);
+      if (text === undefined) throw new Error(`manifest ${manifestPath} line ${lineNo}: missing text`);
+      const audioPath = isAbsolute(audioField) ? audioField : resolve(audioRoot, audioField);
+      entries.push({ audioPath, text, duration: obj.duration, dataset });
+      count++;
+      if (limit && count >= limit) break;
     }
-    const audioField = obj.audio_filepath ?? obj.audio_path ?? obj.wav ?? obj.audio;
-    const text = obj.text ?? obj.transcript ?? obj.reference;
-    if (!audioField) throw new Error(`manifest line ${lineNo}: missing audio_filepath`);
-    if (text === undefined) throw new Error(`manifest line ${lineNo}: missing text`);
-    const audioPath = isAbsolute(audioField) ? audioField : resolve(audioRoot, audioField);
-    entries.push({ audioPath, text, duration: obj.duration });
-    if (limit && entries.length >= limit) break;
   }
-  return entries;
+  return { entries, datasetNames };
 }
 
 // Short content hash of the phrase-boost sources, folded into the resume key so
@@ -332,6 +369,45 @@ function stdev(a) {
   const m = mean(a);
   return Math.sqrt(a.reduce((s, x) => s + (x - m) * (x - m), 0) / a.length);
 }
+
+// --- per-dataset accuracy accumulation ------------------------------------
+// The name of the synthetic row that pools every dataset's utterances. Only
+// emitted when more than one dataset is benchmarked.
+const OVERALL = 'overall';
+
+// A running tally of word/char edits + per-utterance WER samples for one dataset
+// within one grid cell. mean/median/stdev are computed over werSamples; the
+// corpus WER/CER come from the edit/ref totals.
+function newAcc() {
+  return { refWords: 0, hypWords: 0, wordEdits: 0, refChars: 0, charEdits: 0, werSamples: [] };
+}
+function addScore(acc, sc) {
+  acc.refWords += sc.refWords; acc.hypWords += sc.hypWords; acc.wordEdits += sc.wordEdits;
+  acc.refChars += sc.refChars; acc.charEdits += sc.charEdits;
+  acc.werSamples.push(pct(sc.wordEdits, sc.refWords));
+}
+
+// Turn a name->accumulator map into the ordered list of dataset rows the tables
+// consume. Follows datasetNames order; appends an "overall" row pooling every
+// dataset when there is more than one (so single-dataset output is unchanged
+// apart from naming the lone dataset).
+function buildDatasets(perDs, datasetNames) {
+  const datasets = datasetNames.filter((name) => perDs.has(name)).map((name) => ({ name, ...perDs.get(name) }));
+  if (datasets.length > 1) {
+    const all = { name: OVERALL, ...newAcc() };
+    for (const d of datasets) {
+      all.refWords += d.refWords; all.hypWords += d.hypWords; all.wordEdits += d.wordEdits;
+      all.refChars += d.refChars; all.charEdits += d.charEdits;
+      all.werSamples.push(...d.werSamples);
+    }
+    datasets.push(all);
+  }
+  return datasets;
+}
+
+// The dataset row that represents a whole grid cell for sorting/summary: the
+// "overall" pool when multiple datasets, else the single dataset.
+function repDataset(row) { return row.datasets[row.datasets.length - 1]; }
 
 // The per-phase timings the model reports (key in metrics -> short column label).
 const PHASES = [
@@ -382,26 +458,35 @@ function renderMarkdown(headers, body) {
   return [row(headers), '| ' + headers.map(() => '---').join(' | ') + ' |', ...body.map(row)].join('\n');
 }
 
-// Accuracy table: one row per run (grid combination). Rows are sorted by the
-// per-utterance median WER (ascending) so the best config is at the top. "WER %"
-// is the corpus-level rate (total word edits / total ref words); WERmean/med/std
-// summarise the spread of the individual per-utterance WERs.
-const ACC_HEAD = ['beam', 'boost', 'strength', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
+// Accuracy table: one block per run (grid combination), expanded into one row
+// per dataset (plus an "overall" row pooling all utterances when more than one
+// dataset). Blocks are sorted by the cell's overall per-utterance median WER
+// (ascending) so the best config is at the top, and a cell's dataset rows stay
+// grouped together. "WER %" is the corpus-level rate (total word edits / total
+// ref words); WERmean/med/std summarise the spread of the per-utterance WERs.
+const ACC_HEAD = ['beam', 'boost', 'strength', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
 function accuracyBody(rows) {
-  return rows.map((r) => [
-    String(r.beamWidth),
-    r.boostLabel,
-    r.strength == null ? '-' : String(r.strength),
-    pct(r.wordEdits, r.refWords).toFixed(2),
-    mean(r.werSamples).toFixed(2),
-    median(r.werSamples).toFixed(2),
-    stdev(r.werSamples).toFixed(2),
-    pct(r.charEdits, r.refChars).toFixed(2),
-    String(r.wordEdits),
-    String(r.refWords),
-    String(r.charEdits),
-    String(r.refChars),
-  ]);
+  const body = [];
+  for (const r of rows) {
+    for (const d of r.datasets) {
+      body.push([
+        String(r.beamWidth),
+        r.boostLabel,
+        r.strength == null ? '-' : String(r.strength),
+        d.name,
+        pct(d.wordEdits, d.refWords).toFixed(2),
+        mean(d.werSamples).toFixed(2),
+        median(d.werSamples).toFixed(2),
+        stdev(d.werSamples).toFixed(2),
+        pct(d.charEdits, d.refChars).toFixed(2),
+        String(d.wordEdits),
+        String(d.refWords),
+        String(d.charEdits),
+        String(d.refChars),
+      ]);
+    }
+  }
+  return body;
 }
 
 // Timing table: per-phase mean/median (ms per utterance) plus wall time. Each
@@ -448,8 +533,8 @@ async function main() {
   const pw = await import(pathToFileURL(transcribePath).href);
   const { loadParakeetModel, buildPhraseBoost, findFfmpeg, decodePcm } = pw;
 
-  const entries = loadManifest(args.manifest, args.audioRoot, args.limit);
-  console.error(`[bench] manifest: ${args.manifest} (${entries.length} utterances)`);
+  const { entries, datasetNames } = loadManifests(args.manifests, args.audioRoot, args.limit);
+  console.error(`[bench] ${args.manifests.length} manifest(s) / ${datasetNames.length} dataset(s): ${datasetNames.join(', ')} (${entries.length} utterances total)`);
   console.error(`[bench] audio root: ${args.audioRoot}`);
 
   // Verify the audio files exist up front so a typo in --audio-root fails fast
@@ -571,22 +656,28 @@ async function main() {
 
   // Reconstruct a summary row (the shape the final tables consume) from a
   // completed run's records read back from the JSONL, so resumed cells render
-  // identically to freshly-run ones.
+  // identically to freshly-run ones. The per-dataset breakdown is rebuilt from
+  // each utterance record's "dataset" tag (encountered order), which keeps
+  // resume correct even across format tweaks. Pre-multi-dataset records have no
+  // tag; they fold into a single unnamed dataset.
   const rowFromRecords = (utts, s) => {
     const timings = { rtf: [] };
     for (const [key] of PHASES) timings[key] = [];
-    const werSamples = [];
-    let refWords = 0, wordEdits = 0, refChars = 0, charEdits = 0;
+    const perDs = new Map();
+    const order = [];
     for (const u of utts) {
-      refWords += u.refWords || 0; wordEdits += u.wordEdits || 0;
-      refChars += u.refChars || 0; charEdits += u.charEdits || 0;
-      werSamples.push(pct(u.wordEdits || 0, u.refWords || 0));
+      const name = u.dataset ?? '(dataset)';
+      if (!perDs.has(name)) { perDs.set(name, newAcc()); order.push(name); }
+      addScore(perDs.get(name), {
+        refWords: u.refWords || 0, hypWords: u.hypWords || 0, wordEdits: u.wordEdits || 0,
+        refChars: u.refChars || 0, charEdits: u.charEdits || 0,
+      });
       const m = u.metrics || {};
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
       timings.rtf.push(m.rtf ?? 0);
     }
     return { beamWidth: s.beam, boostLabel: s.boost, strength: s.strength,
-      refWords, hypWords: 0, wordEdits, refChars, charEdits, werSamples, timeMs: s.wall_ms || 0, timings };
+      timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
 
   // Computed rows keyed by cell tag; seeded with whatever --resume recovers and
@@ -643,9 +734,9 @@ async function main() {
   for (let gi = 0; gi < pending.length; gi++) {
     const row = pending[gi];
     const tag = tagOf(row);
-    let refWords = 0, hypWords = 0, wordEdits = 0, refChars = 0, charEdits = 0;
-    // Per-utterance WER samples (percent) for this run's mean/median/stdev.
-    const werSamples = [];
+    // Per-dataset accuracy tallies for this run (keyed by dataset name).
+    const perDs = new Map();
+    const ensureDs = (name) => { let acc = perDs.get(name); if (!acc) { acc = newAcc(); perDs.set(name, acc); } return acc; };
     // Per-phase timing samples (one entry per utterance) for this run.
     const timings = { rtf: [] };
     for (const [key] of PHASES) timings[key] = [];
@@ -660,15 +751,14 @@ async function main() {
       const refNorm = normalizeText(e.text, args.stripAccents);
       const hypNorm = normalizeText(hyp, args.stripAccents);
       const sc = score(refNorm, hypNorm);
-      refWords += sc.refWords; hypWords += sc.hypWords; wordEdits += sc.wordEdits;
-      refChars += sc.refChars; charEdits += sc.charEdits;
-      werSamples.push(pct(sc.wordEdits, sc.refWords));
+      addScore(ensureDs(e.dataset), sc);
       // Accumulate per-phase timings for this run's mean/median.
       for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
       timings.rtf.push(metrics.rtf ?? 0);
       writeJsonl({
         type: 'utterance', run: tag,
         beam: row.beamWidth, boost: row.label, strength: row.strength,
+        dataset: e.dataset,
         audio: e.audioPath, duration: e.duration,
         ref: e.text, hyp, refNorm, hypNorm,
         wordEdits: sc.wordEdits, refWords: sc.refWords,
@@ -683,31 +773,50 @@ async function main() {
     }
     const timeMs = Date.now() - t0;
     process.stderr.write('\n');
+    const datasets = buildDatasets(perDs, datasetNames);
     const r = { beamWidth: row.beamWidth, boostLabel: row.label, strength: row.strength,
-      refWords, hypWords, wordEdits, refChars, charEdits, werSamples, timeMs, timings };
+      timeMs, timings, datasets };
     summaryByTag.set(tag, r);
+    // The "overall" pool (or the single dataset) supplies the top-level corpus
+    // figures; the per-dataset breakdown is listed under "datasets".
+    const overall = repDataset(r);
+    const dsSummary = (d) => ({
+      name: d.name,
+      utterances: d.werSamples.length,
+      wer_pct: +pct(d.wordEdits, d.refWords).toFixed(4),
+      wer_mean_pct: +mean(d.werSamples).toFixed(4),
+      wer_median_pct: +median(d.werSamples).toFixed(4),
+      wer_stdev_pct: +stdev(d.werSamples).toFixed(4),
+      cer_pct: +pct(d.charEdits, d.refChars).toFixed(4),
+      wordEdits: d.wordEdits, refWords: d.refWords, charEdits: d.charEdits, refChars: d.refChars,
+    });
     writeJsonl({
       type: 'summary', run: tag,
       beam: row.beamWidth, boost: row.label, strength: row.strength,
       utterances: entries.length,
-      wer_pct: +pct(wordEdits, refWords).toFixed(4),
-      wer_mean_pct: +mean(werSamples).toFixed(4),
-      wer_median_pct: +median(werSamples).toFixed(4),
-      wer_stdev_pct: +stdev(werSamples).toFixed(4),
-      cer_pct: +pct(charEdits, refChars).toFixed(4),
-      wordEdits, refWords, charEdits, refChars,
+      wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
+      wer_mean_pct: +mean(overall.werSamples).toFixed(4),
+      wer_median_pct: +median(overall.werSamples).toFixed(4),
+      wer_stdev_pct: +stdev(overall.werSamples).toFixed(4),
+      cer_pct: +pct(overall.charEdits, overall.refChars).toFixed(4),
+      wordEdits: overall.wordEdits, refWords: overall.refWords, charEdits: overall.charEdits, refChars: overall.refChars,
+      datasets: datasets.map(dsSummary),
       wall_ms: timeMs,
       timing_ms: phaseStats(timings),
     });
-    console.error(`[bench] -> WER ${pct(wordEdits, refWords).toFixed(2)}%  CER ${pct(charEdits, refChars).toFixed(2)}%  (${(timeMs / 1000).toFixed(1)}s)`);
+    const perDsLog = datasets.length > 1
+      ? '  [' + datasets.filter((d) => d.name !== OVERALL).map((d) => `${d.name} ${pct(d.wordEdits, d.refWords).toFixed(2)}%`).join(', ') + ']'
+      : '';
+    console.error(`[bench] -> WER ${pct(overall.wordEdits, overall.refWords).toFixed(2)}%  CER ${pct(overall.charEdits, overall.refChars).toFixed(2)}%${perDsLog}  (${(timeMs / 1000).toFixed(1)}s)`);
   }
 
   model.dispose();
 
-  // Emit every cell (resumed + freshly run), sorted by per-utterance median WER
-  // ascending so the best-scoring config lands at the top of both tables.
+  // Emit every cell (resumed + freshly run), sorted by the cell's overall
+  // per-utterance median WER ascending so the best-scoring config lands at the
+  // top of both tables (a cell's per-dataset rows stay grouped under it).
   const summary = grid.map((cell) => summaryByTag.get(tagOf(cell))).filter(Boolean);
-  summary.sort((a, b) => median(a.werSamples) - median(b.werSamples));
+  summary.sort((a, b) => median(repDataset(a).werSamples) - median(repDataset(b).werSamples));
 
   // Final tables: accuracy + per-phase timing (mean/median ms per utterance).
   const accText = renderAligned(ACC_HEAD, accuracyBody(summary));
@@ -718,9 +827,10 @@ async function main() {
   if (args.jsonl) console.error(`[bench] wrote ${args.jsonl}`);
   if (args.md) {
     const md = [
-      '# Parakeet web benchmark',
+      '# Parakeet web grid-search benchmark',
       '',
-      `Manifest: \`${args.manifest}\` (${entries.length} utterances)  `,
+      `Dataset(s): ${datasetNames.map((n) => '`' + n + '`').join(', ')} (${entries.length} utterances total)  `,
+      `Manifest(s): ${args.manifests.map((m) => '`' + m + '`').join(', ')}  `,
       `Model: \`${dir}\` (${args.quant})`,
       '',
       '## Accuracy',
@@ -739,9 +849,20 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  process.stderr.write('\n');
-  console.error(`[bench] error: ${e.message}`);
-  if (process.env.DEBUG) console.error(e.stack);
-  process.exit(1);
-});
+// Run main() only when invoked as a script, so the pure helpers above can be
+// imported (and unit-tested) without kicking off a benchmark.
+if (pathToFileURL(process.argv[1] || '').href === import.meta.url) {
+  main().catch((e) => {
+    process.stderr.write('\n');
+    console.error(`[bench] error: ${e.message}`);
+    if (process.env.DEBUG) console.error(e.stack);
+    process.exit(1);
+  });
+}
+
+// Exported for unit testing the pure scoring / per-dataset aggregation logic.
+export {
+  normalizeText, score, datasetNameFor, loadManifests,
+  newAcc, addScore, buildDatasets, repDataset,
+  ACC_HEAD, accuracyBody, OVERALL,
+};
