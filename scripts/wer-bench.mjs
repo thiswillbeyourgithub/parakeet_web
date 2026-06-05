@@ -28,7 +28,7 @@
 //
 // Built with Claude Code.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -161,18 +161,38 @@ async function main() {
   }
 
   const pct = (x) => (x == null ? '   -  ' : `${(100 * x).toFixed(1)}%`.padStart(6));
-  console.log('quant  chunk   WER(ref) WER(int8gold)  coverage  hyp.words   time');
-  console.log('-----  -----   -------- -------------  --------  ---------   ----');
+
+  // Collect the table into a buffer so the same text goes to stdout and to the
+  // appended bench_wer.md report.
+  const out = [];
+  out.push('quant  chunk   WER(ref) WER(int8gold)  coverage  hyp.words   time');
+  out.push('-----  -----   -------- -------------  --------  ---------   ----');
   for (const r of rows) {
     if (r.error) {
-      console.log(`${r.quant.padEnd(5)}  ${String(r.chunk).padStart(3)}s   FAILED: ${r.error}`);
+      out.push(`${r.quant.padEnd(5)}  ${String(r.chunk).padStart(3)}s   FAILED: ${r.error}`);
       continue;
     }
-    console.log(
+    out.push(
       `${r.quant.padEnd(5)}  ${String(r.chunk).padStart(3)}s   ${pct(r.wer)}   ${pct(r.werExp)}        ${pct(r.cov)}  ${String(r.hypWords).padStart(7)}   ${r.sec.toFixed(1)}s`,
     );
   }
-  console.log('\nLower WER is better. WER(ref) = vs FLEURS human label; WER(int8gold) = vs this repo\'s int8 transcript.');
+  out.push('\nLower WER is better. WER(ref) = vs FLEURS human label; WER(int8gold) = vs this repo\'s int8 transcript.');
+
+  const table = out.join('\n');
+  console.log(table);
+
+  // Append (never overwrite) a timestamped run to bench_wer.md so the file
+  // accumulates a history of every bench invocation.
+  const reportPath = resolve(ROOT, 'bench_wer.md');
+  const header = [
+    `## ${new Date().toISOString()}`,
+    '',
+    `- audio: \`${args.audio}\` (${audioSec.toFixed(1)}s, reference ${refWords.length} words)`,
+    `- ort backend: ${args.ortBackend}, overlap ${args.overlap}s`,
+    '',
+  ].join('\n');
+  appendFileSync(reportPath, `${header}\n\`\`\`\n${table}\n\`\`\`\n\n`);
+  console.log(`\nAppended to ${reportPath}`);
 }
 
 main().catch((e) => { console.error(`[wer-bench] error: ${e.message}`); process.exit(1); });
