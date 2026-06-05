@@ -14,15 +14,36 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  datasetNameFor, loadManifests, newAcc, addScore, buildDatasets, repDataset,
+  parseManifestSpec, datasetNameFor, loadManifests, newAcc, addScore, buildDatasets, repDataset,
   ACC_HEAD, accuracyBody, OVERALL,
 } from '../../scripts/grid_search_benchmark.mjs';
 
-describe('datasetNameFor: basename without extension, deduped', () => {
+describe('parseManifestSpec: optional "label=path"', () => {
+  test('plain path has no label', () => {
+    assert.deepEqual(parseManifestSpec('/a/b/medical.json'), { label: null, path: '/a/b/medical.json' });
+  });
+  test('"label=path" splits on the first =', () => {
+    assert.deepEqual(parseManifestSpec('fleurs_fr=/a/fr/validation.altered.json'),
+      { label: 'fleurs_fr', path: '/a/fr/validation.altered.json' });
+  });
+  test('a path containing = (with a slash before it) is NOT treated as a label', () => {
+    // The "label" would contain a slash, so it stays a plain path.
+    assert.deepEqual(parseManifestSpec('/weird=dir/m.json'), { label: null, path: '/weird=dir/m.json' });
+  });
+  test('empty path after = falls back to the whole spec as a path', () => {
+    assert.deepEqual(parseManifestSpec('label='), { label: null, path: 'label=' });
+  });
+});
+
+describe('datasetNameFor: basename without extension, deduped, explicit label wins', () => {
   test('strips directory and extension', () => {
     const used = new Set();
     assert.equal(datasetNameFor('/a/b/medical.json', used), 'medical');
     assert.equal(datasetNameFor('general.jsonl', used), 'general');
+  });
+  test('explicit label overrides the basename', () => {
+    const used = new Set();
+    assert.equal(datasetNameFor('/a/fr/validation.altered.json', used, 'fleurs_fr'), 'fleurs_fr');
   });
   test('collisions get a #N suffix so two dirs stay distinct', () => {
     const used = new Set();
@@ -47,6 +68,12 @@ describe('loadManifests: tags entries with their dataset, limit is per manifest'
     assert.deepEqual(entries.map((e) => e.dataset), ['medical', 'medical', 'medical', 'general']);
     // Relative audio paths resolve against audioRoot.
     assert.equal(entries[0].audioPath, '/root/m1.wav');
+  });
+
+  test('a "label=path" spec names the dataset explicitly', () => {
+    const { entries, datasetNames } = loadManifests([`drugs=${med}`, `general=${gen}`], '/root', 0);
+    assert.deepEqual(datasetNames, ['drugs', 'general']);
+    assert.deepEqual([...new Set(entries.map((e) => e.dataset))], ['drugs', 'general']);
   });
 
   test('--limit caps EACH manifest, not the combined total', () => {

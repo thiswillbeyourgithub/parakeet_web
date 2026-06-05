@@ -162,10 +162,11 @@ Required:
                            is read for reporting if present. Repeatable: pass it
                            several times to run the same grid over several
                            datasets at once. Each manifest is one "dataset"
-                           (named after its file basename) and the accuracy table
-                           breaks every grid cell down per dataset, plus an
-                           "overall" row pooling all utterances when more than
-                           one is given. --limit applies per manifest.
+                           (named after its file basename, or use "label=FILE" to
+                           name it explicitly) and the accuracy table breaks
+                           every grid cell down per dataset, plus an "overall"
+                           row pooling all utterances when more than one is
+                           given. --limit applies per manifest.
 
 Paths:
   --audio-root DIR         Directory that relative "audio_filepath" entries are
@@ -293,26 +294,42 @@ function score(refNorm, hypNorm) {
 }
 
 // --- manifest -------------------------------------------------------------
-// Name a dataset after its manifest's file basename (without extension), so the
-// per-dataset rows are readable. Collisions get a "#2" suffix so two manifests
-// with the same basename in different dirs stay distinct.
-function datasetNameFor(manifestPath, used) {
-  let name = basename(manifestPath).replace(/\.[^.]*$/, '') || manifestPath;
+// A --manifest value is either a plain path, or "label=path" to give the dataset
+// a readable name (handy when the file itself is generically named, e.g.
+// .../fleurs/fr/validation.altered.json). The label must contain no path
+// separator so a real path is never mistaken for "label=path".
+function parseManifestSpec(spec) {
+  const eq = spec.indexOf('=');
+  if (eq > 0) {
+    const label = spec.slice(0, eq);
+    const path = spec.slice(eq + 1);
+    if (path && !label.includes('/') && !label.includes('\\')) return { label, path };
+  }
+  return { label: null, path: spec };
+}
+
+// Name a dataset: an explicit "label=" wins, else the manifest's file basename
+// (without extension), so the per-dataset rows are readable. Collisions get a
+// "#2" suffix so two datasets that would share a name stay distinct.
+function datasetNameFor(manifestPath, used, explicit) {
+  let name = explicit || basename(manifestPath).replace(/\.[^.]*$/, '') || manifestPath;
   if (used.has(name)) { let n = 2; while (used.has(`${name}#${n}`)) n++; name = `${name}#${n}`; }
   used.add(name);
   return name;
 }
 
 // Load one or more NeMo manifests into a single flat list of entries, each
-// tagged with its dataset name so per-dataset WER can be reported. --limit
-// applies per manifest. Returns { entries, datasetNames } where datasetNames is
-// in manifest (command-line) order.
-function loadManifests(manifestPaths, audioRoot, limit) {
+// tagged with its dataset name so per-dataset WER can be reported. Each spec is
+// a path or "label=path" (see parseManifestSpec). --limit applies per manifest.
+// Returns { entries, datasetNames } where datasetNames is in manifest
+// (command-line) order.
+function loadManifests(manifestSpecs, audioRoot, limit) {
   const entries = [];
   const datasetNames = [];
   const used = new Set();
-  for (const manifestPath of manifestPaths) {
-    const dataset = datasetNameFor(manifestPath, used);
+  for (const spec of manifestSpecs) {
+    const { label, path: manifestPath } = parseManifestSpec(spec);
+    const dataset = datasetNameFor(manifestPath, used, label);
     datasetNames.push(dataset);
     const raw = readFileSync(manifestPath, 'utf-8');
     let lineNo = 0, count = 0;
@@ -862,7 +879,7 @@ if (pathToFileURL(process.argv[1] || '').href === import.meta.url) {
 
 // Exported for unit testing the pure scoring / per-dataset aggregation logic.
 export {
-  normalizeText, score, datasetNameFor, loadManifests,
+  normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset,
   ACC_HEAD, accuracyBody, OVERALL,
 };
