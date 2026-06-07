@@ -20,9 +20,9 @@
 //   2. crops the first --crop-sec seconds and transcodes to a compact 16 kHz
 //      mono mp3 -> test/fixtures/jfk-moon-3min.mp3 (committed),
 //   3. transcribes that crop with the SAME int8 pipeline the web app uses on the
-//      WASM backend (reusing transcribe.mjs's loadParakeetModel/decodePcm, and
-//      the int8-safe ~20 s chunk window from models.js) so the golden can never
-//      diverge from production behaviour -> test/fixtures/jfk-moon-3min.expected.txt,
+//      WASM backend (reusing transcribe.mjs's loadParakeetModel/decodePcm) at a
+//      small 20 s chunk window (STITCH_STRESS_CHUNK_SEC) so the golden carries
+//      many seams -> test/fixtures/jfk-moon-3min.expected.txt,
 //   4. writes test/fixtures/jfk-moon-3min.meta.json recording the source URL and
 //      crop/model parameters for provenance.
 //
@@ -48,10 +48,15 @@ import { dirname, resolve, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadParakeetModel, decodePcm, findFfmpeg } from './transcribe.mjs';
-import { INT8_SAFE_CHUNK_DURATION_SEC } from '../app/src/models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
+
+// Deliberately small chunk window for the golden: the app default is 60 s (a 3 min
+// clip would split into only ~3 chunks), but this fixture exists to stress the
+// chunk/overlap stitcher across MANY seams, so we generate at 20 s (~10 chunks).
+// Keep this in sync with the window test/e2e/long-audio-chunking.spec.js seeds.
+const STITCH_STRESS_CHUNK_SEC = 20;
 
 // --- shared constants + helpers (also imported by webgpu-check.mjs) -------
 
@@ -144,13 +149,14 @@ async function main() {
   ensureFullCompact(ffmpeg);
 
   // 3) int8 golden: the repo's own int8 pipeline transcript of the crop, decoded
-  // exactly as the WASM app does (int8-safe ~20 s chunk window, greedy). The
-  // chunk e2e then asserts the live app recovers this content across the seams.
+  // with the same int8 pipeline the WASM app uses, at a small 20 s chunk window
+  // (STITCH_STRESS_CHUNK_SEC) so the golden carries many seams. The chunk e2e then
+  // asserts the live app recovers this content across those seams.
   console.error(`[gen-jfk-moon] loading int8 model from ${args.modelDir} ...`);
   const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8' });
   const pcm = await decodePcm(ffmpeg, FIXTURE_MP3);
   const r = await model.transcribeChunked(pcm, 16000, {
-    enableChunking: true, chunkDurationSec: INT8_SAFE_CHUNK_DURATION_SEC, overlapSec: 2,
+    enableChunking: true, chunkDurationSec: STITCH_STRESS_CHUNK_SEC, overlapSec: 2,
     beamWidth: 1, temperature: 0, returnTimestamps: false, returnConfidences: false,
   });
   const expected = r.utterance_text.trim();
@@ -160,12 +166,12 @@ async function main() {
 
   writeFileSync(META_JSON, `${JSON.stringify({
     generatedBy: 'scripts/gen-jfk-moon-fixtures.mjs',
-    note: 'JFK "We choose to go to the Moon", Rice University, 1962-09-12 (public domain US-gov work). audio = first cropSec of the speech; expected = this repo int8 pipeline transcript at the int8-safe chunk window.',
+    note: 'JFK "We choose to go to the Moon", Rice University, 1962-09-12 (public domain US-gov work). audio = first cropSec of the speech; expected = this repo int8 pipeline transcript at a 20 s stitch-stress chunk window.',
     sourceUrl: SOURCE_URL,
     cropStartSec: 0,
     cropDurationSec: args.cropSec,
     model: 'int8',
-    chunkDurationSec: INT8_SAFE_CHUNK_DURATION_SEC,
+    chunkDurationSec: STITCH_STRESS_CHUNK_SEC,
   }, null, 2)}\n`);
   console.error(`[gen-jfk-moon] wrote ${META_JSON}`);
   console.error('[gen-jfk-moon] done.');

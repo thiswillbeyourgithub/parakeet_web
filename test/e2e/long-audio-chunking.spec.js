@@ -13,18 +13,17 @@
 // stitched FLEURS clip is still used as the default WER-bench subject; only this
 // e2e was repointed.)
 //
-// On the WASM backend (which headless Chromium forces, and which runs the int8
-// encoder) the default chunk window is the int8-safe ~20 s, NOT 60 s: the int8
-// encoder loses long-range content past ~20 s within a single chunk, so a 60 s
-// window silently drops most of a long recording. See
-// defaultChunkDurationForBackend in app/src/models.js and the chunk-default unit
-// test. This spec leaves chunkDuration UNSEEDED so it exercises that
-// backend-aware default end to end: the 3 min clip must split into many chunks
-// and the stitched transcript must recover the content.
+// The default chunk window is now a single 60 s for every backend (see
+// app/src/models.js); at 60 s a 3 min clip splits into only ~3 chunks, too few to
+// stress the stitcher. So this spec SEEDS a short 20 s window explicitly: the
+// 3 min clip then splits into ~10 chunks and the stitched transcript must recover
+// the content across seams that land mid-sentence.
 //
 // The golden (jfk-moon-3min.expected.txt) is this repo's own int8 pipeline
-// transcript of the same crop at the same int8-safe window, so the live WASM run
-// must reproduce it across the seams.
+// transcript of the same crop at that same 20 s window
+// (scripts/gen-jfk-moon-fixtures.mjs, STITCH_STRESS_CHUNK_SEC), so the live WASM
+// run must reproduce it across the seams. Keep the seeded window here in sync with
+// the window that script uses.
 //
 // Built with Claude Code.
 
@@ -40,7 +39,7 @@ const FX = resolve(here, '../fixtures');
 const AUDIO = resolve(FX, 'jfk-moon-3min.mp3');
 const GOLDEN = readFileSync(resolve(FX, 'jfk-moon-3min.expected.txt'), 'utf-8').trim();
 
-test('chunks and stitches the 3 min JFK moon speech at the int8-safe default window', async ({ page }) => {
+test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', async ({ page }) => {
   // A few minutes of audio split into ~a dozen chunks; well over the default cap.
   test.setTimeout(20 * 60 * 1000);
 
@@ -55,10 +54,10 @@ test('chunks and stitches the 3 min JFK moon speech at the int8-safe default win
     if (hit) { chunkLogs += 1; chunkTotals.add(Number(hit[2])); }
   });
 
-  // Seed only backend (wasm) + local model: chunkDuration is left UNSEEDED so the
-  // app derives the int8-safe default from the backend.
+  // Seed backend (wasm) + local model + a short 20 s chunk window. The default is
+  // 60 s for every backend now, so we force a small window to get many seams.
   await page.goto('/');
-  await seedSettings(page);
+  await seedSettings(page, { chunkDuration: 20 });
   await page.reload();
 
   await page.locator('[data-umami-event="load_model_button"]').click();
@@ -71,10 +70,10 @@ test('chunks and stitches the 3 min JFK moon speech at the int8-safe default win
   await expect(historyText).not.toBeEmpty({ timeout: 6 * 60 * 1000 });
   await expect(historyText).not.toContainText('transcribing', { timeout: 6 * 60 * 1000 });
 
-  // Chunking really engaged at the int8-safe (~20 s) default: a single consistent
-  // total, and MANY chunks. A 3 min clip at a 20 s window splits into ~10 chunks;
-  // at the old 60 s default it would be only ~3, so a high chunk count is what
-  // proves the backend-aware default actually shrank the window.
+  // Chunking really engaged at the seeded 20 s window: a single consistent total,
+  // and MANY chunks. A 3 min clip at a 20 s window splits into ~10 chunks; at the
+  // 60 s default it would be only ~3, so a high chunk count proves the seeded
+  // small window actually took effect.
   const total = [...chunkTotals][0];
   expect(chunkTotals.size, `inconsistent chunk totals: ${[...chunkTotals]}`).toBe(1);
   expect(total, 'expected the int8-safe default to split the 3 min clip into many chunks').toBeGreaterThanOrEqual(6);

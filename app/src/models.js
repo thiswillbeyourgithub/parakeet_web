@@ -124,33 +124,15 @@ export function listModels() {
   return Object.keys(MODELS);
 }
 
-// Default chunk window (seconds) for long-audio chunking, by backend. The WASM
-// backend runs the int8 encoder, which loses long-range information past ~20 s
-// within a single chunk and so silently drops content from a larger window; the
-// WebGPU backend runs the fp16/fp32 encoder, which transcribes the full window
-// (parakeet-tdt v3 supports very long audio). So the default chunk window is
-// backend-aware. Verified by the long-audio-chunking e2e (int8 recovery at a 60 s
-// window is ~0.69 vs ~0.85 at 20 s; fp32 at 60 s is ~0.83) and by
-// scripts/wer-bench.mjs (int8 WER jumps 27.6% -> 43.9% from a 20 s to a 60 s
-// window, while fp16 and fp32 hold at 18.6%). See ARCHITECTURE.md.
+// Default chunk window (seconds) for long-audio chunking. A single window for
+// every backend and precision. This used to be backend-aware: the WASM/int8 path
+// got a shorter window because the stock int8 encoder dropped long-range content
+// past ~20 s within a chunk. The SmoothQuant int8 encoder this app ships no longer
+// has that problem (it tracks fp16 over long single passes, see the model repo's
+// WER tables), and fp16/fp32 never did, so the special case is gone. parakeet-tdt
+// v3 handles very long audio; 60 s balances peak WASM-heap RAM (smaller chunks =
+// less resident activation memory) against the number of stitch seams.
 export const DEFAULT_CHUNK_DURATION_SEC = 60;
-export const INT8_SAFE_CHUNK_DURATION_SEC = 20;
-
-/**
- * Default long-audio chunk window (seconds) for a given backend + encoder quant.
- * Only the int8 encoder drops content past ~20 s per chunk, so it gets the short
- * window; fp32 (whether on WebGPU or sharded on WASM) and fp16 get the full
- * window. The short window therefore keys off the *quant*, not the backend: a
- * WASM-fp32 (sharded) session is fine at 60 s.
- * @param {string} backend - 'wasm' | 'webgpu' | 'webgpu-hybrid' | ...
- * @param {('int8'|'fp16'|'fp32')} [encoderQuant='int8'] - resolved encoder quant
- * @returns {number} Default chunk window in seconds
- */
-export function defaultChunkDurationForBackend(backend, encoderQuant = 'int8') {
-  return backend === 'wasm' && encoderQuant === 'int8'
-    ? INT8_SAFE_CHUNK_DURATION_SEC
-    : DEFAULT_CHUNK_DURATION_SEC;
-}
 
 /**
  * Get language display name.
