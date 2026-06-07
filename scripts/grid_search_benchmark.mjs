@@ -186,8 +186,8 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
   --model KEY              Model key for the architecture config (features /
                            subsampling). Default: the pipeline's default model.
   --quant int8|fp16|fp32   Encoder/decoder quantisation. Default int8. fp16 files
-                           come from scripts/quantize-fp16.py (~1.2 GB encoder,
-                           near-lossless vs fp32; native CPU upcasts to fp32 for
+                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py
+                           (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
   --ort wasm|node          ORT execution backend. Default: auto (wasm for int8,
                            node for fp16/fp32). The WASM EP reads each weight file
