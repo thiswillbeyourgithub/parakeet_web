@@ -48,12 +48,14 @@ describe('expandBoostSpec file-vs-inline guard', () => {
   });
 });
 
-// The CLI shares the web app's `#!` directive syntax: a directive line in a
-// boosted .txt is list-level config, not a phrase, so it must not leak into the
-// trie as a junk term (the per-phrase `:AUG` field is still parsed normally).
-describe('parseCliBoosts skips #! directive lines', () => {
-  test('directive lines are not turned into phrases', () => {
-    const entries = parseCliBoosts(['#!augment faph\n#!strength 3\nvenlafaxine:5\namlodipine']);
+// The CLI shares the web app's list-level syntax: a `#!prefixes` directive and a
+// `*:WEIGHT:TOPK:AUG` defaults line are config, not phrases, so they must not leak
+// into the trie as junk terms (the per-phrase `:AUG` field is still parsed
+// normally). The removed `#!strength` / `#!augment` directives are likewise never
+// phrases (they are now expressed by a `*` defaults line).
+describe('parseCliBoosts: directive + * defaults lines are not phrases', () => {
+  test('#! directive lines (incl. the removed ones) are not turned into phrases', () => {
+    const entries = parseCliBoosts(['#!prefixes al-\n#!augment faph\n#!strength 3\nvenlafaxine:5\namlodipine']);
     assert.deepEqual(entries.map((e) => e.phrase), ['venlafaxine', 'amlodipine']);
   });
   test('a per-phrase :AUG flag still parses alongside directives', () => {
@@ -61,5 +63,12 @@ describe('parseCliBoosts skips #! directive lines', () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].phrase, 'alpha-methyl');
     assert.equal(entries[0].augment, 'h');
+  });
+  test('a * defaults line sets weight/augment for the following phrases (not a phrase itself)', () => {
+    const entries = parseCliBoosts(['*:2::fa\nvenlafaxine\namlodipine:7']);
+    assert.deepEqual(entries.map((e) => e.phrase), ['venlafaxine', 'amlodipine']);
+    assert.deepEqual([entries[0].weight, entries[0].augment], [2, 'fa']);
+    // explicit per-phrase weight overrides the * default; augment still inherited.
+    assert.deepEqual([entries[1].weight, entries[1].augment], [7, 'fa']);
   });
 });
