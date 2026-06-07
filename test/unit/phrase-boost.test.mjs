@@ -49,16 +49,18 @@ describe('parseBoostPhrases', () => {
   test('non-integer topk rejected + warning', () => assert.ok(tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].topk === DEFAULT_BOOST_TOPK && !!tk[4].warning));
   test('colon-only phrase still unaffected with topk parsing', () => assert.ok(tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].topk === DEFAULT_BOOST_TOPK));
 
-  const fl = parseBoostPhrases('a::40\nb:5:50:i\nc:s\nd:2:i\ne:5:50\nf:abc:i\ng:5::fap\nh:5::p\ni:5::fa');
+  const fl = parseBoostPhrases('a::40\nb:5:50:i\nc:s\nd:2:i\ne:5:50\nf:abc:i\ng:5::fap\nh:5::p\ni:5::fa\nj:5::h\nk:5::hpf');
   test('empty weight keeps default, explicit topk', () => assert.ok(fl[0].phrase === 'a' && fl[0].weight === 1 && fl[0].topk === 40));
-  test(':i alias parsed after weight:topk -> fap', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].topk === 50 && fl[1].augment === 'fap'));
+  test(':i alias parsed after weight:topk -> faph', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].topk === 50 && fl[1].augment === 'faph'));
   test(':s alias alone -> none (defaults otherwise)', () => assert.ok(fl[2].phrase === 'c' && fl[2].weight === 1 && fl[2].augment === ''));
-  test(':i alias right after weight (no topk)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].augment === 'fap'));
+  test(':i alias right after weight (no topk)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].augment === 'faph'));
   test('no flag leaves augment undefined', () => assert.equal(fl[4].augment, undefined));
-  test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].augment === 'fap'));
-  test(':fap sets all three flags', () => assert.ok(fl[6].phrase === 'g' && fl[6].weight === 5 && fl[6].augment === 'fap'));
+  test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].augment === 'faph'));
+  test(':fap sets the three casing/prefix flags', () => assert.ok(fl[6].phrase === 'g' && fl[6].weight === 5 && fl[6].augment === 'fap'));
   test(':p sets prefix flag only', () => assert.ok(fl[7].phrase === 'h' && fl[7].augment === 'p'));
   test(':fa is canonicalised', () => assert.ok(fl[8].phrase === 'i' && fl[8].augment === 'fa'));
+  test(':h sets symbol-strip flag only', () => assert.ok(fl[9].phrase === 'j' && fl[9].augment === 'h'));
+  test(':hpf is canonicalised to f,p,h order', () => assert.ok(fl[10].phrase === 'k' && fl[10].augment === 'fph'));
 });
 
 describe('parseBoostDirectives', () => {
@@ -76,6 +78,12 @@ describe('parseBoostDirectives', () => {
   test('prefixes directive parsed (whitespace-separated)', () => assert.deepEqual(parseBoostDirectives("#!prefixes l' d' al-").prefixes, ["l'", "d'", "al-"]));
   test('empty prefixes value ignored', () => assert.equal(parseBoostDirectives('#!prefixes   ').prefixes, undefined));
   test('last prefixes directive wins', () => assert.deepEqual(parseBoostDirectives("#!prefixes l'\n#!prefixes d'").prefixes, ["d'"]));
+  test('augment directive parsed + canonicalised', () => assert.equal(parseBoostDirectives('#!augment hpf').augment, 'fph'));
+  test('augment directive i -> full set', () => assert.equal(parseBoostDirectives('#!augment i').augment, 'faph'));
+  test('augment directive s -> empty (force none)', () => assert.equal(parseBoostDirectives('#!augment s').augment, ''));
+  test('augment directive case-insensitive value', () => assert.equal(parseBoostDirectives('#!augment FA').augment, 'fa'));
+  test('invalid augment value ignored (no key set)', () => assert.equal(parseBoostDirectives('#!augment xyz').augment, undefined));
+  test('last augment directive wins', () => assert.equal(parseBoostDirectives('#!augment f\n#!augment ah').augment, 'ah'));
 });
 
 describe('augmentVariants / expandAugmentations', () => {
@@ -101,6 +109,37 @@ describe('augmentVariants / expandAugmentations', () => {
   test('p applies to each casing form so far (with f)', () => {
     const v = augmentVariants('amoxicilline', 'fp', ["l'"]);
     assert.ok(v.includes("l'amoxicilline") && v.includes("l'Amoxicilline"));
+  });
+
+  test('h => as-typed + symbol-stripped (hyphen -> space)', () => {
+    assert.ok(eqArr(augmentVariants('alpha-methyl', 'h'), ['alpha-methyl', 'alpha methyl']));
+  });
+  test('h strips every symbol class (, . \' " - _ ? ! `)', () => {
+    for (const sym of [',', '.', "'", '"', '-', '_', '?', '!', '`']) {
+      const v = augmentVariants(`alpha${sym}methyl`, 'h');
+      assert.ok(v.includes('alpha methyl'), `symbol "${sym}" not stripped to a space`);
+    }
+  });
+  test('h collapses a run of mixed symbols to one space', () => {
+    assert.ok(augmentVariants('co-trimoxazole/IV?', 'h').includes('co trimoxazole IV'));
+  });
+  test('h on a phrase with no symbols adds nothing (deduped)', () => {
+    assert.ok(eqArr(augmentVariants('venlafaxine', 'h'), ['venlafaxine']));
+  });
+  test('h applies to each casing form (with a)', () => {
+    const v = augmentVariants('alpha-methyl', 'ah');
+    assert.ok(v.includes('alpha methyl') && v.includes('ALPHA METHYL'));
+  });
+  test('h runs before p so prefixes attach to the stripped form', () => {
+    // "alpha methyl" is vowel-initial, so an elision prefix attaches to it.
+    const v = augmentVariants('alpha-methyl', 'hp', ["l'"]);
+    assert.ok(v.includes("l'alpha methyl"));
+  });
+  test('full faph set yields casing + symbol-stripped + prefixed forms', () => {
+    const v = augmentVariants('alpha-methyl', 'faph', ["l'"]);
+    assert.ok(v.includes('alpha-methyl') && v.includes('Alpha-methyl')
+      && v.includes('ALPHA-METHYL') && v.includes('alpha methyl')
+      && v.includes("l'alpha methyl"));
   });
 
   test('default off => no expansion', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]).length, 1));

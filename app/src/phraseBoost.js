@@ -52,10 +52,11 @@ export const DEFAULT_BOOST_TOPK = 25;
 /**
  * The full augmentation set, applied to a phrase that has no explicit `:AUG`
  * field when the global "Augment" toggle is on. `f` = Title Case, `a` = ALL
- * CAPS, `p` = proclitic prefixes (see {@link DEFAULT_PREFIXES}). The legacy
- * `:i` flag is an alias for this set.
+ * CAPS, `p` = proclitic prefixes (see {@link DEFAULT_PREFIXES}), `h` = strip
+ * symbols/separators (see {@link stripSymbols}). The legacy `:i` flag is an
+ * alias for this set.
  */
-export const FULL_AUGMENT = 'fap';
+export const FULL_AUGMENT = 'faph';
 
 /**
  * Default proclitic prefixes for the `p` augmentation. A phrase is also boosted
@@ -71,27 +72,46 @@ export const DEFAULT_PREFIXES = ["l'", "d'", "L'", "D'"];
 /** Phrase-initial characters that license an elision prefix (vowels + French silent h, accents included). */
 const ELISION_VOWEL_RE = /^[aeiouhàâäéèêëíìîïóòôöúùûüœæ]/i;
 
+/** A run of one or more "symbol" characters (anything that is not a letter, digit, or whitespace). */
+const SYMBOL_RE = /[^\p{L}\p{N}\s]+/gu;
+
+/**
+ * Strip symbols/separators from a surface form for the `h` augmentation:
+ * every run of non-letter, non-digit, non-space characters becomes a single
+ * space, then whitespace is collapsed and trimmed. So `alpha-methyl` ->
+ * `alpha methyl` and `co-trimoxazole/IV` -> `co trimoxazole IV`. The model
+ * transcribes such compounds as separate spoken words, so the space form is the
+ * one it actually emits. Returns the input unchanged when it has no symbols (the
+ * caller dedupes, so a no-op variant is harmless).
+ * @param {string} s
+ * @returns {string}
+ */
+function stripSymbols(s) {
+  return s.replace(SYMBOL_RE, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Normalize a trailing augmentation field (the `:AUG` suffix) to a canonical
  * flag string, or `undefined` when the field is not an augmentation token (so
  * the caller leaves it as part of the phrase). Accepts any combination of:
- *   - `f` Title Case, `a` ALL CAPS, `p` proclitic prefixes,
+ *   - `f` Title Case, `a` ALL CAPS, `p` proclitic prefixes, `h` strip symbols,
  *   - `s` (legacy) = force none / opt out -> `''`,
- *   - `i` (legacy) = all casings -> {@link FULL_AUGMENT}.
+ *   - `i` (legacy) = all of them -> {@link FULL_AUGMENT}.
  * `s` anywhere wins as the explicit opt-out; `i` expands to the full set. The
- * result is always a subset of `'fap'` in canonical `f`,`a`,`p` order (or `''`).
+ * result is always a subset of `'faph'` in canonical `f`,`a`,`p`,`h` order (or `''`).
  * @param {string} tag The raw field text (already split off after the last `:`).
  * @returns {string|undefined}
  */
 function normalizeAugment(tag) {
   const t = tag.trim().toLowerCase();
-  if (!t || !/^[sifap]+$/.test(t)) return undefined;
+  if (!t || !/^[sifaph]+$/.test(t)) return undefined;
   if (t.includes('s')) return ''; // explicit opt-out wins
   const full = t.includes('i');
   let flags = '';
   if (full || t.includes('f')) flags += 'f';
   if (full || t.includes('a')) flags += 'a';
   if (full || t.includes('p')) flags += 'p';
+  if (full || t.includes('h')) flags += 'h';
   return flags;
 }
 
@@ -125,9 +145,9 @@ function peelValueField(text) {
  *     weight + top-k 25; `word:5` is weight 5 + default top-k.
  *   - The optional trailing `:AUG` augmentation field sets per-phrase surface-form
  *     expansion: any mix of `f` (Title Case), `a` (ALL CAPS), `p` (proclitic
- *     prefixes), plus the legacy aliases `s` (force none) and `i` (all of them).
- *     It must be the last field; absent leaves `augment` undefined so the
- *     caller's global default applies. See {@link normalizeAugment}.
+ *     prefixes), `h` (strip symbols), plus the legacy aliases `s` (force none)
+ *     and `i` (all of them). It must be the last field; absent leaves `augment`
+ *     undefined so the caller's global default applies. See {@link normalizeAugment}.
  * Returns RAW, unvalidated weight/topk (callers clamp/warn as they like); weight
  * defaults to 1, topk to {@link DEFAULT_BOOST_TOPK}, augment to undefined.
  * @param {string} text A single phrase line (leading/trailing space tolerated).
@@ -139,7 +159,7 @@ export function parseBoostFields(text) {
   let topk = DEFAULT_BOOST_TOPK;
   let augment;
 
-  // 1. Optional trailing augmentation field (:f/:a/:p/:s/:i), last field only.
+  // 1. Optional trailing augmentation field (:f/:a/:p/:h/:s/:i), last field only.
   const flagColon = phrase.lastIndexOf(':');
   if (flagColon > 0) {
     const norm = normalizeAugment(phrase.slice(flagColon + 1));
@@ -179,12 +199,13 @@ const DIRECTIVE_PREFIX = '#!';
 
 /**
  * Whether an already-trimmed line is a `#!` directive rather than a phrase.
- * Single source of truth so {@link parseBoostPhrases} (skip) and
- * {@link parseBoostDirectives} (collect) agree on what counts as a directive.
+ * Single source of truth so {@link parseBoostPhrases} (skip), the CLI's
+ * `parseCliBoosts` (skip) and {@link parseBoostDirectives} (collect) agree on
+ * what counts as a directive.
  * @param {string} trimmed A line already passed through `.trim()`.
  * @returns {boolean}
  */
-function isDirectiveLine(trimmed) {
+export function isDirectiveLine(trimmed) {
   return trimmed.startsWith(DIRECTIVE_PREFIX);
 }
 
@@ -197,12 +218,18 @@ function isDirectiveLine(trimmed) {
  *     non-finite or absent value leaves the control untouched.
  *   - `prefixes a' b' ...` : the proclitic prefixes used by the `p` augmentation
  *     (whitespace-separated), overriding {@link DEFAULT_PREFIXES} for this list.
+ *   - `augment FLAGS` : the list's default augmentation for phrases without their
+ *     own `:AUG` field (any mix of `f`/`a`/`p`/`h`, or `s`/`i`; see
+ *     {@link normalizeAugment}). This is the file-level equivalent of the UI's
+ *     "Augment" toggle and overrides it for this list; a per-phrase `:AUG` still
+ *     wins. `#!augment s` forces no augmentation, `#!augment i` forces the full
+ *     set. An unrecognised value is ignored.
  * The key is matched case-insensitively and separated from its value by
  * whitespace, `=` or `:` (so `#!strength 3`, `#!strength=3` and `#!strength:3`
  * all work). Unknown keys are ignored, so `#! a note` is a harmless no-op. When
  * a key appears more than once the last occurrence wins.
  * @param {string} raw
- * @returns {{strength?: number, prefixes?: string[]}}
+ * @returns {{strength?: number, prefixes?: string[], augment?: string}}
  */
 export function parseBoostDirectives(raw) {
   const out = {};
@@ -221,6 +248,9 @@ export function parseBoostDirectives(raw) {
     } else if (key === 'prefixes') {
       const list = value.split(/\s+/).filter(Boolean);
       if (list.length) out.prefixes = list;
+    } else if (key === 'augment') {
+      const norm = normalizeAugment(value);
+      if (norm !== undefined) out.augment = norm;
     }
   }
   return out;
@@ -286,13 +316,15 @@ function prefixApplies(prefix, form) {
 /**
  * Surface-form variants of a phrase under an augmentation flag set. The as-typed
  * form is always included; then `f` adds Title Case (each space-separated word's
- * first letter capitalised), `a` adds ALL CAPS, and `p` glues each applicable
- * proclitic prefix (see {@link prefixApplies}) to the front of every form so
- * far. Surrogate-safe; deduplicated with the as-typed form first. The BPE
- * encoder is case-sensitive, so each distinct surface form must be its own trie
- * branch.
+ * first letter capitalised), `a` adds ALL CAPS, `h` adds a symbol-stripped form
+ * of every variant so far (see {@link stripSymbols}, so `alpha-methyl` also
+ * yields `alpha methyl`), and `p` glues each applicable proclitic prefix (see
+ * {@link prefixApplies}) to the front of every form so far. `h` runs before `p`
+ * so prefixes also attach to the symbol-stripped forms. Surrogate-safe;
+ * deduplicated with the as-typed form first. The BPE encoder is case-sensitive,
+ * so each distinct surface form must be its own trie branch.
  * @param {string} phrase
- * @param {string} [flags=''] Any subset of `'fap'` (see {@link normalizeAugment}).
+ * @param {string} [flags=''] Any subset of `'faph'` (see {@link normalizeAugment}).
  * @param {string[]} [prefixes=DEFAULT_PREFIXES] Proclitic prefixes for the `p` flag.
  * @returns {string[]}
  */
@@ -311,8 +343,11 @@ export function augmentVariants(phrase, flags = '', prefixes = DEFAULT_PREFIXES)
   push(phrase);                                          // as typed
   if (set.has('f')) push(phrase.split(' ').map(capFirst).join(' ')); // Title Case
   if (set.has('a')) push(phrase.toUpperCase());          // ALL CAPS
+  if (set.has('h')) {
+    for (const form of out.slice()) push(stripSymbols(form)); // symbol-stripped of every casing form
+  }
   if (set.has('p') && prefixes && prefixes.length) {
-    for (const form of out.slice()) {                    // every casing form so far
+    for (const form of out.slice()) {                    // every form so far (incl. symbol-stripped)
       for (const pre of prefixes) {
         if (prefixApplies(pre, form)) push(pre + form);
       }
