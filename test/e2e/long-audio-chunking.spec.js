@@ -76,7 +76,7 @@ test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', as
   // small window actually took effect.
   const total = [...chunkTotals][0];
   expect(chunkTotals.size, `inconsistent chunk totals: ${[...chunkTotals]}`).toBe(1);
-  expect(total, 'expected the int8-safe default to split the 3 min clip into many chunks').toBeGreaterThanOrEqual(6);
+  expect(total, 'expected the seeded 20 s window to split the 3 min clip into many chunks').toBeGreaterThanOrEqual(6);
   expect(chunkLogs, `expected ${total} chunk-complete logs, saw ${chunkLogs}`).toBe(total);
 
   // The stitched transcript recovered the spoken content across all seams. Golden
