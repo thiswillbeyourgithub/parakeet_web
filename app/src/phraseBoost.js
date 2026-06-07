@@ -141,22 +141,25 @@ function peelValueField(text) {
  * are peeled right-to-left and the phrase keeps any colons it contains (only a
  * trailing field of the right shape is consumed), so e.g. `ratio 3:1` and
  * `bad:abc` still work. Details:
- *   - An empty numeric field means "use the default": `word::25` is default
- *     weight + top-k 25; `word:5` is weight 5 + default top-k.
+ *   - An absent or empty numeric field is returned as `undefined` so the caller
+ *     can fall back to its running default (the list's `*` defaults line, then
+ *     the built-in 1 / {@link DEFAULT_BOOST_TOPK}): `word::25` -> weight
+ *     undefined + top-k 25; `word:5` -> weight 5 + top-k undefined.
  *   - The optional trailing `:AUG` augmentation field sets per-phrase surface-form
  *     expansion: any mix of `f` (Title Case), `a` (ALL CAPS), `p` (proclitic
  *     prefixes), `h` (strip symbols), plus the legacy aliases `s` (force none)
  *     and `i` (all of them). It must be the last field; absent leaves `augment`
- *     undefined so the caller's global default applies. See {@link normalizeAugment}.
- * Returns RAW, unvalidated weight/topk (callers clamp/warn as they like); weight
- * defaults to 1, topk to {@link DEFAULT_BOOST_TOPK}, augment to undefined.
+ *     undefined so the caller's running default / global toggle applies. See
+ *     {@link normalizeAugment}.
+ * Returns RAW, unvalidated weight/topk (callers clamp/warn as they like), each
+ * `undefined` when its field was absent or empty.
  * @param {string} text A single phrase line (leading/trailing space tolerated).
- * @returns {{phrase: string, weight: number, topk: number, augment: (string|undefined)}}
+ * @returns {{phrase: string, weight: (number|undefined), topk: (number|undefined), augment: (string|undefined)}}
  */
 export function parseBoostFields(text) {
   let phrase = text.trim();
-  let weight = 1;
-  let topk = DEFAULT_BOOST_TOPK;
+  let weight;
+  let topk;
   let augment;
 
   // 1. Optional trailing augmentation field (:f/:a/:p/:h/:s/:i), last field only.
@@ -169,7 +172,8 @@ export function parseBoostFields(text) {
     }
   }
 
-  // 2. Optional :WEIGHT then :WEIGHT:TOPK, peeled right-to-left.
+  // 2. Optional :WEIGHT then :WEIGHT:TOPK, peeled right-to-left. An empty field
+  //    stays undefined (the caller fills the running default).
   const last = peelValueField(phrase);
   if (last) {
     const prev = peelValueField(last.head);
@@ -213,23 +217,17 @@ export function isDirectiveLine(trimmed) {
  * Parse list-level `#!key value` directive lines out of a boost blob. Directives
  * configure the list as a whole rather than a single phrase, and live in the
  * same .txt so a curated list ships self-contained. Recognised keys:
- *   - `strength N` : the list's default global strength. The UI forces its
- *     strength control to this value when the list is loaded (see App.jsx); a
- *     non-finite or absent value leaves the control untouched.
  *   - `prefixes a' b' ...` : the proclitic prefixes used by the `p` augmentation
  *     (whitespace-separated), overriding {@link DEFAULT_PREFIXES} for this list.
- *   - `augment FLAGS` : the list's default augmentation for phrases without their
- *     own `:AUG` field (any mix of `f`/`a`/`p`/`h`, or `s`/`i`; see
- *     {@link normalizeAugment}). This is the file-level equivalent of the UI's
- *     "Augment" toggle and overrides it for this list; a per-phrase `:AUG` still
- *     wins. `#!augment s` forces no augmentation, `#!augment i` forces the full
- *     set. An unrecognised value is ignored.
+ *     This is the one list-level setting that has no per-phrase field, so it
+ *     stays a directive (default weight / top-k / augmentation are instead set
+ *     by a `*` defaults line, see {@link resolveBoostLines}).
  * The key is matched case-insensitively and separated from its value by
- * whitespace, `=` or `:` (so `#!strength 3`, `#!strength=3` and `#!strength:3`
- * all work). Unknown keys are ignored, so `#! a note` is a harmless no-op. When
- * a key appears more than once the last occurrence wins.
+ * whitespace, `=` or `:` (so `#!prefixes a b`, `#!prefixes=a b` all work).
+ * Unknown keys are ignored, so `#! a note` is a harmless no-op. When a key
+ * appears more than once the last occurrence wins.
  * @param {string} raw
- * @returns {{strength?: number, prefixes?: string[], augment?: string}}
+ * @returns {{prefixes?: string[]}}
  */
 export function parseBoostDirectives(raw) {
   const out = {};
@@ -242,16 +240,102 @@ export function parseBoostDirectives(raw) {
     if (!m) continue;
     const key = m[1].toLowerCase();
     const value = m[2].trim();
-    if (key === 'strength') {
-      const n = Number(value);
-      if (Number.isFinite(n)) out.strength = n;
-    } else if (key === 'prefixes') {
+    if (key === 'prefixes') {
       const list = value.split(/\s+/).filter(Boolean);
       if (list.length) out.prefixes = list;
-    } else if (key === 'augment') {
-      const norm = normalizeAugment(value);
-      if (norm !== undefined) out.augment = norm;
     }
+  }
+  return out;
+}
+
+/**
+ * The sentinel "phrase" that marks a defaults line. A line whose trimmed text is
+ * exactly `*` or starts with `*:` is a {@link parseDefaultsLine} directive, not a
+ * boost phrase (so a literal `*` cannot itself be boosted, an accepted trade).
+ * @param {string} trimmed A line already passed through `.trim()`.
+ * @returns {boolean}
+ */
+export function isDefaultsLine(trimmed) {
+  return trimmed === '*' || trimmed.startsWith('*:');
+}
+
+/** A weight is a usable per-phrase weight: finite, nonzero, within bounds. */
+function isValidWeight(w) {
+  return Number.isFinite(w) && w !== 0 && w >= -MAX_PHRASE_WEIGHT && w <= MAX_PHRASE_WEIGHT;
+}
+/** A top-k gate is usable: an integer >= 1. */
+function isValidTopk(k) {
+  return Number.isInteger(k) && k >= 1;
+}
+
+/**
+ * Parse a `*` defaults line into the field values it sets. Unlike a phrase, the
+ * `*` line is purely positional (`*:WEIGHT:TOPK:AUG`) with no embedded phrase, so
+ * it is split left-to-right and trailing empty fields are unambiguous: each empty
+ * field simply leaves that default unchanged. Returns only the fields the line
+ * actually sets (a malformed value is dropped). See {@link resolveBoostLines}.
+ * @param {string} trimmed A line for which {@link isDefaultsLine} is true.
+ * @returns {{weight?: number, topk?: number, augment?: string}}
+ */
+function parseDefaultsLine(trimmed) {
+  const out = {};
+  const rest = trimmed.slice(1); // drop the leading '*'
+  if (rest === '' || rest[0] !== ':') return out; // '*' alone: no changes
+  const segs = rest.slice(1).split(':'); // [WEIGHT, TOPK, AUG, ...]
+  const wRaw = (segs[0] ?? '').trim();
+  const kRaw = (segs[1] ?? '').trim();
+  const aRaw = (segs[2] ?? '').trim();
+  if (wRaw !== '') { const w = Number(wRaw); if (Number.isFinite(w)) out.weight = w; }
+  if (kRaw !== '') { const k = Number(kRaw); if (Number.isFinite(k)) out.topk = k; }
+  if (aRaw !== '') { const a = normalizeAugment(aRaw); if (a !== undefined) out.augment = a; }
+  return out;
+}
+
+/**
+ * Resolve an ordered list of phrase-field objects against the list's `*` defaults
+ * lines, the shared core behind both {@link parseBoostPhrases} (web) and the
+ * CLI's `parseCliBoosts`. A `*` line (`*:WEIGHT:TOPK:AUG`) sets the running
+ * default weight / top-k / augmentation for every phrase that follows it, until
+ * the next `*` line changes it; each empty field leaves that default unchanged.
+ * A phrase's own field still wins over the running default. This is what lets a
+ * list set its strength as a default weight (`*:2` at the top) and its
+ * augmentation (`*:::fhp`) without any `#!` directive. A `*` field with an
+ * out-of-range value is ignored (the prior default stands) so a bad defaults
+ * line cannot poison every following phrase with warnings.
+ *
+ * Augmentation/weight/top-k that are still undefined after this (no phrase field
+ * and no active `*` default) are left undefined for the caller to fill with the
+ * built-in base (weight 1, top-k {@link DEFAULT_BOOST_TOPK}) or, for augment, the
+ * global toggle. `*`-sourced defaults are pre-validated (a `*` field out of range
+ * is ignored, the prior default stands); a phrase's own RAW field is passed
+ * through unvalidated so the caller can clamp + warn on it.
+ *
+ * Takes RAW lines (not pre-parsed) because a `*` line must be read from the raw
+ * text: {@link parseBoostFields} cannot parse a `*` line with trailing empty
+ * fields (e.g. `*:2::` peels to the phrase `*:2`). Empty / `#!` lines are skipped
+ * defensively.
+ * @param {string[]} lines One raw line per element, in order.
+ * @returns {Array<{phrase: string, weight: (number|undefined), topk: (number|undefined), augment?: string}>}
+ *   One entry per phrase line (the `*` lines are consumed), in order.
+ */
+export function resolveBoostLines(lines) {
+  const out = [];
+  let defWeight, defTopk, defAugment; // undefined => fall through to base/global
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (!trimmed || isDirectiveLine(trimmed)) continue;
+    if (isDefaultsLine(trimmed)) {
+      const d = parseDefaultsLine(trimmed);
+      if (d.weight !== undefined && isValidWeight(d.weight)) defWeight = d.weight;
+      if (d.topk !== undefined && isValidTopk(d.topk)) defTopk = d.topk;
+      if (d.augment !== undefined) defAugment = d.augment;
+      continue;
+    }
+    const f = parseBoostFields(trimmed);
+    const entry = { phrase: f.phrase, weight: f.weight ?? defWeight, topk: f.topk ?? defTopk };
+    const augment = f.augment ?? defAugment;
+    if (augment !== undefined) entry.augment = augment;
+    out.push(entry);
   }
   return out;
 }
@@ -261,36 +345,39 @@ export function parseBoostDirectives(raw) {
  * to three optional trailing fields, `phrase:WEIGHT:TOPK:AUG`, all peeled
  * right-to-left by {@link parseBoostFields} (e.g. `acetaminophen:2.5`, `um:-3`,
  * `venlafaxine:5:50`, `venlafaxine:5:50:fap`, `epi::40:s`). An empty numeric
- * field keeps the default (`word::25`); the trailing `:AUG` field overrides the
- * per-phrase augmentation (see {@link normalizeAugment}). A negative weight is
- * written with the minus sign after the colon (`phrase:-3`). Lines starting with
- * `#!` are list-level directives (see {@link parseBoostDirectives}) and are
- * skipped here, never becoming phrases. This validates/clamps the raw fields and
- * records a per-entry `warning` for any it had to coerce.
+ * field falls back to the running default; the trailing `:AUG` field overrides
+ * the per-phrase augmentation (see {@link normalizeAugment}). A negative weight
+ * is written with the minus sign after the colon (`phrase:-3`).
+ *
+ * A `*:WEIGHT:TOPK:AUG` line is a defaults line (see {@link resolveBoostLines}):
+ * it sets the default weight / top-k / augmentation for every following phrase
+ * (so `*:2` makes the rest of the list weight 2, `*:::fhp` augments the rest),
+ * and is consumed here rather than emitted. Lines starting with `#!` are
+ * list-level directives (see {@link parseBoostDirectives}) and are likewise
+ * skipped. After defaults are resolved, any phrase still lacking a weight/top-k
+ * gets the built-in base (1 / {@link DEFAULT_BOOST_TOPK}); this then
+ * validates/clamps and records a per-entry `warning` for anything it coerced.
  * @param {string} raw
  * @returns {Array<{phrase: string, weight: number, topk: number, augment?: string, warning?: string}>}
  */
 export function parseBoostPhrases(raw) {
   if (!raw) return [];
   const out = [];
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (isDirectiveLine(trimmed)) continue; // list-level #! directive, not a phrase
-
-    let { phrase, weight, topk, augment } = parseBoostFields(trimmed);
+  for (const { phrase, weight, topk, augment } of resolveBoostLines(raw.split(/\r?\n/))) {
     const warnings = [];
+    let w = weight ?? 1;
+    let k = topk ?? DEFAULT_BOOST_TOPK;
 
-    if (weight === 0 || weight < -MAX_PHRASE_WEIGHT || weight > MAX_PHRASE_WEIGHT) {
-      warnings.push(`weight ${weight} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`);
-      weight = 1;
+    if (w === 0 || w < -MAX_PHRASE_WEIGHT || w > MAX_PHRASE_WEIGHT) {
+      warnings.push(`weight ${w} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`);
+      w = 1;
     }
-    if (!Number.isInteger(topk) || topk < 1) {
-      warnings.push(`top-k ${topk} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK}`);
-      topk = DEFAULT_BOOST_TOPK;
+    if (!Number.isInteger(k) || k < 1) {
+      warnings.push(`top-k ${k} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK}`);
+      k = DEFAULT_BOOST_TOPK;
     }
 
-    const entry = { phrase, weight, topk };
+    const entry = { phrase, weight: w, topk: k };
     if (augment !== undefined) entry.augment = augment;
     if (warnings.length) entry.warning = warnings.join('; ');
     out.push(entry);

@@ -13,6 +13,7 @@ import { BpeEncoder, buildVocabToId } from '../../app/src/bpeEncoder.js';
 import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_TOPK,
+  isDefaultsLine, resolveBoostLines,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -63,27 +64,72 @@ describe('parseBoostPhrases', () => {
   test(':hpf is canonicalised to f,p,h order', () => assert.ok(fl[10].phrase === 'k' && fl[10].augment === 'fph'));
 });
 
-describe('parseBoostDirectives', () => {
-  const dirParsed = parseBoostPhrases('#!strength 3\nvenlafaxine:5\n#! a comment\namlodipine');
+describe('parseBoostDirectives (only #!prefixes survives)', () => {
+  const dirParsed = parseBoostPhrases("#!prefixes l' d'\nvenlafaxine:5\n#! a comment\namlodipine");
   test('directive lines skipped, not phrases', () => assert.ok(dirParsed.length === 2 && dirParsed[0].phrase === 'venlafaxine' && dirParsed[1].phrase === 'amlodipine'));
-  test('strength directive parsed (space)', () => assert.equal(parseBoostDirectives('#!strength 3\nfoo').strength, 3));
-  test('strength directive parsed (= separator)', () => assert.equal(parseBoostDirectives('#!strength=2.5').strength, 2.5));
-  test('strength directive parsed (: separator)', () => assert.equal(parseBoostDirectives('#!strength:-4').strength, -4));
-  test('strength directive case-insensitive key', () => assert.equal(parseBoostDirectives('#!STRENGTH 1.5').strength, 1.5));
-  test('last strength directive wins', () => assert.equal(parseBoostDirectives('#!strength 2\n#!strength 7').strength, 7));
-  test('non-finite strength ignored', () => assert.equal(parseBoostDirectives('#!strength abc').strength, undefined));
+  test('removed #!strength / #!augment lines are still skipped, never phrases', () => {
+    const p = parseBoostPhrases('#!strength 3\n#!augment fa\nfoo');
+    assert.ok(p.length === 1 && p[0].phrase === 'foo');
+  });
+  test('#!strength is no longer parsed (replaced by a * defaults line)', () => assert.equal(parseBoostDirectives('#!strength 3\nfoo').strength, undefined));
+  test('#!augment is no longer parsed (replaced by a * defaults line)', () => assert.equal(parseBoostDirectives('#!augment fa').augment, undefined));
   test('unknown directive key ignored', () => assert.equal(Object.keys(parseBoostDirectives('#!note hello')).length, 0));
   test('no directive => empty result', () => assert.equal(Object.keys(parseBoostDirectives('plain\nfoo:3')).length, 0));
   test('# without ! is still a phrase', () => assert.ok(parseBoostPhrases('#hashtag').length === 1 && parseBoostPhrases('#hashtag')[0].phrase === '#hashtag'));
   test('prefixes directive parsed (whitespace-separated)', () => assert.deepEqual(parseBoostDirectives("#!prefixes l' d' al-").prefixes, ["l'", "d'", "al-"]));
   test('empty prefixes value ignored', () => assert.equal(parseBoostDirectives('#!prefixes   ').prefixes, undefined));
   test('last prefixes directive wins', () => assert.deepEqual(parseBoostDirectives("#!prefixes l'\n#!prefixes d'").prefixes, ["d'"]));
-  test('augment directive parsed + canonicalised', () => assert.equal(parseBoostDirectives('#!augment hpf').augment, 'fph'));
-  test('augment directive i -> full set', () => assert.equal(parseBoostDirectives('#!augment i').augment, 'faph'));
-  test('augment directive s -> empty (force none)', () => assert.equal(parseBoostDirectives('#!augment s').augment, ''));
-  test('augment directive case-insensitive value', () => assert.equal(parseBoostDirectives('#!augment FA').augment, 'fa'));
-  test('invalid augment value ignored (no key set)', () => assert.equal(parseBoostDirectives('#!augment xyz').augment, undefined));
-  test('last augment directive wins', () => assert.equal(parseBoostDirectives('#!augment f\n#!augment ah').augment, 'ah'));
+});
+
+describe('* defaults line', () => {
+  test('isDefaultsLine recognises * and *: lines only', () => {
+    assert.ok(isDefaultsLine('*'));
+    assert.ok(isDefaultsLine('*:2::fa'));
+    assert.ok(!isDefaultsLine('*alpha')); // a phrase that merely starts with *
+    assert.ok(!isDefaultsLine('plain'));
+  });
+
+  test('a leading * sets default weight/topk/augment for following phrases', () => {
+    const p = parseBoostPhrases('*:2:50:fa\nvenlafaxine\namlodipine:7');
+    assert.equal(p.length, 2);
+    assert.deepEqual([p[0].phrase, p[0].weight, p[0].topk, p[0].augment], ['venlafaxine', 2, 50, 'fa']);
+    // explicit weight overrides the * default weight; topk/augment still inherited.
+    assert.deepEqual([p[1].phrase, p[1].weight, p[1].topk, p[1].augment], ['amlodipine', 7, 50, 'fa']);
+  });
+
+  test('* is stateful: a later * changes the defaults for subsequent lines', () => {
+    const p = parseBoostPhrases('*:2::fa\nalpha\n*:3::s\nbeta');
+    assert.deepEqual([p[0].weight, p[0].augment], [2, 'fa']);
+    assert.deepEqual([p[1].weight, p[1].augment], [3, '']); // *:::s forces no augmentation
+  });
+
+  test('empty * fields keep the base default (only the set field applies)', () => {
+    // *:::fa sets augment only; weight falls back to base 1, topk to the default.
+    const p = parseBoostPhrases('*:::fa\nalpha');
+    assert.deepEqual([p[0].weight, p[0].topk, p[0].augment], [1, DEFAULT_BOOST_TOPK, 'fa']);
+  });
+
+  test('a bare * is a no-op defaults line (skipped, changes nothing)', () => {
+    const p = parseBoostPhrases('*\nalpha');
+    assert.ok(p.length === 1 && p[0].phrase === 'alpha' && p[0].weight === 1 && p[0].augment === undefined);
+  });
+
+  test('an out-of-range * weight is ignored, the prior default stands', () => {
+    // *:99 is out of range so it is dropped (no warning poisoning every phrase);
+    // the running default is unchanged, so alpha gets the base weight 1.
+    const p = parseBoostPhrases('*:99\nalpha');
+    assert.ok(p[0].weight === 1 && !p[0].warning);
+  });
+
+  test('per-phrase fields still override the * defaults', () => {
+    const p = parseBoostPhrases('*:2::fa\nalpha:9::s');
+    assert.deepEqual([p[0].weight, p[0].augment], [9, '']);
+  });
+
+  test('resolveBoostLines leaves weight/topk undefined with no * and no per-phrase field', () => {
+    const r = resolveBoostLines(['alpha']);
+    assert.deepEqual([r[0].phrase, r[0].weight, r[0].topk, r[0].augment], ['alpha', undefined, undefined, undefined]);
+  });
 });
 
 describe('augmentVariants / expandAugmentations', () => {
