@@ -917,7 +917,8 @@ export async function listLocalRepoFiles(baseUrl) {
 }
 
 // Map a resolved quant to its ONNX filename suffix. fp16 files are produced by
-// scripts/quantize-fp16.py and must be hosted in the model repo to be selected.
+// parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py and must be hosted in
+// the model repo to be selected.
 export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
 
 /**
