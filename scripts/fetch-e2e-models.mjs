@@ -14,8 +14,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { join, resolve } from 'node:path';
 
-// Matches App.jsx's pinned default repo and the int8/js-preprocessor download set.
-const REPO_ID = 'istupakov/parakeet-tdt-0.6b-v3-onnx';
+// Matches App.jsx's pinned default repo and the int8/js-preprocessor download set:
+// the SmoothQuant int8 the app actually ships (not the upstream istupakov plain int8),
+// so the tier-3 e2e exercises the same weights users get.
+const REPO_ID = 'Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx';
 const REVISION = 'main';
 const FILES = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt'];
 
