@@ -1887,7 +1887,12 @@ export default function App() {
     // load / recording transition, not just once.
     const pre = prebuiltBoostRef.current;
     const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
-    const augmentDefault = boostAugment ? FULL_AUGMENT : '';
+    // The list's own `#!augment` directive overrides the global "Augment" toggle
+    // for this list; a per-phrase `:AUG` still wins over both (in
+    // expandAugmentations). Parse directives once for both the augment default
+    // and the `#!prefixes` the `p` flag uses.
+    const directives = parseBoostDirectives(boostPhrases);
+    const augmentDefault = directives.augment ?? (boostAugment ? FULL_AUGMENT : '');
     // The prebuilt encoding bakes in the augmentation expansion at the global
     // default it was built with; selectPrebuilt() validates text + vocab +
     // augment toggle and, when rejected, explains why (see its docstring).
@@ -1901,7 +1906,7 @@ export default function App() {
     // on). The list's own `#!prefixes` directive drives the `p` flag.
     const entries = usePrebuilt
       ? null
-      : expandAugmentations(phraseEntries, augmentDefault, parseBoostDirectives(boostPhrases).prefixes);
+      : expandAugmentations(phraseEntries, augmentDefault, directives.prefixes);
     // Phrase count for the spinner gate and logs: the prebuilt is already encoded.
     const count = usePrebuilt ? pre.encoded.length : entries.length;
     let cancelled = false;
