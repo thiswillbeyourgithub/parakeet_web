@@ -37,6 +37,7 @@ audio (file or mic/phone)
 | Path | What it is |
 |---|---|
 | `README.md` | User-facing overview: features, quick start, per-feature docs. |
+| `README_fr.md` | French translation of `README.md`, kept in lockstep with it (each links to the other; the About modal points here when the UI language is French). |
 | `ARCHITECTURE.md` | This file. |
 | `CLAUDE.md` | Instructions for Claude Code / contributors (version bump, screenshot, vendored-dep and Caddy refresh procedures). |
 | `LICENSE` | AGPLv3 for the combined work. |
@@ -125,6 +126,7 @@ points: the main app and the remote-microphone phone page.
 | `remote-webrtc.js` | `RemoteMicRTC`: WebRTC peer-connection lifecycle, signaling, and the data channel that carries encrypted PCM. Includes the HTTPS-relay fallback for UDP-blocked networks. |
 | `remote-relay-transport.js` | The two HTTPS relay transports (WebSocket + long-poll) used as last resort when WebRTC cannot connect. Same ciphertext frames, same interface as the data channel. |
 | `remote-mic-handshake.js` | Shared handshake logic used by both desktop and phone, so both sides hash the public keys in the same byte order for the fingerprint compare. |
+| `persistStorage.js` | Asks the browser to promote this origin's IndexedDB to the "persistent" bucket so Chromium does not evict the multi-GB model cache under disk pressure (which looked like "the version bump wiped my model"). Idempotent, called on every load. |
 
 ### Public / static assets (`app/ui/public/`)
 
@@ -184,6 +186,9 @@ git-only). Not documented file-by-file here:
 | `gen-bpe-fixture.py` | Emits the BPE cross-check fixture (ground-truth ids from real HuggingFace `tokenizers`) consumed by the unit tests. |
 | `gen-fleurs-fixtures.mjs` | One-time local tool that builds the FLEURS regression fixtures (`test/fixtures/fleurs/`): samples en+fr validation clips, transcodes them to mp3, transcribes each with the int8 pipeline (reusing `transcribe.mjs`), keeps the ones the model reproduces well, stitches them into one long clip, and writes `manifest.json` with both the human reference and the model golden. |
 | `gen-jfk-moon-fixtures.mjs` | One-time local tool that builds the long-audio chunking fixture: downloads the public-domain JFK "We choose to go to the Moon" speech (Internet Archive) into the gitignored cache, crops the first 3 min to `test/fixtures/jfk-moon-3min.mp3`, and transcribes it with the int8 pipeline for the golden. Exports the download/transcode helpers (and a full-speech clip in the cache) reused by `webgpu-check.mjs`. |
+| `wer-bench.mjs` | WER bench that drives the repo's OWN JS pipeline (`transcribe.mjs` + the chunked TDT decode) to A/B encoder quantisations across chunk windows. Built to confirm fp16 holds long chunks where the stock int8 dropped content; runs on native onnxruntime-node (`--ort node`) so fp16/fp32 load. Appends each run to `bench_wer.md`. |
+| `wer-quants.py` | Small Python WER+timing+RAM bench across int8/fp16/fp32, built on the UPSTREAM `onnx-asr` library (the lib this app is a port of) rather than the JS pipeline. Self-contained `uv run` script. Used to validate the SmoothQuant int8 encoder. |
+| `grid_search_benchmark.mjs` | Grid-search WER bench over NeMo jsonl manifest(s): reuses the production decode + phrase-boost trie unchanged and sweeps beam-width x boost-strength, printing WER/Levenshtein per combination. Sorts by CER by default; multi-dataset overall is size-weighted (micro-average). |
 | `webgpu-check.mjs` | **Manual** WebGPU harness (NOT a test tier, run by hand on a GPU box), the WebGPU analog of the wasm long-audio-chunking e2e. Reuses `serve.mjs` + `seed.mjs` to load the fp16 model on `webgpu-hybrid`. Default (`npm run webgpu:check`) runs the 3 min crop and asserts chunking + content overlap vs the golden; `--full` (`npm run webgpu:memcheck`) runs the FULL ~17 min speech and watches JS heap (via CDP) for a leak. Fails on OOM/crash, silent WASM fallback, content miss, or unbounded heap growth; SKIPs (exit 2) when no real WebGPU GPU is present (rejects software/SwiftShader adapters). |
 | `fetch-e2e-models.mjs` | Downloads just the int8 model files the tier-3 E2E needs into the E2E model dir (skips files already present). |
 | `download-dictation-regex.sh` | Fetches dictation regex CSVs from Murmure for non-Docker local dev. |
@@ -199,15 +204,24 @@ slow, model-loading tier run separately.
 
 | Path | Role |
 |---|---|
-| `test/unit/*.test.mjs` | **Tier 1**, pure-logic unit tests (no model download): `beam-decode`, `bpe-encoder`, `format`, `mel`, `phrase-boost`, `remote-crypto`, `tokenizer`. |
+| `test/unit/*.test.mjs` | **Tier 1**, pure-logic unit tests (no model download). Decode/front-end: `beam-decode`, `bpe-encoder`, `chunk-default`, `chunk-stitch`, `mel`, `phrase-boost`, `tokenizer`, `boost-compile`, `boost-spec-file`. Hub/cache/quant selection: `resolve-quant`, `get-parakeet-model-files`, `list-local-repo-files`, `resolve-local-model-base`, `hub-cache-validate`, `should-retry-locally`, `model-corruption-recovery`, `sweep-orphans` (cache-GC orphan selection), `stream-to-memory` (fp32 shard byte-assembly), `external-data`. Bench/misc: `grid-search-datasets`, `grid-search-eta`, `persist-storage`, `format`, `remote-crypto`. |
 | `test/http/*.test.mjs` | **Tier 2**, integration tests against the **real** signaling server spawned on a random port: `config`, `origin`, `rate-limit`, `rooms`, `validation`. |
 | `test/http/helpers.mjs` | Spawn/teardown helper for the signaling server, shared by the tier-2 tests. |
 | `test/e2e/transcription.spec.js` | **Tier 3** Playwright happy-path: loads the WASM int8 model in real headless Chromium and transcribes each clip in a fixture list (French `sample.aac` + English `jfk.mp3`) end to end against its golden. |
 | `test/e2e/chunking.spec.js` | **Tier 3** long-audio path: seeds a 5 s chunk window and feeds the ~11 s `jfk.mp3` so `transcribeChunked` splits into several chunks, asserting chunking engaged and the stitched transcript recovers the golden content. |
 | `test/e2e/fleurs-regression.spec.js` | **Tier 3** multilingual regression: loads the model ONCE and loops the 10 en + 10 fr FLEURS clips through the file input, asserting each transcript against both the committed int8 golden and the FLEURS human reference (word-overlap). |
 | `test/e2e/long-audio-chunking.spec.js` | **Tier 3** realistic long-audio path: feeds the committed 3 min JFK "moon speech" crop (`jfk-moon-3min.mp3`, one continuous speech, so seams land mid-sentence) at a seeded 20 s chunk window (the default is now a single 60 s for every backend, so it seeds a small window to get ~a dozen chunks); asserts chunking engaged, content recovered, and no runaway seam duplication. (Replaced the stitched-FLEURS clip, now used only by `scripts/wer-bench.mjs`.) |
+| `test/e2e/transcription-fp32-wasm.spec.js` | **Tier 3** in-browser proof that the **sharded** fp32 encoder loads and transcribes on WASM in real headless Chromium (the single 2.4 GB sidecar can't; the `shard-fp32.py` pieces each < 2 GB can). Gated behind the `allowWasmFp32` opt-in; SELF-SKIPS when the local `sharded/` shards are absent (upstream ships none). |
+| `test/e2e/transcription-fp32-wasm-autoupgrade.spec.js` | **Tier 3** proof of the local auto-upgrade: user picks WASM fp32, the HF repo ships no shards, so `hub.js` (given `localUpgradeBaseUrl='/models'`) probes the local mirror, finds the shards, and switches the whole load to local. Routes the HF listing to the shard-less istupakov set; needs the local shards (else skips). |
+| `test/e2e/transcription-fp32-wasm-no-downgrade.spec.js` | **Tier 3** negative counterpart: when NEITHER source can serve fp32, `hub.js` throws `QuantUnavailableError` instead of silently falling back to int8, and the UI shows a banner + Failed status. 404s the local shard probes; needs no weights, so never skips. |
+| `test/e2e/controls-gated-on-model.spec.js` | **Tier 3** (model-free) gate check: record / upload / remote-mic controls stay hidden until the model is fully loaded. Holds every HF request open so the app parks in `loadingModel`, the exact window the gate must cover. |
+| `test/e2e/keyboard-shortcuts-opt-in.spec.js` | **Tier 3** (model-free): global single-letter shortcuts (R/S/F/Space/Enter) are opt-in and OFF by default; exercises the 'S' settings-toggle before and after opting in. |
+| `test/e2e/settings-watchdog.spec.js` | **Tier 3** (model-free): startup must not hang when the settings IndexedDB never opens (a blocking `versionchange` in another tab). Stubs `indexedDB.open` to never settle and asserts the restore watchdog boots on defaults. |
+| `test/e2e/boost-default-source.spec.js` | **Tier 3** (model-free): a curated phrase-boost list can be pre-selected via `?phrase_boost=<name>` or the operator default, but NEITHER overrides a returning user's saved choice. |
+| `test/e2e/boost-rebuild-on-status.spec.js` | **Tier 3** regression: the phrase-boost trie rebuilds once per real model change, NOT on every `status` transition (which used to refreeze the UI on large curated lists). Counts `[Boost] rebuilding trie` logs across a full transcription. |
+| `test/e2e/boost-unk-preview-before-model.spec.js` | **Tier 3** (model-free) regression: the "untokenizable terms" warning for a curated list appears as soon as the list loads (from the prebuilt artifact's `skipped`), not only after a model is loaded. |
 | `test/e2e/seed.mjs` | Shared `seedSettings(page, extra)` helper: writes the app's settings IndexedDB so a spec boots with a known config (local WASM model source + spec-specific keys). |
-| `test/e2e/text-overlap.mjs` | Shared `words()` / `overlap()` transcript-comparison helpers used by the transcription + chunking specs. |
+| `test/e2e/text-overlap.mjs` | Shared transcript-comparison helpers (`words()`, `overlap()`, and order/count-sensitive `wer()`) used by the transcription + chunking specs and the WER benches. |
 | `test/e2e/serve.mjs` | Static server for the E2E (serves the built UI + weights with the cross-origin-isolation headers ORT needs). |
 | `test/e2e/playwright.config.js` | Playwright config that boots `serve.mjs`. |
 | `test/support/bpe-fixture.mjs` | Loader for the BPE cross-check fixture. |
