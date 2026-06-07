@@ -127,10 +127,11 @@ Les modèles vocaux entendent de façon fiable mal les mots qu'ils ont rarement 
 
 Ouvrez le panneau des paramètres et trouvez le groupe **Renforcement de phrases** :
 
-- **Phrases à renforcer** : une phrase par ligne, avec jusqu'à trois champs optionnels séparés par des deux-points (`phrase:POIDS:TOPK:CASSE`). La syntaxe complète par ligne se trouve dans la référence dépliable ci-dessous ; les deux champs les plus courants sont :
+- **Phrases à renforcer** : une phrase par ligne, avec jusqu'à trois champs optionnels séparés par des deux-points (`phrase:POIDS:TOPK:AUG`). La syntaxe complète par ligne se trouve dans la référence dépliable ci-dessous ; les deux champs les plus courants sont :
   - `phrase:POIDS`, par ex. `acetaminophen:2.5`. Un poids positif pousse le décodeur *vers* la phrase ; un poids **négatif** l'en éloigne (une pénalité), par ex. `euh:-3` pour supprimer un mot de remplissage. La plage valide est de -10 à 10 (non nul) ; un poids hors plage ou nul est ignoré avec un avertissement en ligne et traité comme 1.
   - `phrase:POIDS:TOPK`, par ex. `venlafaxine:5:50`, définit une **barrière top-k** par phrase : la phrase n'est poussée que lorsque son token figure déjà parmi les `TOPK` meilleurs candidats du modèle pour cette étape. Cela maintient le renforcement comme un coup de pouce au classement plutôt qu'un marteau qui pourrait halluciner une phrase que le modèle n'a jamais considérée. Le top-k par défaut est 25.
 - **Force de renforcement** : un multiplicateur global appliqué par-dessus le poids de chaque phrase. Va de -10 à 10 ; mettez-le à 0 pour désactiver le renforcement sans effacer votre liste. Une force négative inverse toutes les phrases d'un coup (les renforcements deviennent des pénalités).
+- **Augmenter les phrases** : une bascule globale qui, lorsqu'elle est activée, décline chaque phrase en formes supplémentaires avant l'encodage (le décodeur compare des tokens sensibles à la casse, donc `venlafaxine` seul ne correspond pas à `Venlafaxine`). Elle ajoute la Casse De Titre, les MAJUSCULES et les préfixes proclitiques, si bien qu'un terme commençant par une voyelle comme `amoxicilline` renforce aussi `l'amoxicilline` / `d'amoxicilline`. Remplacez-la par phrase avec le champ `AUG` ci-dessous.
 
 Votre liste de phrases et la force sont enregistrées localement (IndexedDB) et survivent aux rechargements. Comme tout le reste de cette application, le renforcement fonctionne **100% dans votre navigateur** : rien de vos phrases n'est envoyé où que ce soit.
 
@@ -143,15 +144,15 @@ Votre liste de phrases et la force sont enregistrées localement (IndexedDB) et 
 
 #### Syntaxe par ligne
 
-Chaque ligne est `phrase` suivie de jusqu'à trois champs optionnels séparés par des deux-points, `phrase:POIDS:TOPK:CASSE` :
+Chaque ligne est `phrase` suivie de jusqu'à trois champs optionnels séparés par des deux-points, `phrase:POIDS:TOPK:AUG` :
 
 - `POIDS` (par défaut 1) : le poids de renforcement, de -10 à 10 (non nul). Positif pousse *vers* la phrase, négatif *à l'écart* (une pénalité). Hors plage ou nul est ignoré avec un avertissement en ligne et traité comme 1.
 - `TOPK` (par défaut 25) : la barrière top-k par phrase ; la phrase n'est poussée que lorsque son token figure déjà parmi les `TOPK` meilleurs candidats du modèle pour cette étape.
-- `CASSE` : force la casse pour cette seule phrase, `s` (sensible à la casse) ou `i` (insensible à la casse, correspond à toutes les casses). Omettez pour utiliser la valeur par défaut.
+- `AUG` : augmente cette seule phrase en formes supplémentaires, en remplaçant la bascule globale **Augmenter les phrases**. N'importe quel mélange de `f` (Casse De Titre), `a` (MAJUSCULES) et `p` (préfixes proclitiques, par ex. `l'`/`d'` collés à un terme commençant par une voyelle). Deux raccourcis : `s` n'en force aucune (telle quelle) et `i` les active toutes. Omettez pour utiliser la valeur par défaut globale.
 
-Laissez un champ antérieur vide pour conserver sa valeur par défaut tout en définissant un champ ultérieur, par ex. `venlafaxine::50` conserve le poids 1 mais fixe le top-k à 50, et `venlafaxine:5:50:i` définit les trois.
+Laissez un champ antérieur vide pour conserver sa valeur par défaut tout en définissant un champ ultérieur, par ex. `venlafaxine::50` conserve le poids 1 mais fixe le top-k à 50, et `amoxicilline:5::fap` définit les trois.
 
-Une liste servie peut porter sa propre force par défaut sur une ligne `#!strength N` (N de -10 à 10) : charger cette liste force le curseur de force à N, de sorte qu'une liste curatée arrive pré-réglée.
+Une liste servie peut porter sa propre force par défaut sur une ligne `#!strength N` (N de -10 à 10) : charger cette liste force le curseur de force à N, de sorte qu'une liste curatée arrive pré-réglée. Une liste peut aussi remplacer les préfixes proclitiques utilisés par l'augmentation `p` avec une ligne `#!prefixes a' b' ...` (séparés par des espaces) ; le défaut est l'ensemble d'élision française (`l'`, `d'`, `L'`, `D'`). Un préfixe se terminant par une apostrophe ne s'attache que devant une voyelle (donc `l'amoxicilline` mais jamais `l'beta`) ; tout autre préfixe (par ex. l'arabe `al-`) s'attache sans condition.
 
 #### Comment ça marche
 

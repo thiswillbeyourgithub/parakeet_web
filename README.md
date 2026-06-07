@@ -127,10 +127,11 @@ Speech models reliably mis-hear words they rarely saw in training: personal name
 
 Open the settings panel and find the **Phrase boosting** group:
 
-- **Boost phrases**: one phrase per line, with up to three optional colon-separated fields (`phrase:WEIGHT:TOPK:CASE`). The full per-line syntax is in the collapsible reference below; the two most common fields are:
+- **Boost phrases**: one phrase per line, with up to three optional colon-separated fields (`phrase:WEIGHT:TOPK:AUG`). The full per-line syntax is in the collapsible reference below; the two most common fields are:
   - `phrase:WEIGHT`, e.g. `acetaminophen:2.5`. A positive weight nudges the decoder *toward* the phrase; a **negative** weight pushes it *away* (a penalty), e.g. `um:-3` to suppress a filler word. The valid range is -10 to 10 (nonzero); an out-of-range or zero weight is ignored with an inline warning and treated as 1.
   - `phrase:WEIGHT:TOPK`, e.g. `venlafaxine:5:50`, sets a per-phrase **top-k gate**: the phrase is only nudged when its token is already among the model's top `TOPK` candidates for that step. This keeps boosting a ranking nudge rather than a hammer that can hallucinate a phrase the model never considered. Default top-k is 25.
 - **Boost strength**: a global multiplier applied on top of every phrase's weight. Ranges from -10 to 10; set it to 0 to disable boosting without clearing your list. A negative strength inverts every phrase at once (boosts become penalties).
+- **Augment phrases**: a global toggle that, when on, expands every phrase into extra surface forms before encoding (the decoder matches case-sensitive tokens, so `venlafaxine` alone does not match `Venlafaxine`). It adds Title Case, ALL CAPS, and proclitic prefixes, so a vowel-initial term like `amoxicilline` also boosts `l'amoxicilline` / `d'amoxicilline`. Override it per phrase with the `AUG` field below.
 
 Your phrase list and strength are saved locally (IndexedDB) and survive reloads. Like everything else in this app, boosting runs **100% in your browser**: nothing about your phrases is sent anywhere.
 
@@ -143,15 +144,15 @@ Your phrase list and strength are saved locally (IndexedDB) and survive reloads.
 
 #### Per-line syntax
 
-Each line is `phrase` followed by up to three optional colon-separated fields, `phrase:WEIGHT:TOPK:CASE`:
+Each line is `phrase` followed by up to three optional colon-separated fields, `phrase:WEIGHT:TOPK:AUG`:
 
 - `WEIGHT` (default 1): the boost weight, -10 to 10 (nonzero). Positive nudges *toward* the phrase, negative *away* (a penalty). Out-of-range or zero is ignored with an inline warning and treated as 1.
 - `TOPK` (default 25): the per-phrase top-k gate; the phrase is only nudged when its token is already among the model's top `TOPK` candidates for that step.
-- `CASE`: force casing for this one phrase, `s` (case-sensitive) or `i` (case-insensitive, matches every casing). Omit to use the default.
+- `AUG`: augment this one phrase into extra surface forms, overriding the global **Augment phrases** toggle. Any mix of `f` (Title Case), `a` (ALL CAPS), and `p` (proclitic prefixes, e.g. `l'`/`d'` glued to a vowel-initial term). Two shorthands: `s` forces none (as-typed only) and `i` is all of them. Omit to use the global default.
 
-Leave an earlier field empty to keep its default while setting a later one, e.g. `venlafaxine::50` keeps weight 1 but sets top-k 50, and `venlafaxine:5:50:i` sets all three.
+Leave an earlier field empty to keep its default while setting a later one, e.g. `venlafaxine::50` keeps weight 1 but sets top-k 50, and `amoxicilline:5::fap` sets all three.
 
-A served list can carry its own default strength on a `#!strength N` line (N in -10 to 10): loading that list forces the strength slider to N, so a curated list ships pre-tuned.
+A served list can carry its own default strength on a `#!strength N` line (N in -10 to 10): loading that list forces the strength slider to N, so a curated list ships pre-tuned. A list can also override the proclitic prefixes used by the `p` augmentation with a `#!prefixes a' b' ...` line (whitespace-separated); the default is the French elision set (`l'`, `d'`, `L'`, `D'`). A prefix ending in an apostrophe only attaches before a vowel (so `l'amoxicilline` but never `l'beta`); any other prefix (e.g. Arabic `al-`) attaches unconditionally.
 
 #### How it works
 
