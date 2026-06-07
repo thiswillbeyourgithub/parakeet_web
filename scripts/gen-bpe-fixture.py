@@ -47,7 +47,9 @@ PHRASES = [
 
 def main():
     tok_path = hf_hub_download("nvidia/parakeet-tdt-0.6b-v3", "tokenizer.json")
-    vocab_path = hf_hub_download("istupakov/parakeet-tdt-0.6b-v3-onnx", "vocab.txt")
+    vocab_path = hf_hub_download(
+        "Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx", "vocab.txt"
+    )
 
     tk = Tokenizer.from_file(tok_path)
 
