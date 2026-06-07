@@ -50,6 +50,52 @@ export const MAX_PHRASE_WEIGHT = 10;
 export const DEFAULT_BOOST_TOPK = 25;
 
 /**
+ * The full augmentation set, applied to a phrase that has no explicit `:AUG`
+ * field when the global "Augment" toggle is on. `f` = Title Case, `a` = ALL
+ * CAPS, `p` = proclitic prefixes (see {@link DEFAULT_PREFIXES}). The legacy
+ * `:i` flag is an alias for this set.
+ */
+export const FULL_AUGMENT = 'fap';
+
+/**
+ * Default proclitic prefixes for the `p` augmentation. A phrase is also boosted
+ * with each prefix glued to its front, so a vowel-initial term like
+ * `amoxicilline` also matches `l'amoxicilline` / `d'amoxicilline`. This default
+ * is the French elision set; a list overrides it with a `#!prefixes ...`
+ * directive (e.g. Arabic `al-`, Italian `dell'`). A prefix ending in an
+ * apostrophe is an elision and only attaches before a vowel (or `h`); a prefix
+ * without one (e.g. `al-`) attaches unconditionally. See {@link augmentVariants}.
+ */
+export const DEFAULT_PREFIXES = ["l'", "d'", "L'", "D'"];
+
+/** Phrase-initial characters that license an elision prefix (vowels + French silent h, accents included). */
+const ELISION_VOWEL_RE = /^[aeiouhàâäéèêëíìîïóòôöúùûüœæ]/i;
+
+/**
+ * Normalize a trailing augmentation field (the `:AUG` suffix) to a canonical
+ * flag string, or `undefined` when the field is not an augmentation token (so
+ * the caller leaves it as part of the phrase). Accepts any combination of:
+ *   - `f` Title Case, `a` ALL CAPS, `p` proclitic prefixes,
+ *   - `s` (legacy) = force none / opt out -> `''`,
+ *   - `i` (legacy) = all casings -> {@link FULL_AUGMENT}.
+ * `s` anywhere wins as the explicit opt-out; `i` expands to the full set. The
+ * result is always a subset of `'fap'` in canonical `f`,`a`,`p` order (or `''`).
+ * @param {string} tag The raw field text (already split off after the last `:`).
+ * @returns {string|undefined}
+ */
+function normalizeAugment(tag) {
+  const t = tag.trim().toLowerCase();
+  if (!t || !/^[sifap]+$/.test(t)) return undefined;
+  if (t.includes('s')) return ''; // explicit opt-out wins
+  const full = t.includes('i');
+  let flags = '';
+  if (full || t.includes('f')) flags += 'f';
+  if (full || t.includes('a')) flags += 'a';
+  if (full || t.includes('p')) flags += 'p';
+  return flags;
+}
+
+/**
  * Peel the last `:`-delimited field off `text` for the weight/top-k parser.
  * Returns `{ head, value }` for a numeric field, `{ head, empty: true }` for an
  * empty field (e.g. the `::` in `word::25`, meaning "use the default"), or null
@@ -71,33 +117,34 @@ function peelValueField(text) {
 }
 
 /**
- * Split one phrase line into its fields: `phrase[:WEIGHT[:TOPK[:s|i]]]`. Fields
+ * Split one phrase line into its fields: `phrase[:WEIGHT[:TOPK[:AUG]]]`. Fields
  * are peeled right-to-left and the phrase keeps any colons it contains (only a
  * trailing field of the right shape is consumed), so e.g. `ratio 3:1` and
  * `bad:abc` still work. Details:
  *   - An empty numeric field means "use the default": `word::25` is default
  *     weight + top-k 25; `word:5` is weight 5 + default top-k.
- *   - The optional trailing `:s` / `:i` flag sets per-phrase case sensitivity
- *     (`s` = case-sensitive, `i` = case-insensitive, i.e. boost all casings).
- *     It must be the last field; absent leaves `caseInsensitive` undefined so
- *     the caller's global default applies.
+ *   - The optional trailing `:AUG` augmentation field sets per-phrase surface-form
+ *     expansion: any mix of `f` (Title Case), `a` (ALL CAPS), `p` (proclitic
+ *     prefixes), plus the legacy aliases `s` (force none) and `i` (all of them).
+ *     It must be the last field; absent leaves `augment` undefined so the
+ *     caller's global default applies. See {@link normalizeAugment}.
  * Returns RAW, unvalidated weight/topk (callers clamp/warn as they like); weight
- * defaults to 1, topk to {@link DEFAULT_BOOST_TOPK}, caseInsensitive to undefined.
+ * defaults to 1, topk to {@link DEFAULT_BOOST_TOPK}, augment to undefined.
  * @param {string} text A single phrase line (leading/trailing space tolerated).
- * @returns {{phrase: string, weight: number, topk: number, caseInsensitive: (boolean|undefined)}}
+ * @returns {{phrase: string, weight: number, topk: number, augment: (string|undefined)}}
  */
 export function parseBoostFields(text) {
   let phrase = text.trim();
   let weight = 1;
   let topk = DEFAULT_BOOST_TOPK;
-  let caseInsensitive;
+  let augment;
 
-  // 1. Optional trailing case flag (:s / :i), last field only.
+  // 1. Optional trailing augmentation field (:f/:a/:p/:s/:i), last field only.
   const flagColon = phrase.lastIndexOf(':');
   if (flagColon > 0) {
-    const tag = phrase.slice(flagColon + 1).trim().toLowerCase();
-    if (tag === 's' || tag === 'i') {
-      caseInsensitive = tag === 'i';
+    const norm = normalizeAugment(phrase.slice(flagColon + 1));
+    if (norm !== undefined) {
+      augment = norm;
       phrase = phrase.slice(0, flagColon).trim();
     }
   }
@@ -117,7 +164,7 @@ export function parseBoostFields(text) {
       if (!last.empty) weight = last.value;
     }
   }
-  return { phrase, weight, topk, caseInsensitive };
+  return { phrase, weight, topk, augment };
 }
 
 /**
@@ -148,12 +195,14 @@ function isDirectiveLine(trimmed) {
  *   - `strength N` : the list's default global strength. The UI forces its
  *     strength control to this value when the list is loaded (see App.jsx); a
  *     non-finite or absent value leaves the control untouched.
+ *   - `prefixes a' b' ...` : the proclitic prefixes used by the `p` augmentation
+ *     (whitespace-separated), overriding {@link DEFAULT_PREFIXES} for this list.
  * The key is matched case-insensitively and separated from its value by
  * whitespace, `=` or `:` (so `#!strength 3`, `#!strength=3` and `#!strength:3`
  * all work). Unknown keys are ignored, so `#! a note` is a harmless no-op. When
- * `strength` appears more than once the last finite value wins.
+ * a key appears more than once the last occurrence wins.
  * @param {string} raw
- * @returns {{strength?: number}}
+ * @returns {{strength?: number, prefixes?: string[]}}
  */
 export function parseBoostDirectives(raw) {
   const out = {};
@@ -169,6 +218,9 @@ export function parseBoostDirectives(raw) {
     if (key === 'strength') {
       const n = Number(value);
       if (Number.isFinite(n)) out.strength = n;
+    } else if (key === 'prefixes') {
+      const list = value.split(/\s+/).filter(Boolean);
+      if (list.length) out.prefixes = list;
     }
   }
   return out;
@@ -176,17 +228,17 @@ export function parseBoostDirectives(raw) {
 
 /**
  * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase with up
- * to three optional trailing fields, `phrase:WEIGHT:TOPK:FLAG`, all peeled
+ * to three optional trailing fields, `phrase:WEIGHT:TOPK:AUG`, all peeled
  * right-to-left by {@link parseBoostFields} (e.g. `acetaminophen:2.5`, `um:-3`,
- * `venlafaxine:5:50`, `venlafaxine:5:50:i`, `epi::40:s`). An empty numeric field
- * keeps the default (`word::25`); the trailing `:s`/`:i` flag overrides
- * case sensitivity per phrase. A negative weight is written with the minus sign
- * after the colon (`phrase:-3`). Lines starting with `#!` are list-level
- * directives (see {@link parseBoostDirectives}) and are skipped here, never
- * becoming phrases. This validates/clamps the raw fields and records a per-entry
- * `warning` for any it had to coerce.
+ * `venlafaxine:5:50`, `venlafaxine:5:50:fap`, `epi::40:s`). An empty numeric
+ * field keeps the default (`word::25`); the trailing `:AUG` field overrides the
+ * per-phrase augmentation (see {@link normalizeAugment}). A negative weight is
+ * written with the minus sign after the colon (`phrase:-3`). Lines starting with
+ * `#!` are list-level directives (see {@link parseBoostDirectives}) and are
+ * skipped here, never becoming phrases. This validates/clamps the raw fields and
+ * records a per-entry `warning` for any it had to coerce.
  * @param {string} raw
- * @returns {Array<{phrase: string, weight: number, topk: number, caseInsensitive?: boolean, warning?: string}>}
+ * @returns {Array<{phrase: string, weight: number, topk: number, augment?: string, warning?: string}>}
  */
 export function parseBoostPhrases(raw) {
   if (!raw) return [];
@@ -196,7 +248,7 @@ export function parseBoostPhrases(raw) {
     if (!trimmed) continue;
     if (isDirectiveLine(trimmed)) continue; // list-level #! directive, not a phrase
 
-    let { phrase, weight, topk, caseInsensitive } = parseBoostFields(trimmed);
+    let { phrase, weight, topk, augment } = parseBoostFields(trimmed);
     const warnings = [];
 
     if (weight === 0 || weight < -MAX_PHRASE_WEIGHT || weight > MAX_PHRASE_WEIGHT) {
@@ -209,7 +261,7 @@ export function parseBoostPhrases(raw) {
     }
 
     const entry = { phrase, weight, topk };
-    if (caseInsensitive !== undefined) entry.caseInsensitive = caseInsensitive;
+    if (augment !== undefined) entry.augment = augment;
     if (warnings.length) entry.warning = warnings.join('; ');
     out.push(entry);
   }
@@ -217,55 +269,77 @@ export function parseBoostPhrases(raw) {
 }
 
 /**
- * Casing variants of a phrase that the model might emit: as-typed, all
- * lowercase, ALL UPPERCASE, Sentence case (first letter capitalised) and Title
- * Case (each space-separated word capitalised). Surrogate-safe; deduplicated
- * with the as-typed form first. Drug names / jargon are usually ASCII, but
- * `toLowerCase`/`toUpperCase` also give sensible variants for accented Latin.
+ * Whether a proclitic `prefix` may attach to `form`. A prefix ending in an
+ * apostrophe (straight `'` or curly `’`) is an elision and only attaches before
+ * a vowel or French silent `h` (so `l'amoxicilline` but never `l'beta`); any
+ * other prefix (e.g. Arabic `al-`) attaches unconditionally.
+ * @param {string} prefix
+ * @param {string} form
+ * @returns {boolean}
+ */
+function prefixApplies(prefix, form) {
+  const last = prefix[prefix.length - 1];
+  if (last !== "'" && last !== '’') return true;
+  return ELISION_VOWEL_RE.test(form);
+}
+
+/**
+ * Surface-form variants of a phrase under an augmentation flag set. The as-typed
+ * form is always included; then `f` adds Title Case (each space-separated word's
+ * first letter capitalised), `a` adds ALL CAPS, and `p` glues each applicable
+ * proclitic prefix (see {@link prefixApplies}) to the front of every form so
+ * far. Surrogate-safe; deduplicated with the as-typed form first. The BPE
+ * encoder is case-sensitive, so each distinct surface form must be its own trie
+ * branch.
  * @param {string} phrase
+ * @param {string} [flags=''] Any subset of `'fap'` (see {@link normalizeAugment}).
+ * @param {string[]} [prefixes=DEFAULT_PREFIXES] Proclitic prefixes for the `p` flag.
  * @returns {string[]}
  */
-export function casingVariants(phrase) {
+export function augmentVariants(phrase, flags = '', prefixes = DEFAULT_PREFIXES) {
+  if (!phrase) return [];
   const capFirst = (s) => {
     const chars = Array.from(s); // codepoints (surrogate-safe)
     if (!chars.length) return s;
     chars[0] = chars[0].toUpperCase();
     return chars.join('');
   };
-  const lower = phrase.toLowerCase();
-  const candidates = [
-    phrase,                                   // as typed (preserves e.g. mRNA)
-    lower,                                     // mid-sentence common noun
-    phrase.toUpperCase(),                      // acronym / emphasis
-    capFirst(lower),                           // Sentence case (sentence start)
-    lower.split(' ').map(capFirst).join(' '),  // Title Case (proper noun)
-  ];
+  const set = new Set(flags);
   const seen = new Set();
   const out = [];
-  for (const v of candidates) {
-    if (v && !seen.has(v)) { seen.add(v); out.push(v); }
+  const push = (v) => { if (v && !seen.has(v)) { seen.add(v); out.push(v); } };
+  push(phrase);                                          // as typed
+  if (set.has('f')) push(phrase.split(' ').map(capFirst).join(' ')); // Title Case
+  if (set.has('a')) push(phrase.toUpperCase());          // ALL CAPS
+  if (set.has('p') && prefixes && prefixes.length) {
+    for (const form of out.slice()) {                    // every casing form so far
+      for (const pre of prefixes) {
+        if (prefixApplies(pre, form)) push(pre + form);
+      }
+    }
   }
   return out;
 }
 
 /**
- * Expand parsed boost entries so each typed phrase covers every casing the
- * model can emit (see {@link casingVariants}). The BPE encoder is
+ * Expand parsed boost entries so each typed phrase covers every surface form the
+ * model might emit (see {@link augmentVariants}). The BPE encoder is
  * case-sensitive, so `venlafaxine`, `Venlafaxine` and `VENLAFAXINE` encode to
  * different token sequences and must each be their own trie branch; this turns
- * one typed phrase into one entry per casing variant.
+ * one typed phrase into one entry per augmentation variant.
  *
- * Whether an entry expands is decided per phrase: its own `caseInsensitive`
- * flag (the `:s`/`:i` suffix) wins, falling back to `defaultCaseInsensitive`
- * (the UI's global toggle) when the entry has no flag. A case-sensitive entry
- * passes through unchanged. Deduplicated across the whole list by phrase
+ * Which flags apply is decided per phrase: its own `augment` field (the `:AUG`
+ * suffix) wins, falling back to `defaultAugment` (the UI's global "Augment"
+ * toggle) when the entry has none. An entry whose effective flags are empty
+ * (`''`) passes through unchanged. Deduplicated across the whole list by phrase
  * string; on a collision the larger-magnitude weight wins (matching the trie's
  * strongest-magnitude rule) and carries its own top-k.
- * @param {Array<{phrase: string, weight: number, topk?: number, caseInsensitive?: boolean}>} entries
- * @param {boolean} [defaultCaseInsensitive=false] Applied to entries with no `:s`/`:i` flag.
+ * @param {Array<{phrase: string, weight: number, topk?: number, augment?: string}>} entries
+ * @param {string} [defaultAugment=''] Flags applied to entries with no `:AUG` field.
+ * @param {string[]} [prefixes=DEFAULT_PREFIXES] Proclitic prefixes for the `p` flag.
  * @returns {Array<{phrase: string, weight: number, topk?: number}>}
  */
-export function expandCasingVariants(entries, defaultCaseInsensitive = false) {
+export function expandAugmentations(entries, defaultAugment = '', prefixes = DEFAULT_PREFIXES) {
   const byPhrase = new Map();
   const add = (entry, phrase) => {
     const prev = byPhrase.get(phrase);
@@ -274,8 +348,9 @@ export function expandCasingVariants(entries, defaultCaseInsensitive = false) {
     }
   };
   for (const entry of entries) {
-    if (entry.caseInsensitive ?? defaultCaseInsensitive) {
-      for (const phrase of casingVariants(entry.phrase)) add(entry, phrase);
+    const flags = entry.augment ?? defaultAugment;
+    if (flags) {
+      for (const phrase of augmentVariants(entry.phrase, flags, prefixes)) add(entry, phrase);
     } else {
       add(entry, entry.phrase);
     }
@@ -322,13 +397,13 @@ export function encodePhrases(entries, encoder) {
  * Reuse is valid only when all three agree:
  *  - the list text is unedited (matches what the prebuilt was built from),
  *  - the vocab signature the prebuilt was built for matches the loaded model,
- *  - the global casing default matches the prebuilt's baked-in `caseDefault`
- *    (legacy artifacts omit it, so a missing value is treated as `false`, i.e.
- *    un-expanded).
+ *  - the global augmentation default matches the prebuilt's baked-in
+ *    `augmentDefault` (legacy artifacts omit it, so a missing value is treated
+ *    as `''`, i.e. un-augmented).
  *
- * @param {{text: string, vocabSig: string, caseDefault?: boolean, encoded: Array}|null} prebuilt
+ * @param {{text: string, vocabSig: string, augmentDefault?: string, encoded: Array}|null} prebuilt
  *   The loaded prebuilt encoding, or null/undefined when none is available.
- * @param {{text: string, vocabSig: string|null, caseInsensitive: boolean}} current
+ * @param {{text: string, vocabSig: string|null, augmentDefault: string}} current
  *   The current UI state to validate the prebuilt against.
  * @returns {{usePrebuilt: boolean, reasons: string[]}} `reasons` is empty when
  *   the prebuilt is used (or absent); otherwise it lists each mismatch in
@@ -337,7 +412,7 @@ export function encodePhrases(entries, encoder) {
  */
 export function selectPrebuilt(prebuilt, current) {
   if (!prebuilt) return { usePrebuilt: false, reasons: [] };
-  const { text, vocabSig, caseInsensitive } = current;
+  const { text, vocabSig, augmentDefault } = current;
   const reasons = [];
   if (prebuilt.text !== text) {
     reasons.push('list text was edited (no longer matches the prebuilt)');
@@ -345,8 +420,8 @@ export function selectPrebuilt(prebuilt, current) {
   if (prebuilt.vocabSig !== vocabSig) {
     reasons.push(`vocab mismatch (prebuilt for ${prebuilt.vocabSig}, model is ${vocabSig})`);
   }
-  if ((prebuilt.caseDefault ?? false) !== caseInsensitive) {
-    reasons.push(`case toggle differs (prebuilt at caseDefault=${prebuilt.caseDefault ?? false}, UI is ${caseInsensitive})`);
+  if ((prebuilt.augmentDefault ?? '') !== augmentDefault) {
+    reasons.push(`augment default differs (prebuilt at augmentDefault="${prebuilt.augmentDefault ?? ''}", UI is "${augmentDefault}")`);
   }
   return { usePrebuilt: reasons.length === 0, reasons };
 }
