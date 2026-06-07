@@ -126,6 +126,11 @@ const translations = {
     receivingAudio: '⏳ Receiving audio from the recorder…',
     runningFinalTranscription: '⏳ Running final transcription on the full audio…',
     settingsGroupAdvanced: 'Advanced',
+    settingsGroupGeneral: 'General',
+    settingsGroupRecording: 'Recording & audio',
+    settingsGroupOutput: 'Transcript output',
+    settingsGroupEngine: 'Engine & performance',
+    settingsGroupDecoding: 'Decoding',
     settingsGroupBoosting: 'Phrase boosting',
     settingsGroupDebug: 'Debug',
 
@@ -441,6 +446,11 @@ const translations = {
     receivingAudio: "\u23f3 R\u00e9ception de l'audio depuis l'enregistreur\u2026",
     runningFinalTranscription: "\u23f3 Transcription finale sur l'audio complet en cours\u2026",
     settingsGroupAdvanced: 'Avanc\u00e9',
+    settingsGroupGeneral: 'G\u00e9n\u00e9ral',
+    settingsGroupRecording: 'Enregistrement et audio',
+    settingsGroupOutput: 'Sortie de transcription',
+    settingsGroupEngine: 'Moteur et performance',
+    settingsGroupDecoding: 'D\u00e9codage',
     settingsGroupBoosting: 'Renforcement de phrases',
     settingsGroupDebug: 'D\u00e9bogage',
 

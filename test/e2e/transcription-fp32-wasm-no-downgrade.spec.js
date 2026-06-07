@@ -15,7 +15,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, expandSettingsSection } from './seed.mjs';
 
 // The real istupakov file set: single-file fp32 encoder, int8 variants, vocab.
 // Crucially NO encoder-model.onnx.data.NNN shards, so WASM fp32 cannot load.
@@ -63,6 +63,8 @@ test('WASM fp32 fails loudly (no silent int8 downgrade) when no source ships the
 
   // Opt into fp32 via the real encoder-precision radio (offered on WASM and WebGPU; here on WASM).
   await page.locator('.settings-toggle').click();
+  // The encoder-precision radios live in the (collapsed) Engine section.
+  await expandSettingsSection(page, 'Engine');
   const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
   await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await fp32Radio.check();

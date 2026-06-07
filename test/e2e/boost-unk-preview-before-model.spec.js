@@ -18,7 +18,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, expandSettingsSection } from './seed.mjs';
 
 // Boot with the curated list selected (no model is loaded in this test, but the
 // seeded WASM backend keeps the app initialising sanely). The one-shot boost-init
@@ -38,6 +38,8 @@ test('curated list untokenizable terms warning shows before any model is loaded'
   // Deliberately do NOT click "Load model": the warning must not depend on it.
   // Open Settings, where the boosting controls (and the warning) live.
   await page.locator('.settings-toggle').click();
+  // The boost controls live in the (collapsed) Phrase boosting section.
+  await expandSettingsSection(page, 'Phrase boosting');
 
   // The "N term(s) skipped" summary must be present even though no tokenizer
   // exists yet (this is the regression: it used to stay hidden until a model

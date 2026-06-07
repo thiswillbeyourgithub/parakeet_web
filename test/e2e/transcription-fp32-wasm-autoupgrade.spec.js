@@ -19,7 +19,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -83,6 +83,8 @@ test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirr
 
   // Opt into fp32 via the real encoder-precision radio (offered on WASM and WebGPU; here on WASM).
   await page.locator('.settings-toggle').click();
+  // The encoder-precision radios live in the (collapsed) Engine section.
+  await expandSettingsSection(page, 'Engine');
   const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
   await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await fp32Radio.check();

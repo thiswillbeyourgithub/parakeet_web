@@ -21,7 +21,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,6 +74,8 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   // state, unlike the async settings restore) and a faithful test of the actual
   // UI path a user takes.
   await page.locator('.settings-toggle').click();
+  // The encoder-precision radios live in the (collapsed) Engine section.
+  await expandSettingsSection(page, 'Engine');
   const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
   await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await fp32Radio.check();

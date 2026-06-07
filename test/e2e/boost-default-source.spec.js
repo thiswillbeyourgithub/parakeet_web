@@ -10,6 +10,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
+import { expandSettingsSection } from './seed.mjs';
 
 // The boost source <select> is the one carrying the Custom sentinel option.
 const boostSelect = (page) =>
@@ -76,6 +77,8 @@ test('?phrase_boost= pre-selects a curated list for a fresh visitor', async ({ p
   // bare name (no .txt). The app should normalise it, select it, and load it.
   await page.goto('/?phrase_boost=clinical-cjk');
   await page.locator('.settings-toggle').click();
+  // The boost controls live in the (collapsed) Phrase boosting section.
+  await expandSettingsSection(page, 'Phrase boosting');
 
   await expect(boostSelect(page)).toHaveValue('clinical-cjk.txt', { timeout: 15 * 1000 });
   // The fetched list text is loaded into the boost textarea.
@@ -91,6 +94,8 @@ test('VITE_PHRASE_BOOST_DEFAULT pre-selects a curated list for a fresh visitor',
   });
   await page.goto('/');
   await page.locator('.settings-toggle').click();
+  // The boost controls live in the (collapsed) Phrase boosting section.
+  await expandSettingsSection(page, 'Phrase boosting');
 
   await expect(boostSelect(page)).toHaveValue('clinical-cjk.txt', { timeout: 15 * 1000 });
   await expect(boostTextarea(page)).toHaveValue(/venlafaxine/, { timeout: 15 * 1000 });
@@ -104,6 +109,8 @@ test('?phrase_boost= does NOT override a returning user\'s saved choice', async 
   await seedSavedBoost(page, '__custom__', 'mysavedword');
   await page.goto('/?phrase_boost=clinical-cjk');
   await page.locator('.settings-toggle').click();
+  // The boost controls live in the (collapsed) Phrase boosting section.
+  await expandSettingsSection(page, 'Phrase boosting');
 
   await expect(boostSelect(page)).toHaveValue('__custom__', { timeout: 15 * 1000 });
   // The saved custom text is retained; the curated list's phrases were NOT loaded.

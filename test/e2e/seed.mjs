@@ -82,3 +82,16 @@ export async function seedSettings(page, extra = {}) {
     });
   }, { extra, version: APP_VERSION, DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX });
 }
+
+// Expand a collapsible Settings group by clicking its header toggle, so a spec
+// can reach controls that now live inside a (default-collapsed) section. The
+// settings drawer must already be open. `name` is matched as a substring of the
+// section title (e.g. 'Engine' for "Engine & performance"). Idempotent: a no-op
+// when the section is already expanded (aria-expanded="true").
+export async function expandSettingsSection(page, name) {
+  const toggle = page.locator('.settings-group-toggle', { hasText: name });
+  await toggle.waitFor({ state: 'visible', timeout: 30 * 1000 });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    await toggle.click();
+  }
+}

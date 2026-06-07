@@ -312,6 +312,27 @@ function usePersistedSetting(key, value, loaded) {
   }, [key, value, loaded]);
 }
 
+// Collapsible settings group. The header is a button that toggles the body
+// open/closed (the body unmounts when closed so the drawer stays a short list
+// of section titles). Open/closed state lives in the parent so it can be
+// persisted per-section; `open`/`onToggle` are controlled props.
+function CollapsibleSection({ id, title, open, onToggle, children }) {
+  return (
+    <div className="settings-group">
+      <button
+        type="button"
+        className="settings-group-toggle"
+        aria-expanded={open}
+        onClick={() => onToggle(id)}
+      >
+        <span className="settings-group-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span className="settings-group-title">{title}</span>
+      </button>
+      {open && <div className="settings-group-body">{children}</div>}
+    </div>
+  );
+}
+
 // Helper function to truncate long filenames
 // Strip terminal-control and bidi-override codepoints before any
 // clipboard write. Keeps tab and newline. Defends against a
@@ -557,6 +578,13 @@ export default function App() {
   const [progressPct, setProgressPct] = useState(null);
   // EMA state for the download speed / ETA estimate, reset per model load.
   const downloadRateRef = useRef(null);
+  // Open/closed state of each collapsible settings group, keyed by section id.
+  // A section is open only when its id maps to true, so every group starts
+  // collapsed; the whole object is persisted so the choice survives reloads.
+  const [sectionsOpen, setSectionsOpen] = useState({});
+  const toggleSection = useCallback((id) => {
+    setSectionsOpen(prev => ({ ...prev, [id]: !prev[id] }));
+  }, []);
   const [text, setText] = useState('');
   const [latestMetrics, setLatestMetrics] = useState(null);
   const [transcriptions, setTranscriptions] = useState([]);
@@ -1096,6 +1124,7 @@ export default function App() {
           savedBoostCustomText,
           savedBoostAugment,
           savedBoostCaseInsensitiveLegacy,
+          savedSectionsOpen,
         ] = await Promise.all([
           loadSetting('backend', null),
           loadSetting('wasmEncoderQuant', 'int8'),
@@ -1140,6 +1169,7 @@ export default function App() {
           // `boostCaseInsensitive` value below can seed it for returning users.
           loadSetting('boostAugment', null),
           loadSetting('boostCaseInsensitive', false),
+          loadSetting('settingsSectionsOpen', {}),
         ]);
         if (booted) return; // watchdog won while we awaited; skip the stale restore
 
@@ -1219,6 +1249,10 @@ export default function App() {
           setBoostCustomText(seedCustom);
           boostCustomTextRef.current = seedCustom;
           setBoostSource(restoredSource);
+        }
+        // Restore which settings groups are expanded (a plain id->bool map).
+        if (savedSectionsOpen && typeof savedSectionsOpen === 'object') {
+          setSectionsOpen(savedSectionsOpen);
         }
         // Scalar settings are in; boot the app now so the UI is configured and
         // persistence/boost-init can proceed, and stop the watchdog.
@@ -1602,6 +1636,7 @@ export default function App() {
   usePersistedSetting('boostAugment', boostAugment, settingsLoaded);
   usePersistedSetting('boostSource', boostSource, settingsLoaded);
   usePersistedSetting('boostCustomText', boostCustomText, settingsLoaded);
+  usePersistedSetting('settingsSectionsOpen', sectionsOpen, settingsLoaded);
   // F-128: transcripts persist to a dedicated DB (parakeetweb-transcripts-db).
   // When the array shrinks (per-entry delete, clear-all), wipe the whole DB
   // before re-persisting so LevelDB drops the SST/log files that still hold
@@ -4162,6 +4197,8 @@ export default function App() {
           <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: 'var(--text-subtle)'}}>(nemo128)</span>
         </p>
 
+          <div className="settings-content">
+          <CollapsibleSection id="general" title={t('settingsGroupGeneral')} open={!!sectionsOpen.general} onToggle={toggleSection}>
           <div className="setting-row" style={{ marginBottom: '0.5rem' }}>
             <label>
               <input
@@ -4215,8 +4252,9 @@ export default function App() {
               </p>
             </div>
           )}
+          </CollapsibleSection>
 
-          <div className="settings-content">
+          <CollapsibleSection id="recording" title={t('settingsGroupRecording')} open={!!sectionsOpen.recording} onToggle={toggleSection}>
             <div className="setting-row">
               <span className="setting-label">
                 {t('audioProcessing')}:
@@ -4315,7 +4353,9 @@ export default function App() {
                 </p>
               )}
             </div>
+          </CollapsibleSection>
 
+          <CollapsibleSection id="output" title={t('settingsGroupOutput')} open={!!sectionsOpen.output} onToggle={toggleSection}>
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
@@ -4359,8 +4399,6 @@ export default function App() {
               </select>
             </div>
 
-            <div className="settings-group-header">{t('settingsGroupAdvanced')}</div>
-
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
@@ -4368,7 +4406,9 @@ export default function App() {
                 <InfoTooltip text={t('tooltipHeatmap')} />
               </label>
             </div>
+          </CollapsibleSection>
 
+          <CollapsibleSection id="engine" title={t('settingsGroupEngine')} open={!!sectionsOpen.engine} onToggle={toggleSection}>
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
@@ -4482,6 +4522,9 @@ export default function App() {
               </div>
             )}
 
+          </CollapsibleSection>
+
+          <CollapsibleSection id="decoding" title={t('settingsGroupDecoding')} open={!!sectionsOpen.decoding} onToggle={toggleSection}>
             <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
               <span className="setting-label" style={{ flex: '1 1 auto' }}>
                 {t('frameStride')} (1-4):
@@ -4603,8 +4646,9 @@ export default function App() {
               </>
             )}
 
-            <div className="settings-group-header">{t('settingsGroupBoosting')}</div>
+          </CollapsibleSection>
 
+          <CollapsibleSection id="boosting" title={t('settingsGroupBoosting')} open={!!sectionsOpen.boosting} onToggle={toggleSection}>
             <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.4rem' }}>
               <span className="setting-label">
                 {t('boostPhrases')}:
@@ -4723,8 +4767,9 @@ export default function App() {
               )}
             </div>
 
-            <div className="settings-group-header">{t('settingsGroupDebug')}</div>
+          </CollapsibleSection>
 
+          <CollapsibleSection id="debug" title={t('settingsGroupDebug')} open={!!sectionsOpen.debug} onToggle={toggleSection}>
             <div className="setting-row">
               <span className="setting-label">
                 {t('debugLogging')}:
@@ -4744,8 +4789,9 @@ export default function App() {
                 <option value="full">{t('debugFullLogs')}</option>
               </select>
             </div>
+          </CollapsibleSection>
           </div>
-        
+
           {/* Dictation device (SpeechMike) connect button. The button itself
               is always shown when the feature is enabled: on Chromium it opens
               the WebHID picker; on Firefox/Safari clicking it shows an alert

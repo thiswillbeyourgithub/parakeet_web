@@ -11,6 +11,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
+import { expandSettingsSection } from './seed.mjs';
 
 test('keyboard shortcuts are off by default and can be enabled in settings', async ({ page }) => {
   await page.goto('/');
@@ -32,6 +33,9 @@ test('keyboard shortcuts are off by default and can be enabled in settings', asy
   // Open settings via the header gear button instead.
   await page.locator('.settings-toggle').click();
   await expect(sidebar).toBeVisible();
+
+  // The keyboard-shortcuts toggle lives in the (collapsed) General section.
+  await expandSettingsSection(page, 'General');
 
   // Enable the opt-in toggle.
   const enableToggle = sidebar.getByLabel(/Enable keyboard shortcuts/i);

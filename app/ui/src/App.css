@@ -405,6 +405,65 @@ body {
   margin-bottom: 0.25rem;
 }
 
+/* Collapsible settings group (header button + unmounting body). */
+.settings-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.9rem 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  transition: color 0.2s;
+}
+
+.settings-group-toggle:hover {
+  color: var(--accent-soft-text, var(--text));
+}
+
+.settings-group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.settings-group-chevron {
+  display: inline-block;
+  width: 1em;
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+}
+
+.settings-group-title {
+  flex: 1 1 auto;
+}
+
+/* The body's first row already sits under the toggle, so drop its top
+   padding and the redundant divider; the group wrapper owns the bottom rule. */
+.settings-group-body {
+  padding-bottom: 0.5rem;
+}
+
+.settings-group-body > .setting-row:first-child {
+  padding-top: 0.25rem;
+}
+
+.settings-group-body > .setting-row:last-child {
+  border-bottom: none;
+}
+
 /* Drawer footer action buttons — restyle .primary inside the drawer
    as full-width list-row items (à la WebSend's About / Production-mode rows),
    overriding the global .primary look without changing JSX. Higher
