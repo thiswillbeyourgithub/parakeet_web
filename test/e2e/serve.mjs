@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
 
   // Model weights: flat layout under /models, served from MODEL_DIR.
   //
-  // The sharded fp32 encoder (scripts/shard-fp32.py) lives in MODEL_DIR/sharded/:
+  // The sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py) lives in MODEL_DIR/sharded/:
   // a rewritten encoder-model.onnx graph whose tensors point at the
   // encoder-model.onnx.data.NNN shards (each < 2 GB so the fp32 encoder can
   // ingest on WASM, exercised by transcription-fp32-wasm.spec.js). For exactly

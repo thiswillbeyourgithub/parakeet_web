@@ -12,7 +12,7 @@ import { resolveModelQuant, quantSatisfiable } from '../../app/src/hub.js';
 
 const WITH_FP16 = ['encoder-model.fp16.onnx', 'decoder_joint-model.fp16.onnx', 'encoder-model.int8.onnx', 'encoder-model.onnx'];
 const NO_FP16 = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.int8.onnx'];
-// A repo that ships the fp32 encoder as <2GB shards (scripts/shard-fp32.py).
+// A repo that ships the fp32 encoder as <2GB shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py).
 const WITH_FP32_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'decoder_joint-model.int8.onnx'];
 
 describe('resolveModelQuant: WASM is pinned to int8', () => {

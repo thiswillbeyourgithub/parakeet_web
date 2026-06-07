@@ -379,7 +379,7 @@ export async function createSession(modelPath, opts, { ortMod = ort, fromPath = 
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
   // External weights live either in a single <model>.data sidecar (the upstream
-  // fp32 layout) or, for a sharded fp32 encoder (scripts/shard-fp32.py), in
+  // fp32 layout) or, for a sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py), in
   // <model>.data.000, .001, ... each kept under 2 GB so no externalData buffer
   // trips the WASM ArrayBuffer / blob caps. Mount every matching file; the `path`
   // must equal the location string baked into the graph (the shard basename).

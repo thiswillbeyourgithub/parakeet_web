@@ -1,6 +1,6 @@
 // Tier-3 E2E for the WASM *sharded fp32* encoder path. Unlike the single 2.4 GB
 // fp32 sidecar (which trips the 32-bit WASM ArrayBuffer cap and Chromium's
-// ~2 GB blob-fetch cap), scripts/shard-fp32.py splits the fp32 encoder weights
+// ~2 GB blob-fetch cap), parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py splits the fp32 encoder weights
 // into encoder-model.onnx.data.NNN pieces, each < 2 GB, so the full-precision
 // encoder CAN load and run on the WASM backend in a real headless Chromium.
 // resolveModelQuant() gates this behind the allowWasmFp32 opt-in (the UI's
@@ -9,10 +9,10 @@
 // the in-browser proof that the gated path actually loads weights and produces a
 // correct transcript (not a silent fall-back to int8).
 //
-// The shards are produced locally by scripts/shard-fp32.py and are NOT shipped
+// The shards are produced locally by parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py and are NOT shipped
 // by the upstream istupakov repo, so they cannot be fetched in CI. When the
 // static server has no sharded/ encoder available the spec SKIPS itself rather
-// than fail: run `python scripts/shard-fp32.py` (writes ./fallback_models/sharded)
+// than fail: run `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py` (writes ./fallback_models/sharded)
 // to get coverage locally. serve.mjs serves those shards from MODEL_DIR/sharded/.
 //
 // Built with Claude Code.
@@ -36,7 +36,7 @@ const SHARD_PROBE = '/models/encoder-model.onnx.data.000';
 test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async ({ page, request, baseURL }) => {
   const head = await request.head(SHARD_PROBE).catch(() => null);
   test.skip(!head || !head.ok(),
-    `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run scripts/shard-fp32.py for local fp32 coverage)`);
+    `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py for local fp32 coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();

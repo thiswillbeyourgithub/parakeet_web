@@ -195,7 +195,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            so the single-sidecar fp32 encoder ("File size > 2 GiB")
                            and any fp16 model need the native node backend, which
                            streams external data from disk. wasm can still load
-                           fp32 if the model dir is pre-sharded (scripts/shard-fp32.py,
+                           fp32 if the model dir is pre-sharded (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py,
                            each shard <2 GB).
 
 Decoding sweep (each is a comma-separated list; the grid is their product):

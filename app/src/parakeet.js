@@ -7,7 +7,7 @@ import { JsPreprocessor } from './mel.js';
  * Normalise an external-weights source into the ORT `externalData` array.
  *
  * A model's weights live either in a single `<model>.data` sidecar or, for a
- * sharded fp32 encoder (scripts/shard-fp32.py), across several
+ * sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py), across several
  * `<model>.data.000/.001/...` files, each kept under the 2 GB WASM ArrayBuffer
  * and Chromium blob-fetch caps so the ~2.4 GB fp32 encoder can load on WASM.
  *
@@ -176,7 +176,7 @@ export class ParakeetModel {
 
     // Create separate options for sessions that might have external data. Each
     // source is either a single <model>.data sidecar (URL/buffer) or, for a
-    // sharded fp32 encoder (scripts/shard-fp32.py), an array of { path, data }
+    // sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py), an array of { path, data }
     // shard entries; buildExternalData normalises both into the ORT array.
     const encoderSessionOptions = { ...baseSessionOptions };
     const encoderExternalData = buildExternalData(encoderDataUrl, filenames?.encoder);

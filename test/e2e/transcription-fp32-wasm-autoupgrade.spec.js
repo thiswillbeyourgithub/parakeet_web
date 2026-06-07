@@ -11,7 +11,7 @@
 // API to the real istupakov file set (no shards). That makes the downgrade
 // happen for real, then proves the local auto-upgrade kicks in, all without
 // touching the network. The shards still come from serve.mjs (MODEL_DIR/sharded),
-// so the spec self-skips when they are absent (run scripts/shard-fp32.py first).
+// so the spec self-skips when they are absent (run parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py first).
 //
 // Built with Claude Code.
 
@@ -44,7 +44,7 @@ const ISTUPAKOV_FILES = [
 test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirror', async ({ page, request, baseURL }) => {
   const head = await request.head(SHARD_PROBE).catch(() => null);
   test.skip(!head || !head.ok(),
-    `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run scripts/shard-fp32.py for local fp32 coverage)`);
+    `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py for local fp32 coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();

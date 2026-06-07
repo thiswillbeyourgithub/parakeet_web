@@ -2,7 +2,7 @@
 // from an external-weights source to the ORT `externalData` array mounted on a
 // session. It must handle both layouts the loader supports: a single
 // <model>.data sidecar (URL/buffer) and a sharded fp32 encoder
-// (scripts/shard-fp32.py) passed as an array of { path, data } entries, where
+// (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py) passed as an array of { path, data } entries, where
 // each path is the shard basename baked into the graph's external_data location.
 // Built with Claude Code.
 

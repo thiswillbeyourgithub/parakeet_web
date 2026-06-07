@@ -76,7 +76,7 @@ const REPO_NO_FP16 = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
 ];
-// Sharded fp32 (scripts/shard-fp32.py): no single sidecar, two shards instead.
+// Sharded fp32 (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py): no single sidecar, two shards instead.
 const REPO_FP32_SHARDS = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001',
