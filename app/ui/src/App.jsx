@@ -534,6 +534,12 @@ export default function App() {
   // navigator.gpu, e.g. Firefox today) or 'noAdapter' (requestAdapter failed,
   // e.g. blocklisted GPU or hardware acceleration off).
   const [webgpuUnavailableReason, setWebgpuUnavailableReason] = useState(null);
+  // Whether the WebGPU adapter exposes the `shader-f16` feature. fp16 WGSL
+  // kernels only compile with it; without it the fp16 encoder builds but emits
+  // an empty transcript, so we resolve fp16 -> fp32 and grey out the fp16 radio.
+  // null = unknown (still probing, or no adapter) -> assume supported; once an
+  // adapter resolves it is true/false. Only an explicit false blocks fp16.
+  const [webgpuShaderF16, setWebgpuShaderF16] = useState(null);
   // Tracks whether the backend reflects an explicit choice (restored from a
   // saved setting or picked in the UI) vs. our automatic default. The RAM-based
   // default heuristic only applies when this is false.
@@ -1489,6 +1495,7 @@ export default function App() {
     (async () => {
       let available = false;
       let reason = null;
+      let shaderF16 = null;
       try {
         if (!window.isSecureContext) {
           // navigator.gpu is only exposed in secure contexts; a plain http://
@@ -1502,6 +1509,9 @@ export default function App() {
           const adapter = await navigator.gpu.requestAdapter();
           available = !!adapter;
           if (!adapter) reason = 'noAdapter';
+          // fp16 compute needs the shader-f16 adapter feature; record it so the
+          // quant resolver can fall back to fp32 and the UI can grey out fp16.
+          else shaderF16 = adapter.features.has('shader-f16');
         }
       } catch {
         available = false;
@@ -1510,6 +1520,7 @@ export default function App() {
       if (!cancelled) {
         setWebgpuAvailable(available);
         setWebgpuUnavailableReason(available ? null : reason);
+        setWebgpuShaderF16(shaderF16);
       }
     })();
     return () => { cancelled = true; };
@@ -2007,6 +2018,9 @@ export default function App() {
         encoderQuant: wantWebgpu ? (webgpuFp32 ? 'fp32' : 'fp16') : (wasmWantsFp32 ? 'fp32' : 'int8'),
         decoderQuant: (wantWebgpu && !webgpuFp32) ? 'fp16' : 'int8',
         allowWasmFp32: wasmWantsFp32,
+        // When the GPU lacks shader-f16, hub.js resolves the fp16 request above
+        // to fp32 (fp16 shaders won't compile). null/unknown -> assume supported.
+        shaderF16: webgpuShaderF16,
         preprocessor,
         backend,
         progress: progressCallback,
@@ -4382,9 +4396,17 @@ export default function App() {
               const isWebgpu = backend.startsWith('webgpu');
               const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
               const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
+              // fp16 needs the GPU's shader-f16 feature; when an adapter resolved
+              // WITHOUT it, fp16 can't run so it's greyed out and the load
+              // silently resolves to fp32 (hub.js). null = unknown -> leave fp16
+              // selectable (assume supported, matching the resolver default).
+              const webgpuNoF16 = isWebgpu && webgpuShaderF16 === false;
+              // Show the precision that will ACTUALLY load: fp32 when fp16 is
+              // blocked, so the radio doesn't sit on a disabled fp16 option.
+              const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
               const rows = [
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu, note: t('precisionUnavailableWasm') },
+                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : t('precisionUnavailableWasm') },
                 { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
               ];
               return (
@@ -4398,7 +4420,7 @@ export default function App() {
                       const disabled = status === 'modelReady' || !r.available;
                       return (
                         <label key={r.value} className={disabled ? 'disabled-option' : ''}>
-                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && currentQuant === r.value} onChange={e => setQuant(e.target.value)} disabled={disabled} />
+                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && effectiveQuant === r.value} onChange={e => setQuant(e.target.value)} disabled={disabled} />
                           {r.label}{!r.available ? ` ${r.note}` : ''}
                         </label>
                       );
