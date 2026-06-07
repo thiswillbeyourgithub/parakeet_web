@@ -59,3 +59,64 @@ export function formatBytes(bytes) {
   if (mb < 1024) return `${mb.toFixed(1)} MB`;
   return `${(mb / 1024).toFixed(2)} GB`;
 }
+
+/**
+ * Format a transfer rate (bytes/second) as a short `<size>/s` string, reusing
+ * the same units as formatBytes. Returns '' for a non-positive/unknown rate so
+ * callers can omit it from the status line until a real measurement exists.
+ */
+export function formatRate(bytesPerSec) {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '';
+  return `${formatBytes(bytesPerSec)}/s`;
+}
+
+/**
+ * Format a remaining-time estimate (seconds) as zero-padded `MM:SS`. Hours roll
+ * up into the minutes field (e.g. 3725 -> "62:05"). Returns '' for an unknown
+ * or non-finite ETA so the caller can drop it from the status line.
+ */
+export function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '';
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Exponential-moving-average tracker for download speed and ETA. It is pure:
+ * pass the previous `state` (or `null` to start) and the latest byte-progress
+ * sample, and it returns `{ state, rate, eta }` where `rate` is bytes/second
+ * and `eta` is the estimated seconds left for the current file (both `null`
+ * until enough data exists).
+ *
+ * Re-anchors whenever the `file` changes or `loaded` goes backwards (a resume
+ * or retry resets the per-file counter), so a counter reset never reads as a
+ * negative delta. To keep the rate stable against the very frequent progress
+ * ticks, a fresh sample is only folded into the EMA once at least
+ * `minIntervalMs` has elapsed since the last anchor; in between we keep the
+ * last smoothed rate and just recompute the ETA against the current position so
+ * it keeps ticking down smoothly.
+ */
+export function updateDownloadRate(state, { file, loaded, total, now }, opts = {}) {
+  const minIntervalMs = opts.minIntervalMs ?? 300;
+  const alpha = opts.alpha ?? 0.3;
+  const etaFor = (rate) =>
+    rate > 0 && total > 0 && total > loaded ? (total - loaded) / rate : null;
+
+  if (!state || state.file !== file || loaded < state.anchorLoaded) {
+    const next = { file, anchorTime: now, anchorLoaded: loaded, rate: null };
+    return { state: next, rate: null, eta: null };
+  }
+
+  const dt = now - state.anchorTime;
+  if (dt < minIntervalMs) {
+    return { state, rate: state.rate, eta: etaFor(state.rate) };
+  }
+
+  const dBytes = loaded - state.anchorLoaded;
+  const instant = dBytes > 0 ? (dBytes / dt) * 1000 : 0;
+  const rate = state.rate == null ? instant : alpha * instant + (1 - alpha) * state.rate;
+  const next = { file, anchorTime: now, anchorLoaded: loaded, rate };
+  return { state: next, rate, eta: etaFor(rate) };
+}

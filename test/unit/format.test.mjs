@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, formatDuration, formatBytes, relativeAge } from '../../app/ui/src/lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge } from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
   test('zero', () => assert.equal(formatTime(0), '0:00'));
@@ -33,6 +33,93 @@ describe('formatBytes (base 1024)', () => {
   test('negative / non-finite -> 0 B', () => {
     assert.equal(formatBytes(-1), '0 B');
     assert.equal(formatBytes(NaN), '0 B');
+  });
+});
+
+describe('formatRate (<size>/s)', () => {
+  test('formats MB/s', () => assert.equal(formatRate(5 * 1024 * 1024), '5.0 MB/s'));
+  test('formats KB/s', () => assert.equal(formatRate(2048), '2 KB/s'));
+  test('zero / negative / non-finite -> empty', () => {
+    assert.equal(formatRate(0), '');
+    assert.equal(formatRate(-1), '');
+    assert.equal(formatRate(NaN), '');
+    assert.equal(formatRate(null), '');
+  });
+});
+
+describe('formatEta (MM:SS)', () => {
+  test('zero', () => assert.equal(formatEta(0), '00:00'));
+  test('pads single digits', () => assert.equal(formatEta(65), '01:05'));
+  test('rounds fractional seconds', () => assert.equal(formatEta(89.6), '01:30'));
+  test('hours roll into minutes', () => assert.equal(formatEta(3725), '62:05'));
+  test('negative / non-finite / null -> empty', () => {
+    assert.equal(formatEta(-1), '');
+    assert.equal(formatEta(NaN), '');
+    assert.equal(formatEta(Infinity), '');
+    assert.equal(formatEta(null), '');
+  });
+});
+
+describe('updateDownloadRate (EMA speed + ETA)', () => {
+  const MB = 1024 * 1024;
+
+  test('first sample anchors with no rate yet', () => {
+    const r = updateDownloadRate(null, { file: 'a', loaded: 0, total: 10 * MB, now: 0 });
+    assert.equal(r.rate, null);
+    assert.equal(r.eta, null);
+    assert.equal(r.state.file, 'a');
+    assert.equal(r.state.anchorLoaded, 0);
+  });
+
+  test('measures rate once minInterval elapses and computes ETA', () => {
+    let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 10 * MB, now: 0 }).state;
+    // 1 MB over 1000 ms -> 1 MB/s, 9 MB left -> 9 s ETA.
+    const r = updateDownloadRate(s, { file: 'a', loaded: 1 * MB, total: 10 * MB, now: 1000 });
+    assert.equal(r.rate, MB);
+    assert.equal(r.eta, 9);
+  });
+
+  test('holds last rate but reticks ETA between samples (dt < minInterval)', () => {
+    let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 10 * MB, now: 0 }).state;
+    s = updateDownloadRate(s, { file: 'a', loaded: 1 * MB, total: 10 * MB, now: 1000 }).state;
+    // 50 ms later, more bytes but under the 300 ms window: rate unchanged,
+    // ETA recomputed against the new position.
+    const r = updateDownloadRate(s, { file: 'a', loaded: 2 * MB, total: 10 * MB, now: 1050 });
+    assert.equal(r.rate, MB);
+    assert.equal(r.eta, 8);
+    assert.equal(r.state.anchorLoaded, MB); // anchor not advanced
+  });
+
+  test('re-anchors on a new file (no negative delta)', () => {
+    let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 10 * MB, now: 0 }).state;
+    s = updateDownloadRate(s, { file: 'a', loaded: 5 * MB, total: 10 * MB, now: 1000 }).state;
+    const r = updateDownloadRate(s, { file: 'b', loaded: 0, total: 4 * MB, now: 1100 });
+    assert.equal(r.rate, null);
+    assert.equal(r.eta, null);
+    assert.equal(r.state.file, 'b');
+  });
+
+  test('re-anchors when loaded goes backwards (resume/retry)', () => {
+    let s = updateDownloadRate(null, { file: 'a', loaded: 3 * MB, total: 10 * MB, now: 0 }).state;
+    const r = updateDownloadRate(s, { file: 'a', loaded: 1 * MB, total: 10 * MB, now: 1000 });
+    assert.equal(r.rate, null);
+    assert.equal(r.state.anchorLoaded, MB);
+  });
+
+  test('EMA smooths a rate change instead of jumping', () => {
+    let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 100 * MB, now: 0 }).state;
+    // First window: 1 MB/s.
+    let r = updateDownloadRate(s, { file: 'a', loaded: 1 * MB, total: 100 * MB, now: 1000 });
+    assert.equal(r.rate, MB);
+    // Second window: instantaneous 3 MB/s; EMA (alpha 0.3) -> 0.3*3 + 0.7*1 = 1.6 MB/s.
+    r = updateDownloadRate(r.state, { file: 'a', loaded: 4 * MB, total: 100 * MB, now: 2000 });
+    assert.ok(Math.abs(r.rate - 1.6 * MB) < 1);
+  });
+
+  test('no ETA once the file is complete', () => {
+    let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 10 * MB, now: 0 }).state;
+    const r = updateDownloadRate(s, { file: 'a', loaded: 10 * MB, total: 10 * MB, now: 1000 });
+    assert.equal(r.eta, null);
   });
 });
 
