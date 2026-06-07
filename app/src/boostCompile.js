@@ -6,14 +6,14 @@
 // list). This is the single source of truth for both:
 //   - the container-boot prebuild (docker/prebuild-boost.mjs), and
 //   - the operator-run compiler (scripts/compile-boost.mjs, which writes .pwc),
-// so the on-disk format, the vocab-signature pinning and the casing-default can
+// so the on-disk format, the vocab-signature pinning and the augment-default can
 // never drift between them. Reuses the exact browser code paths (parseVocabText
-// + BpeEncoder + parseBoostPhrases + expandCasingVariants + encodePhrases), so
+// + BpeEncoder + parseBoostPhrases + expandAugmentations + encodePhrases), so
 // the ids it emits are byte-for-byte what the UI would have produced.
 //
 // The artifact (the .pwc the operator ships, and the .json the container serves
 // and the browser fetches) is:
-//   { version, vocabSig, caseDefault, encoded, skipped }
+//   { version, vocabSig, augmentDefault, encoded, skipped }
 // The .pwc is written gzip-compressed (writePwc/readPwc) since it is only read
 // back by Node (the boot prebuild + scripts/transcribe.mjs), never fetched by a
 // browser; the served .json stays plain JSON (the browser parses it directly,
@@ -30,23 +30,26 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { parseVocabText } from './tokenizer.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from './bpeEncoder.js';
-import { parseBoostPhrases, expandCasingVariants, encodePhrases } from './phraseBoost.js';
+import { parseBoostPhrases, parseBoostDirectives, expandAugmentations, encodePhrases } from './phraseBoost.js';
 
 /**
- * Casing-default baked into the compiled artifact. The browser leaves casing
- * expansion OFF by default, so compiling at the same default lets it reuse these
- * ids without a re-encode; it falls back to encoding the .txt itself when the
- * user has flipped the global toggle ON (caseDefault mismatch). Per-phrase
- * `:s`/`:i` flags are honoured here regardless, exactly as in the UI.
+ * Augmentation-default baked into the compiled artifact. The browser leaves the
+ * global "Augment" toggle OFF by default (no augmentation), so compiling at the
+ * same default lets it reuse these ids without a re-encode; it falls back to
+ * encoding the .txt itself when the user has flipped the toggle ON
+ * (augmentDefault mismatch). Per-phrase `:AUG` flags are honoured here
+ * regardless, exactly as in the UI.
  */
-export const CASE_DEFAULT = false;
+export const AUGMENT_DEFAULT = '';
 
 /**
  * On-disk artifact format version. Bump when the shape of `encoded` (or any
  * other field a consumer relies on) changes incompatibly, so an old .pwc / .json
  * is rejected by {@link isReusableArtifact} and re-encoded instead of misread.
+ * v2: per-phrase flags switched from casing (`:s`/`:i`) to augmentation
+ * (`:f`/`:a`/`:p`), changing the expanded surface forms an `:i` phrase yields.
  */
-export const BOOST_ARTIFACT_VERSION = 1;
+export const BOOST_ARTIFACT_VERSION = 2;
 
 /**
  * Build the BPE encoder and its vocab signature from a model's vocab.txt plus
@@ -66,22 +69,24 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
 
 /**
  * Compile a boost-phrase .txt blob into the serialized artifact. Runs the exact
- * browser parse -> casing-expand -> encode pipeline, so the token ids match what
- * the UI would produce for the same list and tokenizer.
+ * browser parse -> augment-expand -> encode pipeline, so the token ids match
+ * what the UI would produce for the same list and tokenizer. The list's own
+ * `#!prefixes` directive (if any) drives the `p` augmentation, just like the UI.
  * @param {string} raw The .txt contents.
  * @param {BpeEncoder} encoder Built by {@link loadBoostEncoder}.
  * @param {string} vocabSig The encoder's vocab signature (recorded in the artifact).
  * @param {Object} [opts]
- * @param {boolean} [opts.caseDefault=CASE_DEFAULT] Casing default the expansion is baked at.
- * @returns {{ artifact: {version:number, vocabSig:string, caseDefault:boolean, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number }}
+ * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] Augmentation default the expansion is baked at.
+ * @returns {{ artifact: {version:number, vocabSig:string, augmentDefault:string, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number }}
  */
 export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
-  const caseDefault = opts.caseDefault ?? CASE_DEFAULT;
+  const augmentDefault = opts.augmentDefault ?? AUGMENT_DEFAULT;
+  const { prefixes } = parseBoostDirectives(raw);
   const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
-  const entries = expandCasingVariants(parsed, caseDefault);
+  const entries = expandAugmentations(parsed, augmentDefault, prefixes);
   const { encoded, skipped } = encodePhrases(entries, encoder);
   return {
-    artifact: { version: BOOST_ARTIFACT_VERSION, vocabSig, caseDefault, encoded, skipped },
+    artifact: { version: BOOST_ARTIFACT_VERSION, vocabSig, augmentDefault, encoded, skipped },
     parsedCount: parsed.length,
     expandedCount: entries.length,
   };
@@ -122,9 +127,9 @@ export function readPwc(path) {
  * format version is current, the vocab signature matches, and `encoded` is an
  * array. This is the minimum needed before trusting the pre-encoded ids (a
  * mismatch means the ids index a different vocab and would be meaningless).
- * Casing is NOT considered here, since a consumer that reuses the ids as-is
- * (e.g. scripts/transcribe.mjs) accepts whatever casing expansion the artifact
- * was baked at; the browser-toggle reuse adds that check via
+ * Augmentation is NOT considered here, since a consumer that reuses the ids
+ * as-is (e.g. scripts/transcribe.mjs) accepts whatever augmentation expansion
+ * the artifact was baked at; the browser-toggle reuse adds that check via
  * {@link isReusableArtifact}.
  * @param {any} artifact Parsed .pwc / .json object.
  * @param {string} vocabSig Signature of the currently loaded vocab.
@@ -138,17 +143,17 @@ export function artifactMatchesVocab(artifact, vocabSig) {
 }
 
 /**
- * Whether a parsed artifact can be reused as-is for the given vocab + casing
- * default, letting the boot prebuild skip the encode. Builds on
- * {@link artifactMatchesVocab} and additionally requires the casing default to
- * match, since the browser only reuses the ids when its global casing toggle
- * still agrees with how the artifact was expanded.
+ * Whether a parsed artifact can be reused as-is for the given vocab +
+ * augmentation default, letting the boot prebuild skip the encode. Builds on
+ * {@link artifactMatchesVocab} and additionally requires the augmentation
+ * default to match, since the browser only reuses the ids when its global
+ * "Augment" toggle still agrees with how the artifact was expanded.
  * @param {any} artifact Parsed .pwc / .json object.
  * @param {string} vocabSig Signature of the currently loaded vocab.
- * @param {boolean} [caseDefault=CASE_DEFAULT]
+ * @param {string} [augmentDefault=AUGMENT_DEFAULT]
  * @returns {boolean}
  */
-export function isReusableArtifact(artifact, vocabSig, caseDefault = CASE_DEFAULT) {
+export function isReusableArtifact(artifact, vocabSig, augmentDefault = AUGMENT_DEFAULT) {
   return artifactMatchesVocab(artifact, vocabSig)
-    && (artifact.caseDefault === true) === (caseDefault === true);
+    && (artifact.augmentDefault ?? '') === augmentDefault;
 }

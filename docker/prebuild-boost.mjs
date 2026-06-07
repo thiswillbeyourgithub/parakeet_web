@@ -33,7 +33,7 @@ import {
   compileBoostText,
   isReusableArtifact,
   readPwc,
-  CASE_DEFAULT,
+  AUGMENT_DEFAULT,
 } from '../app/src/boostCompile.js';
 
 const [boostDir, vocabPath, mergesPath] = process.argv.slice(2);
@@ -88,7 +88,7 @@ for (const file of txtFiles) {
     } catch (e) {
       console.log(`[prebuild-boost] ${name}.pwc is unparseable (${e.message}); re-encoding ${file}.`);
     }
-    if (artifact && isReusableArtifact(artifact, vocabSig, CASE_DEFAULT)) {
+    if (artifact && isReusableArtifact(artifact, vocabSig, AUGMENT_DEFAULT)) {
       writeFileSync(outPath, JSON.stringify(artifact));
       console.log(
         `[prebuild-boost] ${file}: reused precompiled ${name}.pwc `

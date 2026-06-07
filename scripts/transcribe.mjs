@@ -33,7 +33,7 @@ import { ParakeetModel } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostFields, expandCasingVariants, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostFields, expandAugmentations, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
@@ -287,29 +287,29 @@ export function expandBoostSpec(spec) {
   return spec;
 }
 
-// Supports the same `phrase:WEIGHT:TOPK:FLAG` suffixes as the web app, reusing
-// parseBoostFields so the field-splitting (and the `:s`/`:i` case flag) stays
-// identical. The deliberate differences: this CLI also accepts comma separators
-// and does NOT clamp the weight, so negative / >10 values can be probed here
-// (the web app clamps to a nonzero [-10, 10]). top-k must still be a positive
-// integer for the trie's gate, so it is validated. Returns the phrases AS TYPED
-// (one entry per line, `:i` flag preserved but not yet applied); the caller runs
-// expandCasingVariants to turn each `:i` phrase into its casing branches for the
-// trie, while keeping these typed phrases for display.
+// Supports the same `phrase:WEIGHT:TOPK:AUG` suffixes as the web app, reusing
+// parseBoostFields so the field-splitting (and the `:AUG` augmentation flag)
+// stays identical. The deliberate differences: this CLI also accepts comma
+// separators and does NOT clamp the weight, so negative / >10 values can be
+// probed here (the web app clamps to a nonzero [-10, 10]). top-k must still be a
+// positive integer for the trie's gate, so it is validated. Returns the phrases
+// AS TYPED (one entry per line, `:AUG` flag preserved but not yet applied); the
+// caller runs expandAugmentations to turn each flagged phrase into its surface
+// branches for the trie, while keeping these typed phrases for display.
 export function parseCliBoosts(specs) {
   const entries = [];
   for (const spec of specs.map(expandBoostSpec)) {
     for (const part of spec.split(/[,\n]/)) {
       const t = part.trim();
       if (!t) continue;
-      let { phrase, weight, topk, caseInsensitive } = parseBoostFields(t);
+      let { phrase, weight, topk, augment } = parseBoostFields(t);
       if (!Number.isInteger(topk) || topk < 1) {
         console.error(`[transcribe] warning: top-k ${topk} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK} for "${phrase}"`);
         topk = DEFAULT_BOOST_TOPK;
       }
       if (phrase) {
         const entry = { phrase, weight, topk };
-        if (caseInsensitive !== undefined) entry.caseInsensitive = caseInsensitive;
+        if (augment !== undefined) entry.augment = augment;
         entries.push(entry);
       }
     }
@@ -511,10 +511,11 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
   const pwcSpecs = boosts.filter(isPwcPath);
   const textSpecs = boosts.filter((s) => !isPwcPath(s));
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
-  // the casing-expanded set actually inserted into the trie (an `:i` phrase
-  // becomes its lower/UPPER/Title branches). CLI default is case-sensitive.
+  // the augmentation-expanded set actually inserted into the trie (a `:fap`
+  // phrase becomes its Title/UPPER/prefixed branches). CLI default is no
+  // augmentation; per-phrase `:AUG` flags use the default prefix set.
   const typedBoosts = parseCliBoosts(textSpecs);
-  const entries = expandCasingVariants(typedBoosts, false);
+  const entries = expandAugmentations(typedBoosts, '');
   if (!entries.length && !pwcSpecs.length) return null;
 
   // The encoder is only needed to encode text/inline phrases; when every spec
