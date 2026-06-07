@@ -32,7 +32,6 @@ import {
   loadBoostEncoder,
   compileBoostText,
   isReusableArtifact,
-  effectiveAugmentDefault,
   readPwc,
   AUGMENT_DEFAULT,
 } from '../app/src/boostCompile.js';
@@ -79,16 +78,11 @@ for (const file of txtFiles) {
   const outPath = join(boostDir, `${name}.json`);
   const pwcPath = join(boostDir, `${name}.pwc`);
 
-  const raw = readFileSync(join(boostDir, file), 'utf-8');
-  // The list's own `#!augment` directive (if any) sets the augmentation it must
-  // be expanded at, so the reuse check below compares the .pwc against the same
-  // default that compileBoostText would bake; otherwise a directive list would
-  // never match its own .pwc and re-encode every boot.
-  const wantAugment = effectiveAugmentDefault(raw, AUGMENT_DEFAULT);
-
   // Reuse a sibling precompiled .pwc when it matches this model's vocab, so the
   // operator who ran scripts/compile-boost.mjs ahead of time skips the encode
   // entirely at boot. Any mismatch falls through to encoding the .txt below.
+  // The server prebuild compiles at the default toggle (AUGMENT_DEFAULT); a
+  // list's `*` defaults line lives in the .txt, so it needs no extra input here.
   if (existsSync(pwcPath)) {
     let artifact = null;
     try {
@@ -96,7 +90,7 @@ for (const file of txtFiles) {
     } catch (e) {
       console.log(`[prebuild-boost] ${name}.pwc is unparseable (${e.message}); re-encoding ${file}.`);
     }
-    if (artifact && isReusableArtifact(artifact, vocabSig, wantAugment)) {
+    if (artifact && isReusableArtifact(artifact, vocabSig, AUGMENT_DEFAULT)) {
       writeFileSync(outPath, JSON.stringify(artifact));
       console.log(
         `[prebuild-boost] ${file}: reused precompiled ${name}.pwc `
@@ -110,6 +104,7 @@ for (const file of txtFiles) {
     }
   }
 
+  const raw = readFileSync(join(boostDir, file), 'utf-8');
   const t0 = Date.now();
   const { artifact, parsedCount, expandedCount } = compileBoostText(raw, encoder, vocabSig);
   const ms = Date.now() - t0;

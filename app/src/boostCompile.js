@@ -33,30 +33,15 @@ import { BpeEncoder, buildVocabToId, vocabSignature } from './bpeEncoder.js';
 import { parseBoostPhrases, parseBoostDirectives, expandAugmentations, encodePhrases } from './phraseBoost.js';
 
 /**
- * Augmentation-default baked into the compiled artifact. The browser leaves the
- * global "Augment" toggle OFF by default (no augmentation), so compiling at the
- * same default lets it reuse these ids without a re-encode; it falls back to
- * encoding the .txt itself when the user has flipped the toggle ON
- * (augmentDefault mismatch). Per-phrase `:AUG` flags are honoured here
- * regardless, exactly as in the UI. A list's own `#!augment FLAGS` directive
- * overrides this fallback for that list (see {@link effectiveAugmentDefault}).
+ * Augmentation-default baked into the compiled artifact: the value of the
+ * browser's global "Augment" toggle the list was compiled at (OFF / no
+ * augmentation by default). Compiling at the same default lets the browser reuse
+ * these ids without a re-encode; it falls back to encoding the .txt itself when
+ * the user has flipped the toggle ON (augmentDefault mismatch). Per-phrase `:AUG`
+ * flags and a list's own `*` defaults line are baked in regardless (they live in
+ * the .txt), exactly as in the UI.
  */
 export const AUGMENT_DEFAULT = '';
-
-/**
- * The augmentation default a list is actually expanded at: its `#!augment`
- * directive when present, else `fallback` (the UI toggle's value, or
- * {@link AUGMENT_DEFAULT}). Single source of truth so {@link compileBoostText}
- * (what gets baked) and the prebuild's {@link isReusableArtifact} reuse check
- * (what it compares against) cannot disagree, which would otherwise re-encode a
- * directive list on every boot. The browser mirrors this in App.jsx.
- * @param {string} raw The .txt contents.
- * @param {string} [fallback=AUGMENT_DEFAULT] Default when the list has no `#!augment`.
- * @returns {string}
- */
-export function effectiveAugmentDefault(raw, fallback = AUGMENT_DEFAULT) {
-  return parseBoostDirectives(raw).augment ?? fallback;
-}
 
 /**
  * On-disk artifact format version. Bump when the shape of `encoded` (or any
@@ -65,9 +50,12 @@ export function effectiveAugmentDefault(raw, fallback = AUGMENT_DEFAULT) {
  * v2: per-phrase flags switched from casing (`:s`/`:i`) to augmentation
  * (`:f`/`:a`/`:p`), changing the expanded surface forms an `:i` phrase yields.
  * v3: added the `h` (strip-symbols) flag and folded it into the full set, so
- * `:i` / `#!augment i` now also yield symbol-stripped variants (`fap` -> `faph`).
+ * `:i` now also yields symbol-stripped variants (`fap` -> `faph`).
+ * v4: a `*:WEIGHT:TOPK:AUG` line is now a list-level defaults directive (it was
+ * parsed as a boost phrase before), and the `#!strength`/`#!augment` directives
+ * were removed; a list with a `*` line expands differently than under v3.
  */
-export const BOOST_ARTIFACT_VERSION = 3;
+export const BOOST_ARTIFACT_VERSION = 4;
 
 /**
  * Build the BPE encoder and its vocab signature from a model's vocab.txt plus
@@ -89,18 +77,19 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
  * Compile a boost-phrase .txt blob into the serialized artifact. Runs the exact
  * browser parse -> augment-expand -> encode pipeline, so the token ids match
  * what the UI would produce for the same list and tokenizer. The list's own
- * `#!prefixes` directive (if any) drives the `p` augmentation and its `#!augment`
- * directive (if any) overrides `opts.augmentDefault`, just like the UI.
+ * `#!prefixes` directive (if any) drives the `p` augmentation, and its `*`
+ * defaults line(s) set per-phrase weight / top-k / augmentation, just like the
+ * UI. Only the global "Augment" toggle is an external input (`opts.augmentDefault`).
  * @param {string} raw The .txt contents.
  * @param {BpeEncoder} encoder Built by {@link loadBoostEncoder}.
  * @param {string} vocabSig The encoder's vocab signature (recorded in the artifact).
  * @param {Object} [opts]
- * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] Augmentation default the expansion is baked at (a list's `#!augment` directive overrides it).
+ * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] The global "Augment" toggle value the expansion is baked at (a phrase's `:AUG` field or a `*` defaults line overrides it).
  * @returns {{ artifact: {version:number, vocabSig:string, augmentDefault:string, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number }}
  */
 export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
   const { prefixes } = parseBoostDirectives(raw);
-  const augmentDefault = effectiveAugmentDefault(raw, opts.augmentDefault ?? AUGMENT_DEFAULT);
+  const augmentDefault = opts.augmentDefault ?? AUGMENT_DEFAULT;
   const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
   const entries = expandAugmentations(parsed, augmentDefault, prefixes);
   const { encoded, skipped } = encodePhrases(entries, encoder);

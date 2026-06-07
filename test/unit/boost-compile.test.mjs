@@ -11,7 +11,7 @@ import { writeFileSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writePwc, readPwc, compileBoostText, effectiveAugmentDefault, isReusableArtifact, BOOST_ARTIFACT_VERSION } from '../../app/src/boostCompile.js';
+import { writePwc, readPwc, compileBoostText, isReusableArtifact, BOOST_ARTIFACT_VERSION } from '../../app/src/boostCompile.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from '../../app/src/bpeEncoder.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -96,28 +96,24 @@ describe('compileBoostText filters untokenizable phrases', () => {
 // A list's own `#!augment` directive sets the augmentation it is compiled at,
 // overriding the opts default, and the reuse check must compare against that
 // same effective value (else a directive list re-encodes on every boot).
-describe('compileBoostText honours the #!augment directive', () => {
+describe('compileBoostText honours a * defaults line', () => {
   const fixture = loadCachedFixture();
   const encoder = new BpeEncoder(loadMergesAsset(), buildVocabToId(fixture.id2token));
   const vocabSig = vocabSignature(fixture.id2token);
 
-  test('effectiveAugmentDefault reads the directive over the fallback', () => {
-    assert.equal(effectiveAugmentDefault('#!augment fa\nvenlafaxine', ''), 'fa');
-    assert.equal(effectiveAugmentDefault('venlafaxine', 'faph'), 'faph');
-    assert.equal(effectiveAugmentDefault('#!augment s\nvenlafaxine', 'faph'), '');
-  });
-
-  test('directive bakes its augmentDefault into the artifact (over opts)', () => {
-    const { artifact } = compileBoostText('#!augment fa\nvenlafaxine', encoder, vocabSig, { augmentDefault: '' });
-    assert.equal(artifact.augmentDefault, 'fa');
+  test('a *:::AUG line augments the phrases that follow it', () => {
+    const { artifact } = compileBoostText('*:::fa\nvenlafaxine', encoder, vocabSig);
     // venlafaxine + Venlafaxine + VENLAFAXINE expand under fa.
     assert.equal(artifact.encoded.length, 3);
   });
 
-  test('a directive artifact is reusable only at its own effective default', () => {
-    const raw = '#!augment fa\nvenlafaxine';
-    const { artifact } = compileBoostText(raw, encoder, vocabSig);
-    assert.ok(isReusableArtifact(artifact, vocabSig, effectiveAugmentDefault(raw, '')));
-    assert.ok(!isReusableArtifact(artifact, vocabSig, '')); // the bare opts default would re-encode
+  test('the artifact records the global augmentDefault, not the * line', () => {
+    // The * line lives in the text and is baked straight into `encoded`; the
+    // artifact's augmentDefault field reflects only the external opts default,
+    // so the browser reuse check (isReusableArtifact) keys on the global toggle
+    // and never on a list's own per-phrase defaults.
+    const { artifact } = compileBoostText('*:::fa\nvenlafaxine', encoder, vocabSig, { augmentDefault: '' });
+    assert.equal(artifact.augmentDefault, '');
+    assert.ok(isReusableArtifact(artifact, vocabSig, ''));
   });
 });
