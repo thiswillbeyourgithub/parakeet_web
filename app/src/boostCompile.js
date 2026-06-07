@@ -38,9 +38,25 @@ import { parseBoostPhrases, parseBoostDirectives, expandAugmentations, encodePhr
  * same default lets it reuse these ids without a re-encode; it falls back to
  * encoding the .txt itself when the user has flipped the toggle ON
  * (augmentDefault mismatch). Per-phrase `:AUG` flags are honoured here
- * regardless, exactly as in the UI.
+ * regardless, exactly as in the UI. A list's own `#!augment FLAGS` directive
+ * overrides this fallback for that list (see {@link effectiveAugmentDefault}).
  */
 export const AUGMENT_DEFAULT = '';
+
+/**
+ * The augmentation default a list is actually expanded at: its `#!augment`
+ * directive when present, else `fallback` (the UI toggle's value, or
+ * {@link AUGMENT_DEFAULT}). Single source of truth so {@link compileBoostText}
+ * (what gets baked) and the prebuild's {@link isReusableArtifact} reuse check
+ * (what it compares against) cannot disagree, which would otherwise re-encode a
+ * directive list on every boot. The browser mirrors this in App.jsx.
+ * @param {string} raw The .txt contents.
+ * @param {string} [fallback=AUGMENT_DEFAULT] Default when the list has no `#!augment`.
+ * @returns {string}
+ */
+export function effectiveAugmentDefault(raw, fallback = AUGMENT_DEFAULT) {
+  return parseBoostDirectives(raw).augment ?? fallback;
+}
 
 /**
  * On-disk artifact format version. Bump when the shape of `encoded` (or any
@@ -48,8 +64,10 @@ export const AUGMENT_DEFAULT = '';
  * is rejected by {@link isReusableArtifact} and re-encoded instead of misread.
  * v2: per-phrase flags switched from casing (`:s`/`:i`) to augmentation
  * (`:f`/`:a`/`:p`), changing the expanded surface forms an `:i` phrase yields.
+ * v3: added the `h` (strip-symbols) flag and folded it into the full set, so
+ * `:i` / `#!augment i` now also yield symbol-stripped variants (`fap` -> `faph`).
  */
-export const BOOST_ARTIFACT_VERSION = 2;
+export const BOOST_ARTIFACT_VERSION = 3;
 
 /**
  * Build the BPE encoder and its vocab signature from a model's vocab.txt plus
@@ -71,17 +89,18 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
  * Compile a boost-phrase .txt blob into the serialized artifact. Runs the exact
  * browser parse -> augment-expand -> encode pipeline, so the token ids match
  * what the UI would produce for the same list and tokenizer. The list's own
- * `#!prefixes` directive (if any) drives the `p` augmentation, just like the UI.
+ * `#!prefixes` directive (if any) drives the `p` augmentation and its `#!augment`
+ * directive (if any) overrides `opts.augmentDefault`, just like the UI.
  * @param {string} raw The .txt contents.
  * @param {BpeEncoder} encoder Built by {@link loadBoostEncoder}.
  * @param {string} vocabSig The encoder's vocab signature (recorded in the artifact).
  * @param {Object} [opts]
- * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] Augmentation default the expansion is baked at.
+ * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] Augmentation default the expansion is baked at (a list's `#!augment` directive overrides it).
  * @returns {{ artifact: {version:number, vocabSig:string, augmentDefault:string, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number }}
  */
 export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
-  const augmentDefault = opts.augmentDefault ?? AUGMENT_DEFAULT;
   const { prefixes } = parseBoostDirectives(raw);
+  const augmentDefault = effectiveAugmentDefault(raw, opts.augmentDefault ?? AUGMENT_DEFAULT);
   const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
   const entries = expandAugmentations(parsed, augmentDefault, prefixes);
   const { encoded, skipped } = encodePhrases(entries, encoder);
