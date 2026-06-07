@@ -229,8 +229,8 @@ Options:
                            Defaults to the HuggingFace cache for the model.
       --quant int8|fp16|fp32
                            Encoder/decoder quantisation. Default int8. fp16 files
-                           come from scripts/quantize-fp16.py (~1.2 GB encoder,
-                           near-lossless vs fp32).
+                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py
+                           (~1.2 GB encoder, near-lossless vs fp32).
       --ort wasm|node      ORT backend. Default wasm (onnxruntime-web, the engine
                            the browser/e2e use). node = native onnxruntime-node
                            (64-bit memory), required to load fp16/fp32 encoders
@@ -342,7 +342,7 @@ export function resolveModelDir(cliDir, repoId) {
   return snap;
 }
 
-// Per-quant filename suffix. fp16 files are produced by scripts/quantize-fp16.py
+// Per-quant filename suffix. fp16 files are produced by parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py
 // from the fp32 pieces; fp32 is the plain name (with an external .onnx.data for
 // the encoder); int8 is the onnxruntime-quantized variant shipped on HF.
 const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
