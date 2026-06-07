@@ -513,10 +513,10 @@ export default function App() {
   const [modelLoadError, setModelLoadError] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~600 MB, fast,
-  // but drops content past ~20 s per chunk) or 'fp32' (sharded ~2.4 GB, full
-  // quality, no long-chunk loss). Opt-in: only honoured when the repo actually
-  // ships the fp32 shards, else hub.js falls back to int8 (resolveModelQuant).
-  // Ignored on WebGPU, which has its own fp16/fp32 selection.
+  // good quality on long audio with the SmoothQuant encoder) or 'fp32' (sharded
+  // ~2.4 GB, full quality, ~2x slower). fp32 is opt-in: only honoured when the
+  // repo actually ships the fp32 shards, else hub.js falls back to int8
+  // (resolveModelQuant). Ignored on WebGPU, which has its own fp16/fp32 selection.
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
   // Encoder precision for the WebGPU backend: 'fp16' (default; ~1.2 GB,
   // near-lossless, fast) or 'fp32' (~2.4 GB, full quality, ~2x slower). int8 is
@@ -1989,13 +1989,12 @@ export default function App() {
       // final quant against what the repo actually ships (resolveModelQuant):
       //   - WASM: int8 encoder (~600 MB), the only one that fits the 32-bit WASM
       //     heap / Chromium's ~2 GB blob limit.
-      //   - WebGPU: prefer the fp16 encoder (~1.2 GB, near-lossless vs fp32 and,
-      //     unlike int8, no content loss past ~20 s per chunk) when the repo
-      //     ships encoder-model.fp16.onnx, else fp32 (~2.4 GB). The GPU EP has
-      //     no int8 encoder kernel.
+      //   - WebGPU: prefer the fp16 encoder (~1.2 GB, near-lossless vs fp32 and
+      //     lighter to serve) when the repo ships encoder-model.fp16.onnx, else
+      //     fp32 (~2.4 GB). The GPU EP has no int8 encoder kernel.
       const wantWebgpu = backend.startsWith('webgpu');
-      // On WASM the user may opt into the sharded fp32 encoder (full quality, no
-      // >20 s chunk loss); hub.js only honours it when the repo ships the shards
+      // On WASM the user may opt into the sharded fp32 encoder (full quality);
+      // hub.js only honours it when the repo ships the shards
       // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
       // stays int8 on WASM regardless (tiny, runs fine).
       const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';

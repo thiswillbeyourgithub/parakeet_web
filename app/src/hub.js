@@ -935,8 +935,8 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.on
  *     Without all three the int8 pin stands.
  *   - WebGPU: the GPU EP has no int8 encoder kernel, so it needs fp16 or fp32.
  *     Prefer fp16 when the repo ships encoder-model.fp16.onnx (near-lossless vs
- *     fp32, ~half the download, and unlike int8 it does not drop content past
- *     ~20 s per chunk), else fall back to fp32. An explicit fp32 request is
+ *     fp32, ~half the download, and lighter to serve), else fall back to fp32.
+ *     An explicit fp32 request is
  *     honoured. The tiny decoder follows to fp16 only when fp16 was requested
  *     and decoder_joint-model.fp16.onnx exists, otherwise stays int8 (which the
  *     GPU EP runs fine).

@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-// WER bench for comparing encoder quantisations at different chunk windows,
-// built to answer one question: does fp16 hold up on a long (>20 s) chunk where
-// the int8 encoder silently drops content?
+// WER bench for comparing encoder quantisations at different chunk windows. It
+// was built to answer one question: does fp16 hold up on a long (>20 s) chunk
+// where the STOCK int8 encoder silently dropped content? (The SmoothQuant int8
+// this app now ships no longer shows that drop; this bench still lets you A/B any
+// encoder across chunk windows.)
 //
-// Background: the int8 encoder loses long-range information past
-// ~INT8_SAFE_CHUNK_DURATION_SEC within a single chunk, so the web app caps the
-// int8/WASM default chunk window there. fp32 does not have this problem. fp16 is
-// the candidate middle ground (~1.2 GB, near-lossless), but it cannot load on
-// the WASM backend (the CPU/WASM EP upcasts fp16->fp32 and overflows the 32-bit
+// fp16 is the candidate middle ground (~1.2 GB, near-lossless), but it cannot load
+// on the WASM backend (the CPU/WASM EP upcasts fp16->fp32 and overflows the 32-bit
 // heap), so this bench runs on the NATIVE onnxruntime-node backend (--ort node),
 // which loads fp16/fp32 fine and is a faithful proxy for fp16 *quality*.
 //
@@ -46,8 +45,8 @@ function parseArgs(argv) {
     modelDir: resolve(ROOT, 'fallback_models'),
     ortBackend: 'node',
     overlap: 2,
-    // (quant, chunkDurationSec). The default matrix isolates the >20 s effect:
-    // int8 at its safe window vs int8/fp16/fp32 at a 60 s window.
+    // (quant, chunkDurationSec). The default matrix sweeps chunk windows per
+    // quant: int8 at 20 s and 60 s vs fp16/fp32 at a 60 s window.
     configs: [
       ['int8', 20], ['int8', 60], ['fp16', 60], ['fp32', 60],
     ],

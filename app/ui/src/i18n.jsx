@@ -84,7 +84,7 @@ const translations = {
     backend: 'Backend',
     wasmCpu: 'WASM (CPU)',
     encoderPrecision: 'Encoder precision',
-    precisionInt8: 'int8 (okay but 20s max, ~600MB, fast)',
+    precisionInt8: 'int8 (good quality, ~600MB, fast)',
     precisionFp16: 'fp16 (good quality, ~1.2GB, fast)',
     precisionFp32: 'fp32 (good quality, ~2.4GB, 2x slower)',
     precisionUnavailableWasm: '(unavailable on WASM)',
@@ -143,7 +143,7 @@ const translations = {
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
-    tooltipEncoderPrecision: 'int8 (WASM only): small and fast but drops content past ~20 s per chunk. fp16 (WebGPU only): near-lossless, ~1.2 GB, fast. fp32: good quality on either backend with no long-chunk loss, but ~2.4 GB (shipped as <2GB shards) and ~2x slower. Each applies only if the model repo provides it, otherwise it falls back.',
+    tooltipEncoderPrecision: 'int8 (WASM only): small, fast, and (with the SmoothQuant encoder) good quality on long audio. fp16 (WebGPU only): near-lossless, ~1.2 GB, fast. fp32: good quality on either backend, but ~2.4 GB (shipped as <2GB shards) and ~2x slower. Each applies only if the model repo provides it, otherwise it falls back.',
     tooltipFrameStride: 'Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed. Default: 1.',
     tooltipBeamWidth: 'Beam search width. 1 = greedy (default, fastest). Above 1 runs MAES (Modified Adaptive Expansion Search): this is the global beam cap, but the effective width adapts per token (see the gamma setting), so confident tokens stay near-greedy speed and only ambiguous ones widen the search. Higher values let phrase boosting recover words greedy would discard. Applies to file transcription only (live transcription always uses width 1). Default: 1.',
     tooltipMaesNumSteps: 'MAES: maximum number of tokens emitted per audio frame before the decoder is forced to advance in time. Only used when Beam Width is above 1. Default: 3.',
@@ -151,7 +151,7 @@ const translations = {
     tooltipMaesExpansionGamma: 'MAES: adaptive pruning threshold (in log-probability). Token expansions more than this far below the best candidate are discarded. Smaller = more aggressive pruning and faster decoding; larger = wider, more thorough search. This is what makes the beam width adapt per token. Only used when Beam Width is above 1. Default: 4.0.',
     tooltipMaesPrefixAlpha: 'MAES: prefix-search recombination. When a shorter hypothesis is a prefix of a longer one (within this many tokens) on the same audio frame, the longer one absorbs the prefix\'s continuation probability, so shared prefixes are not double-counted. 0 disables it. Only used when Beam Width is above 1. Default: 1.',
     tooltipCpuThreads: 'Number of CPU threads to use for processing. More threads = faster, but limited by your CPU cores. Recommended: leave 1-2 cores free for the browser. Default: hardware cores minus 2.',
-    tooltipChunking: 'Split audio longer than the chunk duration into overlapping segments before transcribing. Disable to send the full audio to the model in one pass (may use more memory but avoids chunk boundary issues). Default: enabled; chunk duration 20 s on the WASM backend (the int8 encoder drops content past ~20 s per chunk) and 60 s on WebGPU.',
+    tooltipChunking: 'Split audio longer than the chunk duration into overlapping segments before transcribing. Disable to send the full audio to the model in one pass (may use more memory but avoids chunk boundary issues). Default: enabled, 60 s chunks.',
     tooltipHeatmap: 'Highlights words with color-coded backgrounds based on transcription confidence. Red = low confidence, yellow = medium, green = high. Default: off.',
     tooltipDisplayMode: 'Choose how transcriptions are displayed by default. Raw = unmodified text. Confidence = word-level confidence heatmap. Dictation = text cleaned with regex rules (punctuation, medical vocab, etc.). Default: Raw.',
     tooltipAutoCopy: 'Automatically copies text to clipboard after transcription. Copies the dictation-cleaned transcript when display mode is set to Dictation (and rules are loaded), otherwise copies raw text. Default: on.',
@@ -397,7 +397,7 @@ const translations = {
     backend: 'Moteur',
     wasmCpu: 'WASM (CPU)',
     encoderPrecision: "Précision de l'encodeur",
-    precisionInt8: 'int8 (correct mais 20s max, ~600 Mo, rapide)',
+    precisionInt8: 'int8 (bonne qualité, ~600 Mo, rapide)',
     precisionFp16: 'fp16 (bonne qualité, ~1,2 Go, rapide)',
     precisionFp32: 'fp32 (bonne qualité, ~2,4 Go, 2x plus lent)',
     precisionUnavailableWasm: '(indisponible sur WASM)',
@@ -456,7 +456,7 @@ const translations = {
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
-    tooltipEncoderPrecision: "int8 (WASM uniquement)\u00a0: petit et rapide, mais perd du contenu au-del\u00e0 de ~20\u00a0s par segment. fp16 (WebGPU uniquement)\u00a0: quasi sans perte, ~1,2\u00a0Go, rapide. fp32\u00a0: bonne qualit\u00e9 sur les deux backends sans perte sur les longs segments, mais ~2,4\u00a0Go (livr\u00e9 en fragments de moins de 2\u00a0Go) et ~2x plus lent. Chaque option ne s'applique que si le d\u00e9p\u00f4t du mod\u00e8le la fournit\u00a0; sinon elle bascule sur une autre.",
+    tooltipEncoderPrecision: "int8 (WASM uniquement)\u00a0: petit, rapide, et (avec l'encodeur SmoothQuant) de bonne qualit\u00e9 sur les longs audios. fp16 (WebGPU uniquement)\u00a0: quasi sans perte, ~1,2\u00a0Go, rapide. fp32\u00a0: bonne qualit\u00e9 sur les deux backends, mais ~2,4\u00a0Go (livr\u00e9 en fragments de moins de 2\u00a0Go) et ~2x plus lent. Chaque option ne s'applique que si le d\u00e9p\u00f4t du mod\u00e8le la fournit\u00a0; sinon elle bascule sur une autre.",
     tooltipFrameStride: "Nombre de trames \u00e0 sauter pendant le d\u00e9codage. Des valeurs plus \u00e9lev\u00e9es sont plus rapides mais peuvent r\u00e9duire la pr\u00e9cision. Recommand\u00e9\u00a0: 1-2 pour la qualit\u00e9, 3-4 pour la vitesse. Défaut : 1.",
     tooltipBeamWidth: "Largeur de la recherche en faisceau. 1 = glouton (par défaut, le plus rapide). Au-dessus de 1, utilise MAES (recherche par expansion adaptative modifiée) : c'est le plafond global du faisceau, mais la largeur effective s'adapte à chaque jeton (voir le réglage gamma), de sorte que les jetons sûrs restent proches de la vitesse gloutonne et que seuls les jetons ambigus élargissent la recherche. Des valeurs plus élevées permettent au renforcement de phrases de récupérer des mots que le mode glouton écarterait. S'applique uniquement à la transcription de fichiers (la transcription en direct utilise toujours une largeur de 1). Défaut : 1.",
     tooltipMaesNumSteps: "MAES : nombre maximal de jetons \u00e9mis par trame audio avant que le d\u00e9codeur ne soit forc\u00e9 d'avancer dans le temps. Utilis\u00e9 uniquement lorsque la largeur de faisceau est sup\u00e9rieure \u00e0 1. D\u00e9faut : 3.",
@@ -464,7 +464,7 @@ const translations = {
     tooltipMaesExpansionGamma: "MAES : seuil d'\u00e9lagage adaptatif (en log-probabilit\u00e9). Les expansions de jetons situ\u00e9es au-del\u00e0 de cet \u00e9cart sous le meilleur candidat sont \u00e9cart\u00e9es. Plus petit = \u00e9lagage plus agressif et d\u00e9codage plus rapide ; plus grand = recherche plus large et approfondie. C'est ce qui fait que la largeur de faisceau s'adapte \u00e0 chaque jeton. Utilis\u00e9 uniquement lorsque la largeur de faisceau est sup\u00e9rieure \u00e0 1. D\u00e9faut : 4.0.",
     tooltipMaesPrefixAlpha: "MAES : recombinaison par recherche de pr\u00e9fixe. Lorsqu'une hypoth\u00e8se plus courte est un pr\u00e9fixe d'une plus longue (\u00e0 concurrence de ce nombre de jetons) sur la m\u00eame trame audio, la plus longue absorbe la probabilit\u00e9 de continuation du pr\u00e9fixe, \u00e9vitant ainsi de compter deux fois les pr\u00e9fixes partag\u00e9s. 0 la d\u00e9sactive. Utilis\u00e9 uniquement lorsque la largeur de faisceau est sup\u00e9rieure \u00e0 1. D\u00e9faut : 1.",
     tooltipCpuThreads: "Nombre de threads CPU \u00e0 utiliser. Plus de threads = plus rapide, mais limit\u00e9 par vos c\u0153urs CPU. Recommand\u00e9\u00a0: laisser 1-2 c\u0153urs libres pour le navigateur. Défaut : nombre de cœurs matériels moins 2.",
-    tooltipChunking: "D\u00e9coupe l'audio plus long que la dur\u00e9e du segment en morceaux chevauchants avant la transcription. D\u00e9sactivez pour envoyer l'audio complet au mod\u00e8le en une passe. D\u00e9faut : activ\u00e9 ; segment de 20 s sur le backend WASM (l'encodeur int8 perd le contenu au-del\u00e0 d'environ 20 s par segment) et de 60 s sur WebGPU.",
+    tooltipChunking: "D\u00e9coupe l'audio plus long que la dur\u00e9e du segment en morceaux chevauchants avant la transcription. D\u00e9sactivez pour envoyer l'audio complet au mod\u00e8le en une passe. D\u00e9faut : activ\u00e9, segments de 60 s.",
     tooltipHeatmap: 'Colore les mots selon la confiance de la transcription. Rouge = faible confiance, jaune = moyen, vert = \u00e9lev\u00e9. D\u00e9faut : d\u00e9sactiv\u00e9.',
     tooltipDisplayMode: "Choisissez l'affichage par d\u00e9faut. Brut = texte non modifi\u00e9. Confiance = carte de confiance par mot. Dict\u00e9e = texte nettoy\u00e9 par r\u00e8gles regex. D\u00e9faut : Brut.",
     tooltipAutoCopy: "Copie automatiquement le texte dans le presse-papiers apr\u00e8s la transcription. Copie le texte nettoy\u00e9 en mode Dict\u00e9e si les r\u00e8gles sont charg\u00e9es. D\u00e9faut : activ\u00e9.",

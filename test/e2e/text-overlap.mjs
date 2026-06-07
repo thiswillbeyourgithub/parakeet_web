@@ -30,9 +30,9 @@ export function overlap(a, b) {
 // Word Error Rate = (substitutions + deletions + insertions) / reference words,
 // via word-level Levenshtein distance between the normalised reference and
 // hypothesis. Unlike overlap(), WER is order- and count-sensitive, so it catches
-// content that a chunk silently drops (the failure mode the int8 encoder shows
-// past ~20 s). Can exceed 1 when the hypothesis inserts more than the reference
-// holds. Pass already-normalised word arrays (words(ref), words(hyp)).
+// content that a chunk silently drops (a failure mode of a weak encoder losing
+// long-range content within an over-long chunk). Can exceed 1 when the hypothesis
+// inserts more than the reference holds. Pass already-normalised word arrays (words(ref), words(hyp)).
 export function wer(ref, hyp) {
   const n = ref.length;
   const m = hyp.length;

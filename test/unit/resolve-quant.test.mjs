@@ -2,7 +2,7 @@
 // that picks the encoder/decoder quantisation per backend and per what the repo
 // ships. It encodes two hard rules: WASM is pinned to int8 (fp16/fp32 overflow
 // the 32-bit WASM heap), and WebGPU prefers fp16 when shipped (near-lossless,
-// half the fp32 download, no >20 s chunk loss) but falls back to fp32 so a repo
+// half the fp32 download, lighter to serve) but falls back to fp32 so a repo
 // without fp16 files (e.g. the upstream istupakov repo) keeps working.
 // Built with Claude Code.
 
