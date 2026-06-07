@@ -93,9 +93,10 @@ describe('compileBoostText filters untokenizable phrases', () => {
     assert.equal(artifact.vocabSig, vocabSig));
 });
 
-// A list's own `#!augment` directive sets the augmentation it is compiled at,
-// overriding the opts default, and the reuse check must compare against that
-// same effective value (else a directive list re-encodes on every boot).
+// A list's own `*:::AUG` defaults line is baked straight into `encoded` (it lives
+// in the .txt, like a per-phrase `:AUG`); the artifact's augmentDefault field
+// still records only the external opts/global-toggle value, so the reuse check
+// keys on the toggle and never on a list's own per-phrase defaults.
 describe('compileBoostText honours a * defaults line', () => {
   const fixture = loadCachedFixture();
   const encoder = new BpeEncoder(loadMergesAsset(), buildVocabToId(fixture.id2token));
