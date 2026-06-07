@@ -31,7 +31,7 @@ model), so to avoid duplicating that mapping this asset deliberately stores
 - Regenerate with: `python scripts/distill-bpe-merges.py` (from the repo root).
 
 Note: the authoritative `tokenizer.json` lives in the upstream NVIDIA repo, NOT
-in the `istupakov/parakeet-tdt-0.6b-v3-onnx` repo the app downloads the model
-weights from (that repo ships only `vocab.txt`).
+in the `Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx` repo the app downloads
+the model weights from (that repo ships only `vocab.txt`).
 
 This asset and its tooling were produced with Claude Code.
