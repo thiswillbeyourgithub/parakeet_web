@@ -18,7 +18,7 @@ import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 const sampleArtifact = () => ({
   version: BOOST_ARTIFACT_VERSION,
   vocabSig: 'deadbeef',
-  caseDefault: false,
+  augmentDefault: '',
   encoded: [
     { ids: [12, 34, 56], weight: 5, topk: 40 },
     { ids: [7, 8], weight: -3, topk: 25 },

@@ -1,6 +1,6 @@
 // Tier-1 unit test for the phrase-boosting trie (app/src/phraseBoost.js) and its
 // interaction with the BPE encoder. Validates phrase parsing, list directives,
-// casing expansion, trie build/advance, the depth-scaled bonus map, top-k
+// augmentation expansion, trie build/advance, the depth-scaled bonus map, top-k
 // gating, and that applyBoost/restore flips a greedy argmax without permanently
 // altering the logits.
 //
@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { BpeEncoder, buildVocabToId } from '../../app/src/bpeEncoder.js';
 import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
-  casingVariants, expandCasingVariants, selectPrebuilt, DEFAULT_BOOST_TOPK,
+  augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_TOPK,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -49,13 +49,16 @@ describe('parseBoostPhrases', () => {
   test('non-integer topk rejected + warning', () => assert.ok(tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].topk === DEFAULT_BOOST_TOPK && !!tk[4].warning));
   test('colon-only phrase still unaffected with topk parsing', () => assert.ok(tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].topk === DEFAULT_BOOST_TOPK));
 
-  const fl = parseBoostPhrases('a::40\nb:5:50:i\nc:s\nd:2:i\ne:5:50\nf:abc:i');
+  const fl = parseBoostPhrases('a::40\nb:5:50:i\nc:s\nd:2:i\ne:5:50\nf:abc:i\ng:5::fap\nh:5::p\ni:5::fa');
   test('empty weight keeps default, explicit topk', () => assert.ok(fl[0].phrase === 'a' && fl[0].weight === 1 && fl[0].topk === 40));
-  test(':i flag after weight:topk parsed', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].topk === 50 && fl[1].caseInsensitive === true));
-  test(':s flag alone (defaults otherwise)', () => assert.ok(fl[2].phrase === 'c' && fl[2].weight === 1 && fl[2].caseInsensitive === false));
-  test(':i flag right after weight (no topk)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].caseInsensitive === true));
-  test('no flag leaves caseInsensitive undefined', () => assert.equal(fl[4].caseInsensitive, undefined));
-  test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].caseInsensitive === true));
+  test(':i alias parsed after weight:topk -> fap', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].topk === 50 && fl[1].augment === 'fap'));
+  test(':s alias alone -> none (defaults otherwise)', () => assert.ok(fl[2].phrase === 'c' && fl[2].weight === 1 && fl[2].augment === ''));
+  test(':i alias right after weight (no topk)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].augment === 'fap'));
+  test('no flag leaves augment undefined', () => assert.equal(fl[4].augment, undefined));
+  test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].augment === 'fap'));
+  test(':fap sets all three flags', () => assert.ok(fl[6].phrase === 'g' && fl[6].weight === 5 && fl[6].augment === 'fap'));
+  test(':p sets prefix flag only', () => assert.ok(fl[7].phrase === 'h' && fl[7].augment === 'p'));
+  test(':fa is canonicalised', () => assert.ok(fl[8].phrase === 'i' && fl[8].augment === 'fa'));
 });
 
 describe('parseBoostDirectives', () => {
@@ -70,30 +73,47 @@ describe('parseBoostDirectives', () => {
   test('unknown directive key ignored', () => assert.equal(Object.keys(parseBoostDirectives('#!note hello')).length, 0));
   test('no directive => empty result', () => assert.equal(Object.keys(parseBoostDirectives('plain\nfoo:3')).length, 0));
   test('# without ! is still a phrase', () => assert.ok(parseBoostPhrases('#hashtag').length === 1 && parseBoostPhrases('#hashtag')[0].phrase === '#hashtag'));
+  test('prefixes directive parsed (whitespace-separated)', () => assert.deepEqual(parseBoostDirectives("#!prefixes l' d' al-").prefixes, ["l'", "d'", "al-"]));
+  test('empty prefixes value ignored', () => assert.equal(parseBoostDirectives('#!prefixes   ').prefixes, undefined));
+  test('last prefixes directive wins', () => assert.deepEqual(parseBoostDirectives("#!prefixes l'\n#!prefixes d'").prefixes, ["d'"]));
 });
 
-describe('casingVariants / expandCasingVariants', () => {
-  test('single word -> lower/UPPER/Sentence (Title == Sentence, deduped)', () => {
-    assert.ok(eqArr(casingVariants('venlafaxine'), ['venlafaxine', 'VENLAFAXINE', 'Venlafaxine']));
+describe('augmentVariants / expandAugmentations', () => {
+  test('no flags => as-typed only', () => assert.ok(eqArr(augmentVariants('venlafaxine', ''), ['venlafaxine'])));
+  test('f => as-typed + Title Case', () => assert.ok(eqArr(augmentVariants('venlafaxine', 'f'), ['venlafaxine', 'Venlafaxine'])));
+  test('a => as-typed + ALL CAPS', () => assert.ok(eqArr(augmentVariants('venlafaxine', 'a'), ['venlafaxine', 'VENLAFAXINE'])));
+  test('f Title-cases each word of a multi-word phrase', () => {
+    assert.ok(augmentVariants('myocardial infarction', 'f').includes('Myocardial Infarction'));
   });
-  test('multi word distinguishes Sentence from Title case', () => {
-    const cvMulti = casingVariants('myocardial infarction');
-    assert.ok(cvMulti.includes('Myocardial infarction') && cvMulti.includes('Myocardial Infarction'));
-  });
-  test('as-typed mixed casing is preserved as a variant', () => assert.ok(casingVariants('mRNA').includes('mRNA')));
-  test('empty phrase yields nothing', () => assert.ok(eqArr(casingVariants(''), [])));
+  test('as-typed mixed casing is preserved', () => assert.ok(augmentVariants('mRNA', 'fa').includes('mRNA')));
+  test('empty phrase yields nothing', () => assert.ok(eqArr(augmentVariants('', 'fap'), [])));
 
-  test('default off => no expansion', () => assert.equal(expandCasingVariants([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]).length, 1));
-  const expanded = expandCasingVariants([{ phrase: 'venlafaxine', weight: 5, topk: 50 }], true);
-  test('default on => expands one entry into its casings', () => assert.equal(expanded.length, 3));
+  test('p on a vowel-initial phrase adds elision-prefixed forms', () => {
+    const v = augmentVariants('amoxicilline', 'p', ["l'", "d'"]);
+    assert.ok(v.includes("l'amoxicilline") && v.includes("d'amoxicilline"));
+  });
+  test('p on a consonant-initial phrase adds no elision form', () => {
+    assert.ok(eqArr(augmentVariants('beta', 'p', ["l'", "d'"]), ['beta']));
+  });
+  test('p with a non-apostrophe prefix attaches unconditionally', () => {
+    assert.ok(augmentVariants('beta', 'p', ['al-']).includes('al-beta'));
+  });
+  test('p applies to each casing form so far (with f)', () => {
+    const v = augmentVariants('amoxicilline', 'fp', ["l'"]);
+    assert.ok(v.includes("l'amoxicilline") && v.includes("l'Amoxicilline"));
+  });
+
+  test('default off => no expansion', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]).length, 1));
+  const expanded = expandAugmentations([{ phrase: 'venlafaxine', weight: 5, topk: 50 }], 'fa');
+  test('default fa => expands one entry into 3 forms', () => assert.equal(expanded.length, 3));
   test('expanded entries carry the original weight + topk', () => assert.ok(expanded.every(e => e.weight === 5 && e.topk === 50)));
-  test('expanded entries cover each casing', () => assert.ok(['venlafaxine', 'Venlafaxine', 'VENLAFAXINE'].every(p => expanded.some(e => e.phrase === p))));
-  test('per-phrase :i expands even when default is off', () => assert.equal(expandCasingVariants([{ phrase: 'venlafaxine', weight: 1, caseInsensitive: true }], false).length, 3));
-  test('per-phrase :s stays single even when default is on', () => assert.equal(expandCasingVariants([{ phrase: 'venlafaxine', weight: 1, caseInsensitive: false }], true).length, 1));
-  const dedup = expandCasingVariants([
+  test('expanded entries cover each form', () => assert.ok(['venlafaxine', 'Venlafaxine', 'VENLAFAXINE'].every(p => expanded.some(e => e.phrase === p))));
+  test('per-phrase augment expands even when default is off', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 1, augment: 'fa' }], '').length, 3));
+  test('per-phrase empty augment stays single even when default is on', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 1, augment: '' }], 'fa').length, 1));
+  const dedup = expandAugmentations([
     { phrase: 'venlafaxine', weight: 2 },
     { phrase: 'Venlafaxine', weight: 8 },
-  ], true);
+  ], 'fa');
   test('collision keeps the larger-magnitude weight', () => assert.equal(dedup.find(e => e.phrase === 'Venlafaxine').weight, 8));
   test('no duplicate phrase strings after expansion', () => assert.equal(new Set(dedup.map(e => e.phrase)).size, dedup.length));
 });
@@ -206,19 +226,19 @@ describe('encodePhrases + buildFromEncoded (worker split)', () => {
 
 describe('selectPrebuilt (reload fast-path gate)', () => {
   // This gate decides whether the reload/restore path can reuse the server
-  // prebuilt encoding and so SKIP the in-browser parse + casing-expand + BPE
+  // prebuilt encoding and so SKIP the in-browser parse + augment-expand + BPE
   // encode. A false negative here means the UI re-encodes a large curated list
   // on the main thread (the freeze the prebuilt exists to avoid), so the match
   // conditions are pinned exactly.
   const pre = {
     text: 'venlafaxine\nacetaminophen',
     vocabSig: 'sig-abc',
-    caseDefault: false,
+    augmentDefault: '',
     encoded: [{ ids: [1, 2], weight: 1 }],
   };
-  const base = { text: pre.text, vocabSig: 'sig-abc', caseInsensitive: false };
+  const base = { text: pre.text, vocabSig: 'sig-abc', augmentDefault: '' };
 
-  test('reuses the prebuilt when text + vocab + case all agree', () => {
+  test('reuses the prebuilt when text + vocab + augment all agree', () => {
     const r = selectPrebuilt(pre, base);
     assert.equal(r.usePrebuilt, true);
     assert.deepEqual(r.reasons, []);
@@ -245,21 +265,21 @@ describe('selectPrebuilt (reload fast-path gate)', () => {
     assert.equal(selectPrebuilt(pre, { ...base, vocabSig: null }).usePrebuilt, false);
   });
 
-  test('case toggle differing from the prebuilt caseDefault rejects it', () => {
-    const r = selectPrebuilt(pre, { ...base, caseInsensitive: true });
+  test('augment default differing from the prebuilt rejects it', () => {
+    const r = selectPrebuilt(pre, { ...base, augmentDefault: 'fap' });
     assert.equal(r.usePrebuilt, false);
-    assert.match(r.reasons[0], /case toggle differs/);
+    assert.match(r.reasons[0], /augment default differs/);
   });
 
-  test('legacy prebuilt (no caseDefault) is treated as un-expanded (false)', () => {
+  test('legacy prebuilt (no augmentDefault) is treated as un-augmented ("")', () => {
     const legacy = { ...pre };
-    delete legacy.caseDefault;
-    assert.equal(selectPrebuilt(legacy, { ...base, caseInsensitive: false }).usePrebuilt, true);
-    assert.equal(selectPrebuilt(legacy, { ...base, caseInsensitive: true }).usePrebuilt, false);
+    delete legacy.augmentDefault;
+    assert.equal(selectPrebuilt(legacy, { ...base, augmentDefault: '' }).usePrebuilt, true);
+    assert.equal(selectPrebuilt(legacy, { ...base, augmentDefault: 'fap' }).usePrebuilt, false);
   });
 
   test('multiple mismatches are all reported', () => {
-    const r = selectPrebuilt(pre, { text: 'edited', vocabSig: 'other', caseInsensitive: true });
+    const r = selectPrebuilt(pre, { text: 'edited', vocabSig: 'other', augmentDefault: 'fap' });
     assert.equal(r.usePrebuilt, false);
     assert.equal(r.reasons.length, 3);
   });
