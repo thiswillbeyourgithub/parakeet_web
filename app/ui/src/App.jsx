@@ -1761,12 +1761,10 @@ export default function App() {
           + `(slow for large lists; runs in a worker when available).`);
       }
     }
-    // A curated list can ship its own default strength via a `#!strength N`
-    // directive line; loading the list forces the strength control to that
-    // value (clamped to the slider's range), so the list comes pre-tuned. A
-    // list with no directive leaves whatever strength the user had.
-    const { strength } = parseBoostDirectives(r.text);
-    if (strength !== undefined) setBoostStrength(Math.max(-10, Math.min(10, strength)));
+    // A curated list sets its own per-phrase defaults via a `*:WEIGHT:TOPK:AUG`
+    // line in the text itself (resolved in parseBoostPhrases), so loading a list
+    // no longer touches the global strength slider: whatever strength the user
+    // had is left as-is and multiplies those baked-in weights.
     setBoostPhrases(r.text);
   }
 
@@ -1922,12 +1920,12 @@ export default function App() {
     // load / recording transition, not just once.
     const pre = prebuiltBoostRef.current;
     const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
-    // The list's own `#!augment` directive overrides the global "Augment" toggle
-    // for this list; a per-phrase `:AUG` still wins over both (in
-    // expandAugmentations). Parse directives once for both the augment default
-    // and the `#!prefixes` the `p` flag uses.
+    // A `*` defaults line or per-phrase `:AUG` (resolved in parseBoostPhrases)
+    // sets augmentation from the list text itself; this global default is just
+    // the UI "Augment" toggle, applied to phrases that specify neither. Parse
+    // directives for the `#!prefixes` the `p` flag uses.
     const directives = parseBoostDirectives(boostPhrases);
-    const augmentDefault = directives.augment ?? (boostAugment ? FULL_AUGMENT : '');
+    const augmentDefault = boostAugment ? FULL_AUGMENT : '';
     // The prebuilt encoding bakes in the augmentation expansion at the global
     // default it was built with; selectPrebuilt() validates text + vocab +
     // augment toggle and, when rejected, explains why (see its docstring).
