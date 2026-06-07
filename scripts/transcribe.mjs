@@ -33,7 +33,7 @@ import { ParakeetModel } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostFields, expandAugmentations, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostFields, parseBoostDirectives, expandAugmentations, isDirectiveLine, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
 import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
@@ -302,6 +302,7 @@ export function parseCliBoosts(specs) {
     for (const part of spec.split(/[,\n]/)) {
       const t = part.trim();
       if (!t) continue;
+      if (isDirectiveLine(t)) continue; // list-level #! directive, not a phrase
       let { phrase, weight, topk, augment } = parseBoostFields(t);
       if (!Number.isInteger(topk) || topk < 1) {
         console.error(`[transcribe] warning: top-k ${topk} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK} for "${phrase}"`);
@@ -512,10 +513,12 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
   const textSpecs = boosts.filter((s) => !isPwcPath(s));
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
   // the augmentation-expanded set actually inserted into the trie (a `:fap`
-  // phrase becomes its Title/UPPER/prefixed branches). CLI default is no
-  // augmentation; per-phrase `:AUG` flags use the default prefix set.
+  // phrase becomes its Title/UPPER/prefixed branches). A list's own `#!augment`
+  // / `#!prefixes` directives drive the default, exactly as in the web app; the
+  // CLI default (no directive) is no augmentation. Per-phrase `:AUG` still wins.
   const typedBoosts = parseCliBoosts(textSpecs);
-  const entries = expandAugmentations(typedBoosts, '');
+  const { augment, prefixes } = parseBoostDirectives(textSpecs.map(expandBoostSpec).join('\n'));
+  const entries = expandAugmentations(typedBoosts, augment ?? '', prefixes);
   if (!entries.length && !pwcSpecs.length) return null;
 
   // The encoder is only needed to encode text/inline phrases; when every spec

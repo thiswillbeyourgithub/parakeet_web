@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expandBoostSpec } from '../../scripts/transcribe.mjs';
+import { expandBoostSpec, parseCliBoosts } from '../../scripts/transcribe.mjs';
 
 describe('expandBoostSpec file-vs-inline guard', () => {
   test('missing .txt path throws (the bug: was silently treated as inline)', () => {
@@ -45,5 +45,21 @@ describe('expandBoostSpec file-vs-inline guard', () => {
     const file = join(dir, 'real.txt');
     writeFileSync(file, 'amlodipine\nvenlafaxine\n');
     assert.equal(expandBoostSpec(file), 'amlodipine\nvenlafaxine\n');
+  });
+});
+
+// The CLI shares the web app's `#!` directive syntax: a directive line in a
+// boosted .txt is list-level config, not a phrase, so it must not leak into the
+// trie as a junk term (the per-phrase `:AUG` field is still parsed normally).
+describe('parseCliBoosts skips #! directive lines', () => {
+  test('directive lines are not turned into phrases', () => {
+    const entries = parseCliBoosts(['#!augment faph\n#!strength 3\nvenlafaxine:5\namlodipine']);
+    assert.deepEqual(entries.map((e) => e.phrase), ['venlafaxine', 'amlodipine']);
+  });
+  test('a per-phrase :AUG flag still parses alongside directives', () => {
+    const entries = parseCliBoosts(['#!prefixes al-\nalpha-methyl:5::h']);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].phrase, 'alpha-methyl');
+    assert.equal(entries[0].augment, 'h');
   });
 });
