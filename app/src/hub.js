@@ -951,7 +951,7 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.on
  *   when the repo ships encoder-model.onnx.data.NNN shards and fp32 is requested.
  * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, encoderFellBackToFp32: boolean}}
  */
-export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 = false }) {
+export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 = false, shaderF16 = true }) {
   if (!backend.startsWith('webgpu')) {
     // Opt-in sharded fp32 on WASM: needs the explicit flag, an fp32 request, and
     // the repo to actually ship the <2GB shards. Anything missing keeps int8.
@@ -971,8 +971,15 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
       encoderFellBackToFp32: false,
     };
   }
-  const hasFp16Enc = repoFiles.includes('encoder-model.fp16.onnx');
-  const hasFp16Dec = repoFiles.includes('decoder_joint-model.fp16.onnx');
+  // WebGPU fp16 kernels emit WGSL `f16`, which only compile when the adapter
+  // exposes the `shader-f16` feature. Without it the fp16 session BUILDS but the
+  // shaders fail to compile and transcription comes back empty, so treat fp16 as
+  // unavailable and resolve to fp32 (which needs no shader-f16). shaderF16 is
+  // null/undefined while the capability is still unknown -> assume supported
+  // (the historical behaviour). Only an explicit `false` blocks fp16.
+  const canF16 = shaderF16 !== false;
+  const hasFp16Enc = canF16 && repoFiles.includes('encoder-model.fp16.onnx');
+  const hasFp16Dec = canF16 && repoFiles.includes('decoder_joint-model.fp16.onnx');
   let encoderQ = encoderQuant;
   // int8/fp16 requests resolve to fp16-if-shipped-else-fp32; explicit fp32 stays.
   if (encoderQ === 'int8' || encoderQ === 'fp16') {
@@ -983,7 +990,11 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     encoderQ,
     decoderQ,
     pinnedToInt8: false,
-    encoderFellBackToFp32: encoderQ === 'fp32' && encoderQuant !== 'fp32',
+    // Only flag a fp16->fp32 fall-back worth probing a local mirror for when the
+    // GPU could actually USE fp16 and the repo merely lacks the file. When the
+    // GPU has no shader-f16, fp32 is the best it can do and no mirror can help,
+    // so don't trip the local-upgrade probe.
+    encoderFellBackToFp32: canF16 && encoderQ === 'fp32' && encoderQuant !== 'fp32',
   };
 }
 
@@ -1041,6 +1052,10 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  * @param {boolean} [options.allowWasmFp32=false] Opt-in: on WASM, select the
  *   sharded fp32 encoder (instead of the int8 pin) when fp32 is requested and the
  *   repo ships encoder-model.onnx.data.NNN shards. Off by default (2.4 GB download).
+ * @param {boolean} [options.shaderF16=true] WebGPU only: whether the GPU adapter
+ *   exposes the `shader-f16` feature. When false, fp16 is unavailable (its WGSL
+ *   shaders won't compile) so resolveModelQuant resolves fp16 requests to fp32.
+ *   Defaults true (assume supported) so non-WebGPU callers need not pass it.
  * @param {(progress: {loaded: number, total: number, file: string}) => void} [options.progress] Progress callback
  * @param {string} [options.localFallbackBaseUrl] When set, download files from this local
  *   base URL instead of HuggingFace (e.g., '/models'). Used as a fallback when HF is blocked.
@@ -1059,7 +1074,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, allowWasmFp32 = false } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, allowWasmFp32 = false, shaderF16 = true } = options;
   // The base URL all files are actually fetched from. Starts as the explicit
   // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
   // primary (HF) source cannot serve the requested quant and the local mirror
@@ -1087,7 +1102,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
 
   // Resolve the effective quantisation per backend and per availability.
   let { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
-    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 });
+    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32, shaderF16 });
 
   // Pre-download upgrade: the primary (HF) source could not serve the requested
   // quant (WASM fp32 with no shards -> int8 pin, or WebGPU fp16 with no fp16
@@ -1101,13 +1116,13 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     // both target the layout the operator actually mounted.
     const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId)) || localUpgradeBaseUrl;
     const localFiles = await listLocalRepoFiles(resolvedUpgrade).catch(() => []);
-    if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, allowWasmFp32 })) {
+    if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, allowWasmFp32, shaderF16 })) {
       console.log(`[Hub] HuggingFace cannot serve the requested quant (encoder=${encoderQuant}); `
         + `the local mirror at ${resolvedUpgrade} can — switching the load to it`);
       effectiveLocalBase = resolvedUpgrade;
       repoFiles = localFiles;
       ({ encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
-        resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 }));
+        resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32, shaderF16 }));
     }
   }
 

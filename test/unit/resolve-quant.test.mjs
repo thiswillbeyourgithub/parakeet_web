@@ -109,6 +109,54 @@ describe('resolveModelQuant: WebGPU falls back to fp32 without fp16 files', () =
   });
 });
 
+describe('resolveModelQuant: WebGPU without shader-f16 falls back to fp32', () => {
+  // Some GPU/driver/Chromium combos expose a WebGPU adapter but NOT the
+  // `shader-f16` feature (verified on an RTX 3090 Ti box). fp16 kernels then
+  // build but their WGSL `f16` shaders fail to compile and the transcript comes
+  // back empty, so resolveModelQuant must resolve fp16 to fp32 instead.
+  test('fp16 request + fp16 in repo but no shader-f16 -> fp32 encoder, int8 decoder', () => {
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: false });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+  });
+
+  test('no shader-f16 fall-back is NOT flagged for the local-mirror probe (no mirror can help)', () => {
+    // canF16=false means fp32 is the best the GPU can do; flagging it would trip
+    // a pointless local-upgrade probe for an fp16 file that could never run here.
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: false });
+    assert.equal(r.encoderFellBackToFp32, false);
+  });
+
+  test('legacy int8 request without shader-f16 -> fp32 encoder', () => {
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP16, shaderF16: false });
+    assert.equal(r.encoderQ, 'fp32');
+  });
+
+  test('explicit fp32 request without shader-f16 -> fp32 (fp32 needs no shader-f16)', () => {
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP16, shaderF16: false });
+    assert.equal(r.encoderQ, 'fp32');
+    assert.equal(r.encoderFellBackToFp32, false);
+  });
+
+  test('shader-f16 unknown (omitted/null) assumes supported -> fp16 when shipped (historical behaviour)', () => {
+    const omitted = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16 });
+    assert.equal(omitted.encoderQ, 'fp16');
+    const nullish = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: null });
+    assert.equal(nullish.encoderQ, 'fp16');
+  });
+
+  test('shader-f16 present -> fp16 when shipped (unchanged)', () => {
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp16', 'fp16']);
+  });
+
+  test('quantSatisfiable: no fp16->fp32 downgrade to chase on a no-shader-f16 GPU', () => {
+    // The mirror ships fp16 but the GPU cannot run it; fp32 is the resolved and
+    // correct result, so the request is "satisfied" (no downgrade) and the UI
+    // must not needlessly switch sources hunting an fp16 file it can't use.
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: false }), true);
+  });
+});
+
 // quantSatisfiable(fileSet) = "this source can deliver the requested quant with
 // NO downgrade". The UI calls it on a local /models mirror to decide whether to
 // reload from there when HuggingFace could not serve the requested precision.
