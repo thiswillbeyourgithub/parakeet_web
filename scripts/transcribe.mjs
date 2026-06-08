@@ -507,7 +507,13 @@ export async function loadParakeetModel({
 // suppresses the per-phrase listing (useful when sweeping many configs); the
 // returned trie is identical either way. Reused by both the CLI and benchmarks
 // so boosting behaviour can never diverge between them.
-export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, quiet = false, verbose = false }) {
+//
+// `depthScaling` overrides the trie's linear per-depth reward growth (the bonus
+// at trie depth d is `weight * (1 + depthScaling * (d - 1))`); unlike the min-p
+// gate it is BAKED INTO each node's bonus at insert time, so changing it needs a
+// fresh trie (the grid benchmark rebuilds one per value). Leave undefined to use
+// the trie's built-in default.
+export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling, tokenizer, quiet = false, verbose = false }) {
   const pwcSpecs = boosts.filter(isPwcPath);
   const textSpecs = boosts.filter((s) => !isPwcPath(s));
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
@@ -525,8 +531,8 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
   // is a precompiled .pwc we skip loading it and start from an empty trie.
   const encoder = entries.length ? await loadBpeEncoder(tokenizer, BPE_MERGES) : null;
   const phraseBoost = entries.length
-    ? BoostingTrie.buildFromPhrases(entries, encoder, { strength })
-    : new BoostingTrie({ strength });
+    ? BoostingTrie.buildFromPhrases(entries, encoder, { strength, depthScaling })
+    : new BoostingTrie({ strength, depthScaling });
   phraseBoost.strength = strength;
 
   // Precompiled .pwc lists: confirm the vocab signature matches the loaded
@@ -557,7 +563,7 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
   }
 
   if (!quiet) {
-    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}`);
+    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}, depth-scaling ${phraseBoost.depthScaling}`);
     // List the phrases AS TYPED, not their generated casing variants, and cap
     // the listing: it is handy for a handful of inline probes but floods the
     // terminal for a list of thousands. --verbose lifts the cap. (.pwc ids are

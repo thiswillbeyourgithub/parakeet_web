@@ -11,9 +11,12 @@
 //
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
 // grid: beam-width x (no-boost baseline + each boost strength x each boost
-// min-p) and prints one row per combination in two tables (accuracy + per-phase
-// timing). The min-p axis overrides the per-phrase boost gate, so one prebuilt
-// trie is reused across every min-p value (no re-encode per value). Rows are
+// depth-scaling x each boost min-p) and prints one row per combination in two
+// tables (accuracy + per-phase timing). The min-p axis overrides the per-phrase
+// boost gate, so one prebuilt trie is reused across every min-p value (no
+// re-encode per value); depth-scaling, by contrast, is baked into the trie at
+// build time, so each value rebuilds the trie (one per strength x depth-scaling).
+// Rows are
 // sorted by the per-utterance median WER (best first), and the accuracy table
 // reports the mean/median/stdev of the per-utterance WER alongside the
 // corpus-level rate. It also writes those tables to a .md file and every
@@ -77,6 +80,7 @@ function parseArgs(argv) {
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
     minps: [null],          // swept dimension: min-p gate override (null = each phrase's baked min-p)
+    depthScalings: [null],  // swept dimension: trie depth-scaling (null = trie's built-in default)
     boosts: [],             // --phrase-boost specs (repeatable); inline / .txt / .pwc
     noBaseline: false,      // drop the no-boost row from the sweep
     maesNumSteps: 2,
@@ -116,6 +120,7 @@ function parseArgs(argv) {
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
       case '--boost-minp': a.minps = numList(val(flag)); break;
+      case '--depth-scaling': a.depthScalings = numList(val(flag)); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '--no-baseline': a.noBaseline = true; break;
       case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
@@ -154,6 +159,9 @@ function parseArgs(argv) {
   }
   if (!a.minps.length || a.minps.some((p) => p !== null && (!Number.isFinite(p) || p <= 0 || p > 1))) {
     throw new Error('--boost-minp must be a comma-separated list of numbers in (0, 1]');
+  }
+  if (!a.depthScalings.length || a.depthScalings.some((d) => d !== null && (!Number.isFinite(d) || d < 0))) {
+    throw new Error('--depth-scaling must be a comma-separated list of numbers >= 0 (0 = flat, no per-depth growth)');
   }
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) {
     throw new Error('--frame-stride must be an integer in [1, 4]');
@@ -226,6 +234,17 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
                            hallucinating the phrase), higher = stricter. Only used
                            when --phrase-boost is set. Default: each phrase's own
                            baked min-p (no override).
+      --depth-scaling LIST  Trie depth-scaling factors to sweep, e.g. "0,0.5,1".
+                           The per-token boost at trie depth d is
+                           weight*(1 + depth-scaling*(d-1)), so this controls how
+                           much deeper (more committed) matches are rewarded:
+                           0 = flat (every depth gets the base weight, least
+                           "inertia"), higher = stronger pull to complete a
+                           started phrase. Unlike min-p this is baked into the
+                           trie at build time, so each value rebuilds the trie
+                           (one per strength x depth-scaling). Only used when
+                           --phrase-boost is set. Default: the trie's built-in
+                           default (no override).
       --no-baseline        Drop the no-boost baseline row from the sweep.
 
 MAES knobs (used only when a beam width > 1; defaults match NeMo's maes):
@@ -553,7 +572,7 @@ function renderMarkdown(headers, body) {
 // (ascending) so the best config is at the top, and a cell's dataset rows stay
 // grouped together. "WER %" is the corpus-level rate (total word edits / total
 // ref words); WERmean/med/std summarise the spread of the per-utterance WERs.
-const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
+const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
 function accuracyBody(rows) {
   const body = [];
   for (const r of rows) {
@@ -563,6 +582,7 @@ function accuracyBody(rows) {
         r.boostLabel,
         r.strength == null ? '-' : String(r.strength),
         r.minp == null ? '-' : String(r.minp),
+        r.depthScaling == null ? '-' : String(r.depthScaling),
         d.name,
         pct(d.wordEdits, d.refWords).toFixed(2),
         mean(d.werSamples).toFixed(2),
@@ -581,7 +601,7 @@ function accuracyBody(rows) {
 
 // Timing table: per-phase mean/median (ms per utterance) plus wall time. Each
 // phase cell is "mean/median".
-const TIME_HEAD = ['beam', 'boost', 'strength', 'minp', ...PHASES.map(([, label]) => label), 'rtf', 'wall s', 'n'];
+const TIME_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', ...PHASES.map(([, label]) => label), 'rtf', 'wall s', 'n'];
 function timingBody(rows) {
   return rows.map((r) => {
     const cell = (key) => `${mean(r.timings[key]).toFixed(1)}/${median(r.timings[key]).toFixed(1)}`;
@@ -590,6 +610,7 @@ function timingBody(rows) {
       r.boostLabel,
       r.strength == null ? '-' : String(r.strength),
       r.minp == null ? '-' : String(r.minp),
+      r.depthScaling == null ? '-' : String(r.depthScaling),
       ...PHASES.map(([key]) => cell(key)),
       mean(r.timings.rtf).toFixed(2),
       (r.timeMs / 1000).toFixed(1),
@@ -659,25 +680,31 @@ async function main() {
   // Content hash of the boost sources, folded into the boost cells' resume key.
   const bDigest = boostDigest(args.boosts);
   if (!hasBoost || !args.noBaseline) {
-    boostConfigs.push({ label: 'none', strength: null, minp: null, phraseBoost: null, boostDigest: null });
+    boostConfigs.push({ label: 'none', strength: null, minp: null, depthScaling: null, phraseBoost: null, boostDigest: null });
   }
   if (hasBoost) {
+    // depth-scaling is baked into each node's bonus at insert time (unlike min-p,
+    // which is a decode-time gate), so each (strength, depth-scaling) pair needs
+    // its OWN trie. min-p, by contrast, is then swept over that one trie for free.
     for (const strength of args.strengths) {
-      const phraseBoost = await buildPhraseBoost({
-        boosts: args.boosts,
-        strength,
-        tokenizer,
-        quiet: !args.verbose,
-        verbose: args.verbose,
-      });
-      if (!phraseBoost) {
-        console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
-      }
-      // One trie per strength, swept across every requested min-p override
-      // (null = the phrase's own baked min-p). The override is set on the shared
-      // trie per cell at decode time, so all min-p cells reuse this one trie.
-      for (const minp of args.minps) {
-        boostConfigs.push({ label: 'boost', strength, minp, phraseBoost, boostDigest: bDigest });
+      for (const depthScaling of args.depthScalings) {
+        const phraseBoost = await buildPhraseBoost({
+          boosts: args.boosts,
+          strength,
+          depthScaling: depthScaling ?? undefined, // null => trie's built-in default
+          tokenizer,
+          quiet: !args.verbose,
+          verbose: args.verbose,
+        });
+        if (!phraseBoost) {
+          console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
+        }
+        // This (strength, depth-scaling) trie is swept across every requested
+        // min-p override (null = the phrase's baked min-p). The override is set
+        // on the shared trie per cell at decode time, so all min-p cells reuse it.
+        for (const minp of args.minps) {
+          boostConfigs.push({ label: 'boost', strength, minp, depthScaling, phraseBoost, boostDigest: bDigest });
+        }
       }
     }
   }
@@ -688,7 +715,8 @@ async function main() {
     for (const bc of boostConfigs) grid.push({ beamWidth, ...bc });
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
-  console.error(`[bench] sweep: ${args.beamWidths.length} beam width(s) x ${boostConfigs.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}\n`);
+  const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
+  console.error(`[bench] sweep: ${args.beamWidths.length} beam width(s) x ${boostConfigs.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -749,7 +777,10 @@ async function main() {
   const tagOf = (row) => {
     const boostPart = row.boostDigest ? `boost#${row.boostDigest}` : row.label;
     const minpPart = row.minp == null ? '' : '~' + row.minp;
-    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}`;
+    // null depth-scaling appends nothing, so a sweep without --depth-scaling
+    // keeps the same resume key as before (existing jsonl stays reusable).
+    const depthPart = row.depthScaling == null ? '' : '^' + row.depthScaling;
+    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}`;
   };
 
   // Reconstruct a summary row (the shape the final tables consume) from a
@@ -775,6 +806,7 @@ async function main() {
       timings.rtf.push(m.rtf ?? 0);
     }
     return { beamWidth: s.beam, boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
+      depthScaling: s.depthScaling ?? null,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
 
@@ -863,6 +895,7 @@ async function main() {
       writeJsonl({
         type: 'utterance', run: tag,
         beam: row.beamWidth, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+        depthScaling: row.depthScaling ?? null,
         dataset: e.dataset,
         audio: e.audioPath, duration: e.duration,
         ref: e.text, hyp, refNorm, hypNorm,
@@ -881,7 +914,7 @@ async function main() {
     process.stderr.write('\n');
     const datasets = buildDatasets(perDs, datasetNames);
     const r = { beamWidth: row.beamWidth, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
-      timeMs, timings, datasets };
+      depthScaling: row.depthScaling ?? null, timeMs, timings, datasets };
     summaryByTag.set(tag, r);
     // The "overall" pool (or the single dataset) supplies the top-level corpus
     // figures; the per-dataset breakdown is listed under "datasets".
@@ -899,6 +932,7 @@ async function main() {
     writeJsonl({
       type: 'summary', run: tag,
       beam: row.beamWidth, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+      depthScaling: row.depthScaling ?? null,
       utterances: entries.length,
       wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
       wer_mean_pct: +mean(overall.werSamples).toFixed(4),

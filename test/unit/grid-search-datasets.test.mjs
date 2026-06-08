@@ -205,4 +205,18 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     assert.equal(accuracyBody([mk(0.05)])[0][minpCol], '0.05', 'a swept min-p renders its value');
     assert.equal(accuracyBody([mk(null)])[0][minpCol], '-', 'a baked/absent min-p renders "-"');
   });
+
+  test('renders the depth-scaling sweep column (value, "0" for flat, and "-" when unset)', () => {
+    const dscaleCol = ACC_HEAD.indexOf('dscale');
+    assert.ok(dscaleCol >= 0, 'ACC_HEAD must include a depth-scaling column');
+
+    const mk = (depthScaling) => {
+      const perDs = new Map([['medical', newAcc()]]);
+      addScore(perDs.get('medical'), sc(10, 1));
+      return { beamWidth: 1, boostLabel: 'boost', strength: 1, minp: null, depthScaling, datasets: buildDatasets(perDs, ['medical']) };
+    };
+    assert.equal(accuracyBody([mk(1)])[0][dscaleCol], '1', 'a swept depth-scaling renders its value');
+    assert.equal(accuracyBody([mk(0)])[0][dscaleCol], '0', 'a flat (0) depth-scaling renders "0", not "-"');
+    assert.equal(accuracyBody([mk(null)])[0][dscaleCol], '-', 'a default/absent depth-scaling renders "-"');
+  });
 });
