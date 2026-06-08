@@ -185,6 +185,19 @@ This feature was implemented with [Claude Code](https://www.anthropic.com/claude
 5. Speak — encrypted audio streams to the computer in real time
 6. Click **Stop** on either device — the audio is transcribed normally
 
+### Send a saved audio file from the phone
+
+Once paired, the phone page also offers **📁 Send an audio file**. Pick any
+audio file on the phone (mp3, m4a, wav, ...) and it is decoded to PCM **on the
+phone**, then streamed through the exact same end-to-end encrypted tunnel the
+live mic uses. The computer chunks, resamples and transcribes it identically
+to a recording, including resumable long-audio chunking — there is no separate
+upload path and the relay still only ever sees ciphertext. A progress bar
+shows the (faster-than-real-time) transfer, which you can cancel. Files longer
+than the 60-minute session limit are truncated on the phone with a warning.
+This is handy when the file lives on your phone but you want it transcribed on
+the desktop. Built with the help of Claude Code.
+
 ### Requirements
 
 - **Local network only**: works out of the box with no extra config (STUN-only / direct P2P).

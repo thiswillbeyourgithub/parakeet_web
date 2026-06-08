@@ -185,6 +185,21 @@ Cette fonctionnalité a été implémentée avec [Claude Code](https://www.anthr
 5. Parlez — l'audio chiffré est diffusé vers l'ordinateur en temps réel
 6. Cliquez sur **Stop** sur l'un ou l'autre appareil — l'audio est transcrit normalement
 
+### Envoyer un fichier audio enregistré depuis le téléphone
+
+Une fois l'appairage effectué, la page du téléphone propose aussi **📁 Envoyer
+un fichier audio**. Choisissez n'importe quel fichier audio sur le téléphone
+(mp3, m4a, wav, ...) : il est décodé en PCM **sur le téléphone**, puis diffusé
+par le même tunnel chiffré de bout en bout que le micro en direct. L'ordinateur
+le découpe, le rééchantillonne et le transcrit exactement comme un
+enregistrement, y compris le découpage reprenable des longs audios — il n'y a
+pas de chemin d'envoi distinct et le relais ne voit toujours que du chiffré.
+Une barre de progression affiche le transfert (plus rapide que le temps réel),
+que vous pouvez annuler. Les fichiers dépassant la limite de session de
+60 minutes sont tronqués sur le téléphone avec un avertissement. Pratique quand
+le fichier se trouve sur votre téléphone mais que vous voulez le transcrire sur
+l'ordinateur. Réalisé avec l'aide de Claude Code.
+
 ### Prérequis
 
 - **Réseau local uniquement** : fonctionne d'emblée sans configuration supplémentaire (STUN seul / P2P direct).

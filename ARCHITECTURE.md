@@ -100,7 +100,7 @@ points: the main app and the remote-microphone phone page.
 | `App.css` | Styles for the app. |
 | `config.js` | Build-time/runtime config indirection. Reads `window.__CONFIG__` (written by the Docker entrypoint) or falls back to Vite `import.meta.env`. Every operator-settable `VITE_*` key must be listed here. |
 | `i18n.jsx` | Translation tables + `I18nProvider` / `useI18n` / `LanguageSwitcher`. |
-| `remote-mic-entry.jsx` | React root + UI for the phone page: captures mic audio, encrypts it, and streams PCM to the desktop over WebRTC (with pause/resume, multi-recording, wake-lock). |
+| `remote-mic-entry.jsx` | React root + UI for the phone page: captures mic audio (or decodes a saved audio file on the phone), encrypts it, and streams PCM to the desktop over WebRTC (with pause/resume, multi-recording, wake-lock). The "Send an audio file" action decodes/resamples the file to 16 kHz mono locally and pumps it through the same `audio-config`->Int16-chunks->`audio-end` framing as the live mic, paced via `RemoteMicRTC.drain()`. |
 | `phraseBoost.worker.js` | Module worker that moves the CPU-heavy BPE encode of a boost list off the main thread so the UI does not freeze on large clinical lists. |
 
 ### Reusable components (`app/ui/src/components/`)
@@ -124,7 +124,7 @@ points: the main app and the remote-microphone phone page.
 | `asset-integrity.js` | Verify-then-load for loose runtime assets that bypass the HTML SRI chain (today: the PCM worklet). Hashes bytes against the build-time pin before `AudioWorklet.addModule`. |
 | `remote-crypto.js` | The E2E crypto for the remote mic: ECDH (P-256) key exchange -> HKDF -> AES-GCM, all via Web Crypto. |
 | `remote-webrtc.js` | `RemoteMicRTC`: WebRTC peer-connection lifecycle, signaling, and the data channel that carries encrypted PCM. Includes the HTTPS-relay fallback for UDP-blocked networks. |
-| `remote-relay-transport.js` | The two HTTPS relay transports (WebSocket + long-poll) used as last resort when WebRTC cannot connect. Same ciphertext frames, same interface as the data channel. |
+| `remote-relay-transport.js` | The two HTTPS relay transports (WebSocket + long-poll) used as last resort when WebRTC cannot connect. Same ciphertext frames, same interface as the data channel. Each exposes a `drain()` (buffered-amount / queue-depth) so the saved-file pump can pace itself to the link. |
 | `remote-mic-handshake.js` | Shared handshake logic used by both desktop and phone, so both sides hash the public keys in the same byte order for the fingerprint compare. |
 | `persistStorage.js` | Asks the browser to promote this origin's IndexedDB to the "persistent" bucket so Chromium does not evict the multi-GB model cache under disk pressure (which looked like "the version bump wiped my model"). Idempotent, called on every load. |
 
@@ -204,7 +204,7 @@ slow, model-loading tier run separately.
 
 | Path | Role |
 |---|---|
-| `test/unit/*.test.mjs` | **Tier 1**, pure-logic unit tests (no model download). Decode/front-end: `beam-decode`, `bpe-encoder`, `chunk-default`, `chunk-stitch`, `mel`, `phrase-boost`, `tokenizer`, `boost-compile`, `boost-spec-file`. Hub/cache/quant selection: `resolve-quant`, `get-parakeet-model-files`, `list-local-repo-files`, `resolve-local-model-base`, `hub-cache-validate`, `should-retry-locally`, `model-corruption-recovery`, `sweep-orphans` (cache-GC orphan selection), `stream-to-memory` (fp32 shard byte-assembly), `external-data`. Bench/misc: `grid-search-datasets`, `grid-search-eta`, `persist-storage`, `format`, `remote-crypto`. |
+| `test/unit/*.test.mjs` | **Tier 1**, pure-logic unit tests (no model download). Decode/front-end: `beam-decode`, `bpe-encoder`, `chunk-default`, `chunk-stitch`, `mel`, `phrase-boost`, `tokenizer`, `boost-compile`, `boost-spec-file`. Hub/cache/quant selection: `resolve-quant`, `get-parakeet-model-files`, `list-local-repo-files`, `resolve-local-model-base`, `hub-cache-validate`, `should-retry-locally`, `model-corruption-recovery`, `sweep-orphans` (cache-GC orphan selection), `stream-to-memory` (fp32 shard byte-assembly), `external-data`. Bench/misc: `grid-search-datasets`, `grid-search-eta`, `persist-storage`, `format`, `remote-crypto`, `remote-relay-drain` (transport backpressure drain for the saved-file pump). |
 | `test/http/*.test.mjs` | **Tier 2**, integration tests against the **real** signaling server spawned on a random port: `config`, `origin`, `rate-limit`, `rooms`, `validation`. |
 | `test/http/helpers.mjs` | Spawn/teardown helper for the signaling server, shared by the tier-2 tests. |
 | `test/e2e/transcription.spec.js` | **Tier 3** Playwright happy-path: loads the WASM int8 model in real headless Chromium and transcribes each clip in a fixture list (French `sample.aac` + English `jfk.mp3`) end to end against its golden. |
