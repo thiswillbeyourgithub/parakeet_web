@@ -312,6 +312,34 @@ export class RemoteMicRTC {
         }
     }
 
+    /**
+     * Resolve once the outbound buffer has drained below `thresholdBytes`,
+     * so a faster-than-real-time producer (the saved-file pump) can pace
+     * itself to the link instead of overrunning sendBinary's 5 s drop path.
+     * A live mic never needs this — it is rate-limited by wall-clock audio —
+     * but a file is decoded all at once and would otherwise flood the SCTP
+     * buffer. Bounded by `deadlineMs` so a wedged or slow link cannot hang
+     * the pump forever; returns true if it drained, false on deadline (the
+     * caller keeps going, accepting that sendBinary may then drop and
+     * surface its own onSendError). Delegates to the active relay transport
+     * once one has won the race.
+     * @returns {Promise<boolean>}
+     */
+    async drain(thresholdBytes = 256 * 1024, deadlineMs = 30000) {
+        if (this.relayTransport) {
+            return typeof this.relayTransport.drain === 'function'
+                ? this.relayTransport.drain(thresholdBytes, deadlineMs)
+                : true;
+        }
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') return true;
+        const deadline = Date.now() + deadlineMs;
+        while (this.dataChannel.bufferedAmount > thresholdBytes) {
+            if (Date.now() > deadline) return false;
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        return true;
+    }
+
     // ============ HTTPS Relay Race ============
     //
     // Race state machine: WebRTC and the relay run in parallel after

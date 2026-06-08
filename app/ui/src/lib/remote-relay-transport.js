@@ -164,6 +164,21 @@ export class RelayWsTransport {
         }
     }
 
+    /**
+     * Backpressure drain for the saved-file pump (see RemoteMicRTC.drain).
+     * WebSocket.bufferedAmount mirrors RTCDataChannel.bufferedAmount.
+     * @returns {Promise<boolean>}
+     */
+    async drain(thresholdBytes = 256 * 1024, deadlineMs = 30000) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return true;
+        const deadline = Date.now() + deadlineMs;
+        while (this.ws.bufferedAmount > thresholdBytes) {
+            if (Date.now() > deadline) return false;
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        return true;
+    }
+
     close() {
         if (this.closed) return;
         this.closed = true;
@@ -362,6 +377,27 @@ export class RelayHttpTransport {
             body: data,
         });
         return accepted;
+    }
+
+    /**
+     * Backpressure drain for the saved-file pump (see RemoteMicRTC.drain).
+     * This transport is queue-based (one serial POST per frame), not
+     * buffer-based, so `thresholdBytes` is interpreted as a frame budget:
+     * wait until the pending binary queue falls below ~1/8 of its cap so
+     * the pump never pushes frames into a queue that is about to overflow
+     * and silently drop them. Bounded by `deadlineMs`.
+     * @returns {Promise<boolean>}
+     */
+    async drain(_thresholdBytes = 256 * 1024, deadlineMs = 30000) {
+        if (this.closed || !this.connected) return true;
+        const frameBudget = Math.max(1, Math.floor(this._SEND_QUEUE_MAX_BINARY_FRAMES / 8));
+        const deadline = Date.now() + deadlineMs;
+        while (this._sendQueueBinaryCount > frameBudget) {
+            if (this.closed || !this.connected) return true;
+            if (Date.now() > deadline) return false;
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        return true;
     }
 
     _enqueueSend(item) {
