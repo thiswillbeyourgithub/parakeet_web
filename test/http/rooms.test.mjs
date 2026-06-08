@@ -89,6 +89,62 @@ describe('SDP offer/answer relay round trip', () => {
   });
 });
 
+describe('room re-arm for reconnection', () => {
+  test('rearm clears offer/answer/ICE but keeps the room and secret valid', async () => {
+    const { roomId, secret } = await createRoom(srv);
+
+    // First handshake: offer, answer, and ICE on both sides.
+    await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/ice/offer`, { candidate: SAMPLE_CANDIDATE }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/ice/answer`, { candidate: SAMPLE_CANDIDATE }, secret);
+
+    let status = await (await apiGet(srv, `/api/rooms/${roomId}`, secret)).json();
+    assert.deepEqual(status, { exists: true, hasOffer: true, hasAnswer: true });
+
+    // Re-arm.
+    const rearm = await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, secret);
+    assert.equal(rearm.status, 200);
+    assert.deepEqual(await rearm.json(), { success: true });
+
+    // Signaling slot is back to the just-created state, room still alive.
+    status = await (await apiGet(srv, `/api/rooms/${roomId}`, secret)).json();
+    assert.deepEqual(status, { exists: true, hasOffer: false, hasAnswer: false });
+    assert.equal((await apiGet(srv, `/api/rooms/${roomId}/offer`, secret)).status, 404);
+    assert.equal((await apiGet(srv, `/api/rooms/${roomId}/answer`, secret)).status, 204);
+    const offerIce = await (await apiGet(srv, `/api/rooms/${roomId}/ice/offer`, secret)).json();
+    const answerIce = await (await apiGet(srv, `/api/rooms/${roomId}/ice/answer`, secret)).json();
+    assert.deepEqual(offerIce.candidates, []);
+    assert.deepEqual(answerIce.candidates, []);
+
+    // A second handshake works on the same room/secret.
+    await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, secret);
+    const get = await apiGet(srv, `/api/rooms/${roomId}/offer`, secret);
+    assert.equal(get.status, 200);
+  });
+
+  test('rearm wakes a pending answer long-poll so it does not return the stale answer', async () => {
+    const { roomId, secret } = await createRoom(srv);
+    await apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, secret);
+
+    // After rearm there is no answer, so a waiting long-poll must block then
+    // 204 at the timeout boundary rather than returning the cleared answer.
+    const pollPromise = apiGet(srv, `/api/rooms/${roomId}/answer?wait=true`, secret);
+    // A fresh answer posted after rearm is what it should ultimately resolve to.
+    setTimeout(() => { apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret); }, 100);
+    const res = await pollPromise;
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { type: 'answer', sdp: SAMPLE_SDP });
+  });
+
+  test('rearm requires the room secret', async () => {
+    const { roomId } = await createRoom(srv);
+    const res = await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, 'wrong-secret');
+    assert.equal(res.status, 401);
+  });
+});
+
 describe('ICE candidate trickle relay', () => {
   test('candidates posted to the offer side are listed back', async () => {
     const { roomId, secret } = await createRoom(srv);

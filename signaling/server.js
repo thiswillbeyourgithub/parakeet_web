@@ -942,6 +942,30 @@ app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), validateRoom
     }
 });
 
+// Re-arm a room for a SECOND handshake without minting a new room/secret.
+// When a phone drops, the desktop keeps the same QR on screen and waits for
+// the phone to come back. But the old session's SDP answer and the
+// append-only ICE candidate lists are still stored: a fresh offer alone is
+// not enough because GET /answer would immediately return the STALE answer
+// (and the new RTCPeerConnection would replay dead ICE). This resets the
+// signaling slot (offer/answer/ICE) to its just-created state, keeping the
+// room id, secret, and relay state alive, so the desktop can store a fresh
+// offer and long-poll for the returning phone's new answer. Any waiter
+// currently long-polling /answer is woken so it re-evaluates (and 204s)
+// against the now-empty answer instead of hanging on the prior one.
+app.post('/api/rooms/:id/rearm', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+    req.room.offer = null;
+    req.room.answer = null;
+    req.room.iceCandidatesOffer = [];
+    req.room.iceCandidatesAnswer = [];
+    if (req.room.answerWaiters) {
+        for (const wake of req.room.answerWaiters) wake();
+        req.room.answerWaiters.clear();
+    }
+    debugLog('SIGNALING', `Room ${req.params.id} re-armed for reconnection`);
+    res.json({ success: true });
+});
+
 // ICE candidates for offer side
 app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
     const err = validateIceCandidate(req.body);
