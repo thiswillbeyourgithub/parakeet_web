@@ -1,6 +1,6 @@
 // Tier-1 unit test for the phrase-boosting trie (app/src/phraseBoost.js) and its
 // interaction with the BPE encoder. Validates phrase parsing, list directives,
-// augmentation expansion, trie build/advance, the depth-scaled bonus map, top-k
+// augmentation expansion, trie build/advance, the depth-scaled bonus map, min-p
 // gating, and that applyBoost/restore flips a greedy argmax without permanently
 // altering the logits.
 //
@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { BpeEncoder, buildVocabToId } from '../../app/src/bpeEncoder.js';
 import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
-  augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_TOPK,
+  augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
   isDefaultsLine, resolveBoostLines,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
@@ -42,19 +42,19 @@ describe('parseBoostPhrases', () => {
   test('under-range negative weight clamped + warning', () => assert.ok(signed[1].phrase === 'over' && signed[1].weight === 1 && !!signed[1].warning));
   test('zero weight rejected + warning', () => assert.ok(signed[2].phrase === 'zero' && signed[2].weight === 1 && !!signed[2].warning));
 
-  const tk = parseBoostPhrases('plain\nfoo:3\nbar:3:50\nbaz:3:0\nqux:3:2.5\nratio 3:1');
-  test('no suffix => default weight + default topk', () => assert.ok(tk[0].phrase === 'plain' && tk[0].weight === 1 && tk[0].topk === DEFAULT_BOOST_TOPK));
-  test('one number is the weight, topk defaults', () => assert.ok(tk[1].phrase === 'foo' && tk[1].weight === 3 && tk[1].topk === DEFAULT_BOOST_TOPK));
-  test('weight:topk parsed (inner weight, outer topk)', () => assert.ok(tk[2].phrase === 'bar' && tk[2].weight === 3 && tk[2].topk === 50));
-  test('topk < 1 rejected + warning', () => assert.ok(tk[3].phrase === 'baz' && tk[3].weight === 3 && tk[3].topk === DEFAULT_BOOST_TOPK && !!tk[3].warning));
-  test('non-integer topk rejected + warning', () => assert.ok(tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].topk === DEFAULT_BOOST_TOPK && !!tk[4].warning));
-  test('colon-only phrase still unaffected with topk parsing', () => assert.ok(tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].topk === DEFAULT_BOOST_TOPK));
+  const tk = parseBoostPhrases('plain\nfoo:3\nbar:3:0.5\nbaz:3:0\nqux:3:2.5\nratio 3:1');
+  test('no suffix => default weight + default minp', () => assert.ok(tk[0].phrase === 'plain' && tk[0].weight === 1 && tk[0].minp === DEFAULT_BOOST_MIN_P));
+  test('one number is the weight, minp defaults', () => assert.ok(tk[1].phrase === 'foo' && tk[1].weight === 3 && tk[1].minp === DEFAULT_BOOST_MIN_P));
+  test('weight:minp parsed (inner weight, outer minp)', () => assert.ok(tk[2].phrase === 'bar' && tk[2].weight === 3 && tk[2].minp === 0.5));
+  test('minp 0 rejected + warning', () => assert.ok(tk[3].phrase === 'baz' && tk[3].weight === 3 && tk[3].minp === DEFAULT_BOOST_MIN_P && !!tk[3].warning));
+  test('minp > 1 rejected + warning', () => assert.ok(tk[4].phrase === 'qux' && tk[4].weight === 3 && tk[4].minp === DEFAULT_BOOST_MIN_P && !!tk[4].warning));
+  test('colon-only phrase still unaffected with minp parsing', () => assert.ok(tk[5].phrase === 'ratio 3' && tk[5].weight === 1 && tk[5].minp === DEFAULT_BOOST_MIN_P));
 
-  const fl = parseBoostPhrases('a::40\nb:5:50:i\nc:s\nd:2:i\ne:5:50\nf:abc:i\ng:5::fap\nh:5::p\ni:5::fa\nj:5::h\nk:5::hpf');
-  test('empty weight keeps default, explicit topk', () => assert.ok(fl[0].phrase === 'a' && fl[0].weight === 1 && fl[0].topk === 40));
-  test(':i alias parsed after weight:topk -> faph', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].topk === 50 && fl[1].augment === 'faph'));
+  const fl = parseBoostPhrases('a::0.2\nb:5:0.3:i\nc:s\nd:2:i\ne:5:0.3\nf:abc:i\ng:5::fap\nh:5::p\ni:5::fa\nj:5::h\nk:5::hpf');
+  test('empty weight keeps default, explicit minp', () => assert.ok(fl[0].phrase === 'a' && fl[0].weight === 1 && fl[0].minp === 0.2));
+  test(':i alias parsed after weight:minp -> faph', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].minp === 0.3 && fl[1].augment === 'faph'));
   test(':s alias alone -> none (defaults otherwise)', () => assert.ok(fl[2].phrase === 'c' && fl[2].weight === 1 && fl[2].augment === ''));
-  test(':i alias right after weight (no topk)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].topk === DEFAULT_BOOST_TOPK && fl[3].augment === 'faph'));
+  test(':i alias right after weight (no minp)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].minp === DEFAULT_BOOST_MIN_P && fl[3].augment === 'faph'));
   test('no flag leaves augment undefined', () => assert.equal(fl[4].augment, undefined));
   test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].augment === 'faph'));
   test(':fap sets the three casing/prefix flags', () => assert.ok(fl[6].phrase === 'g' && fl[6].weight === 5 && fl[6].augment === 'fap'));
@@ -89,12 +89,12 @@ describe('* defaults line', () => {
     assert.ok(!isDefaultsLine('plain'));
   });
 
-  test('a leading * sets default weight/topk/augment for following phrases', () => {
-    const p = parseBoostPhrases('*:2:50:fa\nvenlafaxine\namlodipine:7');
+  test('a leading * sets default weight/minp/augment for following phrases', () => {
+    const p = parseBoostPhrases('*:2:0.3:fa\nvenlafaxine\namlodipine:7');
     assert.equal(p.length, 2);
-    assert.deepEqual([p[0].phrase, p[0].weight, p[0].topk, p[0].augment], ['venlafaxine', 2, 50, 'fa']);
-    // explicit weight overrides the * default weight; topk/augment still inherited.
-    assert.deepEqual([p[1].phrase, p[1].weight, p[1].topk, p[1].augment], ['amlodipine', 7, 50, 'fa']);
+    assert.deepEqual([p[0].phrase, p[0].weight, p[0].minp, p[0].augment], ['venlafaxine', 2, 0.3, 'fa']);
+    // explicit weight overrides the * default weight; minp/augment still inherited.
+    assert.deepEqual([p[1].phrase, p[1].weight, p[1].minp, p[1].augment], ['amlodipine', 7, 0.3, 'fa']);
   });
 
   test('* is stateful: a later * changes the defaults for subsequent lines', () => {
@@ -104,9 +104,9 @@ describe('* defaults line', () => {
   });
 
   test('empty * fields keep the base default (only the set field applies)', () => {
-    // *:::fa sets augment only; weight falls back to base 1, topk to the default.
+    // *:::fa sets augment only; weight falls back to base 1, minp to the default.
     const p = parseBoostPhrases('*:::fa\nalpha');
-    assert.deepEqual([p[0].weight, p[0].topk, p[0].augment], [1, DEFAULT_BOOST_TOPK, 'fa']);
+    assert.deepEqual([p[0].weight, p[0].minp, p[0].augment], [1, DEFAULT_BOOST_MIN_P, 'fa']);
   });
 
   test('a bare * is a no-op defaults line (skipped, changes nothing)', () => {
@@ -126,9 +126,9 @@ describe('* defaults line', () => {
     assert.deepEqual([p[0].weight, p[0].augment], [9, '']);
   });
 
-  test('resolveBoostLines leaves weight/topk undefined with no * and no per-phrase field', () => {
+  test('resolveBoostLines leaves weight/minp undefined with no * and no per-phrase field', () => {
     const r = resolveBoostLines(['alpha']);
-    assert.deepEqual([r[0].phrase, r[0].weight, r[0].topk, r[0].augment], ['alpha', undefined, undefined, undefined]);
+    assert.deepEqual([r[0].phrase, r[0].weight, r[0].minp, r[0].augment], ['alpha', undefined, undefined, undefined]);
   });
 });
 
@@ -188,10 +188,10 @@ describe('augmentVariants / expandAugmentations', () => {
       && v.includes("l'alpha methyl"));
   });
 
-  test('default off => no expansion', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 5, topk: 50 }]).length, 1));
-  const expanded = expandAugmentations([{ phrase: 'venlafaxine', weight: 5, topk: 50 }], 'fa');
+  test('default off => no expansion', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 5, minp: 0.3 }]).length, 1));
+  const expanded = expandAugmentations([{ phrase: 'venlafaxine', weight: 5, minp: 0.3 }], 'fa');
   test('default fa => expands one entry into 3 forms', () => assert.equal(expanded.length, 3));
-  test('expanded entries carry the original weight + topk', () => assert.ok(expanded.every(e => e.weight === 5 && e.topk === 50)));
+  test('expanded entries carry the original weight + minp', () => assert.ok(expanded.every(e => e.weight === 5 && e.minp === 0.3)));
   test('expanded entries cover each form', () => assert.ok(['venlafaxine', 'Venlafaxine', 'VENLAFAXINE'].every(p => expanded.some(e => e.phrase === p))));
   test('per-phrase augment expands even when default is off', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 1, augment: 'fa' }], '').length, 3));
   test('per-phrase empty augment stays single even when default is on', () => assert.equal(expandAugmentations([{ phrase: 'venlafaxine', weight: 1, augment: '' }], 'fa').length, 1));
@@ -212,7 +212,7 @@ describe('BoostingTrie build + advance + bonus map', () => {
   trie.reset();
   test('root boosts only first token', () => assert.ok(trie.childBoostFor(ids[0]) !== null && trie.childBoostFor(ids[1]) === null));
   test('depth-1 bonus = weight*(1+0.5*0) = 2', () => assert.equal(trie.childBoostFor(ids[0]).bonus, 2));
-  test('default topk carried on the bonus', () => assert.equal(trie.childBoostFor(ids[0]).topk, DEFAULT_BOOST_TOPK));
+  test('default minp carried on the bonus', () => assert.equal(trie.childBoostFor(ids[0]).minp, DEFAULT_BOOST_MIN_P));
 
   test('after advance: second token boosted, root still active', () => {
     trie.advance(ids[0]);
@@ -264,20 +264,42 @@ test('penalise (negative weight) flips the argmax away, then restores', () => {
   assert.equal(penLogits[ids[0]], 1.0, 'restore brings the phrase token back');
 });
 
-test('top-k gating only boosts tokens already in the model top-k', () => {
+test('min-p gating only boosts tokens the model finds plausible enough', () => {
   const V = fixture.id2token.length;
   const gateLogits = new Float32Array(V);
-  gateLogits[100] = 5; gateLogits[101] = 4; gateLogits[ids[0]] = 1; // ids[0] ranks 3rd
-  const gate2 = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, topk: 2 }], encoder, { strength: 1 });
-  gate2.reset();
-  assert.equal(gate2.applyBoost(gateLogits), null, 'candidate outside top-k is gated out');
+  // ids[0] sits 4 logits below the top token, i.e. exp(-4) ~= 1.83% as likely.
+  gateLogits[100] = 5; gateLogits[ids[0]] = 1;
+  // min-p 0.05 = "at least 5% as likely as the top": 1.83% < 5%, gated out.
+  const strict = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.05 }], encoder, { strength: 1 });
+  strict.reset();
+  assert.equal(strict.applyBoost(gateLogits), null, 'candidate below the min-p ratio is gated out');
   assert.equal(gateLogits[ids[0]], 1, 'gated-out logit is untouched');
-  const gate3 = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, topk: 3 }], encoder, { strength: 1 });
-  gate3.reset();
-  const gateSaved = gate3.applyBoost(gateLogits);
-  assert.ok(Array.isArray(gateSaved) && gateLogits[ids[0]] === 6, 'candidate inside top-k is boosted');
-  gate3.restore(gateLogits, gateSaved);
+  // min-p 0.01 = "at least 1% as likely": 1.83% > 1%, boosted (by weight*1 = 5).
+  const loose = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.01 }], encoder, { strength: 1 });
+  loose.reset();
+  const gateSaved = loose.applyBoost(gateLogits);
+  assert.ok(Array.isArray(gateSaved) && gateLogits[ids[0]] === 6, 'candidate above the min-p ratio is boosted');
+  loose.restore(gateLogits, gateSaved);
   assert.equal(gateLogits[ids[0]], 1, 'restore after gated boost');
+});
+
+test('min-p adapts to the per-frame max (entropy-aware): same logit, different gate', () => {
+  // The whole point of min-p over a fixed top-k: the SAME candidate logit is
+  // gated out on a confident (peaked) frame but boosted on a flat (uncertain)
+  // one. log(0.05) ~= -3.0, so the gate admits ids[0] iff maxLogit - logit <= 3.
+  const V = fixture.id2token.length;
+  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.05 }], encoder, { strength: 1 });
+
+  const peaked = new Float32Array(V);
+  peaked[100] = 10; peaked[ids[0]] = 1; // gap 9 >> 3: the model is confident elsewhere
+  trie.reset();
+  assert.equal(trie.applyBoost(peaked), null, 'on a confident frame the same logit is gated out');
+
+  const flat = new Float32Array(V);
+  flat[100] = 2; flat[ids[0]] = 1; // gap 1 < 3: the model is unsure, the term is plausible
+  trie.reset();
+  const saved = trie.applyBoost(flat);
+  assert.ok(Array.isArray(saved) && flat[ids[0]] === 6, 'on a flat frame the same logit clears the gate');
 });
 
 describe('skip <unk> phrases', () => {

@@ -49,7 +49,7 @@ describe('expandBoostSpec file-vs-inline guard', () => {
 });
 
 // The CLI shares the web app's list-level syntax: a `#!prefixes` directive and a
-// `*:WEIGHT:TOPK:AUG` defaults line are config, not phrases, so they must not leak
+// `*:WEIGHT:MINP:AUG` defaults line are config, not phrases, so they must not leak
 // into the trie as junk terms (the per-phrase `:AUG` field is still parsed
 // normally). The removed `#!strength` / `#!augment` directives are likewise never
 // phrases (they are now expressed by a `*` defaults line).

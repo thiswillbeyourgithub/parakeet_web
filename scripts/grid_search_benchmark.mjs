@@ -201,7 +201,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
 Decoding sweep (each is a comma-separated list; the grid is their product):
   -w, --beam-width LIST    Beam widths to test, e.g. "1,2,4,8". 1 = greedy.
                            Default 1.
-  -b, --phrase-boost SPEC  Phrase-boost source: inline "phrase:WEIGHT:TOPK:FLAG"
+  -b, --phrase-boost SPEC  Phrase-boost source: inline "phrase:WEIGHT:MINP:FLAG"
                            text, a .txt list, or a precompiled .pwc. Repeatable;
                            all specs are merged into one boost set. When given,
                            the sweep adds one row per --boost-strength (plus a

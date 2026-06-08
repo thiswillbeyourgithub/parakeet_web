@@ -22,12 +22,18 @@
 // per-phrase weight flips the sign so the phrase is penalised instead of
 // boosted; a negative global strength inverts every phrase at once.
 //
-// Top-k gating (applyBoost): a candidate token only receives its bonus when its
-// raw logit is already among the model's top-k tokens (per-phrase, default
-// DEFAULT_BOOST_TOPK). This keeps boosting a ranking nudge rather than a hammer
-// that forces a token the model itself ranked far down (which would hallucinate
-// the phrase). The gate is on the model's own raw logits, so the strength
-// multiplier and weight sign do not affect which tokens are eligible.
+// Min-p gating (applyBoost): a candidate token only receives its bonus when the
+// model already finds it plausible, measured relatively to the top token by the
+// min-p rule borrowed from LLM sampling. A token is eligible iff its probability
+// is at least `minp` times the top token's, i.e. (in logit space, with no softmax
+// needed) iff `logit >= maxLogit + log(minp)` (per-phrase, default
+// DEFAULT_BOOST_MIN_P). Unlike a fixed top-k count this adapts to the per-frame
+// entropy: it narrows to the few near-the-max tokens on a confident frame (so a
+// strong weight cannot dredge up a token the model itself ranked far down and
+// hallucinate the phrase) and widens on a flat/uncertain frame (so a genuinely
+// plausible rare term is still boosted, which a fixed rank-25 cut would miss).
+// The gate is on the model's own raw logits, so the strength multiplier and
+// weight sign do not affect which tokens are eligible.
 
 /** Internal: default linear depth-scaling factor (PLAN.md section 3). */
 const DEFAULT_DEPTH_SCALING = 0.5;
@@ -41,13 +47,13 @@ const DEFAULT_DEPTH_SCALING = 0.5;
 export const MAX_PHRASE_WEIGHT = 10;
 
 /**
- * Default top-k gate for a phrase (see {@link BoostingTrie#applyBoost}). A
- * phrase token only receives its boost when its raw logit is already among the
- * model's top-`topk` tokens, so boosting nudges the ranking without forcing a
- * token the model ranked far down. Overridable per-phrase via the `:weight:topk`
- * suffix.
+ * Default min-p gate for a phrase (see {@link BoostingTrie#applyBoost}). A phrase
+ * token only receives its boost when its probability is at least this fraction of
+ * the model's top token for that step, so boosting nudges the ranking without
+ * forcing a token the model ranked far down. 0.05 = "at least 5% as likely as the
+ * top candidate". Overridable per-phrase via the `:weight:minp` suffix.
  */
-export const DEFAULT_BOOST_TOPK = 25;
+export const DEFAULT_BOOST_MIN_P = 0.05;
 
 /**
  * The full augmentation set, applied to a phrase that has no explicit `:AUG`
@@ -137,29 +143,29 @@ function peelValueField(text) {
 }
 
 /**
- * Split one phrase line into its fields: `phrase[:WEIGHT[:TOPK[:AUG]]]`. Fields
+ * Split one phrase line into its fields: `phrase[:WEIGHT[:MINP[:AUG]]]`. Fields
  * are peeled right-to-left and the phrase keeps any colons it contains (only a
  * trailing field of the right shape is consumed), so e.g. `ratio 3:1` and
  * `bad:abc` still work. Details:
  *   - An absent or empty numeric field is returned as `undefined` so the caller
  *     can fall back to its running default (the list's `*` defaults line, then
- *     the built-in 1 / {@link DEFAULT_BOOST_TOPK}): `word::25` -> weight
- *     undefined + top-k 25; `word:5` -> weight 5 + top-k undefined.
+ *     the built-in 1 / {@link DEFAULT_BOOST_MIN_P}): `word::0.1` -> weight
+ *     undefined + min-p 0.1; `word:5` -> weight 5 + min-p undefined.
  *   - The optional trailing `:AUG` augmentation field sets per-phrase surface-form
  *     expansion: any mix of `f` (Title Case), `a` (ALL CAPS), `p` (proclitic
  *     prefixes), `h` (strip symbols), plus the legacy aliases `s` (force none)
  *     and `i` (all of them). It must be the last field; absent leaves `augment`
  *     undefined so the caller's running default / global toggle applies. See
  *     {@link normalizeAugment}.
- * Returns RAW, unvalidated weight/topk (callers clamp/warn as they like), each
+ * Returns RAW, unvalidated weight/minp (callers clamp/warn as they like), each
  * `undefined` when its field was absent or empty.
  * @param {string} text A single phrase line (leading/trailing space tolerated).
- * @returns {{phrase: string, weight: (number|undefined), topk: (number|undefined), augment: (string|undefined)}}
+ * @returns {{phrase: string, weight: (number|undefined), minp: (number|undefined), augment: (string|undefined)}}
  */
 export function parseBoostFields(text) {
   let phrase = text.trim();
   let weight;
-  let topk;
+  let minp;
   let augment;
 
   // 1. Optional trailing augmentation field (:f/:a/:p/:h/:s/:i), last field only.
@@ -172,23 +178,23 @@ export function parseBoostFields(text) {
     }
   }
 
-  // 2. Optional :WEIGHT then :WEIGHT:TOPK, peeled right-to-left. An empty field
+  // 2. Optional :WEIGHT then :WEIGHT:MINP, peeled right-to-left. An empty field
   //    stays undefined (the caller fills the running default).
   const last = peelValueField(phrase);
   if (last) {
     const prev = peelValueField(last.head);
     if (prev) {
-      // phrase:WEIGHT:TOPK  (prev = weight, last = topk)
+      // phrase:WEIGHT:MINP  (prev = weight, last = minp)
       phrase = prev.head;
       if (!prev.empty) weight = prev.value;
-      if (!last.empty) topk = last.value;
+      if (!last.empty) minp = last.value;
     } else {
       // phrase:WEIGHT
       phrase = last.head;
       if (!last.empty) weight = last.value;
     }
   }
-  return { phrase, weight, topk, augment };
+  return { phrase, weight, minp, augment };
 }
 
 /**
@@ -263,30 +269,30 @@ export function isDefaultsLine(trimmed) {
 function isValidWeight(w) {
   return Number.isFinite(w) && w !== 0 && w >= -MAX_PHRASE_WEIGHT && w <= MAX_PHRASE_WEIGHT;
 }
-/** A top-k gate is usable: an integer >= 1. */
-function isValidTopk(k) {
-  return Number.isInteger(k) && k >= 1;
+/** A min-p gate is usable: a number in the half-open range (0, 1]. */
+function isValidMinP(p) {
+  return Number.isFinite(p) && p > 0 && p <= 1;
 }
 
 /**
  * Parse a `*` defaults line into the field values it sets. Unlike a phrase, the
- * `*` line is purely positional (`*:WEIGHT:TOPK:AUG`) with no embedded phrase, so
+ * `*` line is purely positional (`*:WEIGHT:MINP:AUG`) with no embedded phrase, so
  * it is split left-to-right and trailing empty fields are unambiguous: each empty
  * field simply leaves that default unchanged. Returns only the fields the line
  * actually sets (a malformed value is dropped). See {@link resolveBoostLines}.
  * @param {string} trimmed A line for which {@link isDefaultsLine} is true.
- * @returns {{weight?: number, topk?: number, augment?: string}}
+ * @returns {{weight?: number, minp?: number, augment?: string}}
  */
 function parseDefaultsLine(trimmed) {
   const out = {};
   const rest = trimmed.slice(1); // drop the leading '*'
   if (rest === '' || rest[0] !== ':') return out; // '*' alone: no changes
-  const segs = rest.slice(1).split(':'); // [WEIGHT, TOPK, AUG, ...]
+  const segs = rest.slice(1).split(':'); // [WEIGHT, MINP, AUG, ...]
   const wRaw = (segs[0] ?? '').trim();
-  const kRaw = (segs[1] ?? '').trim();
+  const pRaw = (segs[1] ?? '').trim();
   const aRaw = (segs[2] ?? '').trim();
   if (wRaw !== '') { const w = Number(wRaw); if (Number.isFinite(w)) out.weight = w; }
-  if (kRaw !== '') { const k = Number(kRaw); if (Number.isFinite(k)) out.topk = k; }
+  if (pRaw !== '') { const p = Number(pRaw); if (Number.isFinite(p)) out.minp = p; }
   if (aRaw !== '') { const a = normalizeAugment(aRaw); if (a !== undefined) out.augment = a; }
   return out;
 }
@@ -294,8 +300,8 @@ function parseDefaultsLine(trimmed) {
 /**
  * Resolve an ordered list of phrase-field objects against the list's `*` defaults
  * lines, the shared core behind both {@link parseBoostPhrases} (web) and the
- * CLI's `parseCliBoosts`. A `*` line (`*:WEIGHT:TOPK:AUG`) sets the running
- * default weight / top-k / augmentation for every phrase that follows it, until
+ * CLI's `parseCliBoosts`. A `*` line (`*:WEIGHT:MINP:AUG`) sets the running
+ * default weight / min-p / augmentation for every phrase that follows it, until
  * the next `*` line changes it; each empty field leaves that default unchanged.
  * A phrase's own field still wins over the running default. This is what lets a
  * list set its strength as a default weight (`*:2` at the top) and its
@@ -303,9 +309,9 @@ function parseDefaultsLine(trimmed) {
  * out-of-range value is ignored (the prior default stands) so a bad defaults
  * line cannot poison every following phrase with warnings.
  *
- * Augmentation/weight/top-k that are still undefined after this (no phrase field
+ * Augmentation/weight/min-p that are still undefined after this (no phrase field
  * and no active `*` default) are left undefined for the caller to fill with the
- * built-in base (weight 1, top-k {@link DEFAULT_BOOST_TOPK}) or, for augment, the
+ * built-in base (weight 1, min-p {@link DEFAULT_BOOST_MIN_P}) or, for augment, the
  * global toggle. `*`-sourced defaults are pre-validated (a `*` field out of range
  * is ignored, the prior default stands); a phrase's own RAW field is passed
  * through unvalidated so the caller can clamp + warn on it.
@@ -315,24 +321,24 @@ function parseDefaultsLine(trimmed) {
  * fields (e.g. `*:2::` peels to the phrase `*:2`). Empty / `#!` lines are skipped
  * defensively.
  * @param {string[]} lines One raw line per element, in order.
- * @returns {Array<{phrase: string, weight: (number|undefined), topk: (number|undefined), augment?: string}>}
+ * @returns {Array<{phrase: string, weight: (number|undefined), minp: (number|undefined), augment?: string}>}
  *   One entry per phrase line (the `*` lines are consumed), in order.
  */
 export function resolveBoostLines(lines) {
   const out = [];
-  let defWeight, defTopk, defAugment; // undefined => fall through to base/global
+  let defWeight, defMinP, defAugment; // undefined => fall through to base/global
   for (const raw of lines) {
     const trimmed = raw.trim();
     if (!trimmed || isDirectiveLine(trimmed)) continue;
     if (isDefaultsLine(trimmed)) {
       const d = parseDefaultsLine(trimmed);
       if (d.weight !== undefined && isValidWeight(d.weight)) defWeight = d.weight;
-      if (d.topk !== undefined && isValidTopk(d.topk)) defTopk = d.topk;
+      if (d.minp !== undefined && isValidMinP(d.minp)) defMinP = d.minp;
       if (d.augment !== undefined) defAugment = d.augment;
       continue;
     }
     const f = parseBoostFields(trimmed);
-    const entry = { phrase: f.phrase, weight: f.weight ?? defWeight, topk: f.topk ?? defTopk };
+    const entry = { phrase: f.phrase, weight: f.weight ?? defWeight, minp: f.minp ?? defMinP };
     const augment = f.augment ?? defAugment;
     if (augment !== undefined) entry.augment = augment;
     out.push(entry);
@@ -342,42 +348,42 @@ export function resolveBoostLines(lines) {
 
 /**
  * Parse a multi-line boost-phrase blob. Each non-empty line is a phrase with up
- * to three optional trailing fields, `phrase:WEIGHT:TOPK:AUG`, all peeled
+ * to three optional trailing fields, `phrase:WEIGHT:MINP:AUG`, all peeled
  * right-to-left by {@link parseBoostFields} (e.g. `acetaminophen:2.5`, `um:-3`,
- * `venlafaxine:5:50`, `venlafaxine:5:50:fap`, `epi::40:s`). An empty numeric
+ * `venlafaxine:5:0.1`, `venlafaxine:5:0.1:fap`, `epi::0.02:s`). An empty numeric
  * field falls back to the running default; the trailing `:AUG` field overrides
  * the per-phrase augmentation (see {@link normalizeAugment}). A negative weight
  * is written with the minus sign after the colon (`phrase:-3`).
  *
- * A `*:WEIGHT:TOPK:AUG` line is a defaults line (see {@link resolveBoostLines}):
- * it sets the default weight / top-k / augmentation for every following phrase
+ * A `*:WEIGHT:MINP:AUG` line is a defaults line (see {@link resolveBoostLines}):
+ * it sets the default weight / min-p / augmentation for every following phrase
  * (so `*:2` makes the rest of the list weight 2, `*:::fhp` augments the rest),
  * and is consumed here rather than emitted. Lines starting with `#!` are
  * list-level directives (see {@link parseBoostDirectives}) and are likewise
- * skipped. After defaults are resolved, any phrase still lacking a weight/top-k
- * gets the built-in base (1 / {@link DEFAULT_BOOST_TOPK}); this then
+ * skipped. After defaults are resolved, any phrase still lacking a weight/min-p
+ * gets the built-in base (1 / {@link DEFAULT_BOOST_MIN_P}); this then
  * validates/clamps and records a per-entry `warning` for anything it coerced.
  * @param {string} raw
- * @returns {Array<{phrase: string, weight: number, topk: number, augment?: string, warning?: string}>}
+ * @returns {Array<{phrase: string, weight: number, minp: number, augment?: string, warning?: string}>}
  */
 export function parseBoostPhrases(raw) {
   if (!raw) return [];
   const out = [];
-  for (const { phrase, weight, topk, augment } of resolveBoostLines(raw.split(/\r?\n/))) {
+  for (const { phrase, weight, minp, augment } of resolveBoostLines(raw.split(/\r?\n/))) {
     const warnings = [];
     let w = weight ?? 1;
-    let k = topk ?? DEFAULT_BOOST_TOPK;
+    let p = minp ?? DEFAULT_BOOST_MIN_P;
 
     if (w === 0 || w < -MAX_PHRASE_WEIGHT || w > MAX_PHRASE_WEIGHT) {
       warnings.push(`weight ${w} out of range [-${MAX_PHRASE_WEIGHT}, ${MAX_PHRASE_WEIGHT}] (nonzero); using 1`);
       w = 1;
     }
-    if (!Number.isInteger(k) || k < 1) {
-      warnings.push(`top-k ${k} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK}`);
-      k = DEFAULT_BOOST_TOPK;
+    if (!isValidMinP(p)) {
+      warnings.push(`min-p ${p} invalid (number in (0, 1]); using ${DEFAULT_BOOST_MIN_P}`);
+      p = DEFAULT_BOOST_MIN_P;
     }
 
-    const entry = { phrase, weight: w, topk: k };
+    const entry = { phrase, weight: w, minp: p };
     if (augment !== undefined) entry.augment = augment;
     if (warnings.length) entry.warning = warnings.join('; ');
     out.push(entry);
@@ -455,11 +461,11 @@ export function augmentVariants(phrase, flags = '', prefixes = DEFAULT_PREFIXES)
  * toggle) when the entry has none. An entry whose effective flags are empty
  * (`''`) passes through unchanged. Deduplicated across the whole list by phrase
  * string; on a collision the larger-magnitude weight wins (matching the trie's
- * strongest-magnitude rule) and carries its own top-k.
- * @param {Array<{phrase: string, weight: number, topk?: number, augment?: string}>} entries
+ * strongest-magnitude rule) and carries its own min-p.
+ * @param {Array<{phrase: string, weight: number, minp?: number, augment?: string}>} entries
  * @param {string} [defaultAugment=''] Flags applied to entries with no `:AUG` field.
  * @param {string[]} [prefixes=DEFAULT_PREFIXES] Proclitic prefixes for the `p` flag.
- * @returns {Array<{phrase: string, weight: number, topk?: number}>}
+ * @returns {Array<{phrase: string, weight: number, minp?: number}>}
  */
 export function expandAugmentations(entries, defaultAugment = '', prefixes = DEFAULT_PREFIXES) {
   const byPhrase = new Map();
@@ -499,18 +505,18 @@ export function expandAugmentations(entries, defaultAugment = '', prefixes = DEF
  * reference (read-only by callers; {@link BoostingTrie.insert} only reads them),
  * and index the encoder's vocab, so the owner (the worker) MUST drop the cache
  * when the encoder/vocab changes. Pass none and the function is unchanged.
- * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
+ * @param {Array<{phrase: string, weight: number, minp?: number}>} entries
  * @param {{encode: (text: string) => number[], unkId?: number}} encoder A BpeEncoder.
  * @param {Object} [opts]
  * @param {Map<string, number[]>} [opts.cache] Surface-form -> ids memo, persisted by the caller across rebuilds.
- * @returns {{encoded: Array<{ids: number[], weight: number, topk?: number}>, skipped: string[]}}
+ * @returns {{encoded: Array<{ids: number[], weight: number, minp?: number}>, skipped: string[]}}
  */
 export function encodePhrases(entries, encoder, opts = {}) {
   const unkId = encoder.unkId;
   const cache = opts.cache;
   const encoded = [];
   const skipped = [];
-  for (const { phrase, weight, topk } of entries) {
+  for (const { phrase, weight, minp } of entries) {
     let ids = cache?.get(phrase);
     if (ids === undefined) {
       ids = encoder.encode(phrase);
@@ -521,7 +527,7 @@ export function encodePhrases(entries, encoder, opts = {}) {
       skipped.push(phrase);
       continue;
     }
-    encoded.push({ ids, weight, topk });
+    encoded.push({ ids, weight, minp });
   }
   return { encoded, skipped };
 }
@@ -567,46 +573,13 @@ export function selectPrebuilt(prebuilt, current) {
 }
 
 /**
- * Indices of the `k` largest elements of `logits`, returned in descending value
- * order so the array index doubles as the 0-based top-k rank (rank 0 = largest).
- * Used by {@link BoostingTrie#applyBoost} to gate boosts: a token is "in top-k"
- * iff its rank `< k`. O(V*k) to find the k largest (early-out on the running
- * minimum) plus an O(k log k) sort, cheap for the small k used by boost gating.
- * When `k >= logits.length` every index is returned (the gate is effectively
- * off). Ties are broken by scan order, matching no particular phrase.
- * @param {Float32Array|number[]} logits
- * @param {number} k
- * @returns {number[]}
- */
-function rankedTopKIds(logits, k) {
-  const n = logits.length;
-  const kk = Math.min(k, n);
-  const ids = [];
-  const vals = [];
-  for (let i = 0; i < n; i++) {
-    const v = logits[i];
-    if (ids.length < kk) {
-      ids.push(i); vals.push(v);
-    } else {
-      let mi = 0; // index (within the kept set) of the current smallest
-      for (let j = 1; j < kk; j++) if (vals[j] < vals[mi]) mi = j;
-      if (v > vals[mi]) { vals[mi] = v; ids[mi] = i; }
-    }
-  }
-  return ids
-    .map((id, idx) => idx)
-    .sort((a, b) => vals[b] - vals[a])
-    .map(idx => ids[idx]);
-}
-
-/**
  * Trie node. `children` is created lazily (null until the first child is
  * inserted) so the many leaf nodes of a large list do not each carry an empty
  * Map; readers must treat a null `children` as "no children".
- * @returns {{children: Map<number, object>|null, depth: number, bonus: number, topk: number}}
+ * @returns {{children: Map<number, object>|null, depth: number, bonus: number, minp: number}}
  */
 function makeNode(depth) {
-  return { children: null, depth, bonus: 0, topk: DEFAULT_BOOST_TOPK };
+  return { children: null, depth, bonus: 0, minp: DEFAULT_BOOST_MIN_P };
 }
 
 /**
@@ -624,13 +597,14 @@ export class BoostingTrie {
     this.depthScaling = opts.depthScaling ?? DEFAULT_DEPTH_SCALING;
     this.size = 0; // number of distinct phrases inserted (for UI/diagnostics)
     /**
-     * Largest per-phrase top-k gate inserted so far. {@link applyBoost} only
-     * ever boosts a token inside the model's top-`maxTopk`, so this is the depth
-     * to which the per-step top-k scan must reach; each candidate is then gated
-     * by its own (possibly smaller) `topk`. Tracking the max globally avoids
-     * re-scanning the (potentially vocab-sized) active children every step.
+     * Smallest (most permissive) per-phrase min-p gate inserted so far. No token
+     * below `maxLogit + log(minMinp)` can clear ANY per-phrase gate, so
+     * {@link applyBoost} uses this as a single cheap floor to skip the active-set
+     * lookup for every token the most lenient phrase would still reject; each
+     * surviving candidate is then re-checked against its own (possibly larger)
+     * `minp`. Starts at 1 (the strictest) and only ever drops as phrases insert.
      */
-    this.maxTopk = 0;
+    this.minMinp = 1;
     /**
      * Phrases that {@link BoostingTrie.buildFromPhrases} dropped because they
      * encode to an out-of-vocabulary `<unk>` token (e.g. CJK / scripts absent
@@ -649,7 +623,7 @@ export class BoostingTrie {
    * token, e.g. CJK) is dropped rather than inserted, since the decoder never
    * emits `<unk>` so the phrase could never match; such phrases are collected on
    * the returned trie's `skipped` array for the UI to warn about.
-   * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
+   * @param {Array<{phrase: string, weight: number, minp?: number}>} entries
    * @param {{encode: (text: string) => number[], unkId?: number}} encoder A BpeEncoder.
    * @param {Object} [opts] Forwarded to the constructor.
    * @returns {BoostingTrie}
@@ -667,15 +641,15 @@ export class BoostingTrie {
    * so the expensive encode can run elsewhere (e.g. a worker) via
    * {@link encodePhrases} and the result handed here. The caller owns `skipped`
    * (set it on the returned trie if needed).
-   * @param {Array<{ids: number[], weight?: number, topk?: number}>} encoded
+   * @param {Array<{ids: number[], weight?: number, minp?: number}>} encoded
    * @param {Object} [opts] Forwarded to the constructor.
    * @returns {BoostingTrie}
    */
   static buildFromEncoded(encoded, opts = {}) {
     const trie = new BoostingTrie(opts);
-    for (const { ids, weight, topk } of encoded) {
+    for (const { ids, weight, minp } of encoded) {
       if (!ids || !ids.length) continue;
-      trie.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
+      trie.insert(ids, weight ?? 1, minp ?? DEFAULT_BOOST_MIN_P);
     }
     return trie;
   }
@@ -687,10 +661,10 @@ export class BoostingTrie {
    * bonus regardless of sign.
    * @param {number[]} tokenIds
    * @param {number} [weight=1]
-   * @param {number} [topk=DEFAULT_BOOST_TOPK] Top-k gate carried with the bonus.
+   * @param {number} [minp=DEFAULT_BOOST_MIN_P] Min-p gate carried with the bonus.
    */
-  insert(tokenIds, weight = 1, topk = DEFAULT_BOOST_TOPK) {
-    if (topk > this.maxTopk) this.maxTopk = topk;
+  insert(tokenIds, weight = 1, minp = DEFAULT_BOOST_MIN_P) {
+    if (minp < this.minMinp) this.minMinp = minp;
     let node = this.root;
     for (const id of tokenIds) {
       let child = node.children?.get(id);
@@ -699,11 +673,11 @@ export class BoostingTrie {
         (node.children ??= new Map()).set(id, child);
       }
       const bonus = weight * (1 + this.depthScaling * (child.depth - 1));
-      // The winning (strongest-magnitude) phrase also owns the node's top-k gate,
+      // The winning (strongest-magnitude) phrase also owns the node's min-p gate,
       // so the bonus and the threshold that gates it come from the same phrase.
       if (Math.abs(bonus) > Math.abs(child.bonus)) {
         child.bonus = bonus;
-        child.topk = topk;
+        child.minp = minp;
       }
       node = child;
     }
@@ -725,10 +699,10 @@ export class BoostingTrie {
    * or null if no active node has `id` as a child. If two active nodes propose
    * the same token, the larger-magnitude bonus wins (so a penalty is not masked
    * by a weaker boost on a shared token, or vice versa) and brings its own
-   * top-k along. O(|active|) per lookup; the active set is small (root plus the
+   * min-p along. O(|active|) per lookup; the active set is small (root plus the
    * few in-progress phrase nodes), so this stays cheap regardless of list size.
    * @param {number} id
-   * @returns {{bonus: number, topk: number}|null}
+   * @returns {{bonus: number, minp: number}|null}
    */
   childBoostFor(id) {
     let best = null;
@@ -739,7 +713,7 @@ export class BoostingTrie {
         best = child;
       }
     }
-    return best === null ? null : { bonus: best.bonus, topk: best.topk };
+    return best === null ? null : { bonus: best.bonus, minp: best.minp };
   }
 
   /**
@@ -747,32 +721,37 @@ export class BoostingTrie {
    * originals so the caller can restore them (keeps confidence/softmax computed
    * on the model's true logits). Returns null when there is nothing to boost.
    *
-   * Top-k gating: a candidate token only receives its bonus when its raw logit
-   * is already among the model's top-`topk` tokens (the per-phrase gate, default
-   * {@link DEFAULT_BOOST_TOPK}). This keeps boosting a ranking nudge rather than
-   * a hammer that can force (or, with a penalty, suppress) a token the model
-   * itself ranked far away.
+   * Min-p gating: a candidate token only receives its bonus when its probability
+   * is at least `minp` times the model's top token for that step (the per-phrase
+   * gate, default {@link DEFAULT_BOOST_MIN_P}). In logit space that is just
+   * `logit >= maxLogit + log(minp)`, so no softmax is needed: the additive log of
+   * the ratio is the gap below the max. This keeps boosting a ranking nudge rather
+   * than a hammer that can force (or, with a penalty, suppress) a token the model
+   * itself ranked far away, and unlike a fixed top-k it adapts to the per-frame
+   * entropy (tight near a confident max, wide on a flat/uncertain frame).
    *
-   * Rather than enumerate every boostable child (up to vocab-sized for a large
-   * list) and discard those outside top-k, we scan the model's top-`maxTopk`
-   * tokens once and look each up in the (small) active set: only a top-k token
-   * can ever clear the gate, so this is equivalent but costs O(maxTopk *
-   * |active|) instead of O(active children), independent of the phrase count.
-   * Each candidate is then gated by its own (possibly smaller) `topk` via its
-   * rank in the ranked top-k list.
+   * Cost: one O(V) pass for `maxLogit`, then one O(V) pass that skips, with a
+   * single comparison against the most permissive floor (`maxLogit +
+   * log(minMinp)`), every token no phrase could ever gate in; only the survivors
+   * (few on a realistic frame) pay the O(|active|) active-set lookup and are
+   * re-checked against their own (possibly stricter) `minp`. This is independent
+   * of the phrase count.
    * @param {Float32Array|number[]} logits
    * @returns {number[]|null} Flat [index, originalValue, ...] pairs, or null.
    */
   applyBoost(logits) {
     if (this.strength === 0 || this.isEmpty) return null;
-    const ranked = rankedTopKIds(logits, this.maxTopk); // descending; index = rank
+    const n = logits.length;
+    let maxLogit = -Infinity;
+    for (let i = 0; i < n; i++) if (logits[i] > maxLogit) maxLogit = logits[i];
+    // No token below the most permissive floor can clear any per-phrase gate.
+    const floor = maxLogit + Math.log(this.minMinp);
     const saved = [];
-    for (let rank = 0; rank < ranked.length; rank++) {
-      const id = ranked[rank];
-      if (id < 0 || id >= logits.length) continue;
+    for (let id = 0; id < n; id++) {
+      if (logits[id] < floor) continue; // below every gate; skip the lookup
       const boost = this.childBoostFor(id);
       if (boost === null) continue;
-      if (rank >= boost.topk) continue; // outside this candidate's own top-k gate
+      if (logits[id] < maxLogit + Math.log(boost.minp)) continue; // below this candidate's own min-p
       saved.push(id, logits[id]);
       logits[id] += this.strength * boost.bonus;
     }

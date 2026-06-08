@@ -20,8 +20,8 @@ const sampleArtifact = () => ({
   vocabSig: 'deadbeef',
   augmentDefault: '',
   encoded: [
-    { ids: [12, 34, 56], weight: 5, topk: 40 },
-    { ids: [7, 8], weight: -3, topk: 25 },
+    { ids: [12, 34, 56], weight: 5, minp: 0.1 },
+    { ids: [7, 8], weight: -3, minp: 0.05 },
   ],
   skipped: ['<unk>phrase'],
 });
@@ -59,7 +59,7 @@ describe('writePwc / readPwc', () => {
     // Token-id arrays of a large list compress well; confirm the helper buys
     // something rather than silently writing larger files.
     const big = { ...sampleArtifact(), encoded: [] };
-    for (let i = 0; i < 2000; i++) big.encoded.push({ ids: [12, 34, 56, 78], weight: 5, topk: 40 });
+    for (let i = 0; i < 2000; i++) big.encoded.push({ ids: [12, 34, 56, 78], weight: 5, minp: 0.1 });
     const p = join(dir, 'big.pwc');
     writePwc(p, big);
     const gzBytes = readFileSync(p).length;

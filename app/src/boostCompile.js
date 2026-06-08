@@ -54,8 +54,11 @@ export const AUGMENT_DEFAULT = '';
  * v4: a `*:WEIGHT:TOPK:AUG` line is now a list-level defaults directive (it was
  * parsed as a boost phrase before), and the `#!strength`/`#!augment` directives
  * were removed; a list with a `*` line expands differently than under v3.
+ * v5: the per-phrase gate switched from an integer top-k rank to a min-p ratio,
+ * so `encoded[].topk` (an integer >= 1) became `encoded[].minp` (a number in
+ * (0, 1]); an old v4 artifact's topk would be misread as an out-of-range minp.
  */
-export const BOOST_ARTIFACT_VERSION = 4;
+export const BOOST_ARTIFACT_VERSION = 5;
 
 /**
  * Build the BPE encoder and its vocab signature from a model's vocab.txt plus
@@ -78,7 +81,7 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
  * browser parse -> augment-expand -> encode pipeline, so the token ids match
  * what the UI would produce for the same list and tokenizer. The list's own
  * `#!prefixes` directive (if any) drives the `p` augmentation, and its `*`
- * defaults line(s) set per-phrase weight / top-k / augmentation, just like the
+ * defaults line(s) set per-phrase weight / min-p / augmentation, just like the
  * UI. Only the global "Augment" toggle is an external input (`opts.augmentDefault`).
  * @param {string} raw The .txt contents.
  * @param {BpeEncoder} encoder Built by {@link loadBoostEncoder}.

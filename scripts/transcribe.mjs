@@ -33,7 +33,7 @@ import { ParakeetModel } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
-import { BoostingTrie, parseBoostDirectives, resolveBoostLines, expandAugmentations, DEFAULT_BOOST_TOPK } from '../app/src/phraseBoost.js';
+import { BoostingTrie, parseBoostDirectives, resolveBoostLines, expandAugmentations, DEFAULT_BOOST_MIN_P } from '../app/src/phraseBoost.js';
 import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
 import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
 
@@ -164,7 +164,7 @@ Arguments:
   <audio>                  Path to an audio file (any format ffmpeg can read).
 
 Options:
-  -b, --phrase-boost STR   Boost phrases as "phrase:WEIGHT:TOPK:FLAG" entries
+  -b, --phrase-boost STR   Boost phrases as "phrase:WEIGHT:MINP:FLAG" entries
                            (every field after the phrase is optional), comma- or
                            newline-separated, OR a path to a text file holding
                            such phrases (one per line is fine). Repeatable; the
@@ -174,10 +174,10 @@ Options:
                            (negative values suppress a phrase); the web UI clamps
                            weights to a nonzero [-10, 10] but this CLI does not,
                            so you can probe the full range. An empty WEIGHT keeps
-                           the default ("phrase::40"). TOPK is the per-phrase
-                           top-k gate (a token is only boosted when its raw logit
-                           is already among the model's top-TOPK; positive
-                           integer, default ${DEFAULT_BOOST_TOPK}). FLAG is "s"
+                           the default ("phrase::0.1"). MINP is the per-phrase
+                           min-p gate (a token is only boosted when its probability
+                           is at least MINP times the model's top token for that
+                           step; number in (0, 1], default ${DEFAULT_BOOST_MIN_P}). FLAG is "s"
                            (case-sensitive, default) or "i" (case-insensitive:
                            also boost the phrase's lower/UPPER/Title casings).
                            A path ending in .pwc is a precompiled list (see
@@ -287,12 +287,12 @@ export function expandBoostSpec(spec) {
   return spec;
 }
 
-// Supports the same `phrase:WEIGHT:TOPK:AUG` suffixes (and the `*:WEIGHT:TOPK:AUG`
+// Supports the same `phrase:WEIGHT:MINP:AUG` suffixes (and the `*:WEIGHT:MINP:AUG`
 // defaults line) as the web app, reusing resolveBoostLines so the field-splitting,
 // the `:AUG` augmentation flag and the `*` defaults all stay identical. The
 // deliberate differences: this CLI also accepts comma separators and does NOT
 // clamp the weight, so negative / >10 values can be probed here (the web app
-// clamps to a nonzero [-10, 10]). top-k must still be a positive integer for the
+// clamps to a nonzero [-10, 10]). min-p must still be a number in (0, 1] for the
 // trie's gate, so it is validated. `*` and `#!` lines are consumed by
 // resolveBoostLines, not emitted. Defaults are resolved per spec, so a `*` in one
 // `--phrase-boost` file does not leak into another. Returns the phrases AS TYPED
@@ -302,14 +302,14 @@ export function expandBoostSpec(spec) {
 export function parseCliBoosts(specs) {
   const entries = [];
   for (const spec of specs.map(expandBoostSpec)) {
-    for (const { phrase, weight, topk, augment } of resolveBoostLines(spec.split(/[,\n]/))) {
+    for (const { phrase, weight, minp, augment } of resolveBoostLines(spec.split(/[,\n]/))) {
       if (!phrase) continue;
-      let k = topk ?? DEFAULT_BOOST_TOPK;
-      if (!Number.isInteger(k) || k < 1) {
-        console.error(`[transcribe] warning: top-k ${k} invalid (integer >= 1); using ${DEFAULT_BOOST_TOPK} for "${phrase}"`);
-        k = DEFAULT_BOOST_TOPK;
+      let p = minp ?? DEFAULT_BOOST_MIN_P;
+      if (!Number.isFinite(p) || p <= 0 || p > 1) {
+        console.error(`[transcribe] warning: min-p ${p} invalid (number in (0, 1]); using ${DEFAULT_BOOST_MIN_P} for "${phrase}"`);
+        p = DEFAULT_BOOST_MIN_P;
       }
-      const entry = { phrase, weight: weight ?? 1, topk: k };
+      const entry = { phrase, weight: weight ?? 1, minp: p };
       if (augment !== undefined) entry.augment = augment;
       entries.push(entry);
     }
@@ -513,7 +513,7 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
   // the augmentation-expanded set actually inserted into the trie (a `:fap`
   // phrase becomes its Title/UPPER/prefixed branches). A `*` defaults line sets
-  // the per-phrase weight/top-k/augmentation (already resolved into typedBoosts);
+  // the per-phrase weight/min-p/augmentation (already resolved into typedBoosts);
   // the list's `#!prefixes` directive drives the `p` flag. The CLI has no global
   // toggle, so the augment fallback is '' (none). Per-phrase `:AUG` still wins.
   const typedBoosts = parseCliBoosts(textSpecs);
@@ -547,8 +547,8 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
         + `ids would be meaningless. Recompile it: node scripts/compile-boost.mjs <list>.txt --model-dir <dir>`,
       );
     }
-    for (const { ids, weight, topk } of artifact.encoded) {
-      phraseBoost.insert(ids, weight ?? 1, topk ?? DEFAULT_BOOST_TOPK);
+    for (const { ids, weight, minp } of artifact.encoded) {
+      phraseBoost.insert(ids, weight ?? 1, minp ?? DEFAULT_BOOST_MIN_P);
     }
     if (Array.isArray(artifact.skipped) && artifact.skipped.length) {
       phraseBoost.skipped = phraseBoost.skipped.concat(artifact.skipped);
@@ -564,8 +564,8 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, tokenizer, q
     // already summarised above.)
     const PHRASE_LIST_CAP = 20;
     const showAll = verbose || typedBoosts.length <= PHRASE_LIST_CAP;
-    for (const { phrase, weight, topk } of (showAll ? typedBoosts : typedBoosts.slice(0, PHRASE_LIST_CAP))) {
-      console.error(`             - "${phrase}" (weight ${weight}, top-k ${topk})  -> [${encoder.encode(phrase).join(', ')}]`);
+    for (const { phrase, weight, minp } of (showAll ? typedBoosts : typedBoosts.slice(0, PHRASE_LIST_CAP))) {
+      console.error(`             - "${phrase}" (weight ${weight}, min-p ${minp})  -> [${encoder.encode(phrase).join(', ')}]`);
     }
     if (!showAll) {
       console.error(`             ... and ${typedBoosts.length - PHRASE_LIST_CAP} more (pass --verbose to list all)`);
