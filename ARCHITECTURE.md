@@ -100,7 +100,7 @@ points: the main app and the remote-microphone phone page.
 | `App.css` | Styles for the app. |
 | `config.js` | Build-time/runtime config indirection. Reads `window.__CONFIG__` (written by the Docker entrypoint) or falls back to Vite `import.meta.env`. Every operator-settable `VITE_*` key must be listed here. |
 | `i18n.jsx` | Translation tables + `I18nProvider` / `useI18n` / `LanguageSwitcher`. |
-| `remote-mic-entry.jsx` | React root + UI for the phone page: captures mic audio (or decodes a saved audio file on the phone), encrypts it, and streams PCM to the desktop over WebRTC (with pause/resume, multi-recording, wake-lock). The "Send an audio file" action decodes/resamples the file to 16 kHz mono locally and pumps it through the same `audio-config`->Int16-chunks->`audio-end` framing as the live mic, paced via `RemoteMicRTC.drain()`. |
+| `remote-mic-entry.jsx` | React root + UI for the phone page: captures mic audio (or decodes a saved audio file on the phone), encrypts it, and streams PCM to the desktop over WebRTC (with pause/resume, multi-recording, wake-lock). The "Send an audio file" action decodes + downmixes the file to mono locally (no phone-side resample, for iOS robustness; the desktop resamples) and pumps it through the same `audio-config`->Int16-chunks->`audio-end` framing as the live mic, paced via `RemoteMicRTC.drain()`. |
 | `phraseBoost.worker.js` | Module worker that moves the CPU-heavy BPE encode of a boost list off the main thread so the UI does not freeze on large clinical lists. |
 
 ### Reusable components (`app/ui/src/components/`)

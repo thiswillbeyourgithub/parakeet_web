@@ -193,10 +193,13 @@ phone**, then streamed through the exact same end-to-end encrypted tunnel the
 live mic uses. The computer chunks, resamples and transcribes it identically
 to a recording, including resumable long-audio chunking — there is no separate
 upload path and the relay still only ever sees ciphertext. A progress bar
-shows the (faster-than-real-time) transfer, which you can cancel. Files longer
-than the 60-minute session limit are truncated on the phone with a warning.
-This is handy when the file lives on your phone but you want it transcribed on
-the desktop. Built with the help of Claude Code.
+shows the (faster-than-real-time) transfer, which you can cancel. Very long
+files are truncated on the phone with a warning (the session limit is roughly
+60 minutes of 16 kHz audio). The phone never resamples: it sends the decoded
+PCM and the desktop downsamples it, exactly like a live phone mic, so the
+decode path stays robust across browsers including iOS Safari. This is handy
+when the file lives on your phone but you want it transcribed on the desktop.
+Built with the help of Claude Code.
 
 ### Requirements
 

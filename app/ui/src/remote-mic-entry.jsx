@@ -24,7 +24,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
-import { createLevelMonitor, resamplePcmTo16k } from './lib/audio.js';
+import { createLevelMonitor } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
 
 const STATUS = {
@@ -179,15 +179,22 @@ function RemoteMicSender() {
     const pendingBatchRef = useRef({ buf: null, len: 0 });
     const batchTargetSamplesRef = useRef(0);
 
-    // Saved-file send is decoded/resampled to 16 kHz mono on the phone, then
-    // streamed through the exact same Int16 batch framing the mic uses. The
-    // desktop receiver enforces a per-session sample cap (REMOTE_MIC_MAX_SAMPLES
-    // = 10*60*96000 -> 60 min at 16 kHz); mirror it here so we truncate-and-warn
-    // locally rather than pumping minutes of audio the receiver will silently
-    // drop. 16 kHz mono Float32 at 60 min is ~230 MB, the same ceiling the
-    // desktop already tolerates.
-    const FILE_TARGET_SAMPLE_RATE = 16000;
-    const FILE_MAX_SAMPLES_16K = 60 * 60 * FILE_TARGET_SAMPLE_RATE;
+    // Saved-file send: decode + downmix to mono ON THE PHONE, then stream the
+    // Int16 PCM through the exact same batch framing the mic uses and let the
+    // DESKTOP resample to 16 kHz (the proven mic path). We deliberately do NOT
+    // resample on the phone: phone-side OfflineAudioContext at 16 kHz is a
+    // brand-new code path on iOS Safari (the mic path never resamples on the
+    // phone), so avoiding it removes the only iOS-specific risk. We still
+    // *request* a 16 kHz decode context, so on platforms that honour it
+    // (Chrome, modern Safari) decodeAudioData already yields 16 kHz and the
+    // desktop resample is a no-op; otherwise we send native rate and the
+    // desktop downsamples exactly as it does for a 48 kHz phone mic.
+    const FILE_DECODE_TARGET_RATE = 16000;
+    // Match the desktop's raw-sample cap (REMOTE_MIC_MAX_SAMPLES = 10*60*96000
+    // = 57.6M samples) so we never pump samples the receiver will silently
+    // drop. The cap is on raw (pre-resample) samples, so its wall-clock length
+    // depends on the sent rate: 60 min at 16 kHz, ~20 min at 48 kHz.
+    const FILE_MAX_RAW_SAMPLES = 10 * 60 * 96000;
 
     // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
@@ -771,17 +778,23 @@ function RemoteMicSender() {
         setStatus(STATUS.SENDING_FILE);
 
         try {
-            // 1. Decode at (ideally) 16 kHz; the browser's own hardened decoder
-            //    rejects malformed files here, so nothing bad reaches the wire.
+            // 1. Decode, requesting a 16 kHz context (honoured on Chrome/modern
+            //    Safari -> no desktop resample needed; ignored elsewhere -> we
+            //    send native rate and the desktop downsamples). The browser's
+            //    own hardened decoder rejects malformed files here, so nothing
+            //    bad reaches the wire.
             const arrayBuf = await file.arrayBuffer();
             try {
-                decodeCtx = new AudioContext({ sampleRate: FILE_TARGET_SAMPLE_RATE });
+                decodeCtx = new AudioContext({ sampleRate: FILE_DECODE_TARGET_RATE });
             } catch (_) {
                 decodeCtx = new AudioContext();
             }
             const decoded = await decodeCtx.decodeAudioData(arrayBuf);
+            const sentRate = decoded.sampleRate; // actual rate of the decoded PCM
 
-            // 2. Downmix to mono.
+            // 2. Downmix to mono. No phone-side resample (see constant comment):
+            //    the desktop resamples whatever rate we report, exactly as it
+            //    does for a live phone mic.
             const nCh = decoded.numberOfChannels;
             let mono;
             if (nCh <= 1) {
@@ -795,39 +808,37 @@ function RemoteMicSender() {
                 for (let i = 0; i < mono.length; i++) mono[i] /= nCh;
             }
 
-            // 3. Resample to 16 kHz (shared helper; no-op when already 16 kHz).
-            let pcm16k = await resamplePcmTo16k(mono, decoded.sampleRate);
-
-            // 4. Truncate to the receiver's per-session cap, warn if we did.
-            if (pcm16k.length > FILE_MAX_SAMPLES_16K) {
-                console.warn(`[RemoteMic] File ${pcm16k.length} samples exceeds cap ${FILE_MAX_SAMPLES_16K}, truncating`);
-                pcm16k = pcm16k.subarray(0, FILE_MAX_SAMPLES_16K);
+            // 3. Truncate to the receiver's raw-sample cap, warn if we did.
+            if (mono.length > FILE_MAX_RAW_SAMPLES) {
+                console.warn(`[RemoteMic] File ${mono.length} samples exceeds cap ${FILE_MAX_RAW_SAMPLES}, truncating`);
+                mono = mono.subarray(0, FILE_MAX_RAW_SAMPLES);
                 setFileWarning(t('mobileFileTruncated'));
             }
             if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) return;
 
-            // 5. Announce config (identical framing to a live recording).
-            //    source:'file' is an optional hint older desktops ignore.
+            // 4. Announce config (identical framing to a live recording) at the
+            //    decoded rate. source:'file' is an optional hint older desktops
+            //    ignore.
             rtcRef.current.sendMessage({
                 type: 'audio-config',
-                sampleRate: FILE_TARGET_SAMPLE_RATE,
+                sampleRate: sentRate,
                 format: 'pcm-s16',
                 source: 'file',
             });
             configSent = true;
             setHasRecorded(true);
 
-            // 6. Fresh batch buffer (mirrors startMicCapture).
-            batchTargetSamplesRef.current = Math.max(128, Math.round(FILE_TARGET_SAMPLE_RATE * SEND_BATCH_MS / 1000));
+            // 5. Fresh batch buffer sized to the sent rate (mirrors startMicCapture).
+            batchTargetSamplesRef.current = Math.max(128, Math.round(sentRate * SEND_BATCH_MS / 1000));
             pendingBatchRef.current = {
                 buf: new Float32Array(batchTargetSamplesRef.current + 128),
                 len: 0,
             };
 
-            // 7. Paced pump: one batch worth at a time, awaiting the send and a
+            // 6. Paced pump: one batch worth at a time, awaiting the send and a
             //    drain so we throttle to the link instead of overrunning it.
             const batch = batchTargetSamplesRef.current;
-            const total = pcm16k.length;
+            const total = mono.length;
             for (let off = 0; off < total; off += batch) {
                 if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) {
                     console.warn('[RemoteMic] File send aborted mid-pump');
@@ -842,7 +853,7 @@ function RemoteMicSender() {
                     }
                     return;
                 }
-                await pushPcmIntoBatch(pcm16k.subarray(off, Math.min(off + batch, total)));
+                await pushPcmIntoBatch(mono.subarray(off, Math.min(off + batch, total)));
                 await rtcRef.current.drain();
                 setFileProgress(Math.min(1, (off + batch) / total));
             }

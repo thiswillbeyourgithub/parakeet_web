@@ -195,10 +195,14 @@ le découpe, le rééchantillonne et le transcrit exactement comme un
 enregistrement, y compris le découpage reprenable des longs audios — il n'y a
 pas de chemin d'envoi distinct et le relais ne voit toujours que du chiffré.
 Une barre de progression affiche le transfert (plus rapide que le temps réel),
-que vous pouvez annuler. Les fichiers dépassant la limite de session de
-60 minutes sont tronqués sur le téléphone avec un avertissement. Pratique quand
-le fichier se trouve sur votre téléphone mais que vous voulez le transcrire sur
-l'ordinateur. Réalisé avec l'aide de Claude Code.
+que vous pouvez annuler. Les fichiers très longs sont tronqués sur le téléphone
+avec un avertissement (la limite de session correspond à environ 60 minutes
+d'audio à 16 kHz). Le téléphone ne rééchantillonne jamais : il envoie le PCM
+décodé et c'est l'ordinateur qui le sous-échantillonne, exactement comme un
+micro de téléphone en direct, ce qui garde le décodage robuste sur tous les
+navigateurs, y compris iOS Safari. Pratique quand le fichier se trouve sur
+votre téléphone mais que vous voulez le transcrire sur l'ordinateur. Réalisé
+avec l'aide de Claude Code.
 
 ### Prérequis
 
