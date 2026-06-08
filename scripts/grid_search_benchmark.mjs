@@ -11,17 +11,17 @@
 //
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
 // grid: beam-width x (no-boost baseline + each boost strength x each boost
-// depth-scaling x each boost min-p) and prints one row per combination in two
-// tables (accuracy + per-phase timing). The min-p axis overrides the per-phrase
-// boost gate, so one prebuilt trie is reused across every min-p value (no
-// re-encode per value); depth-scaling, by contrast, is baked into the trie at
+// depth-scaling x each boost min-p) and prints one row per combination in the
+// accuracy table (beam/boost knobs + corpus WER %, CER % and RTF), followed by a
+// top-3-by-CER and a top-3-by-WER shortlist. The min-p axis overrides the
+// per-phrase boost gate, so one prebuilt trie is reused across every min-p value
+// (no re-encode per value); depth-scaling, by contrast, is baked into the trie at
 // build time, so each value rebuilds the trie (one per strength x depth-scaling).
-// Rows are
-// sorted by the cell's corpus-level (micro-averaged) CER by default, or WER with
-// --sort-by wer (best first), and the accuracy table reports the
-// mean/median/stdev of the per-utterance WER alongside the corpus-level rate. It
-// also writes those tables to a .md file and every per-sample/per-run record to
-// a JSON Lines file.
+// Rows are sorted by the cell's corpus-level (micro-averaged) CER by default, or
+// WER with --sort-by wer (best first). It APPENDS those tables to a .md file
+// (successive runs accumulate, separated by a dated rule) and writes every
+// per-sample/per-run record (including the full per-utterance WER spread and
+// per-phase timings) to a JSON Lines file.
 //
 // --manifest is repeatable: pass it several times to run the SAME grid over
 // several datasets at once. Each manifest is one "dataset" (named after its file
@@ -269,8 +269,7 @@ Output / misc:
                            than WER between close boost strengths). The
                            multi-dataset overall is the micro-average (summed
                            edits / summed refs), so each dataset is weighted by
-                           its size, not averaged. (The WERmean/med/std columns
-                           stay per-utterance and are unaffected.)
+                           its size, not averaged.
       --jsonl FILE         Write results as JSON Lines (one object per line):
                            a "utterance" record per sample (tagged with its
                            dataset, with per-phase timings) and a "summary"
@@ -278,8 +277,10 @@ Output / misc:
                            mean/median/stdev of the per-utterance WER, a
                            per-dataset breakdown, and the mean/median of each
                            phase). Default benchmark_results.jsonl.
-      --md FILE            Write the summary tables (accuracy + per-phase
-                           timing) as markdown. Default benchmark_results.md.
+      --md FILE            APPEND the summary tables (accuracy, top-3-by-CER,
+                           top-3-by-WER) as markdown; successive runs accumulate
+                           in the file, separated by a dated rule. Default
+                           benchmark_results.md.
       --resume             Reuse an existing --jsonl: any grid cell whose
                            "summary" record is already present is skipped (and
                            still shown in the final tables). Orphan records from
@@ -571,13 +572,21 @@ function renderMarkdown(headers, body) {
 // per dataset (plus an "overall" row pooling all utterances when more than one
 // dataset). Blocks are sorted by the cell's corpus-level (micro-averaged) CER or
 // WER (see --sort-by) ascending so the best config is at the top, and a cell's
-// dataset rows stay grouped together. "WER %" is the corpus-level rate (total
-// word edits / total ref words); WERmean/med/std summarise the spread of the
-// per-utterance WERs.
-const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
+// dataset rows stay grouped together. "WER %" / "CER %" are the corpus-level
+// rates (total word/char edits / total refs); "RTF" is the cell's mean
+// real-time factor (decode work only; the encoder is amortized away). The
+// per-utterance WER spread (mean/median/stdev) and the raw edit/ref counts are
+// dropped from the table to keep it readable; they remain in the JSONL records.
+const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF'];
+// RTF is a per-cell figure (same across a cell's dataset rows); guard the timings
+// lookup so synthetic rows (unit tests) without a timings field render "-".
+function cellRtf(r) {
+  return r.timings && r.timings.rtf && r.timings.rtf.length ? mean(r.timings.rtf).toFixed(2) : '-';
+}
 function accuracyBody(rows) {
   const body = [];
   for (const r of rows) {
+    const rtf = cellRtf(r);
     for (const d of r.datasets) {
       body.push([
         String(r.beamWidth),
@@ -587,36 +596,30 @@ function accuracyBody(rows) {
         r.depthScaling == null ? '-' : String(r.depthScaling),
         d.name,
         pct(d.wordEdits, d.refWords).toFixed(2),
-        mean(d.werSamples).toFixed(2),
-        median(d.werSamples).toFixed(2),
-        stdev(d.werSamples).toFixed(2),
         pct(d.charEdits, d.refChars).toFixed(2),
-        String(d.wordEdits),
-        String(d.refWords),
-        String(d.charEdits),
-        String(d.refChars),
+        rtf,
       ]);
     }
   }
   return body;
 }
 
-// Timing table: per-phase mean/median (ms per utterance) plus wall time. Each
-// phase cell is "mean/median".
-const TIME_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', ...PHASES.map(([, label]) => label), 'rtf', 'wall s', 'n'];
-function timingBody(rows) {
+// Top-N table: one row per grid cell (no per-dataset expansion), using the
+// cell's representative (overall when multi-dataset, else the single dataset)
+// row. Same columns as the accuracy table so the renderers stay shared.
+function topBody(rows) {
   return rows.map((r) => {
-    const cell = (key) => `${mean(r.timings[key]).toFixed(1)}/${median(r.timings[key]).toFixed(1)}`;
+    const d = repDataset(r);
     return [
       String(r.beamWidth),
       r.boostLabel,
       r.strength == null ? '-' : String(r.strength),
       r.minp == null ? '-' : String(r.minp),
       r.depthScaling == null ? '-' : String(r.depthScaling),
-      ...PHASES.map(([key]) => cell(key)),
-      mean(r.timings.rtf).toFixed(2),
-      (r.timeMs / 1000).toFixed(1),
-      String(r.timings.total_ms.length),
+      d.name,
+      pct(d.wordEdits, d.refWords).toFixed(2),
+      pct(d.charEdits, d.refChars).toFixed(2),
+      cellRtf(r),
     ];
   });
 }
@@ -964,16 +967,26 @@ async function main() {
   const summary = grid.map((cell) => summaryByTag.get(tagOf(cell))).filter(Boolean);
   summary.sort((a, b) => cellRate(a, args.sortBy) - cellRate(b, args.sortBy));
 
-  // Final tables: accuracy + per-phase timing (mean/median ms per utterance).
-  const accText = renderAligned(ACC_HEAD, accuracyBody(summary));
-  const timeText = renderAligned(TIME_HEAD, timingBody(summary));
-  console.log('\nAccuracy:\n' + accText);
-  console.log('\nTiming (ms per utterance, mean/median):\n' + timeText + '\n');
+  // The three best cells by each corpus-level (micro-averaged) rate, ranked off
+  // their representative (overall) row, independent of --sort-by.
+  const top3 = (metric) => [...summary].sort((a, b) => cellRate(a, metric) - cellRate(b, metric)).slice(0, 3);
+  const topCer = top3('cer');
+  const topWer = top3('wer');
+
+  // Final tables: the full accuracy table plus a top-3-by-CER and top-3-by-WER
+  // shortlist (one row per cell, using the overall figures).
+  console.log('\nAccuracy:\n' + renderAligned(ACC_HEAD, accuracyBody(summary)));
+  console.log('\nTop 3 by CER (overall):\n' + renderAligned(ACC_HEAD, topBody(topCer)));
+  console.log('\nTop 3 by WER (overall):\n' + renderAligned(ACC_HEAD, topBody(topWer)) + '\n');
 
   if (args.jsonl) console.error(`[bench] wrote ${args.jsonl}`);
   if (args.md) {
+    // Append (don't overwrite) so successive runs accumulate in one file; a
+    // dated separator keeps each run's tables distinguishable. A leading blank
+    // line guarantees separation from any prior content.
     const md = [
-      '# Parakeet web grid-search benchmark',
+      existsSync(args.md) && statSync(args.md).size > 0 ? '\n---\n' : '',
+      `# Parakeet web grid-search benchmark (${new Date().toISOString()})`,
       '',
       `Dataset(s): ${datasetNames.map((n) => '`' + n + '`').join(', ')} (${entries.length} utterances total)  `,
       `Manifest(s): ${args.manifests.map((m) => '`' + m + '`').join(', ')}  `,
@@ -983,15 +996,19 @@ async function main() {
       '',
       renderMarkdown(ACC_HEAD, accuracyBody(summary)),
       '',
-      '## Timing (ms per utterance, mean/median)',
+      '## Top 3 by CER (overall)',
       '',
-      renderMarkdown(TIME_HEAD, timingBody(summary)),
+      renderMarkdown(ACC_HEAD, topBody(topCer)),
+      '',
+      '## Top 3 by WER (overall)',
+      '',
+      renderMarkdown(ACC_HEAD, topBody(topWer)),
       '',
       '_Built with Claude Code._',
       '',
     ].join('\n');
-    writeFileSync(args.md, md);
-    console.error(`[bench] wrote ${args.md}`);
+    appendFileSync(args.md, md);
+    console.error(`[bench] appended to ${args.md}`);
   }
 }
 
@@ -1010,6 +1027,6 @@ if (pathToFileURL(process.argv[1] || '').href === import.meta.url) {
 export {
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset, cellRate,
-  ACC_HEAD, accuracyBody, OVERALL,
+  ACC_HEAD, accuracyBody, topBody, OVERALL,
   makeEtaEstimator, fmtDuration,
 };
