@@ -606,6 +606,17 @@ export class BoostingTrie {
      */
     this.minMinp = 1;
     /**
+     * Optional global min-p override (a number in (0, 1], or null to disable).
+     * When set, {@link applyBoost} uses it as the gate for EVERY candidate,
+     * superseding each phrase's own baked `minp` and the `minMinp` floor. This is
+     * a decode-time knob for sweeping the gate (e.g. the grid-search benchmark
+     * probing several min-p values against one prebuilt trie) without rebuilding
+     * the trie per value; the web app leaves it null and relies on per-phrase
+     * min-p. Set directly on the trie instance before decoding.
+     * @type {number|null}
+     */
+    this.minpOverride = opts.minpOverride ?? null;
+    /**
      * Phrases that {@link BoostingTrie.buildFromPhrases} dropped because they
      * encode to an out-of-vocabulary `<unk>` token (e.g. CJK / scripts absent
      * from the model vocab), so they cannot be matched during decoding. Surfaced
@@ -744,14 +755,18 @@ export class BoostingTrie {
     const n = logits.length;
     let maxLogit = -Infinity;
     for (let i = 0; i < n; i++) if (logits[i] > maxLogit) maxLogit = logits[i];
-    // No token below the most permissive floor can clear any per-phrase gate.
-    const floor = maxLogit + Math.log(this.minMinp);
+    // A global override (a benchmark/sweep knob) supersedes every per-phrase
+    // min-p, including the floor; otherwise each candidate uses its own min-p
+    // and the floor is the most permissive one inserted. No token below the
+    // floor can clear any gate, so it skips the active-set lookup cheaply.
+    const override = this.minpOverride;
+    const floor = maxLogit + Math.log(override ?? this.minMinp);
     const saved = [];
     for (let id = 0; id < n; id++) {
       if (logits[id] < floor) continue; // below every gate; skip the lookup
       const boost = this.childBoostFor(id);
       if (boost === null) continue;
-      if (logits[id] < maxLogit + Math.log(boost.minp)) continue; // below this candidate's own min-p
+      if (logits[id] < maxLogit + Math.log(override ?? boost.minp)) continue; // below the effective min-p
       saved.push(id, logits[id]);
       logits[id] += this.strength * boost.bonus;
     }

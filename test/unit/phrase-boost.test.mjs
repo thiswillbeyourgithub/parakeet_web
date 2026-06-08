@@ -302,6 +302,29 @@ test('min-p adapts to the per-frame max (entropy-aware): same logit, different g
   assert.ok(Array.isArray(saved) && flat[ids[0]] === 6, 'on a flat frame the same logit clears the gate');
 });
 
+test('minpOverride supersedes every per-phrase min-p (the grid-search sweep knob)', () => {
+  const V = fixture.id2token.length;
+  // The phrase bakes a strict gate (0.5 = "at least 50% as likely as the top"),
+  // which would reject ids[0] at exp(-4) ~= 1.83% of the max.
+  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.5 }], encoder, { strength: 1 });
+  const logits = new Float32Array(V);
+  logits[100] = 5; logits[ids[0]] = 1;
+  trie.reset();
+  assert.equal(trie.applyBoost(logits), null, 'baked strict min-p gates the candidate out');
+  // Override to a looser gate (0.01): now 1.83% > 1%, so it boosts despite the
+  // baked 0.5, proving the override wins over both the per-node minp and minMinp.
+  trie.minpOverride = 0.01;
+  trie.reset();
+  const saved = trie.applyBoost(logits);
+  assert.ok(Array.isArray(saved) && logits[ids[0]] === 6, 'override loosens the gate and boosts');
+  trie.restore(logits, saved);
+  // And a stricter override can gate out a candidate the baked min-p would pass.
+  const loose = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.01 }], encoder, { strength: 1 });
+  loose.minpOverride = 0.5;
+  loose.reset();
+  assert.equal(loose.applyBoost(logits), null, 'a stricter override gates out what the baked min-p would pass');
+});
+
 describe('skip <unk> phrases', () => {
   test('CJK encodes to <unk>', () => assert.ok(encoder.encode('東京').includes(encoder.unkId)));
   const mixedTrie = BoostingTrie.buildFromPhrases(
