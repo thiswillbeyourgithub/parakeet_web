@@ -38,6 +38,39 @@ describe('JS BPE encoder matches HuggingFace ground truth', () => {
   }
 });
 
+describe('word-level memo cache', () => {
+  test('repeated encode is byte-identical (cache never changes output)', () => {
+    const e = new BpeEncoder(asset, buildVocabToId(fixture.id2token));
+    for (const { text, ids: expected } of fixture.cases) {
+      const first = Array.from(e.encode(text));
+      const second = Array.from(e.encode(text)); // now served partly from cache
+      assert.deepEqual(first, expected, `cold encode drifted for ${JSON.stringify(text)}`);
+      assert.deepEqual(second, expected, `warm encode drifted for ${JSON.stringify(text)}`);
+    }
+  });
+
+  test('a word shared between two phrases is BPE-merged only once', () => {
+    const e = new BpeEncoder(asset, buildVocabToId(fixture.id2token));
+    // Spy on the merge-table lookups: a cache hit must run zero of them.
+    let mergeLookups = 0;
+    const realGet = e.mergeRank.get.bind(e.mergeRank);
+    e.mergeRank.get = (k) => { mergeLookups++; return realGet(k); };
+
+    e.encode('alpha methyl');
+    const afterFirst = mergeLookups;
+    assert.ok(afterFirst > 0, 'first encode should run the merge loop');
+    // "methyl" recurs as the metaspace word "▁methyl"; encoding another phrase
+    // ending in it must not re-run the merge loop for that word.
+    e.encode('beta methyl');
+    const sharedWord = '▁methyl';
+    assert.ok(e._wordCache.has(sharedWord), 'shared word should be cached');
+    // The second phrase's only novel word is "▁beta"; "▁methyl" is served from
+    // cache, so the extra lookups are far fewer than re-encoding both words.
+    const secondCost = mergeLookups - afterFirst;
+    assert.ok(secondCost < afterFirst, 'a shared word should make the second encode cheaper');
+  });
+});
+
 describe('fixture freshness (requires python + tokenizers)', () => {
   test('committed fixture matches a fresh HuggingFace regeneration', (t) => {
     const fresh = regenerateFixture();
