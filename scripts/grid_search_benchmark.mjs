@@ -13,7 +13,7 @@
 // grid: beam-width x (no-boost baseline + each boost strength x each boost
 // depth-scaling x each boost min-p) and prints one row per combination in the
 // accuracy table (beam/boost knobs + corpus WER %, CER % and RTF), followed by a
-// top-3-by-CER and a top-3-by-WER shortlist. The min-p axis overrides the
+// top-5-by-CER and a top-5-by-WER shortlist. The min-p axis overrides the
 // per-phrase boost gate, so one prebuilt trie is reused across every min-p value
 // (no re-encode per value); depth-scaling, by contrast, is baked into the trie at
 // build time, so each value rebuilds the trie (one per strength x depth-scaling).
@@ -277,8 +277,8 @@ Output / misc:
                            mean/median/stdev of the per-utterance WER, a
                            per-dataset breakdown, and the mean/median of each
                            phase). Default benchmark_results.jsonl.
-      --md FILE            APPEND the summary tables (accuracy, top-3-by-CER,
-                           top-3-by-WER) as markdown; successive runs accumulate
+      --md FILE            APPEND the summary tables (accuracy, top-5-by-CER,
+                           top-5-by-WER) as markdown; successive runs accumulate
                            in the file, separated by a dated rule. Default
                            benchmark_results.md.
       --resume             Reuse an existing --jsonl: any grid cell whose
@@ -967,17 +967,17 @@ async function main() {
   const summary = grid.map((cell) => summaryByTag.get(tagOf(cell))).filter(Boolean);
   summary.sort((a, b) => cellRate(a, args.sortBy) - cellRate(b, args.sortBy));
 
-  // The three best cells by each corpus-level (micro-averaged) rate, ranked off
+  // The five best cells by each corpus-level (micro-averaged) rate, ranked off
   // their representative (overall) row, independent of --sort-by.
-  const top3 = (metric) => [...summary].sort((a, b) => cellRate(a, metric) - cellRate(b, metric)).slice(0, 3);
-  const topCer = top3('cer');
-  const topWer = top3('wer');
+  const top5 = (metric) => [...summary].sort((a, b) => cellRate(a, metric) - cellRate(b, metric)).slice(0, 5);
+  const topCer = top5('cer');
+  const topWer = top5('wer');
 
-  // Final tables: the full accuracy table plus a top-3-by-CER and top-3-by-WER
+  // Final tables: the full accuracy table plus a top-5-by-CER and top-5-by-WER
   // shortlist (one row per cell, using the overall figures).
   console.log('\nAccuracy:\n' + renderAligned(ACC_HEAD, accuracyBody(summary)));
-  console.log('\nTop 3 by CER (overall):\n' + renderAligned(ACC_HEAD, topBody(topCer)));
-  console.log('\nTop 3 by WER (overall):\n' + renderAligned(ACC_HEAD, topBody(topWer)) + '\n');
+  console.log('\nTop 5 by CER (overall):\n' + renderAligned(ACC_HEAD, topBody(topCer)));
+  console.log('\nTop 5 by WER (overall):\n' + renderAligned(ACC_HEAD, topBody(topWer)) + '\n');
 
   if (args.jsonl) console.error(`[bench] wrote ${args.jsonl}`);
   if (args.md) {
@@ -996,11 +996,11 @@ async function main() {
       '',
       renderMarkdown(ACC_HEAD, accuracyBody(summary)),
       '',
-      '## Top 3 by CER (overall)',
+      '## Top 5 by CER (overall)',
       '',
       renderMarkdown(ACC_HEAD, topBody(topCer)),
       '',
-      '## Top 3 by WER (overall)',
+      '## Top 5 by WER (overall)',
       '',
       renderMarkdown(ACC_HEAD, topBody(topWer)),
       '',
