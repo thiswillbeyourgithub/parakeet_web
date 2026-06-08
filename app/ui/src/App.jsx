@@ -2491,11 +2491,18 @@ export default function App() {
 
   // ============ Remote Microphone (Phone as Mic) ============
 
-  async function startRemoteMic() {
-    if (isRecording || isRemoteMic) return;
+  // `existingRoom` ({ roomId, secret }) re-arms a dropped session on the SAME
+  // room instead of minting a new one: the phone disconnected and we want to
+  // keep the same QR on screen and wait for it to come back. A fresh offer
+  // alone is not enough (the server still holds the prior session's answer +
+  // ICE), so we adopt the room id/secret on a new RTC and re-arm it first.
+  async function startRemoteMic(existingRoom = null) {
+    if (!existingRoom && (isRecording || isRemoteMic)) return;
 
     setRemoteMicModal(true);
-    setRemoteMicStatus('connecting');
+    // On a re-arm, keep the existing QR visible ('waiting') instead of
+    // flashing 'connecting' and blanking it.
+    setRemoteMicStatus(existingRoom ? 'waiting' : 'connecting');
     setRemoteMicError('');
     setRemoteMicDecryptErrors(0);
     setRemoteMicLevel(0);
@@ -2509,7 +2516,14 @@ export default function App() {
       remoteMicRtcRef.current = rtc;
 
       await rtc.init();
-      const { roomId, secret } = await rtc.createRoom();
+      let roomId, secret;
+      if (existingRoom) {
+        rtc.adoptRoom(existingRoom.roomId, existingRoom.secret);
+        await rtc.rearmRoom();
+        ({ roomId, secret } = existingRoom);
+      } else {
+        ({ roomId, secret } = await rtc.createRoom());
+      }
 
       // Generate ECDH key pair for E2E encryption
       const keyPair = await generateKeyPair();
@@ -2517,8 +2531,10 @@ export default function App() {
 
       rtc.onDisconnected = () => {
         console.log('[RemoteMic] Disconnected');
-        // Clean up audio/timer state but keep modal open with a "disconnected" status
-        // so the user can click Regenerate QR instead of having to restart manually.
+        // Keep the SAME QR up and re-arm the room so the phone can reconnect
+        // (auto-retry, or a fresh camera scan of the same QR) without the user
+        // having to mint a new code. stopRemoteMicTimer/resolve the pending
+        // handshake waits and tear down the dead session first.
         stopRemoteMicTimer();
         resolveRemoteMicVerify(false);
         resolveRemoteMicPeerAck(false);
@@ -2536,8 +2552,13 @@ export default function App() {
         setRemoteMicRecording(false);
         setRemoteMicLevel(0);
         setRemoteMicPaused(false);
-        setRemoteMicStatus('disconnected');
+        // Re-arm the same room and resume waiting with the same QR. If the
+        // room has since expired (or any re-arm step fails), startRemoteMic's
+        // catch drops to the 'disconnected' state so the user can mint a new
+        // QR. The QR URL is left in place so it stays on screen meanwhile.
+        setRemoteMicStatus('waiting');
         setRemoteMicModal(true);
+        startRemoteMic({ roomId, secret });
       };
 
       // Handle incoming messages (JSON control + binary audio)
@@ -2965,8 +2986,15 @@ export default function App() {
 
     } catch (e) {
       console.error('[RemoteMic] Error:', e);
-      setRemoteMicStatus('error');
-      setRemoteMicError(e.message || 'Connection failed');
+      // A failed re-arm almost always means the room expired while we waited
+      // for the phone to come back: drop to 'disconnected' (offers a
+      // "Generate new QR" button) rather than a dead-end 'error'.
+      if (existingRoom) {
+        setRemoteMicStatus('disconnected');
+      } else {
+        setRemoteMicStatus('error');
+        setRemoteMicError(e.message || 'Connection failed');
+      }
     }
   }
 
@@ -5427,6 +5455,15 @@ export default function App() {
               <p style={{ color: 'var(--text-subtle)', fontSize: '0.8rem', textAlign: 'center' }}>
                 {t('remoteMicWaiting') || 'Waiting for phone to connect...'}
               </p>
+              {/* Escape hatch: mint a brand-new room/QR if the phone can't
+                  rejoin the current one (e.g. it reloaded and lost the link). */}
+              <button onClick={regenerateRemoteMicQr} style={{
+                background: 'transparent', color: 'var(--text-subtle)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)', padding: '0.4rem 1rem', cursor: 'pointer',
+                fontSize: '0.8rem', display: 'block', margin: '0.75rem auto 0',
+              }}>
+                {t('remoteMicRegenerateQr')}
+              </button>
             </>
           )}
 
