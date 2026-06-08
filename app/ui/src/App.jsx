@@ -5096,7 +5096,7 @@ export default function App() {
               {recordingCountdown !== null ? `${t('getReady')} (${recordingCountdown})` : t('recordAudio')}
             </button>
             <button
-              onClick={startRemoteMic}
+              onClick={() => startRemoteMic()}
               disabled={isTranscribing || isRecording || isRemoteMic}
               className="primary record-button"
               style={{ background: '#8b5cf6', flex: 1 }}
