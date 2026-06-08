@@ -453,6 +453,39 @@ export class RemoteMicRTC {
     }
 
     /**
+     * Adopt an EXISTING room on a fresh instance (computer/receiver side)
+     * instead of minting a new one. Used when the phone drops and we want to
+     * keep the same QR (room id + secret) on screen and wait for it to come
+     * back: the dead RTCPeerConnection cannot be reused, so a new RemoteMicRTC
+     * adopts the room id/secret, re-arms it, and stores a fresh offer.
+     * @param {string} roomId
+     * @param {string} secret
+     */
+    adoptRoom(roomId, secret) {
+        this.roomId = roomId;
+        this.roomSecret = secret;
+        console.log(`[RemoteMicRTC] Adopted existing room: ${this.roomId}`);
+    }
+
+    /**
+     * Reset the room's signaling slot (offer/answer/ICE) on the server so a
+     * SECOND handshake against the same room id/secret starts clean. Without
+     * this the stale answer from the prior session would be returned by the
+     * waitForAnswer long-poll and dead ICE candidates would be replayed onto
+     * the new peer connection. Must be called BEFORE createOfferAndStore on a
+     * re-armed room.
+     */
+    async rearmRoom() {
+        const response = await this._fetch(`/rooms/${this.roomId}/rearm`, {
+            method: 'POST',
+            headers: this._getAuthHeaders({ 'Content-Type': 'application/json' }),
+            body: '{}',
+        });
+        if (!response.ok) throw new Error(`Failed to re-arm room (HTTP ${response.status})`);
+        console.log(`[RemoteMicRTC] Re-armed room ${this.roomId} for reconnection`);
+    }
+
+    /**
      * Create offer, gather ICE, store on server (computer/receiver side).
      * @returns {Promise<{roomId: string, secret: string}>}
      */
