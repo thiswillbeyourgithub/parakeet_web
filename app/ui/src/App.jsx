@@ -1761,7 +1761,7 @@ export default function App() {
           + `(slow for large lists; runs in a worker when available).`);
       }
     }
-    // A curated list sets its own per-phrase defaults via a `*:WEIGHT:TOPK:AUG`
+    // A curated list sets its own per-phrase defaults via a `*:WEIGHT:MINP:AUG`
     // line in the text itself (resolved in parseBoostPhrases), so loading a list
     // no longer touches the global strength slider: whatever strength the user
     // had is left as-is and multiplies those baked-in weights.
