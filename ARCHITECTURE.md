@@ -126,6 +126,7 @@ points: the main app and the remote-microphone phone page.
 | `remote-webrtc.js` | `RemoteMicRTC`: WebRTC peer-connection lifecycle, signaling, and the data channel that carries encrypted PCM. Includes the HTTPS-relay fallback for UDP-blocked networks. |
 | `remote-relay-transport.js` | The two HTTPS relay transports (WebSocket + long-poll) used as last resort when WebRTC cannot connect. Same ciphertext frames, same interface as the data channel. Each exposes a `drain()` (buffered-amount / queue-depth) so the saved-file pump can pace itself to the link. |
 | `remote-mic-handshake.js` | Shared handshake logic used by both desktop and phone, so both sides hash the public keys in the same byte order for the fingerprint compare. |
+| `remote-mic-link.js` | Pure parser/validator for a scanned remote-mic QR payload (`parseRemoteMicLink`). Accepts only a same-origin `/remote-mic.html#roomId:secret` link, the trust boundary for the in-page camera re-scan. Unit-tested in `test/unit/remote-mic-link.test.mjs`. |
 | `persistStorage.js` | Asks the browser to promote this origin's IndexedDB to the "persistent" bucket so Chromium does not evict the multi-GB model cache under disk pressure (which looked like "the version bump wiped my model"). Idempotent, called on every load. |
 
 ### Public / static assets (`app/ui/public/`)
@@ -137,6 +138,7 @@ points: the main app and the remote-microphone phone page.
 | `js/eruda-loader.js` | Opt-in (`?debug=1`) loader for the vendored eruda mobile devtools; externalised so the CSP can stay strict. |
 | `js/eruda.min.js` | Vendored eruda devtools bundle. |
 | `js/qrcode.min.js` | Vendored QR-code generator (renders the phone-pairing QR). |
+| `js/jsqr.min.js` | Vendored QR-code scanner (jsQR 1.4.0, Apache-2.0). Loaded lazily behind an SRI pin by the phone page's in-page camera re-scan, so a dropped phone can re-pair by scanning the desktop's QR without leaving the page. |
 | `tokenizer/bpe-merges.json` | Distilled BPE merges + added-token list for the phrase-boost encoder (loaded lazily only when boosting is on). |
 | `tokenizer/SOURCE.md` | Provenance + refresh recipe for that asset. |
 | `ort/*` | Mirror of the ONNX Runtime Web WASM/MJS runtime files, served same-origin and integrity-verified via the manifest. |

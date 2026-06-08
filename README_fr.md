@@ -204,6 +204,29 @@ navigateurs, y compris iOS Safari. Pratique quand le fichier se trouve sur
 votre téléphone mais que vous voulez le transcrire sur l'ordinateur. Réalisé
 avec l'aide de Claude Code.
 
+### Se reconnecter après une coupure
+
+Les connexions du téléphone se coupent (l'écran se verrouille, vous changez
+d'application, le Wi-Fi vacille). Dans ce cas, l'ordinateur **garde le même QR
+code à l'écran et attend** le retour du téléphone, au lieu de vous obliger à
+tout recommencer. Deux niveaux de récupération couvrent ce scénario :
+
+- **Reconnexion automatique.** Le téléphone mémorise l'appairage et rejoint
+  silencieusement la même salle avec un court délai exponentiel. Une coupure
+  brève se rétablit généralement toute seule, sans aucune action.
+- **Re-scan par la caméra, dans la page.** Si la reconnexion automatique
+  n'aboutit pas (trop d'échecs, ou la page du téléphone a été rechargée et a
+  perdu le lien), touchez **📷 Scanner le QR code** sur le téléphone. La caméra
+  arrière s'ouvre directement dans la page et vous scannez le QR toujours
+  affiché sur l'ordinateur pour vous ré-appairer — sans quitter la page ni
+  ouvrir une application de scan séparée. (Un ré-appairage relance toujours la
+  vérification du code court, la garantie de bout en bout reste donc
+  inchangée.)
+
+Si vous préférez un appairage entièrement neuf, cliquez sur **Générer un
+nouveau QR** sur l'ordinateur. Les salles vivent environ 10 minutes, après quoi
+il vous faudra un nouveau QR. Réalisé avec l'aide de Claude Code.
+
 ### Prérequis
 
 - **Réseau local uniquement** : fonctionne d'emblée sans configuration supplémentaire (STUN seul / P2P direct).

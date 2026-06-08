@@ -201,6 +201,27 @@ decode path stays robust across browsers including iOS Safari. This is handy
 when the file lives on your phone but you want it transcribed on the desktop.
 Built with the help of Claude Code.
 
+### Reconnecting after a drop
+
+Phone connections drop (the screen locks, you switch apps, the Wi-Fi flaps).
+When that happens the desktop **keeps the same QR code on screen and waits**
+for the phone to come back, rather than forcing you to start over. Two layers
+of recovery cover it:
+
+- **Automatic reconnect.** The phone remembers the pairing and silently
+  re-joins the same room with a short exponential backoff. A brief flap usually
+  recovers on its own with no interaction.
+- **In-page camera re-scan.** If auto-reconnect can't recover (too many
+  failures, or the phone page was reloaded and lost the link), tap **📷 Scan QR
+  code** on the phone. The rear camera opens right in the page and you scan the
+  QR still shown on the computer to re-pair — no need to leave the page or open
+  a separate barcode app. (Re-pairing always runs a fresh short-code
+  verification, so the end-to-end guarantee is unchanged.)
+
+If you ever want a brand-new pairing instead, click **Generate new QR** on the
+computer. Rooms live for about 10 minutes, after which you'll need a new QR.
+Built with the help of Claude Code.
+
 ### Requirements
 
 - **Local network only**: works out of the box with no extra config (STUN-only / direct P2P).
