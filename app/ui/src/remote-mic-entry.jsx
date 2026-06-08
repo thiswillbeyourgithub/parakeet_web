@@ -232,6 +232,42 @@ function RemoteMicSender() {
         }
     }, []);
 
+    // Append Float32 PCM into the pending batch; once a full batch
+    // (batchTargetSamplesRef samples) has accumulated, quantise to Int16,
+    // encrypt, and send it over the transport. Shared verbatim by the live
+    // AudioWorklet handler and the saved-file pump (sendFile) so both produce
+    // the EXACT same on-the-wire framing (audio-config -> Int16 chunks ->
+    // audio-end). The snapshot+reset (p.len = 0) is synchronous before the
+    // await so concurrent callers append into a fresh batch instead of
+    // clobbering the one in flight. Awaiting the returned promise lets the
+    // file pump apply backpressure (the worklet handler fires-and-forgets).
+    const pushPcmIntoBatch = useCallback(async (float32) => {
+        if (!sharedKeyRef.current || !rtcRef.current) return;
+        const p = pendingBatchRef.current;
+        if (!p.buf) return; // torn down mid-flight
+        if (p.len + float32.length > p.buf.length) {
+            // Defensive grow: never fires for 128-sample worklet quanta (the
+            // buffer carries a +128 headroom), but a file pump may hand in a
+            // slice larger than one batch, so size to fit it.
+            const grown = new Float32Array(Math.max(p.buf.length * 2, p.len + float32.length));
+            grown.set(p.buf.subarray(0, p.len));
+            p.buf = grown;
+        }
+        p.buf.set(float32, p.len);
+        p.len += float32.length;
+        if (p.len < batchTargetSamplesRef.current) return;
+
+        const int16 = _quantiseFloat32ToInt16(p.buf.subarray(0, p.len));
+        p.len = 0;
+        try {
+            const encrypted = await encrypt(int16.buffer, sharedKeyRef.current);
+            await rtcRef.current.sendBinary(encrypted);
+        } catch (err) {
+            console.warn('[RemoteMic] Encrypt/send error:', err.message);
+            setSendErrorCount((n) => n + 1);
+        }
+    }, []);
+
     // --- Full cleanup (audio + RTC) ---
     const cleanupAll = useCallback(() => {
         cleanupAudio();
@@ -644,43 +680,18 @@ function RemoteMicSender() {
                 len: 0,
             };
 
-            worklet.port.onmessage = async (e) => {
+            worklet.port.onmessage = (e) => {
                 const pcmChunk = e.data; // Float32Array
-                if (!sharedKeyRef.current || !rtcRef.current) return;
                 // Defensive: the worklet should only ever post 128-sample
                 // Float32Arrays. Anything else is a bug or a hijacked port.
                 if (!(pcmChunk instanceof Float32Array)) {
                     console.warn('[RemoteMic] Dropping non-Float32 worklet payload:', typeof pcmChunk);
                     return;
                 }
-
-                const p = pendingBatchRef.current;
-                if (!p.buf) return; // recording torn down mid-flight
-                if (p.len + pcmChunk.length > p.buf.length) {
-                    // Defensive grow: shouldn't fire with 128-sample quanta and
-                    // the +128 headroom above, but keeps a misbehaving worklet
-                    // from corrupting memory.
-                    const grown = new Float32Array(p.buf.length * 2);
-                    grown.set(p.buf.subarray(0, p.len));
-                    p.buf = grown;
-                }
-                p.buf.set(pcmChunk, p.len);
-                p.len += pcmChunk.length;
-                if (p.len < batchTargetSamplesRef.current) return;
-
-                // Snapshot, quantise, and reset synchronously so concurrent
-                // worklet messages racing the await below append into a
-                // fresh batch instead of clobbering the one being sent.
-                const int16 = _quantiseFloat32ToInt16(p.buf.subarray(0, p.len));
-                p.len = 0;
-
-                try {
-                    const encrypted = await encrypt(int16.buffer, sharedKeyRef.current);
-                    await rtcRef.current.sendBinary(encrypted);
-                } catch (err) {
-                    console.warn('[RemoteMic] Encrypt/send error:', err.message);
-                    setSendErrorCount((n) => n + 1);
-                }
+                // Fire-and-forget: the worklet is rate-limited by real time,
+                // so backpressure is handled inside sendBinary. The file pump
+                // (sendFile) instead awaits pushPcmIntoBatch for pacing.
+                pushPcmIntoBatch(pcmChunk);
             };
 
             source.connect(gainNode);
@@ -710,7 +721,7 @@ function RemoteMicSender() {
                 setErrorMsg(t('mobileMicFailed') + e.message);
             }
         }
-    }, [acquireWakeLock, t]);
+    }, [acquireWakeLock, t, pushPcmIntoBatch]);
 
     // Stop current recording but keep RTC alive for next recording
     const stopRecording = useCallback(async () => {
