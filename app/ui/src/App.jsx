@@ -2749,16 +2749,39 @@ export default function App() {
                 }
                 format = msg.format;
               }
+              // Optional source hint: 'mic' (live recording, default) or
+              // 'file' (a saved file the phone decoded and is pumping faster
+              // than real time). Validate it like format; an unknown value is
+              // refused rather than silently ignored so protocol drift is
+              // visible. The only behavioural effect is skipping the live
+              // transcriber for files (see below).
+              let source = 'mic';
+              if (msg.source !== undefined) {
+                if (msg.source !== 'mic' && msg.source !== 'file') {
+                  console.error('[RemoteMic] Invalid audio-config source:', msg.source);
+                  setRemoteMicError(t('remoteMicInvalidConfig'));
+                  setRemoteMicStatus('error');
+                  rtc.close();
+                  return;
+                }
+                source = msg.source;
+              }
               remoteMicAudioConfiguredRef.current = true;
               remoteMicSampleRateRef.current = sr;
               remoteMicFormatRef.current = format;
-              console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${format}`);
+              console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${format}, source: ${source}`);
               setRemoteMicRecording(true);
               startRemoteMicTimer();
               // Phone audio is buffered into the same pcmChunksRef the local
               // path uses, so the live transcriber works without any other
               // wiring. Pass a getSampleRate() that reads the phone's rate.
-              maybeStartLiveTranscriber({ sampleRate: remoteMicSampleRateRef.current });
+              // Skip it for a saved file: the phone pumps faster than real
+              // time, so the sliding-window live pass is pure wasted compute
+              // (and competes with the final batch for the shared ORT
+              // session); the audio-end batch is the authoritative transcript.
+              if (source !== 'file') {
+                maybeStartLiveTranscriber({ sampleRate: remoteMicSampleRateRef.current });
+              }
             } else if (msg.type === 'audio-end') {
               console.log('[RemoteMic] Phone stopped recording, processing batch...');
               // Set awaitingFinal before flipping remoteMicRecording so the
