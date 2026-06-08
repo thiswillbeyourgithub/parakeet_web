@@ -309,6 +309,66 @@ describe('encodePhrases + buildFromEncoded (worker split)', () => {
   test('buildFromEncoded reaches the same first token', () => assert.ok(fromEncoded.root.children.has(ids[0])));
 });
 
+describe('encodePhrases opts.cache (incremental re-encode)', () => {
+  const entries = [
+    { phrase: 'acetaminophen', weight: 1 },
+    { phrase: '東京', weight: 2 },          // <unk>, must still be skipped via the cache
+    { phrase: 'sœur', weight: 3 },
+  ];
+  // A spying encoder wrapper that counts encode() calls but delegates the real work.
+  function spyEncoder() {
+    let calls = 0;
+    return {
+      unkId: encoder.unkId,
+      encode(text) { calls++; return encoder.encode(text); },
+      get calls() { return calls; },
+    };
+  }
+
+  test('cached result is identical to uncached', () => {
+    const cache = new Map();
+    const cold = encodePhrases(entries, encoder, { cache });
+    const plain = encodePhrases(entries, encoder);
+    assert.equal(cold.encoded.length, plain.encoded.length);
+    assert.deepEqual(cold.skipped, plain.skipped);
+    for (let i = 0; i < cold.encoded.length; i++) {
+      assert.ok(eqArr(cold.encoded[i].ids, plain.encoded[i].ids));
+      assert.equal(cold.encoded[i].weight, plain.encoded[i].weight);
+    }
+  });
+
+  test('a warm rebuild re-encodes nothing (every variant served from cache)', () => {
+    const cache = new Map();
+    const spy = spyEncoder();
+    encodePhrases(entries, spy, { cache });
+    const afterCold = spy.calls;
+    assert.equal(afterCold, entries.length, 'cold pass encodes every phrase once');
+    encodePhrases(entries, spy, { cache });
+    assert.equal(spy.calls, afterCold, 'warm pass must not call encode() again');
+  });
+
+  test('only a new/changed phrase is encoded on the next rebuild', () => {
+    const cache = new Map();
+    const spy = spyEncoder();
+    encodePhrases(entries, spy, { cache });
+    const afterCold = spy.calls;
+    // Drop 'sœur', keep the rest, add one new phrase: only the new phrase encodes.
+    const edited = [
+      { phrase: 'acetaminophen', weight: 1 },
+      { phrase: '東京', weight: 2 },
+      { phrase: 'ibuprofen', weight: 4 },
+    ];
+    encodePhrases(edited, spy, { cache });
+    assert.equal(spy.calls - afterCold, 1, 'only the newly added phrase is encoded');
+  });
+
+  test('the <unk> phrase is skipped consistently from the cache', () => {
+    const cache = new Map();
+    const warm = (() => { encodePhrases(entries, encoder, { cache }); return encodePhrases(entries, encoder, { cache }); })();
+    assert.deepEqual(warm.skipped, ['東京']);
+  });
+});
+
 describe('selectPrebuilt (reload fast-path gate)', () => {
   // This gate decides whether the reload/restore path can reuse the server
   // prebuilt encoding and so SKIP the in-browser parse + augment-expand + BPE

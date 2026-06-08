@@ -488,16 +488,34 @@ export function expandAugmentations(entries, defaultAugment = '', prefixes = DEF
  * phrase-boost worker, so the encode + unk-filter rule lives in exactly one
  * place. This is the CPU-heavy step for large lists (the BPE merge loop runs per
  * phrase), which is why the worker calls it off the main thread.
+ *
+ * Optional `opts.cache` memoizes the encode by surface form (the variant
+ * string), so a rebuild after a hand-edit only BPE-encodes the variants that
+ * actually changed. The cache key is the full variant string, which already
+ * bakes in every casing/prefix/strip augmentation and the list's `*` defaults,
+ * so a directive edit that alters a phrase's variants simply produces new keys
+ * (a miss) for the changed forms and reuses the rest, no diffing required.
+ * Removed phrases just stop being looked up. The cached `ids` are returned by
+ * reference (read-only by callers; {@link BoostingTrie.insert} only reads them),
+ * and index the encoder's vocab, so the owner (the worker) MUST drop the cache
+ * when the encoder/vocab changes. Pass none and the function is unchanged.
  * @param {Array<{phrase: string, weight: number, topk?: number}>} entries
  * @param {{encode: (text: string) => number[], unkId?: number}} encoder A BpeEncoder.
+ * @param {Object} [opts]
+ * @param {Map<string, number[]>} [opts.cache] Surface-form -> ids memo, persisted by the caller across rebuilds.
  * @returns {{encoded: Array<{ids: number[], weight: number, topk?: number}>, skipped: string[]}}
  */
-export function encodePhrases(entries, encoder) {
+export function encodePhrases(entries, encoder, opts = {}) {
   const unkId = encoder.unkId;
+  const cache = opts.cache;
   const encoded = [];
   const skipped = [];
   for (const { phrase, weight, topk } of entries) {
-    const ids = encoder.encode(phrase);
+    let ids = cache?.get(phrase);
+    if (ids === undefined) {
+      ids = encoder.encode(phrase);
+      cache?.set(phrase, ids);
+    }
     if (!ids.length) continue;
     if (unkId !== undefined && ids.includes(unkId)) {
       skipped.push(phrase);

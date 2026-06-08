@@ -24,6 +24,15 @@ let cachedAsset = null;
 let cachedEncoder = null;
 let cachedVocabSig = null;
 
+// Surface-form -> ids memo, persisted across requests so a rebuild after a
+// hand-edit only re-encodes the variants that actually changed (the whole list
+// re-encode is otherwise the dominant cost, ~seconds on a large augmented list;
+// see encodePhrases). The ids index the current vocab, so the cache is dropped
+// whenever the encoder is rebuilt for a new vocab (below). Removed phrases leave
+// stale entries behind, so it is also pruned when it grows well past the live
+// working set (a fresh Map repopulates from this request's hits, no re-encode).
+let encodeCache = new Map();
+
 async function getEncoder(id2token, assetUrl) {
   if (!cachedAsset) {
     const resp = await fetch(assetUrl);
@@ -36,6 +45,7 @@ async function getEncoder(id2token, assetUrl) {
   if (!cachedEncoder || cachedVocabSig !== sig) {
     cachedEncoder = new BpeEncoder(cachedAsset, buildVocabToId(id2token));
     cachedVocabSig = sig;
+    encodeCache = new Map(); // ids index the old vocab; drop them
   }
   return cachedEncoder;
 }
@@ -44,7 +54,11 @@ self.onmessage = async (e) => {
   const { id, entries, id2token, assetUrl = BPE_ASSET_URL } = e.data || {};
   try {
     const encoder = await getEncoder(id2token, assetUrl);
-    const { encoded, skipped } = encodePhrases(entries, encoder);
+    // Cap accumulated stale (removed-line) entries: once the cache is more than
+    // 2x the current variant count, most of it is dead, so start fresh. This
+    // request then re-encodes once and the cache tracks the live set again.
+    if (encodeCache.size > (entries?.length || 0) * 2) encodeCache = new Map();
+    const { encoded, skipped } = encodePhrases(entries, encoder, { cache: encodeCache });
     self.postMessage({ id, ok: true, encoded, skipped });
   } catch (err) {
     self.postMessage({ id, ok: false, error: String((err && err.message) || err) });
