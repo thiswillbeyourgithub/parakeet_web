@@ -79,10 +79,17 @@
 		# broader than `'self'` for the same content; data: in media-src
 		# is not a known script-execution surface.
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: {$VITE_CSP_SCRIPT_HOSTS:}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; media-src 'self' blob: data:; font-src 'self'; connect-src 'self' blob: {$_CSP_HF_HOSTS:} {$VITE_CSP_CONNECT_HOSTS:}; worker-src 'self' blob:; child-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
-		# Permissions-Policy: only microphone, hid (WebHID for SpeechMike)
-		# and clipboard-write are needed by the page. Everything else is
-		# explicitly disabled so a compromised script cannot elicit a
-		# prompt for camera, USB, serial, geolocation, etc.
+		# Permissions-Policy: only microphone, camera (rear-camera QR
+		# re-scan on the remote-mic reconnect screen), hid (WebHID for
+		# SpeechMike) and clipboard-write are needed by the page.
+		# camera=(self) is required: the phone's "Scan QR code"
+		# re-pairing flow in remote-mic-entry.jsx calls
+		# getUserMedia({ video: { facingMode: 'environment' } }), and
+		# leaving camera=() blocks that at the policy layer so the
+		# browser never even prompts (Brave/Chrome silently
+		# NotAllowedError). Everything else is explicitly disabled so a
+		# compromised script cannot elicit a prompt for USB, serial,
+		# geolocation, etc.
 		# fullscreen=(self) is kept open for the legitimate UI fullscreen
 		# path.
 		#
@@ -109,7 +116,7 @@
 		# this, navigator.wakeLock.request('screen') throws a
 		# permissions-policy NotAllowedError on every visibilitychange
 		# and the recording UI can sleep mid-capture on mobile.
-		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), attribution-reporting=(), autoplay=(), battery=(), bluetooth=(), browsing-topics=(), camera=(), captured-surface-control=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), deferred-fetch=(), digital-credentials-get=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), interest-cohort=(), join-ad-interest-group=(), keyboard-map=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), otp-credentials=(), payment=(), picture-in-picture=(), private-aggregation=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-create=(), publickey-credentials-get=(), run-ad-auction=(), screen-wake-lock=(self), serial=(), shared-storage=(), shared-storage-select-url=(), speaker-selection=(), storage-access=(), unload=(), usb=(), wake-lock=(self), web-share=(), window-management=(), xr-spatial-tracking=()"
+		Permissions-Policy "accelerometer=(), ambient-light-sensor=(), attribution-reporting=(), autoplay=(), battery=(), bluetooth=(), browsing-topics=(), camera=(self), captured-surface-control=(), clipboard-read=(), clipboard-write=(self), compute-pressure=(), deferred-fetch=(), digital-credentials-get=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(self), idle-detection=(), interest-cohort=(), join-ad-interest-group=(), keyboard-map=(), local-fonts=(), magnetometer=(), microphone=(self), midi=(), otp-credentials=(), payment=(), picture-in-picture=(), private-aggregation=(), private-state-token-issuance=(), private-state-token-redemption=(), publickey-credentials-create=(), publickey-credentials-get=(), run-ad-auction=(), screen-wake-lock=(self), serial=(), shared-storage=(), shared-storage-select-url=(), speaker-selection=(), storage-access=(), unload=(), usb=(), wake-lock=(self), web-share=(), window-management=(), xr-spatial-tracking=()"
 		# Belt-and-braces clickjacking defense alongside frame-ancestors 'none'
 		# in CSP, for legacy browsers that ignore frame-ancestors.
 		X-Frame-Options "DENY"
