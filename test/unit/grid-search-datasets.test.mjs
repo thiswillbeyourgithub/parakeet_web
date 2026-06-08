@@ -192,4 +192,17 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
       assert.equal(r[2], '2');
     }
   });
+
+  test('renders the min-p sweep column (value, and "-" when unset)', () => {
+    const minpCol = ACC_HEAD.indexOf('minp');
+    assert.ok(minpCol >= 0, 'ACC_HEAD must include a min-p column');
+
+    const mk = (minp) => {
+      const perDs = new Map([['medical', newAcc()]]);
+      addScore(perDs.get('medical'), sc(10, 1));
+      return { beamWidth: 1, boostLabel: 'boost', strength: 1, minp, datasets: buildDatasets(perDs, ['medical']) };
+    };
+    assert.equal(accuracyBody([mk(0.05)])[0][minpCol], '0.05', 'a swept min-p renders its value');
+    assert.equal(accuracyBody([mk(null)])[0][minpCol], '-', 'a baked/absent min-p renders "-"');
+  });
 });

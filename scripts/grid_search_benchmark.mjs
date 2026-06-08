@@ -10,8 +10,10 @@
 // beyond ffmpeg decode to 16 kHz mono float32 (same as transcribe.mjs).
 //
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
-// grid: beam-width x (no-boost baseline + each boost strength) and prints one
-// row per combination in two tables (accuracy + per-phase timing). Rows are
+// grid: beam-width x (no-boost baseline + each boost strength x each boost
+// min-p) and prints one row per combination in two tables (accuracy + per-phase
+// timing). The min-p axis overrides the per-phrase boost gate, so one prebuilt
+// trie is reused across every min-p value (no re-encode per value). Rows are
 // sorted by the per-utterance median WER (best first), and the accuracy table
 // reports the mean/median/stdev of the per-utterance WER alongside the
 // corpus-level rate. It also writes those tables to a .md file and every
@@ -41,7 +43,8 @@
 //     --model-dir  ./perso/onnx_export \
 //     --beam-width 1,2,4 \
 //     --phrase-boost ./phrase_boosting/medical.txt \
-//     --boost-strength 1,2
+//     --boost-strength 1,2 \
+//     --boost-minp 0.01,0.05,0.1
 //
 // This script lives in parakeet_web/scripts/, so it imports the reusable
 // helpers from its sibling transcribe.mjs by default. Set PARAKEET_WEB (or
@@ -73,6 +76,7 @@ function parseArgs(argv) {
     ort: null,              // null => auto: 'wasm' for int8, 'node' for fp16/fp32
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
+    minps: [null],          // swept dimension: min-p gate override (null = each phrase's baked min-p)
     boosts: [],             // --phrase-boost specs (repeatable); inline / .txt / .pwc
     noBaseline: false,      // drop the no-boost row from the sweep
     maesNumSteps: 2,
@@ -111,6 +115,7 @@ function parseArgs(argv) {
       case '--ort': a.ort = val(flag); break;
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
+      case '--boost-minp': a.minps = numList(val(flag)); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '--no-baseline': a.noBaseline = true; break;
       case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
@@ -146,6 +151,9 @@ function parseArgs(argv) {
   }
   if (!a.strengths.length || a.strengths.some((s) => !Number.isFinite(s))) {
     throw new Error('--boost-strength must be a comma-separated list of numbers');
+  }
+  if (!a.minps.length || a.minps.some((p) => p !== null && (!Number.isFinite(p) || p <= 0 || p > 1))) {
+    throw new Error('--boost-minp must be a comma-separated list of numbers in (0, 1]');
   }
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) {
     throw new Error('--frame-stride must be an integer in [1, 4]');
@@ -208,6 +216,16 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
                            no-boost baseline row unless --no-baseline).
   -s, --boost-strength LIST  Boost-strength multipliers to test, e.g. "1,2".
                            Only used when --phrase-boost is set. Default 1.
+      --boost-minp LIST    Per-phrase min-p gate values to sweep, e.g.
+                           "0.01,0.05,0.1" (each in (0, 1]). Overrides the gate
+                           baked into every boost phrase, so one trie is swept
+                           across all values (cheap: no re-encode per value).
+                           A token is only boosted when it is at least min-p
+                           times as likely as the model's top candidate for that
+                           step; lower = looser (more recall, more risk of
+                           hallucinating the phrase), higher = stricter. Only used
+                           when --phrase-boost is set. Default: each phrase's own
+                           baked min-p (no override).
       --no-baseline        Drop the no-boost baseline row from the sweep.
 
 MAES knobs (used only when a beam width > 1; defaults match NeMo's maes):
@@ -535,7 +553,7 @@ function renderMarkdown(headers, body) {
 // (ascending) so the best config is at the top, and a cell's dataset rows stay
 // grouped together. "WER %" is the corpus-level rate (total word edits / total
 // ref words); WERmean/med/std summarise the spread of the per-utterance WERs.
-const ACC_HEAD = ['beam', 'boost', 'strength', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
+const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
 function accuracyBody(rows) {
   const body = [];
   for (const r of rows) {
@@ -544,6 +562,7 @@ function accuracyBody(rows) {
         String(r.beamWidth),
         r.boostLabel,
         r.strength == null ? '-' : String(r.strength),
+        r.minp == null ? '-' : String(r.minp),
         d.name,
         pct(d.wordEdits, d.refWords).toFixed(2),
         mean(d.werSamples).toFixed(2),
@@ -562,7 +581,7 @@ function accuracyBody(rows) {
 
 // Timing table: per-phase mean/median (ms per utterance) plus wall time. Each
 // phase cell is "mean/median".
-const TIME_HEAD = ['beam', 'boost', 'strength', ...PHASES.map(([, label]) => label), 'rtf', 'wall s', 'n'];
+const TIME_HEAD = ['beam', 'boost', 'strength', 'minp', ...PHASES.map(([, label]) => label), 'rtf', 'wall s', 'n'];
 function timingBody(rows) {
   return rows.map((r) => {
     const cell = (key) => `${mean(r.timings[key]).toFixed(1)}/${median(r.timings[key]).toFixed(1)}`;
@@ -570,6 +589,7 @@ function timingBody(rows) {
       String(r.beamWidth),
       r.boostLabel,
       r.strength == null ? '-' : String(r.strength),
+      r.minp == null ? '-' : String(r.minp),
       ...PHASES.map(([key]) => cell(key)),
       mean(r.timings.rtf).toFixed(2),
       (r.timeMs / 1000).toFixed(1),
@@ -639,7 +659,7 @@ async function main() {
   // Content hash of the boost sources, folded into the boost cells' resume key.
   const bDigest = boostDigest(args.boosts);
   if (!hasBoost || !args.noBaseline) {
-    boostConfigs.push({ label: 'none', strength: null, phraseBoost: null, boostDigest: null });
+    boostConfigs.push({ label: 'none', strength: null, minp: null, phraseBoost: null, boostDigest: null });
   }
   if (hasBoost) {
     for (const strength of args.strengths) {
@@ -653,7 +673,12 @@ async function main() {
       if (!phraseBoost) {
         console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
       }
-      boostConfigs.push({ label: 'boost', strength, phraseBoost, boostDigest: bDigest });
+      // One trie per strength, swept across every requested min-p override
+      // (null = the phrase's own baked min-p). The override is set on the shared
+      // trie per cell at decode time, so all min-p cells reuse this one trie.
+      for (const minp of args.minps) {
+        boostConfigs.push({ label: 'boost', strength, minp, phraseBoost, boostDigest: bDigest });
+      }
     }
   }
 
@@ -662,7 +687,8 @@ async function main() {
   for (const beamWidth of args.beamWidths) {
     for (const bc of boostConfigs) grid.push({ beamWidth, ...bc });
   }
-  console.error(`[bench] sweep: ${args.beamWidths.length} beam width(s) x ${boostConfigs.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each\n`);
+  const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
+  console.error(`[bench] sweep: ${args.beamWidths.length} beam width(s) x ${boostConfigs.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -722,7 +748,8 @@ async function main() {
   // only those cells (the no-boost baseline keeps its plain key).
   const tagOf = (row) => {
     const boostPart = row.boostDigest ? `boost#${row.boostDigest}` : row.label;
-    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}`;
+    const minpPart = row.minp == null ? '' : '~' + row.minp;
+    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}`;
   };
 
   // Reconstruct a summary row (the shape the final tables consume) from a
@@ -747,7 +774,7 @@ async function main() {
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
       timings.rtf.push(m.rtf ?? 0);
     }
-    return { beamWidth: s.beam, boostLabel: s.boost, strength: s.strength,
+    return { beamWidth: s.beam, boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
 
@@ -808,6 +835,10 @@ async function main() {
   for (let gi = 0; gi < pending.length; gi++) {
     const row = pending[gi];
     const tag = tagOf(row);
+    // Apply this cell's min-p gate override to the shared per-strength trie
+    // (null restores the phrases' baked min-p). Cells run sequentially, so
+    // mutating the shared trie here is safe and avoids re-encoding per value.
+    if (row.phraseBoost) row.phraseBoost.minpOverride = row.minp ?? null;
     // Per-dataset accuracy tallies for this run (keyed by dataset name).
     const perDs = new Map();
     const ensureDs = (name) => { let acc = perDs.get(name); if (!acc) { acc = newAcc(); perDs.set(name, acc); } return acc; };
@@ -831,7 +862,7 @@ async function main() {
       timings.rtf.push(metrics.rtf ?? 0);
       writeJsonl({
         type: 'utterance', run: tag,
-        beam: row.beamWidth, boost: row.label, strength: row.strength,
+        beam: row.beamWidth, boost: row.label, strength: row.strength, minp: row.minp ?? null,
         dataset: e.dataset,
         audio: e.audioPath, duration: e.duration,
         ref: e.text, hyp, refNorm, hypNorm,
@@ -849,7 +880,7 @@ async function main() {
     const timeMs = Date.now() - t0;
     process.stderr.write('\n');
     const datasets = buildDatasets(perDs, datasetNames);
-    const r = { beamWidth: row.beamWidth, boostLabel: row.label, strength: row.strength,
+    const r = { beamWidth: row.beamWidth, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
       timeMs, timings, datasets };
     summaryByTag.set(tag, r);
     // The "overall" pool (or the single dataset) supplies the top-level corpus
@@ -867,7 +898,7 @@ async function main() {
     });
     writeJsonl({
       type: 'summary', run: tag,
-      beam: row.beamWidth, boost: row.label, strength: row.strength,
+      beam: row.beamWidth, boost: row.label, strength: row.strength, minp: row.minp ?? null,
       utterances: entries.length,
       wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
       wer_mean_pct: +mean(overall.werSamples).toFixed(4),
