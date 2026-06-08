@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expandBoostSpec, parseCliBoosts } from '../../scripts/transcribe.mjs';
+import { expandBoostSpec, parseCliBoosts, buildPhraseBoost } from '../../scripts/transcribe.mjs';
+import { loadCachedFixture } from '../support/bpe-fixture.mjs';
 
 describe('expandBoostSpec file-vs-inline guard', () => {
   test('missing .txt path throws (the bug: was silently treated as inline)', () => {
@@ -70,5 +71,38 @@ describe('parseCliBoosts: directive + * defaults lines are not phrases', () => {
     assert.deepEqual([entries[0].weight, entries[0].augment], [2, 'fa']);
     // explicit per-phrase weight overrides the * default; augment still inherited.
     assert.deepEqual([entries[1].weight, entries[1].augment], [7, 'fa']);
+  });
+});
+
+// The CLI's --depth-scaling / --boost-minp flags flow into buildPhraseBoost,
+// which must set them on the trie it returns. depthScaling is baked into the
+// node bonuses (a build-time constructor option); minpOverride is a decode-time
+// property layered on after build. (The trie-level *effect* of both knobs is
+// covered in phrase-boost.test.mjs; this pins the buildPhraseBoost wiring.)
+describe('buildPhraseBoost wires depthScaling + minpOverride onto the trie', () => {
+  // loadBpeEncoder only needs id2token; the committed BPE fixture supplies it.
+  const tokenizer = { id2token: loadCachedFixture().id2token };
+  const boosts = ['acetaminophen:5:0.5']; // per-phrase min-p 0.5
+
+  test('depthScaling defaults to the trie built-in when not passed', async () => {
+    const t = await buildPhraseBoost({ boosts, strength: 1, tokenizer, quiet: true });
+    assert.equal(t.depthScaling, 0.5);
+    assert.equal(t.minpOverride, null);
+  });
+
+  test('depthScaling 0 (flat) is honoured, not coerced to the default', async () => {
+    const t = await buildPhraseBoost({ boosts, strength: 1, depthScaling: 0, tokenizer, quiet: true });
+    assert.equal(t.depthScaling, 0);
+  });
+
+  test('minpOverride is set on the trie, superseding the per-phrase baked min-p', async () => {
+    const t = await buildPhraseBoost({ boosts, strength: 1, depthScaling: 1, minpOverride: 0.01, tokenizer, quiet: true });
+    assert.equal(t.depthScaling, 1);
+    assert.equal(t.minpOverride, 0.01);
+  });
+
+  test('a null minpOverride leaves each phrase on its own baked min-p', async () => {
+    const t = await buildPhraseBoost({ boosts, strength: 1, minpOverride: null, tokenizer, quiet: true });
+    assert.equal(t.minpOverride, null);
   });
 });

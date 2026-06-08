@@ -82,6 +82,8 @@ function parseArgs(argv) {
     audio: null,
     boosts: [],            // raw --phrase-boost strings or file paths (repeatable)
     strength: 1,
+    boostMinp: null,       // global min-p override (null = each phrase's baked min-p)
+    depthScaling: null,    // trie depth-scaling override (null = trie's built-in default)
     beamWidth: 1,          // 1 = greedy; >1 = MAES beam search
     maesNumSteps: 2,       // MAES: max symbols emitted per frame
     maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
@@ -115,6 +117,8 @@ function parseArgs(argv) {
       case '-h': case '--help': printHelp(); process.exit(0); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '-s': case '--boost-strength': a.strength = Number(val(flag)); break;
+      case '--boost-minp': a.boostMinp = Number(val(flag)); break;
+      case '--depth-scaling': a.depthScaling = Number(val(flag)); break;
       case '-w': case '--beam-width': a.beamWidth = parseInt(val(flag), 10); break;
       case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
       case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
@@ -143,6 +147,12 @@ function parseArgs(argv) {
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
   if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ortBackend})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
+  if (a.boostMinp !== null && (!Number.isFinite(a.boostMinp) || a.boostMinp <= 0 || a.boostMinp > 1)) {
+    throw new Error('--boost-minp must be a number in (0, 1]');
+  }
+  if (a.depthScaling !== null && (!Number.isFinite(a.depthScaling) || a.depthScaling < 0)) {
+    throw new Error('--depth-scaling must be a number >= 0 (0 = flat, no per-depth growth)');
+  }
   if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 25) throw new Error('--beam-width must be an integer in [1, 25]');
   if (!Number.isInteger(a.maesNumSteps) || a.maesNumSteps < 1) throw new Error('--maes-num-steps must be an integer >= 1');
   if (!Number.isInteger(a.maesExpansionBeta) || a.maesExpansionBeta < 0) throw new Error('--maes-expansion-beta must be an integer >= 0');
@@ -190,6 +200,20 @@ Options:
                            Example: --phrase-boost=./phrases.pwc
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
+      --boost-minp N       Global min-p gate override applied to EVERY boost phrase
+                           (number in (0, 1]), superseding any per-phrase :MINP and
+                           the built-in default. A token is only boosted when its
+                           probability is at least N times the model's top token for
+                           that step; lower = looser (more recall, more risk of
+                           hallucinating the phrase), higher = stricter. Default:
+                           each phrase's own baked min-p (no override).
+      --depth-scaling N    Trie depth-scaling factor (number >= 0), overriding the
+                           built-in default. The per-token boost at trie depth d is
+                           weight*(1 + N*(d-1)), so this controls how much deeper
+                           (more committed) matches are rewarded: 0 = flat (every
+                           depth gets the base weight, least "inertia" toward
+                           completing a started phrase), higher = stronger pull to
+                           finish it. Default: the trie's built-in default.
   -w, --beam-width N       Beam search width (integer in [1, 25]). 1 = greedy (default,
                            fastest). >1 runs MAES (Modified Adaptive Expansion
                            Search): width is the global beam cap, but the gamma
@@ -513,7 +537,13 @@ export async function loadParakeetModel({
 // gate it is BAKED INTO each node's bonus at insert time, so changing it needs a
 // fresh trie (the grid benchmark rebuilds one per value). Leave undefined to use
 // the trie's built-in default.
-export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling, tokenizer, quiet = false, verbose = false }) {
+//
+// `minpOverride` is a global min-p gate (a decode-time property, NOT baked in)
+// applied to every phrase, superseding each phrase's own baked min-p. null = no
+// override (each phrase keeps its own). The grid benchmark sets this per cell on
+// a shared trie instead (so it can sweep it without rebuilding); the CLI passes
+// it here for a single run.
+export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling, minpOverride = null, tokenizer, quiet = false, verbose = false }) {
   const pwcSpecs = boosts.filter(isPwcPath);
   const textSpecs = boosts.filter((s) => !isPwcPath(s));
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
@@ -534,6 +564,9 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling
     ? BoostingTrie.buildFromPhrases(entries, encoder, { strength, depthScaling })
     : new BoostingTrie({ strength, depthScaling });
   phraseBoost.strength = strength;
+  // A global min-p override supersedes every phrase's baked min-p (decode-time,
+  // not baked into the bonus). null leaves each phrase's own gate untouched.
+  if (minpOverride != null) phraseBoost.minpOverride = minpOverride;
 
   // Precompiled .pwc lists: confirm the vocab signature matches the loaded
   // model (its ids would otherwise index a different vocab and be meaningless),
@@ -563,7 +596,8 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling
   }
 
   if (!quiet) {
-    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}, depth-scaling ${phraseBoost.depthScaling}`);
+    const minpNote = phraseBoost.minpOverride != null ? `, min-p override ${phraseBoost.minpOverride}` : '';
+    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}, depth-scaling ${phraseBoost.depthScaling}${minpNote}`);
     // List the phrases AS TYPED, not their generated casing variants, and cap
     // the listing: it is handy for a handful of inline probes but floods the
     // terminal for a list of thousands. --verbose lifts the cap. (.pwc ids are
@@ -610,6 +644,8 @@ async function main() {
   const phraseBoost = await buildPhraseBoost({
     boosts: args.boosts,
     strength: args.strength,
+    depthScaling: args.depthScaling ?? undefined, // null => trie's built-in default
+    minpOverride: args.boostMinp,                  // null => each phrase's baked min-p
     tokenizer,
     verbose: args.verbose,
   });
