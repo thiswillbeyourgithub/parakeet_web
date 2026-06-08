@@ -24,7 +24,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
-import { createLevelMonitor } from './lib/audio.js';
+import { createLevelMonitor, resamplePcmTo16k } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
 
 const STATUS = {
@@ -34,6 +34,7 @@ const STATUS = {
     RECORDING: 'recording',
     PAUSED: 'paused',    // audio paused, RTC still open
     READY: 'ready',      // connected, not recording — between recordings
+    SENDING_FILE: 'sending_file', // pumping a decoded saved file through the tunnel
     STOPPED: 'stopped',  // RTC closed
     ERROR: 'error',
 };
@@ -98,6 +99,11 @@ function RemoteMicSender() {
     const [menuOpen, setMenuOpen] = useState(false);
     const [hasRecorded, setHasRecorded] = useState(false);
     const [sendErrorCount, setSendErrorCount] = useState(0);
+    // Saved-file send: 0..1 progress, picked filename, and a non-fatal
+    // warning (e.g. the file was truncated to the receiver's length cap).
+    const [fileProgress, setFileProgress] = useState(0);
+    const [fileName, setFileName] = useState('');
+    const [fileWarning, setFileWarning] = useState('');
     const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
     const [fingerprint, setFingerprint] = useState('');
     const verifyResolveRef = useRef(null); // (boolean) => void
@@ -140,6 +146,11 @@ function RemoteMicSender() {
     // fresh level monitor to the same MediaStreamSource.
     const sourceRef = useRef(null);
     const keepaliveHeldRef = useRef(false);
+    // Hidden <input type=file> trigger, and an abort flag the cleanup paths
+    // raise so an in-flight saved-file pump stops promptly (disconnect,
+    // BFCache eviction, error) instead of pushing into a dead transport.
+    const fileInputRef = useRef(null);
+    const fileAbortRef = useRef(false);
     // Audio capture settings pushed from the desktop. Defaults match the
     // historical hardcoded values; overwritten when the desktop sends an
     // `audio-settings` control message. Toggles are read inside
@@ -167,6 +178,16 @@ function RemoteMicSender() {
     const SEND_BATCH_MS = 500;
     const pendingBatchRef = useRef({ buf: null, len: 0 });
     const batchTargetSamplesRef = useRef(0);
+
+    // Saved-file send is decoded/resampled to 16 kHz mono on the phone, then
+    // streamed through the exact same Int16 batch framing the mic uses. The
+    // desktop receiver enforces a per-session sample cap (REMOTE_MIC_MAX_SAMPLES
+    // = 10*60*96000 -> 60 min at 16 kHz); mirror it here so we truncate-and-warn
+    // locally rather than pumping minutes of audio the receiver will silently
+    // drop. 16 kHz mono Float32 at 60 min is ~230 MB, the same ceiling the
+    // desktop already tolerates.
+    const FILE_TARGET_SAMPLE_RATE = 16000;
+    const FILE_MAX_SAMPLES_16K = 60 * 60 * FILE_TARGET_SAMPLE_RATE;
 
     // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
@@ -270,6 +291,9 @@ function RemoteMicSender() {
 
     // --- Full cleanup (audio + RTC) ---
     const cleanupAll = useCallback(() => {
+        // Abort any in-flight saved-file pump so it stops pushing into the
+        // transport we're about to tear down.
+        fileAbortRef.current = true;
         cleanupAudio();
         if (rtcRef.current) { rtcRef.current.close(); rtcRef.current = null; }
         sharedKeyRef.current = null;
@@ -723,6 +747,139 @@ function RemoteMicSender() {
         }
     }, [acquireWakeLock, t, pushPcmIntoBatch]);
 
+    // Decode a saved audio file ON THE PHONE and stream it through the SAME
+    // encrypted Int16 tunnel the live mic uses (audio-config -> chunks ->
+    // audio-end). The desktop receiver treats the stream as opaque PCM, so it
+    // chunks/resamples/transcribes a file exactly like a recording with zero
+    // receiver-side changes. The file is decoded and encrypted locally, so the
+    // signaling server and relay still only ever see ciphertext. Paced via
+    // rtc.drain() so the all-at-once decode does not flood the transport and
+    // trip sendBinary's drop path.
+    const sendFile = useCallback(async (file) => {
+        if (!file) return;
+        // Reuse the recording gate: only stream once the handshake is bound.
+        if (!sharedKeyRef.current || !rtcRef.current) {
+            console.warn('[RemoteMic] Ignoring file send — not connected/verified');
+            return;
+        }
+        fileAbortRef.current = false;
+        let configSent = false;
+        let decodeCtx = null;
+        setFileWarning('');
+        setFileName(file.name);
+        setFileProgress(0);
+        setStatus(STATUS.SENDING_FILE);
+
+        try {
+            // 1. Decode at (ideally) 16 kHz; the browser's own hardened decoder
+            //    rejects malformed files here, so nothing bad reaches the wire.
+            const arrayBuf = await file.arrayBuffer();
+            try {
+                decodeCtx = new AudioContext({ sampleRate: FILE_TARGET_SAMPLE_RATE });
+            } catch (_) {
+                decodeCtx = new AudioContext();
+            }
+            const decoded = await decodeCtx.decodeAudioData(arrayBuf);
+
+            // 2. Downmix to mono.
+            const nCh = decoded.numberOfChannels;
+            let mono;
+            if (nCh <= 1) {
+                mono = decoded.getChannelData(0).slice();
+            } else {
+                mono = new Float32Array(decoded.length);
+                for (let c = 0; c < nCh; c++) {
+                    const ch = decoded.getChannelData(c);
+                    for (let i = 0; i < ch.length; i++) mono[i] += ch[i];
+                }
+                for (let i = 0; i < mono.length; i++) mono[i] /= nCh;
+            }
+
+            // 3. Resample to 16 kHz (shared helper; no-op when already 16 kHz).
+            let pcm16k = await resamplePcmTo16k(mono, decoded.sampleRate);
+
+            // 4. Truncate to the receiver's per-session cap, warn if we did.
+            if (pcm16k.length > FILE_MAX_SAMPLES_16K) {
+                console.warn(`[RemoteMic] File ${pcm16k.length} samples exceeds cap ${FILE_MAX_SAMPLES_16K}, truncating`);
+                pcm16k = pcm16k.subarray(0, FILE_MAX_SAMPLES_16K);
+                setFileWarning(t('mobileFileTruncated'));
+            }
+            if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) return;
+
+            // 5. Announce config (identical framing to a live recording).
+            //    source:'file' is an optional hint older desktops ignore.
+            rtcRef.current.sendMessage({
+                type: 'audio-config',
+                sampleRate: FILE_TARGET_SAMPLE_RATE,
+                format: 'pcm-s16',
+                source: 'file',
+            });
+            configSent = true;
+            setHasRecorded(true);
+
+            // 6. Fresh batch buffer (mirrors startMicCapture).
+            batchTargetSamplesRef.current = Math.max(128, Math.round(FILE_TARGET_SAMPLE_RATE * SEND_BATCH_MS / 1000));
+            pendingBatchRef.current = {
+                buf: new Float32Array(batchTargetSamplesRef.current + 128),
+                len: 0,
+            };
+
+            // 7. Paced pump: one batch worth at a time, awaiting the send and a
+            //    drain so we throttle to the link instead of overrunning it.
+            const batch = batchTargetSamplesRef.current;
+            const total = pcm16k.length;
+            for (let off = 0; off < total; off += batch) {
+                if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) {
+                    console.warn('[RemoteMic] File send aborted mid-pump');
+                    // User cancelled while the transport is still alive: finalise
+                    // in order (flush + audio-end) so the desktop transcribes what
+                    // it received. A disconnect-driven abort instead nulls rtcRef
+                    // and owns its own teardown, so we just return there.
+                    if (rtcRef.current) {
+                        try { await flushPendingBatch(); } catch (_) { /* ignore */ }
+                        try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
+                        setStatus(STATUS.READY);
+                    }
+                    return;
+                }
+                await pushPcmIntoBatch(pcm16k.subarray(off, Math.min(off + batch, total)));
+                await rtcRef.current.drain();
+                setFileProgress(Math.min(1, (off + batch) / total));
+            }
+            if (fileAbortRef.current || !rtcRef.current) return;
+
+            // 8. Flush trailing partial batch, then close the recording.
+            await flushPendingBatch();
+            if (rtcRef.current) rtcRef.current.sendMessage({ type: 'audio-end' });
+            setFileProgress(1);
+            setStatus(STATUS.READY);
+        } catch (e) {
+            console.error('[RemoteMic] File send error:', e);
+            // The tunnel is independent of file problems, so keep the session
+            // alive (no rescan needed) and let the user pick another file. If
+            // we already announced audio-config, close the recording cleanly
+            // so the desktop finalises what it got instead of waiting forever.
+            if (configSent && rtcRef.current) {
+                try { await flushPendingBatch(); } catch (_) { /* ignore */ }
+                try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
+            }
+            setFileWarning(
+                (e?.name === 'EncodingError' || e?.name === 'NotSupportedError')
+                    ? t('mobileFileDecodeError')
+                    : (t('mobileFileSendError') + (e?.message || ''))
+            );
+            setStatus(STATUS.READY);
+        } finally {
+            if (decodeCtx) { try { await decodeCtx.close(); } catch (_) { /* ignore */ } }
+        }
+    }, [t, pushPcmIntoBatch, flushPendingBatch]);
+
+    // Cancel an in-flight saved-file send. The pump detects the flag on its
+    // next iteration and finalises the recording in order (see sendFile).
+    const cancelFileSend = useCallback(() => {
+        fileAbortRef.current = true;
+    }, []);
+
     // Stop current recording but keep RTC alive for next recording
     const stopRecording = useCallback(async () => {
         // Flush before audio-end so the trailing <500 ms of audio that
@@ -794,6 +951,20 @@ function RemoteMicSender() {
 
     return (
         <div style={{ textAlign: 'center', position: 'relative' }}>
+
+            {/* Hidden picker for the "Send a file" action. Reset value on
+                change so re-picking the same file fires onChange again. */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                    const f = e.target.files && e.target.files[0];
+                    e.target.value = '';
+                    if (f) sendFile(f);
+                }}
+            />
 
             {fingerprint && verifyResolveRef.current && (
                 <VerificationModal
@@ -1032,11 +1203,54 @@ function RemoteMicSender() {
                             {t('mobileStartAnother')}
                         </p>
                     )}
+                    {fileWarning && (
+                        <p style={{ color: '#fbbf24', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                            ⚠ {fileWarning}
+                        </p>
+                    )}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center', marginTop: hasRecorded ? 0 : '1.5rem' }}>
                         <button onClick={startMicCapture} style={styles.newRecordingButton}>
                             {t('mobileStartNewBtn')}
                         </button>
+                        <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={styles.sendFileButton}>
+                            {t('mobileSendFileBtn')}
+                        </button>
                     </div>
+                </div>
+            )}
+
+            {status === STATUS.SENDING_FILE && (
+                <div>
+                    <div style={styles.spinner} />
+                    <p style={{ marginTop: '1rem', color: '#60a5fa', fontWeight: 'bold' }}>
+                        {t('mobileSendingFile')}
+                    </p>
+                    {fileName && (
+                        <p style={{ color: '#9ca3af', fontSize: '0.85rem', wordBreak: 'break-all', marginBottom: '1rem' }}>
+                            {fileName}
+                        </p>
+                    )}
+                    {/* Progress bar */}
+                    <div style={{
+                        margin: '1rem auto', width: '80%', height: '8px',
+                        background: '#2a2a4a', borderRadius: '4px', overflow: 'hidden',
+                    }}>
+                        <div style={{
+                            width: `${Math.round(fileProgress * 100)}%`, height: '100%',
+                            background: '#10b981', transition: 'width 0.2s',
+                        }} />
+                    </div>
+                    <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+                        {Math.round(fileProgress * 100)}%
+                    </p>
+                    {sendErrorCount > 0 && (
+                        <p style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                            ⚠ {sendErrorCount} dropped chunk{sendErrorCount === 1 ? '' : 's'}
+                        </p>
+                    )}
+                    <button onClick={cancelFileSend} style={styles.stopButton}>
+                        {t('mobileCancelSendBtn')}
+                    </button>
                 </div>
             )}
 
@@ -1169,6 +1383,11 @@ const styles = {
     newRecordingButton: {
         background: '#ef4444', color: 'white', border: 'none',
         borderRadius: '12px', padding: '1rem 2.5rem', fontSize: '1.1rem',
+        fontWeight: 'bold', cursor: 'pointer', width: '80%',
+    },
+    sendFileButton: {
+        background: 'transparent', color: '#60a5fa', border: '1px solid #3b82f6',
+        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1rem',
         fontWeight: 'bold', cursor: 'pointer', width: '80%',
     },
     disconnectButton: {
