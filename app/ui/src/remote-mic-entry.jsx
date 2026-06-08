@@ -30,6 +30,7 @@ import { formatTime } from './lib/format.js';
 const STATUS = {
     INIT: 'init',
     CONNECTING: 'connecting',
+    RECONNECTING: 'reconnecting', // session dropped, auto-retrying the same room
     WAITING_KEY: 'waiting_key',
     RECORDING: 'recording',
     PAUSED: 'paused',    // audio paused, RTC still open
@@ -105,6 +106,9 @@ function RemoteMicSender() {
     const [fileName, setFileName] = useState('');
     const [fileWarning, setFileWarning] = useState('');
     const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+    // Auto-reconnect: how many retries we're into the current drop, surfaced
+    // in the RECONNECTING UI.
+    const [reconnectAttempt, setReconnectAttempt] = useState(0);
     const [fingerprint, setFingerprint] = useState('');
     const verifyResolveRef = useRef(null); // (boolean) => void
     // F-63: bilateral verify-ok ack. The phone must not bind the shared key
@@ -133,6 +137,20 @@ function RemoteMicSender() {
     // first await to close the multi-await window.
     const handshakeInProgressRef = useRef(false);
     const logsEndRef = useRef(null);
+
+    // Room id/secret for the CURRENT pairing, kept in a ref so auto-reconnect
+    // (and a camera re-scan) can re-join the same room without re-reading the
+    // URL hash (which we scrub right after the first connect). Set on every
+    // start(); cleared on a deliberate full disconnect.
+    const roomInfoRef = useRef(null);
+    // Auto-reconnect bookkeeping. reconnectAttemptsRef counts retries within
+    // the current drop (reset to 0 once a session binds), reconnectTimerRef
+    // holds the pending backoff timer so teardown can cancel it.
+    const reconnectAttemptsRef = useRef(0);
+    const reconnectTimerRef = useRef(null);
+    // Pointer to the latest start() so the stable reconnect handler can call
+    // it without a circular useCallback dependency.
+    const startRef = useRef(null);
 
     const rtcRef = useRef(null);
     const sharedKeyRef = useRef(null);
@@ -176,6 +194,12 @@ function RemoteMicSender() {
     // ~500 ms minimum latency, which is invisible for batch transcription
     // and acceptable for the live transcriber's 1-2 s windows.
     const SEND_BATCH_MS = 500;
+    // Auto-reconnect budget: after an unexpected drop we re-join the SAME room
+    // (the desktop keeps the QR up and re-arms it) with exponential backoff,
+    // giving up after this many tries so a permanently-dead session lands on
+    // the STOPPED screen (where "Scan QR" offers a fresh pairing) instead of
+    // hammering the signaling server forever.
+    const RECONNECT_MAX_ATTEMPTS = 6;
     const pendingBatchRef = useRef({ buf: null, len: 0 });
     const batchTargetSamplesRef = useRef(0);
 
@@ -301,6 +325,11 @@ function RemoteMicSender() {
         // Abort any in-flight saved-file pump so it stops pushing into the
         // transport we're about to tear down.
         fileAbortRef.current = true;
+        // Cancel any pending auto-reconnect backoff timer. roomInfoRef and the
+        // attempt counter are intentionally left alone: the reconnect handler
+        // calls cleanupAll between tries and relies on both surviving. Only a
+        // deliberate full disconnect clears roomInfoRef.
+        if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
         cleanupAudio();
         if (rtcRef.current) { rtcRef.current.close(); rtcRef.current = null; }
         sharedKeyRef.current = null;
@@ -324,6 +353,33 @@ function RemoteMicSender() {
 
     useEffect(() => {
         return cleanupAll;
+    }, [cleanupAll]);
+
+    // Handle an UNEXPECTED transport loss (rtc.onDisconnected, or a join error
+    // while reconnecting). Tears down the dead session but keeps roomInfoRef,
+    // then re-joins the same room with exponential backoff. The desktop keeps
+    // the same QR on screen and re-arms the room, so a successful re-join just
+    // runs the handshake again. Gives up after RECONNECT_MAX_ATTEMPTS, landing
+    // on STOPPED where the user can scan a fresh QR. Uses startRef to avoid a
+    // circular dependency with start().
+    const handleConnectionLost = useCallback(() => {
+        cleanupAll();
+        if (!roomInfoRef.current) { setStatus(STATUS.STOPPED); return; }
+        if (reconnectAttemptsRef.current >= RECONNECT_MAX_ATTEMPTS) {
+            console.warn('[RemoteMic] Reconnect attempts exhausted, giving up');
+            setStatus(STATUS.STOPPED);
+            return;
+        }
+        const attempt = ++reconnectAttemptsRef.current;
+        // 1s, 2s, 4s, 8s, 8s, 8s ...
+        const delay = Math.min(1000 * 2 ** (attempt - 1), 8000);
+        setReconnectAttempt(attempt);
+        setStatus(STATUS.RECONNECTING);
+        console.log(`[RemoteMic] Reconnect attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS} in ${delay}ms`);
+        reconnectTimerRef.current = setTimeout(() => {
+            reconnectTimerRef.current = null;
+            if (startRef.current && roomInfoRef.current) startRef.current(roomInfoRef.current);
+        }, delay);
     }, [cleanupAll]);
 
     // F-131: BFCache hardening on the phone side. Mirror App.jsx's
@@ -360,51 +416,70 @@ function RemoteMicSender() {
         }
     }, [logs, logsOpen]);
 
-    const start = useCallback(async () => {
+    // `override` ({ roomId, secret }) re-joins a known room without re-reading
+    // the URL hash: used by auto-reconnect and the camera re-scan. Without it
+    // start() parses the hash exactly as on the initial deep-link open.
+    const start = useCallback(async (override = null) => {
         // Hoisted so the catch block below can clear it on early failure;
         // otherwise a join error left the timer to fire 30s later and call
         // rtc.close() on an already-closed connection.
         let keyTimeout = null;
+        // Whether this attempt is a reconnect (auto-retry or re-scan) vs the
+        // first deep-link connect, so the catch can retry instead of erroring.
+        const isReconnect = !!override;
         try {
-            // Parse room info from URL hash: #roomId:secret
-            // JS String#split(sep, limit) truncates rather than packing the
-            // tail, so split(':', 2) on "ROOM:abc:def" yields ["ROOM","abc"]
-            // and silently drops ":def". Today the secret alphabet excludes
-            // `:`, but slicing at the first separator removes the latent
-            // footgun if the secret format ever widens.
-            const hash = window.location.hash.substring(1);
-            const sep = hash.indexOf(':');
-            if (sep < 0) {
-                setStatus(STATUS.ERROR);
-                setErrorMsg(t('mobileInvalidLink'));
-                return;
-            }
-            const roomId = hash.slice(0, sep);
-            const secret = hash.slice(sep + 1);
-            if (!roomId || !secret) {
-                setStatus(STATUS.ERROR);
-                setErrorMsg(t('mobileInvalidLinkMissing'));
-                return;
+            let roomId, secret;
+            if (override) {
+                roomId = override.roomId;
+                secret = override.secret;
+            } else {
+                // Parse room info from URL hash: #roomId:secret
+                // JS String#split(sep, limit) truncates rather than packing the
+                // tail, so split(':', 2) on "ROOM:abc:def" yields ["ROOM","abc"]
+                // and silently drops ":def". Today the secret alphabet excludes
+                // `:`, but slicing at the first separator removes the latent
+                // footgun if the secret format ever widens.
+                const hash = window.location.hash.substring(1);
+                const sep = hash.indexOf(':');
+                if (sep < 0) {
+                    setStatus(STATUS.ERROR);
+                    setErrorMsg(t('mobileInvalidLink'));
+                    return;
+                }
+                roomId = hash.slice(0, sep);
+                secret = hash.slice(sep + 1);
+                if (!roomId || !secret) {
+                    setStatus(STATUS.ERROR);
+                    setErrorMsg(t('mobileInvalidLinkMissing'));
+                    return;
+                }
+
+                // Scrub the secret out of the visible URL before the browser
+                // commits it to history / autocomplete / Chrome Sync / OBS
+                // screenshots of the phone. The secret now lives only in
+                // roomInfoRef for the duration of the session.
+                try {
+                    window.history.replaceState(
+                        null,
+                        document.title,
+                        window.location.pathname + window.location.search
+                    );
+                } catch (_) {
+                    // history.replaceState is allowed on same-origin pages; if a
+                    // sandboxing edge case blocks it we still proceed because the
+                    // attack surface is the long-term hash residue, not the
+                    // single-page lifetime in memory.
+                }
             }
 
-            // Scrub the secret out of the visible URL before the browser
-            // commits it to history / autocomplete / Chrome Sync / OBS
-            // screenshots of the phone. The secret is now held only in the
-            // local `secret` variable for the duration of the handshake.
-            try {
-                window.history.replaceState(
-                    null,
-                    document.title,
-                    window.location.pathname + window.location.search
-                );
-            } catch (_) {
-                // history.replaceState is allowed on same-origin pages; if a
-                // sandboxing edge case blocks it we still proceed because the
-                // attack surface is the long-term hash residue, not the
-                // single-page lifetime in memory.
-            }
+            // Remember the room so auto-reconnect / re-scan can rejoin it.
+            roomInfoRef.current = { roomId, secret };
 
-            setStatus(STATUS.CONNECTING);
+            // A fresh deep-link connect resets the reconnect budget; an
+            // auto-retry keeps counting (handleConnectionLost owns the count).
+            if (!isReconnect) reconnectAttemptsRef.current = 0;
+
+            setStatus(isReconnect ? STATUS.RECONNECTING : STATUS.CONNECTING);
 
             // Connect to signaling server
             const rtc = new RemoteMicRTC('/api/signal');
@@ -413,8 +488,10 @@ function RemoteMicSender() {
             await rtc.init();
 
             rtc.onDisconnected = () => {
-                cleanupAll();
-                setStatus(STATUS.STOPPED);
+                // Unexpected drop: auto-reconnect to the same room (the desktop
+                // keeps its QR up and re-arms). Gives up to STOPPED after the
+                // retry budget is spent.
+                handleConnectionLost();
             };
 
             // Surface dropped/failed sends so the user sees data loss instead
@@ -532,6 +609,10 @@ function RemoteMicSender() {
                             // F-137: handshake is now bound, future public-key
                             // messages are caught by the sharedKeyRef guard.
                             handshakeInProgressRef.current = false;
+                            // Session bound: a stable connection refills the
+                            // auto-reconnect budget for the next drop.
+                            reconnectAttemptsRef.current = 0;
+                            setReconnectAttempt(0);
 
                             // Phone is connected, let the user tap Start Recording when ready
                             setStatus(STATUS.READY);
@@ -636,10 +717,17 @@ function RemoteMicSender() {
         } catch (e) {
             if (keyTimeout) clearTimeout(keyTimeout);
             console.error('[RemoteMic] Connection error:', e);
-            setStatus(STATUS.ERROR);
-            setErrorMsg(e.message || t('mobileConnectionError'));
+            if (isReconnect) {
+                // The room may not be re-armed yet (desktop still tearing the
+                // old session down) so a join error here is expected: keep
+                // retrying on the backoff schedule instead of dead-ending.
+                handleConnectionLost();
+            } else {
+                setStatus(STATUS.ERROR);
+                setErrorMsg(e.message || t('mobileConnectionError'));
+            }
         }
-    }, [cleanupAll, t]);
+    }, [cleanupAll, t, handleConnectionLost]);
 
     const startMicCapture = useCallback(async () => {
         try {
@@ -940,16 +1028,25 @@ function RemoteMicSender() {
         if (rtcRef.current) rtcRef.current.sendMessage({ type: 'resumed' });
     }, [elapsed, acquireWakeLock]);
 
-    // Full disconnect — close RTC, show goodbye screen
+    // Full disconnect — close RTC, show goodbye screen. This is a DELIBERATE
+    // teardown (user tapped Disconnect, or the desktop sent 'stop'), so clear
+    // roomInfoRef and reset the retry budget: we must NOT auto-reconnect.
     const stopAndDisconnect = useCallback(async () => {
         await flushPendingBatch();
         if (rtcRef.current) {
             try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) {}
         }
+        roomInfoRef.current = null;
+        reconnectAttemptsRef.current = 0;
+        setReconnectAttempt(0);
         cleanupAll();
         setAudioLevel(0);
         setStatus(STATUS.STOPPED);
     }, [cleanupAll, flushPendingBatch]);
+
+    // Keep startRef pointing at the latest start() so the stable
+    // handleConnectionLost can re-invoke it without depending on it.
+    useEffect(() => { startRef.current = start; }, [start]);
 
     // Auto-start on mount
     useEffect(() => {
@@ -1120,6 +1217,27 @@ function RemoteMicSender() {
                 <div>
                     <div style={styles.spinner} />
                     <p style={{ marginTop: '1rem', color: '#60a5fa' }}>{t('mobileConnecting')}</p>
+                </div>
+            )}
+
+            {status === STATUS.RECONNECTING && (
+                <div>
+                    <div style={styles.spinner} />
+                    <p style={{ marginTop: '1rem', color: '#fbbf24' }}>{t('mobileReconnecting')}</p>
+                    <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                        {t('mobileReconnectAttempt', { n: reconnectAttempt, max: RECONNECT_MAX_ATTEMPTS })}
+                    </p>
+                    <p style={{ color: '#9ca3af', fontSize: '0.8rem', marginTop: '1rem' }}>
+                        {t('mobileReconnectHint')}
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center', marginTop: '1.25rem' }}>
+                        <button onClick={stopAndDisconnect} style={{
+                            background: 'transparent', border: '1px solid #6b7280', color: '#9ca3af',
+                            borderRadius: '8px', padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer',
+                        }}>
+                            {t('mobileStopReconnectBtn')}
+                        </button>
+                    </div>
                 </div>
             )}
 
