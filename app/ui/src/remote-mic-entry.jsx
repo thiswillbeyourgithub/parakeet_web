@@ -26,6 +26,7 @@ import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLevelMonitor } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
+import { parseRemoteMicLink } from './lib/remote-mic-link.js';
 
 const STATUS = {
     INIT: 'init',
@@ -109,6 +110,10 @@ function RemoteMicSender() {
     // Auto-reconnect: how many retries we're into the current drop, surfaced
     // in the RECONNECTING UI.
     const [reconnectAttempt, setReconnectAttempt] = useState(0);
+    // Camera QR re-scan (WebSend-style): open the rear camera, decode the
+    // desktop's QR with jsQR, and re-pair without leaving the page.
+    const [scannerOpen, setScannerOpen] = useState(false);
+    const [scannerError, setScannerError] = useState('');
     const [fingerprint, setFingerprint] = useState('');
     const verifyResolveRef = useRef(null); // (boolean) => void
     // F-63: bilateral verify-ok ack. The phone must not bind the shared key
@@ -151,6 +156,14 @@ function RemoteMicSender() {
     // Pointer to the latest start() so the stable reconnect handler can call
     // it without a circular useCallback dependency.
     const startRef = useRef(null);
+
+    // Camera QR scanner state. jsQR is loaded lazily from a vendored,
+    // SRI-pinned script (same discipline as the desktop's qrcode.min.js).
+    // The camera stream + decode loop are owned by the scanner effect (keyed
+    // on scannerOpen); only the <video> element needs a ref here.
+    const jsqrLibRef = useRef(null);
+    const loadJsQRRef = useRef(null);
+    const scanVideoRef = useRef(null);   // <video> showing the camera feed
 
     const rtcRef = useRef(null);
     const sharedKeyRef = useRef(null);
@@ -382,6 +395,142 @@ function RemoteMicSender() {
         }, delay);
     }, [cleanupAll]);
 
+    // Lazily load the vendored, SRI-pinned jsQR decoder. Mirrors the desktop's
+    // qrcode.min.js loader (App.jsx): a tampered serving path can't swap the
+    // bytes without the integrity check failing. Resolves with the jsQR fn.
+    const ensureJsQR = useCallback(() => {
+        if (jsqrLibRef.current) return Promise.resolve(jsqrLibRef.current);
+        if (loadJsQRRef.current) return loadJsQRRef.current;
+        loadJsQRRef.current = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = '/js/jsqr.min.js';
+            // SRI hash of app/ui/public/js/jsqr.min.js. If you replace that
+            // file, recompute with: openssl dgst -sha384 -binary <file> | base64
+            script.integrity = 'sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx';
+            script.crossOrigin = 'anonymous';
+            let settled = false;
+            const settle = (fn) => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
+            const timer = setTimeout(() => settle(() => {
+                loadJsQRRef.current = null;
+                reject(new Error('jsQR script load timed out'));
+            }), 15000);
+            script.onload = () => settle(() => {
+                jsqrLibRef.current = window.jsQR;
+                console.log('[RemoteMic] jsQR library loaded');
+                resolve(window.jsQR);
+            });
+            script.onerror = () => settle(() => {
+                loadJsQRRef.current = null;
+                reject(new Error('jsQR script load error'));
+            });
+            document.head.appendChild(script);
+        });
+        loadJsQRRef.current.catch(() => {});
+        return loadJsQRRef.current;
+    }, []);
+
+    const openScanner = useCallback(() => {
+        setScannerError('');
+        setScannerOpen(true);
+    }, []);
+
+    const closeScanner = useCallback(() => {
+        setScannerOpen(false);
+    }, []);
+
+    // Drive the rear camera + jsQR decode loop while the scanner is open. Keyed
+    // on scannerOpen so the <video> element is guaranteed mounted (refs
+    // populated) before we attach the stream, and so the cleanup reliably stops
+    // the camera on close, unmount, or a successful scan. On a valid scan we
+    // refill the reconnect budget and re-pair with the scanned room (which may
+    // be the same room still on the desktop, or a fresh one).
+    useEffect(() => {
+        if (!scannerOpen) return;
+        let cancelled = false;
+        let raf = null;
+        let stream = null;
+
+        const stop = () => {
+            cancelled = true;
+            if (raf) cancelAnimationFrame(raf);
+            if (stream) stream.getTracks().forEach(track => track.stop());
+            const v = scanVideoRef.current;
+            if (v) { try { v.srcObject = null; } catch (_) { /* ignore */ } }
+        };
+
+        (async () => {
+            let jsQR;
+            try {
+                jsQR = await ensureJsQR();
+            } catch (_) {
+                if (!cancelled) setScannerError(t('mobileScanLoadError'));
+                return;
+            }
+            if (cancelled) return;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' } },
+                    audio: false,
+                });
+            } catch (e) {
+                console.warn('[RemoteMic] Camera access failed:', e.message);
+                if (!cancelled) {
+                    setScannerError(e.name === 'NotAllowedError'
+                        ? t('mobileScanCameraDenied')
+                        : t('mobileScanCameraFailed'));
+                }
+                return;
+            }
+            if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
+            const video = scanVideoRef.current;
+            if (!video) { stream.getTracks().forEach(track => track.stop()); return; }
+            video.srcObject = stream;
+            video.setAttribute('playsinline', 'true');
+            try { await video.play(); } catch (_) { /* autoplay may need a gesture; the modal opened from one */ }
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            const tick = () => {
+                if (cancelled) return;
+                if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    let imageData;
+                    try {
+                        imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    } catch (_) {
+                        // Frame not yet readable; try again next paint.
+                        raf = requestAnimationFrame(tick);
+                        return;
+                    }
+                    const result = jsQR(imageData.data, imageData.width, imageData.height, {
+                        inversionAttempts: 'dontInvert',
+                    });
+                    if (result && result.data) {
+                        const link = parseRemoteMicLink(result.data, window.location.origin);
+                        if (link) {
+                            // Fresh manual pairing: refill the auto-reconnect
+                            // budget so the new session gets full retries.
+                            reconnectAttemptsRef.current = 0;
+                            setReconnectAttempt(0);
+                            setScannerOpen(false); // runs stop() via cleanup
+                            if (startRef.current) startRef.current(link);
+                            return;
+                        }
+                        // A QR that isn't one of ours: keep scanning, hint why.
+                        setScannerError(t('mobileScanWrongQr'));
+                    }
+                }
+                raf = requestAnimationFrame(tick);
+            };
+            raf = requestAnimationFrame(tick);
+        })();
+
+        return stop;
+    }, [scannerOpen, ensureJsQR, t]);
+
     // F-131: BFCache hardening on the phone side. Mirror App.jsx's
     // pagehide/pageshow pattern so a phone parked in BFCache mid-session
     // (Home button, app-switcher, deep link) does not revive with a stale
@@ -479,7 +628,9 @@ function RemoteMicSender() {
             // auto-retry keeps counting (handleConnectionLost owns the count).
             if (!isReconnect) reconnectAttemptsRef.current = 0;
 
-            setStatus(isReconnect ? STATUS.RECONNECTING : STATUS.CONNECTING);
+            // CONNECTING means "actively dialing". The RECONNECTING status is
+            // owned by handleConnectionLost for the backoff wait between tries.
+            setStatus(STATUS.CONNECTING);
 
             // Connect to signaling server
             const rtc = new RemoteMicRTC('/api/signal');
@@ -1209,6 +1360,48 @@ function RemoteMicSender() {
                 </div>
             )}
 
+            {/* Camera QR scanner overlay (WebSend-style re-pairing) */}
+            {scannerOpen && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: '#000', zIndex: 9999, display: 'flex',
+                    flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                }}>
+                    <p style={{ color: '#e0e0e0', fontSize: '1rem', margin: '1rem', textAlign: 'center' }}>
+                        {t('mobileScanTitle')}
+                    </p>
+                    <div style={{ position: 'relative', width: '90%', maxWidth: '400px', aspectRatio: '1 / 1' }}>
+                        <video
+                            ref={scanVideoRef}
+                            muted
+                            playsInline
+                            style={{
+                                width: '100%', height: '100%', objectFit: 'cover',
+                                borderRadius: '12px', background: '#111',
+                            }}
+                        />
+                        {/* Framing reticle */}
+                        <div style={{
+                            position: 'absolute', top: '12%', left: '12%', right: '12%', bottom: '12%',
+                            border: '3px solid rgba(96,165,250,0.9)', borderRadius: '12px',
+                            pointerEvents: 'none',
+                        }} />
+                    </div>
+                    {scannerError && (
+                        <p style={{ color: '#fbbf24', fontSize: '0.85rem', margin: '1rem', textAlign: 'center' }}>
+                            ⚠ {scannerError}
+                        </p>
+                    )}
+                    <button onClick={closeScanner} style={{
+                        marginTop: '1.5rem', background: '#ef4444', color: 'white', border: 'none',
+                        borderRadius: '12px', padding: '0.8rem 2.5rem', fontSize: '1rem',
+                        fontWeight: 'bold', cursor: 'pointer',
+                    }}>
+                        {t('mobileScanCancelBtn')}
+                    </button>
+                </div>
+            )}
+
             {status === STATUS.INIT && (
                 <p style={{ color: '#9ca3af' }}>{t('mobileInitializing')}</p>
             )}
@@ -1231,6 +1424,9 @@ function RemoteMicSender() {
                         {t('mobileReconnectHint')}
                     </p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center', marginTop: '1.25rem' }}>
+                        <button onClick={openScanner} style={styles.sendFileButton}>
+                            {t('mobileScanQrBtn')}
+                        </button>
                         <button onClick={stopAndDisconnect} style={{
                             background: 'transparent', border: '1px solid #6b7280', color: '#9ca3af',
                             borderRadius: '8px', padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer',
@@ -1388,18 +1584,24 @@ function RemoteMicSender() {
                     <p style={{ color: '#10b981', fontSize: '1.1rem', marginBottom: '1rem' }}>
                         {t('mobileSessionEnded')}
                     </p>
-                    <p style={{ color: '#9ca3af', fontSize: '0.9rem' }}>
+                    <p style={{ color: '#9ca3af', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                         {t('mobileSessionEndedHint')}
                     </p>
+                    <button onClick={openScanner} style={styles.newRecordingButton}>
+                        {t('mobileScanQrBtn')}
+                    </button>
                 </div>
             )}
 
             {status === STATUS.ERROR && (
                 <div>
                     <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{errorMsg}</p>
-                    <p style={{ color: '#9ca3af', fontSize: '0.9rem' }}>
+                    <p style={{ color: '#9ca3af', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                         {t('mobileRescanHint')}
                     </p>
+                    <button onClick={openScanner} style={styles.newRecordingButton}>
+                        {t('mobileScanQrBtn')}
+                    </button>
                 </div>
             )}
 
