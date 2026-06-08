@@ -17,10 +17,11 @@
 // re-encode per value); depth-scaling, by contrast, is baked into the trie at
 // build time, so each value rebuilds the trie (one per strength x depth-scaling).
 // Rows are
-// sorted by the per-utterance median WER (best first), and the accuracy table
-// reports the mean/median/stdev of the per-utterance WER alongside the
-// corpus-level rate. It also writes those tables to a .md file and every
-// per-sample/per-run record to a JSON Lines file.
+// sorted by the cell's corpus-level (micro-averaged) CER by default, or WER with
+// --sort-by wer (best first), and the accuracy table reports the
+// mean/median/stdev of the per-utterance WER alongside the corpus-level rate. It
+// also writes those tables to a .md file and every per-sample/per-run record to
+// a JSON Lines file.
 //
 // --manifest is repeatable: pass it several times to run the SAME grid over
 // several datasets at once. Each manifest is one "dataset" (named after its file
@@ -568,10 +569,11 @@ function renderMarkdown(headers, body) {
 
 // Accuracy table: one block per run (grid combination), expanded into one row
 // per dataset (plus an "overall" row pooling all utterances when more than one
-// dataset). Blocks are sorted by the cell's overall per-utterance median WER
-// (ascending) so the best config is at the top, and a cell's dataset rows stay
-// grouped together. "WER %" is the corpus-level rate (total word edits / total
-// ref words); WERmean/med/std summarise the spread of the per-utterance WERs.
+// dataset). Blocks are sorted by the cell's corpus-level (micro-averaged) CER or
+// WER (see --sort-by) ascending so the best config is at the top, and a cell's
+// dataset rows stay grouped together. "WER %" is the corpus-level rate (total
+// word edits / total ref words); WERmean/med/std summarise the spread of the
+// per-utterance WERs.
 const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'WERmean %', 'WERmed %', 'WERstd %', 'CER %', 'wordEdits', 'refWords', 'charEdits', 'refChars'];
 function accuracyBody(rows) {
   const body = [];
