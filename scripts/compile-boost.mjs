@@ -46,6 +46,22 @@ import { loadBoostEncoder, compileBoostText, writePwc } from '../app/src/boostCo
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_MERGES = join(ROOT, 'app/ui/public/tokenizer/bpe-merges.json');
 
+// How many entries of a warning list to print before truncating with a
+// "...and N more" tail. The web UI shows the full list in a scrollable box; a
+// CLI log must not flood the terminal for a 100k-line clinical list, but the
+// admin still needs the first offenders by name (a bare count tells them
+// nothing about WHICH terms are wrong).
+const WARN_LIST_CAP = 20;
+
+// Print a non-fatal warning block to stderr: a header plus up to WARN_LIST_CAP
+// item lines, truncated with a count tail. Empty lists print nothing.
+function printWarnBlock(header, items, format) {
+  if (!items.length) return;
+  console.error(`[compile-boost] WARNING: ${header}`);
+  for (const item of items.slice(0, WARN_LIST_CAP)) console.error(`    - ${format(item)}`);
+  if (items.length > WARN_LIST_CAP) console.error(`    ... and ${items.length - WARN_LIST_CAP} more`);
+}
+
 function usage() {
   console.log(`Compile a phrase-boost .txt list into a .pwc artifact.
 
@@ -165,7 +181,7 @@ for (const input of inputs) {
     failures++;
     continue;
   }
-  const { artifact, parsedCount, expandedCount } = compiled;
+  const { artifact, parsedCount, expandedCount, warnings } = compiled;
   const ms = Date.now() - t0;
   if (!parsedCount) {
     console.error(`[compile-boost] ${input}: no phrases found, not writing ${outPath}.`);
@@ -178,6 +194,20 @@ for (const input of inputs) {
     `[compile-boost] ${input}: ${parsedCount} phrase(s) -> ${expandedCount} after casing `
     + `expansion; encoded ${artifact.encoded.length} (${artifact.skipped.length} skipped) in ${ms}ms `
     + `(avg ${perLine.toFixed(3)}ms/line) -> ${outPath}`
+  );
+  // Surface the same non-fatal issues the web UI flags in its sidebar, so a
+  // clean exit no longer hides them from the admin who ran this. (Conflicts,
+  // the third UI warning, are fatal here and already threw above.) Both are
+  // non-fatal: the .pwc is written and the batch's exit code is unaffected.
+  printWarnBlock(
+    `${input}: ${warnings.length} phrase(s) had an out-of-range weight or invalid min-p, reset to a default:`,
+    warnings,
+    (w) => `"${w.phrase}": ${w.warning}`,
+  );
+  printWarnBlock(
+    `${input}: ${artifact.skipped.length} phrase(s) dropped (encode to <unk>, e.g. CJK/scripts absent from the model vocab; cannot ever be boosted):`,
+    artifact.skipped,
+    (ph) => `"${ph}"`,
   );
 }
 
