@@ -9179,7 +9179,7 @@ associations de levothyroxine et liothyronine:::fph
 associations de sels:::fph
 associations de vitamines:::fph
 associations néphalistes
-associations:::fph
+associe
 assourdissement
 assujettissement
 assurance de la qualité
@@ -30627,6 +30627,7 @@ inoculation
 inoculer
 inoculum
 inocurette
+inoep:-1:::fph
 inofer:::fph
 inondation des voies aériennes du nouveau-né
 inondation endiguée de Vigne
@@ -37842,6 +37843,7 @@ myrinx
 myristoylation
 myrmécie
 myrosulfatase
+myrtazapine:-1:::fph
 mysildecard:::fph
 mysoline:::fph
 mytelase:::fph
