@@ -35,7 +35,7 @@
 5 FC
 5 HIA
 5 fluoro-uracile
-5'-aminolévulinate synthase l.f.
+5'-aminolévulinate synthase
 5'-nucléotidase
 5'ecto-nucleotidase
 5-HIA
@@ -799,6 +799,7 @@ CYP11B1 gene
 CYP11B2 gene
 CYP17A1 gene
 Ca CO2
+Ca2 plus ATPase
 CaSR
 Cac
 Caenorhabditis elegans
@@ -1167,7 +1168,7 @@ Escherichia coli entéro-invasif
 Escherichia coli entérohémorragique
 Escherichia coli entéropathogène
 Etablissement français des Greffes
-Eubacterium n.m.
+Eubacterium
 Eumycète
 Eurocollins
 Euroglyphus maynei
@@ -1275,7 +1276,7 @@ Fasciolopsis buski
 FiO2
 FibroMAX
 Fibromètre
-Fibrotest n.m.
+Fibrotest
 Filaria
 Filoviridae
 Firmicutes
@@ -1314,6 +1315,7 @@ GDP
 GDP-fucose
 GDP-mannose
 GDP-mannose pyrophosphorylase
+GEFS plus
 GEPA
 GEU
 GFO
@@ -1435,7 +1437,7 @@ HGPRT1 gene
 HHH
 HHML syndrome
 HHV-6
-HHV-7 sigle angl. m.
+HHV-7 sigle angl.
 HHV-8
 HIC
 HIE syndrome
@@ -1665,7 +1667,7 @@ KCNQ1OT1 gene
 KCNT1 gene
 KERMA
 KFACS
-KFACS sigle angl. m.
+KFACS sigle angl.
 KID syndrome
 KIF11 gene
 KIR
@@ -2017,11 +2019,13 @@ N-méthyl-D-aspartate
 N-méthyl-glycocolle
 N-méthyl-histamine
 N-méthylglycine
+NAD plus
 NAD-ADP-ribosyl-transférase
 NAD-NADP-transhydrogénase
 NADH
 NADH déshydrogénase
 NADH-ubiquinone-réductase
+NADP plus
 NADPH
 NADPH-oxydase
 NAFLD
@@ -2546,7 +2550,7 @@ Rhizopode
 Rhizopus
 Rhm
 Rhodnius prolixus
-Rhodococcus n.m.
+Rhodococcus
 Rhodotorula
 Rickettsia
 Rickettsia africae
@@ -2790,7 +2794,7 @@ T helper
 T suppresseur
 T-indépendant
 T.P.I.
-T2*
+T2 étoile
 T2A
 TA-GT
 TACE
@@ -3041,7 +3045,7 @@ VHB
 VHC
 VHD
 VHE
-VHG sigle m.
+VHG sigle
 VHL gene
 VHL protein
 VIH
@@ -4889,7 +4893,7 @@ akynzeo:::fph
 ala hama
 alacrymie
 alacrymie congénitale
-alacrymie-achalasie-addisonisme l.f.
+alacrymie-achalasie-addisonisme
 alamandine
 alanine
 alanine-aminotransférase
@@ -5589,8 +5593,8 @@ amygdaleum profundum mediale
 amygdaleum profundum ventrale
 amygdalien
 amygdalite
+amygdalotome
 amygdalotome de Sluder
-amygdalotome n.m.
 amygdaloïde
 amygdalum
 amylacé
@@ -5968,7 +5972,7 @@ anesthésie tronculaire périoculaire
 anesthésie électrique
 anesthésie épidurale
 anesthésie-réanimation des témoins de Jehovah
-anesthésiologie n.f.
+anesthésiologie
 anesthésiologiste
 anesthésique
 anesthésique général
@@ -6032,7 +6036,7 @@ angiofibromatose hépatique
 angiofibrome
 angiofibrome myxoïde
 angiofibrome mélanocytique solitaire
-angiofibrome nasopharyngien l.m.
+angiofibrome nasopharyngien
 angiofluorographie
 angiofluorographie rétinienne
 angiofluoroscopie
@@ -6481,7 +6485,7 @@ ankyloglosse
 ankyloglossie-hétérochromie iris-pouces en griffe
 ankylose
 ankylose crico-aryténoïdienne
-ankylose stapédo-vestibulaire l.f.
+ankylose stapédo-vestibulaire
 ankylostomiase
 ankylostomiase cutanée
 ankylostomose
@@ -6887,7 +6891,7 @@ antigène spécifique de prostate
 antigène squamous cell carcinoma
 antigène tumoral
 antigène urothélial de surface
-antigène variable de surface l.m.
+antigène variable de surface
 antigène érythrocytaire
 antigènes ABH
 antigènes leucocytaires communs
@@ -7456,7 +7460,7 @@ apophyse lacrymale du cornet inférieur
 apophyse latérale du marteau
 apophyse lenticulaire de l'enclume
 apophyse longue du marteau
-apophyse malaire du maxillaire supérieur l.f.
+apophyse malaire du maxillaire supérieur
 apophyse marginale de l'os malaire
 apophyse mastoïde
 apophyse maxillaire du cornet inférieur
@@ -7470,11 +7474,11 @@ apophyse orbitaire externe de l'os frontal
 apophyse palatine du maxillaire supérieur
 apophyse ptérygoïde
 apophyse pyramidale du cuboïde
-apophyse pyramidale du maxillaire supérieur l.f.
+apophyse pyramidale du maxillaire supérieur
 apophyse pyramidale du palatin
 apophyse semi-lunaire des vertèbres cervicales
 apophyse spénoïdale du palatin
-apophyse styloïde de l'os temporal l.f.
+apophyse styloïde de l'os temporal
 apophyse styloïde du cinquième métatarsien
 apophyse styloïde du cubitus
 apophyse styloïde du péroné
@@ -8127,7 +8131,7 @@ articulation sacro-iliaque
 articulation sacro-vertébrale
 articulation sacrococcygienne
 articulation scapho-cunéenne
-articulation scapulo-humérale l.f.
+articulation scapulo-humérale
 articulation scapulo-thoracique
 articulation semi-mobile
 articulation sphéroïde
@@ -8864,7 +8868,7 @@ artères intrarénales
 artères iriennes de Chaussier
 artères jumelles
 artères jéjunales
-artères lobaires du rein l.
+artères lobaires du rein
 artères lobaires inférieures de l'artère pulmonaire
 artères lobaires supérieures de l'artère pulmonaire droite
 artères lobaires supérieures de l'artère pulmonaire gauche
@@ -9245,7 +9249,7 @@ asymbolie à la douleur
 asymptomatique
 asymétrie contractile de l'utérus
 asymétrie du nystagmus optocinétique
-asymétrie faciale l.f.
+asymétrie faciale
 asymétrie fonctionnelle hémisphérique
 asymétrie mammaire
 asymétrique
@@ -9332,7 +9336,7 @@ athalamie
 athrocytose
 athymhormie
 athymie
-athyroïdie n.f.
+athyroïdie
 athélie
 athérectomie
 athérectomie directionnelle, rotative
@@ -9769,7 +9773,7 @@ axe encéphalo-médullaire
 axe externe du bulbe de l'œil
 axe géométrique de l'œil
 axe hypothalamo-antéhypophysaire
-axe interne du bulbe de l'œil l.m.
+axe interne du bulbe de l'œil
 axe ombilicococcygien
 axe optique
 axe pelvien de sortie
@@ -9962,7 +9966,7 @@ balanite à plasmocytes de Zoon
 balanite érosive circinée de Berdal et Bataille
 balanitis xerotica obliterans post operationem de Stuhmer
 balanoposthite
-balantidiase n.f.
+balantidiase
 balantidiose
 balayage
 balayage sélectif
@@ -10087,7 +10091,7 @@ barrière d'espèce
 barrière hémato-encéphalique
 barrière hématocamérulaire
 barrière hématomédullaire
-barrière hématorétinienne l.f.
+barrière hématorétinienne
 barrière hématotesticulaire
 barrière muqueuse
 barrière muqueuse gastrique
@@ -10393,7 +10397,7 @@ bifurcation de l'artère carotide commune
 bifurcation de la trachée
 bifurcation du tronc pulmonaire
 bifurcation trachéale
-big data l.f.p.
+big data
 biguanides
 bigéminisme
 biktarvy:::fph
@@ -10705,7 +10709,7 @@ blépharite
 blépharite ciliaire
 blépharo-conjonctivite
 blépharo-conjonctivite de l'acné rosacée
-blépharo-conjonctivite de l'ichtyose l.f.
+blépharo-conjonctivite de l'ichtyose
 blépharo-conjonctivite phlycténulaire
 blépharochalasis
 blépharochalasis et dédoublement de la lèvre
@@ -11230,7 +11234,7 @@ brexin:::fph
 bricanyl turbuhaler:::fph
 bricanyl:::fph
 bride
-bride amniotique l.f.
+bride amniotique
 bride hyménéale
 bride masculine
 bride masculine du clitoris de Pozzi
@@ -11562,7 +11566,7 @@ bébé arlequin
 bébé collodion
 bécégite
 bégaiement
-béhaviorisme n.m.
+béhaviorisme
 bénin, malin dysembryome
 béniqué
 bénéfices tirés de la maladie
@@ -11593,6 +11597,7 @@ bêta-hydroxy-butyrate-déshydrogénase
 bêta-hydroxy-bêta-méthyl-glutaryl-CoA-lyase
 bêta-hydroxy-bêta-méthyl-glutaryl-CoA-synthétase
 bêta-hydroxy-bêta-méthyl-glutaryl-coenzyme A
+bêta-hydroxy-bêta-méthylglutaryl-CoA-réductase
 bêta-hydroxybutyryl-CoA-déshydrogénase
 bêta-hydroxylé-CoA-déshydrogénase
 bêta-hydroxyvaléryl-CoA-carboxylase
@@ -11642,7 +11647,7 @@ cachexie diencéphalique
 cachexie diencéphalique de Russell
 cachexie fluorique
 cachexie hypophysaire
-cachexie myxɶdèmateuse
+cachexie myxœdèmateuse
 cachexie surrénalienne
 cachexie thyroïdienne
 cachou
@@ -11831,7 +11836,7 @@ callosotomie
 callotasis
 calmoduline
 calnexine
-calomel n.m.
+calomel
 calorie
 calorimètre
 calorimétrie directe
@@ -12890,7 +12895,7 @@ casodex:::fph
 caspase
 caspofungin:::fph
 caspofungine:::fph
-cassavisme n.m.
+cassavisme
 cassette
 cassette d'expression
 cassure d'un brin d'ADN
@@ -13208,6 +13213,7 @@ cellule B
 cellule B mémoire
 cellule C
 cellule F
+cellule F plus
 cellule F'
 cellule K
 cellule LE
@@ -13395,7 +13401,7 @@ cellule totipotente
 cellule trans-complémentante
 cellule transformable
 cellule transformée
-cellule trophoblastique l.f.
+cellule trophoblastique
 cellule tueuse
 cellule tueuse naturelle
 cellule tuft intestinale
@@ -13855,7 +13861,7 @@ chimiotropisme
 chimère
 chimère homme-animal
 chimérisme
-chimérisme hématopoïètique l.m.
+chimérisme hématopoïètique
 chique
 chiral
 chiralité
@@ -13916,7 +13922,7 @@ chlorotrianisène
 chlorproguanil
 chlorpromazine:::fph
 chlorure
-chlorure de chaux l.m.
+chlorure de chaux
 chlorure de méthyle en médecine du travail
 chlorure de polyvinyle
 chlorure de sodium
@@ -14011,7 +14017,7 @@ cholestase intrahépatique
 cholestase intrahépatique progressive familiale de type 1
 cholestases familiales
 cholestases fibrogènes familiales
-cholestases intrahépatiques familiales l.f.
+cholestases intrahépatiques familiales
 cholestases intrahépatiques progressives familiales
 cholesteryl ester transfer protein
 cholestéatome
@@ -14569,6 +14575,7 @@ classe d'âge
 classe de différenciation
 classe de différentiation 54 CD54
 classe thérapeutique
+classification
 classification ASA
 classification FAB
 classification FIGO
@@ -14694,7 +14701,6 @@ classification internationale des tumeurs
 classification lymphome de Hodgkin
 classification maladie mitochondriale
 classification modifiée de Gell et Coombs
-classification n.
 classification selon Cohen et Woods acidoses lactiques
 classifications de Castaing
 classifications de l'OMS gliome
@@ -15406,7 +15412,7 @@ complexe cohésine
 complexe d'Eisenmenger
 complexe d'attaque membranaire
 complexe d'espèces
-complexe d'Œdipe l.m.
+complexe d'Œdipe
 complexe de Carney
 complexe de Caïn
 complexe de Parinaud
@@ -15545,7 +15551,7 @@ concatémère
 concentration
 concentration anesthésique efficace minimale à 50 %
 concentration corpusculaire moyenne en hémoglobine
-concentration critique l.f.
+concentration critique
 concentration du sang en oxygène
 concentration en bicarbonates sériques
 concentration en eau d'une lentille cornéenne
@@ -15827,7 +15833,7 @@ constante uréosecrétoire
 constipation
 constitutif
 constitution
-constitution hémophiloïde l.f.
+constitution hémophiloïde
 constitution hémophyloïde,
 constitutive androstan receptor
 constitutivité
@@ -15839,7 +15845,6 @@ constriction primaire
 constriction péricardique et arrêt de la croissance
 constriction secondaire
 construction d'Ombrédanne
-construction d'Ombrédanne l.f.
 construction de Putti
 construction génique
 consultant
@@ -16087,7 +16092,7 @@ cordons de la moelle spinale
 cordons gonadiques
 cordons médullaires
 cordons sexuels
-cordopexie l.f.
+cordopexie
 corectopie
 corgard:::fph
 corifollitropine alfa:::fph
@@ -16278,7 +16283,7 @@ corps du sphénoïde
 corps du sternum
 corps du talus
 corps du tibia
-corps en fagot d'Auer
+corps en fagotd'Auer
 corps en rosace
 corps flottant
 corps gastrique
@@ -16392,7 +16397,7 @@ cortex vitréen
 cortexolone
 cortexone
 cortical
-cortical defect l.
+cortical defect
 corticographie
 corticolibérine
 corticostatine
@@ -16801,7 +16806,7 @@ crise épileptique réflexe
 crise épileptique vertigineuse
 crise épileptique épigastrique
 crises comitiales fébriles familiales
-crises comitiales plus, type 7 l.f.p.
+crises comitiales plus, type 7
 crises familiales infantiles bégnines
 crises partielles migrantes malignes du nourrisson
 crises partielles migratrices malignes de l'enfance
@@ -16925,7 +16930,7 @@ cryptes utérines
 cryptidine
 cryptique
 cryptochrome
-cryptococcose n.f.
+cryptococcose
 cryptocoque
 cryptogène
 cryptogénétique adj.
@@ -16971,8 +16976,8 @@ crénobalnéothérapie
 crénothérapie
 crénothérapie gynécologique
 créode
+crépitation
 crépitation osseuse
-crépitation, n.f.
 crésolase
 crétinisme
 créviculaire
@@ -17080,7 +17085,7 @@ crête triangulaire de la dent
 crête turbinale inférieure du palatin
 crête turbinale supérieure du maxillaire
 crête turbinale supérieure du palatin
-crête tympanale de Bellocq l.f.
+crête tympanale de Bellocq
 crête tympanique
 crête urogénitale
 crête uréthrale
@@ -17137,7 +17142,7 @@ cul-de-sac vésico-utérin
 culdocentèse
 culdoscopie
 culdotomie
-culex n.m.
+culex
 culmen
 culmen du poumon gauche
 culmen rétropubien
@@ -17450,7 +17455,7 @@ cytochrome
 cytochrome P450
 cytochrome a et a3
 cytochrome b
-cytochrome b duodénal l.m.
+cytochrome b duodénal
 cytochrome b5-réductase
 cytochrome c
 cytochrome f
@@ -18014,7 +18019,7 @@ dermatofibrose lenticulaire disséminée de Schreus
 dermatoglyphe
 dermatohistopathologie
 dermatologie
-dermatologie et thermalisme l.f.
+dermatologie et thermalisme
 dermatolysie
 dermatome
 dermatomycose
@@ -18620,7 +18625,6 @@ diméthylformamide en médecine du travail
 diméthylsulfone en médecine du travail
 diméthylsulfoxyde
 diméthylsulfure
-diméthylsulfure n.m.
 dinitrochlorobenzène
 dinitrophénol
 dinophysistoxine
@@ -18676,8 +18680,8 @@ diplogamète
 diplomyélie
 diplonte
 diplophase
+diplopie
 diplopie monoculaire
-diplopie n.f.
 diplopie paradoxale
 diplopie pathologique binoculaire
 diplopie physiologique
@@ -18741,7 +18745,6 @@ disomata
 disomie
 disomie uniparentale
 disomique
-disopyramide n. m.
 disopyramide:::fph
 disparition des plis
 disparité binoculaire
@@ -18943,7 +18946,7 @@ dogmatil:::fph
 doigt en maillet
 doigt surnuméraire
 doigt à ressaut
-doigt à ressort l.m.
+doigt à ressort
 doigt à zinc
 doigtier
 doigts de la main
@@ -18999,7 +19002,6 @@ don d'ovocyte
 don de sang
 don de sang dirigé
 don de sperme
-don de sperme l.m.
 don du lait
 donasert:::fph
 donneur d'organe
@@ -19960,7 +19962,7 @@ décanulation
 décapiteur de Braun
 décapsulation rénale
 décarboxylase
-décarboxylase malique l.f.
+décarboxylase malique
 décarboxylation
 décarboxyprothrombine
 décentrement optique
@@ -20285,6 +20287,7 @@ déficit familial en apolipoprotéine B-100
 déficit fonctionnel personnel définitif
 déficit fonctionnel personnel temporaire
 déficit fœtal en iode
+déficit idiopathique en lymphocytes T CD4 plus
 déficit immunitaire
 déficit immunitaire acquis
 déficit immunitaire cellulaire
@@ -21204,7 +21207,6 @@ embryopathie au valproate
 embryopathie herpétique
 embryopathie rubéolique
 embryopathie varicelle-zona
-embryopathie varicelle-zona l.f.
 embryopathie à cytomégalovirus
 embryopathie à l'acide rétinoïque
 embryopathie à l'acide valproïque
@@ -22217,7 +22219,7 @@ excès d'anticorps
 excès d'antigènes
 excès de liquide amniotique
 excès de volume du fœtus
-excès de volume foetal localisé l.m.
+excès de volume foetal localisé
 exemestane accord:::fph
 exemestane arrow:::fph
 exemestane bgr:::fph
@@ -22640,6 +22642,7 @@ facilitation active
 facilitation post-tétanique
 faciocéphalométrie
 faciotronculaire
+faciès
 faciès adénoïdien
 faciès anormal, retard de croissance et retard mental
 faciès antonin
@@ -22653,8 +22656,7 @@ faciès hippocratique
 faciès léonin
 faciès mitral
 faciès myxoedémateux
-faciès n.m.
-faciès sardonique l.m.
+faciès sardonique
 fact von willebrand et fact viii de coagulation en association:::fph
 factane:::fph
 facteur 23 de croissance des fibroblastes
@@ -22875,7 +22877,7 @@ faisceau quinto-thalamique
 faisceau radio-carpien du ligament antérieur de l'articulation du poignet
 faisceau rubro-spinal
 faisceau rubrospinal de von Monakow
-faisceau réticulo-spinal l.m.
+faisceau réticulo-spinal
 faisceau rétro-réflexe de Meynert
 faisceau semi-lunaire
 faisceau septo-marginal
@@ -23746,7 +23748,7 @@ fistule gastrojéjunocolique
 fistule hépatique
 fistule intestinale
 fistule labiale
-fistule labyrinthique l.f.
+fistule labyrinthique
 fistule lacrymale congénitale
 fistule ostéoméningée
 fistule ouraquienne
@@ -23754,9 +23756,9 @@ fistule palatine
 fistule pancréatique
 fistule pré-auriculaire
 fistule pré-hélicéenne
-fistule pré-tragienne l.f.
+fistule pré-tragienne
 fistule pyélolymphatique
-fistule périlymphatique l.f.
+fistule périlymphatique
 fistule rectale
 fistule rectovaginale
 fistule rénobronchique
@@ -24302,7 +24304,7 @@ foramen ethmoïdal postérieur
 foramen frontal
 foramen grand palatin
 foramen incisif
-foramen infrapiriformis l.m.
+foramen infrapiriformis
 foramen interventriculaire
 foramen intervertébral
 foramen jugulaire
@@ -26216,7 +26218,7 @@ glycoprotéine riche en histidine
 glycoprotéinose
 glycopyrronium bromure:::fph
 glycopyrronium:::fph
-glycorachie n.f.
+glycorachie
 glycosidase
 glycosphingolipide
 glycostase
@@ -26332,8 +26334,8 @@ gouttelettes de Flügge
 gouttière antérieure du carpe
 gouttière basilaire
 gouttière bicipitale
-gouttière bicipitale externe l.f.
-gouttière bicipitale interne l.f.
+gouttière bicipitale externe
+gouttière bicipitale interne
 gouttière bullaire
 gouttière carotidienne
 gouttière carpienne
@@ -26591,7 +26593,7 @@ granulome xénique
 granulome à corps étranger
 granulome à corps étranger endogène
 granulome éosinophile
-granulome éosinophile des os l.m.
+granulome éosinophile des os
 granulome éosinophile facial
 granulome éosinophile orbitaire
 granulome éosinophile parasitaire
@@ -26854,7 +26856,7 @@ gynolactose
 gynoïde
 gynécographie
 gynécologie
-gynécologie et thermalisme l.f.
+gynécologie et thermalisme
 gynécologique
 gynécomastie
 gynécoïde
@@ -27060,7 +27062,7 @@ hallux
 hallux abductus
 hallux adductus
 hallux flexus
-hallux malleus l.m.
+hallux malleus
 hallux rigidus
 hallux valgus
 hallux varus
@@ -27231,7 +27233,7 @@ hepatite a, virus entier inactive:::fph
 hepatite b, antigene purifie:::fph
 hepatotropic
 hepcidine
-hepcidino-déficience l.f.
+hepcidino-déficience
 hepcludex:::fph
 heptose
 heptulose
@@ -27538,7 +27540,7 @@ homocarnosine
 homocarnosinose
 homocaryose
 homocaryotype
-homocystinurie par troubles de la reméthylation et déficit en 5,10-méthylène-tétrahydrofolate-réductase l.
+homocystinurie par troubles de la reméthylation et déficit en 5,10-méthylène-tétrahydrofolate-réductase
 homocystéine
 homocystéine-désulfhydrase
 homocystéine-méthyltransférase
@@ -27607,7 +27609,9 @@ horizon XVI
 horizon XVIII
 horizon XXI
 horizon XXIII
+horizons I - III de Streeter
 horizons IX et X
+horizons VI - VIII
 horizons XI - XII
 horizons de Streeter
 horizontal
@@ -29033,13 +29037,13 @@ hémoculture
 hémocytoblaste
 hémocytoblastomatose
 hémocytoblastose
-hémocytopénie n.f.
+hémocytopénie
 hémodiafiltration
 hémodiagnostic
 hémodialyse chronique de suppléance
 hémodialyse d'urgence
 hémodialyse et troubles psychiques
-hémodialyse itérative l.f.
+hémodialyse itérative
 hémodialyse périodique
 hémodialyseur
 hémodilution
@@ -29249,8 +29253,8 @@ hépatite virale TTV
 hépato-cholangio-cysto-gastrostomie
 hépato-cholangio-entérostomie
 hépato-cholangiome
-hépato-duodénostomie transvésiculaire l.f.
-hépato-gastrostomie n.f.
+hépato-duodénostomie transvésiculaire
+hépato-gastrostomie
 hépato-jéjunostomie
 hépato-lobectomie
 hépato-manométrie
@@ -29792,7 +29796,7 @@ immunoadsorbant
 immunoadsorption sélective
 immunobilles
 immunoblaste
-immunoblot n.
+immunoblot
 immunoblotting en dermatologie
 immunocapture
 immunochromatographie
@@ -30562,6 +30566,7 @@ inhibiteur de tyrosine kinase
 inhibiteur membranaire de la lyse réactive
 inhibiteurs de bêtalactamases
 inhibiteurs de fusion
+inhibiteurs de l'HMG-co A réductase
 inhibiteurs de l'angiogenèse
 inhibiteurs de l'aromatase
 inhibiteurs de l'enzyme de conversion de l'angiotensine
@@ -31286,7 +31291,7 @@ ivresse convulsivante
 ixazomib:::fph
 ixekizumab:::fph
 ixioïde
-ixothymie n.f.
+ixothymie
 ixprim:::fph
 izalgi:::fph
 izilox:::fph
@@ -31851,8 +31856,8 @@ laboratoire pharmaceutique
 labrocyte
 labrum acétabulaire
 labrum articulaire
-labrum glénoïdal de la scapula l.m.
-labrum glénoïdal l.m.
+labrum glénoïdal
+labrum glénoïdal de la scapula
 labrum iléocolique de la papille iléale
 labrum iléocæcal de la papille iléale
 labrum inférieur de l'orifice iléal
@@ -32921,7 +32926,7 @@ ligament périnéal transverse
 ligament péritonéo-vaginal
 ligament péronéo-astragalien antérieur
 ligament péronéo-astragalien postérieur
-ligament péronéo-calcanéen l.m.
+ligament péronéo-calcanéen
 ligament péronéo-tibial antérieur et inférieur
 ligament péronéo-tibial antérieur et supérieur
 ligament péronéo-tibial postérieur et inférieur
@@ -33721,8 +33726,8 @@ lobules du thymus
 lobules hyménéaux
 lobules hépatiques
 lobules spermatiques
-lobules thymiques accessoires l.m.p.
-lobules thymiques l.m.p.
+lobules thymiques
+lobules thymiques accessoires
 lobulus interpariétalis superior de Huschke
 localisateur
 localisation placentaire
@@ -34050,7 +34055,7 @@ luxatio erecta
 luxation
 luxation ancienne
 luxation antéro- médiale de l'épaule
-luxation antéro-interne de l'épaule l.f.
+luxation antéro-interne de l'épaule
 luxation atloïdo-axoïdienne
 luxation chondro-vomérienne
 luxation congénitale
@@ -34742,6 +34747,7 @@ maladie de Duhring-Brocq
 maladie de Dupont-Lachapelle
 maladie de Dupuytren
 maladie de Eales
+maladie de Erdheim-Chester
 maladie de Fabry
 maladie de Fahr
 maladie de Fanconi
@@ -34936,6 +34942,7 @@ maladie de Pick-Herxheimer
 maladie de Pierre Marie et Patrikios
 maladie de Pogosta
 maladie de Pompe
+maladie de Porak - Durante - Vrolik
 maladie de Porak et Durante
 maladie de Posadas
 maladie de Posadas et Wernicke
@@ -35454,6 +35461,7 @@ manœuvre de Deventer-Mueller
 manœuvre de Dix et Hallpike
 manœuvre de Frenzel
 manœuvre de Hallpike
+manœuvre de Hansen
 manœuvre de Heimlich
 manœuvre de Hon
 manœuvre de Hoover
@@ -35503,7 +35511,6 @@ manœuvre de van Huevel-Tarnier
 manœuvre des bras tendus
 manœuvre du toboggan
 manœuvre ou technique de Mueller
-manɶuvre de Hansen
 maprotiline:::fph
 maralixibat chlorure:::fph
 marasme
@@ -36283,7 +36290,7 @@ mise en évidence scintigraphique du neuroblastome
 mise en évidence scintigraphique du paragangliome
 mise en évidence scintigraphique du phéochromocytome
 mise sur le marché d'un dispositif médical
-mise à plat n.f.
+mise à plat
 mise-bas
 misonéisme
 misoprostol
@@ -36904,7 +36911,7 @@ muscle bulbo-caverneux
 muscle bulbo-spongieux
 muscle canin
 muscle cardiaque
-muscle carré crural l.m.
+muscle carré crural
 muscle carré des lombes
 muscle carré du menton
 muscle carré fémoral
@@ -37034,7 +37041,7 @@ muscle fléchisseur accessoire
 muscle fléchisseur commun profond des doigts
 muscle fléchisseur commun superficiel des doigts
 muscle fléchisseur perforant
-muscle fléchisseur perforé l.m.
+muscle fléchisseur perforé
 muscle fléchisseur profond des doigts de la main
 muscle fléchisseur péronier des orteils
 muscle fléchisseur radial du carpe
@@ -37861,7 +37868,7 @@ myélencéphale
 myéline
 myélinisation
 myélinolyse centrale du pont cérébral
-myélinolyse centropontique l.f.
+myélinolyse centropontique
 myélinopathie de Grinker
 myélite
 myélite nécrotique subaigüe de Foix-Alajouanine
@@ -38026,6 +38033,7 @@ médiastinal
 médiastinite
 médiastinite aigüe
 médiastinite chronique
+médiastinite de Griesinger-Kussmaul
 médiastinite fibreuse
 médiastinographie gazeuse
 médiastinopéricardite
@@ -38202,8 +38210,8 @@ mélanose de guerre
 mélanose dermique
 mélanose des tourneurs d'obus
 mélanose diffuse familiale
-mélanose encéphalo-trigéminée de Ōta
-mélanose encéphalotrigéminée d'Ōta
+mélanose encéphalo-trigéminée de Ota
+mélanose encéphalotrigéminée d'Ota
 mélanose lenticulaire progressive
 mélanose mélanose
 mélanose neuro-cutanée
@@ -38567,9 +38575,9 @@ méthode de Proetz
 méthode de Read
 méthode de Risser-Ferguson
 méthode de Ritchie
+méthode de Sagiroglu
 méthode de Saling
 méthode de Sauvegrain et Nahum âge osseux
-méthode de Sağiroğlu
 méthode de Seldinger
 méthode de Shorr
 méthode de Stewart-Hamilton
@@ -38668,6 +38676,7 @@ météoropathologie
 mévalonate
 mévalonate kinase
 méxilétine AP-HP
+môle
 môle destructrice
 môle disséquante
 môle embryonnée
@@ -38678,7 +38687,6 @@ môle invasive
 môle maligne
 môle morte
 môle métastatique
-môle n.f.
 môle tubéreuse de Breus
 môle térébrante
 môle vésiculaire
@@ -38726,7 +38734,6 @@ nanisme de type I avec microcéphalie primaire
 nanisme de type Laron
 nanisme de type sénile
 nanisme diastrophique
-nanisme diastrophique l.m.
 nanisme en tête d'oiseau
 nanisme hypophysaire de type II
 nanisme hypophysaire et petite selle turcique
@@ -39132,7 +39139,7 @@ nerf supra-trochléaire
 nerf supérieur du muscle subscapulaire
 nerf supérieur du sous-scapulaire
 nerf sural
-nerf sus-orbitaire l.m.
+nerf sus-orbitaire
 nerf sus-scapulaire
 nerf sus-trochléaire
 nerf temporal profond antérieur
@@ -40080,18 +40087,18 @@ nævus de Becker
 nævus de Hori
 nævus de Itô
 nævus de Meyerson
+nævus de Ota
 nævus de Spitz
 nævus de Sutton
 nævus de Tièche-Jadassohn
 nævus de Unna
-nævus de Ōta
 nævus du follicule pileux
 nævus dysplasique
 nævus dysplasique héréditaire
 nævus eccrine
 nævus elasticus
 nævus flammeus
-nævus fusco-caeruleus ophtalmo-maxillaris de Ōta
+nævus fusco-caeruleus ophtalmo-maxillaris de Ota
 nævus jonctionnel
 nævus juvénile
 nævus kystique bénin
@@ -41816,7 +41823,7 @@ ostéo-arthrite vertébrale tuberculeuse
 ostéo-arthropathie hypertrophiante de Pierre Marie
 ostéo-arthropathie hypertrophiante pneumique
 ostéo-arthropathie hypertrophique idiopathique
-ostéo-arthropathie hypertrophique primitive l.f.
+ostéo-arthropathie hypertrophique primitive
 ostéo-arthropathie idiopathique de Currarino
 ostéo-arthropathie nerveuse
 ostéo-arthropathie pneumique
@@ -41937,7 +41944,7 @@ ostéoporose sénile
 ostéoporose transitoire de la grossesse
 ostéopoïkilose et dacryocystite
 ostéopoïkilose et dacyrocystite
-ostéopraticien n.m.
+ostéopraticien
 ostéoprotégérine
 ostéopsathyrose
 ostéopédion
@@ -42214,7 +42221,7 @@ paderyl:::fph
 paillette
 pain dermatologique
 pain à cacheter
-painful piezogenic pedal papules l.f.p.
+painful piezogenic pedal papules
 paire de bases
 palais
 palais dur
@@ -44468,7 +44475,7 @@ plan scissural
 plan sous-costal
 plan subcostal
 plan supra-cristal
-plan temporal l.m.
+plan temporal
 plan transpylorique
 plan transversal
 plan vrai du détroit supérieur
@@ -47221,6 +47228,7 @@ purivist:::fph
 purpura
 purpura annulaire télangiectasique de Majocchi
 purpura de Henoch-Schönlein
+purpura de Schönlein-Henoch
 purpura de Werlhof
 purpura en cocarde infantile postinfectieux de Seidlmayer
 purpura fulminans
@@ -48013,7 +48021,7 @@ radiopelvimétrie
 radiopharmaceutique
 radiophotographie
 radiophysique
-radioprotecteur n.m.
+radioprotecteur
 radioprotection
 radiopédiatre
 radiorénogramme
@@ -48037,7 +48045,7 @@ radiothérapie externe
 radiothérapie interstitielle
 radiothérapie métabolique
 radiothérapie pendulaire
-radiothérapie peropératoire l.f.
+radiothérapie peropératoire
 radiothérapie stéréotaxique
 radiothérapie transcutanée
 radiothérapie tridimensionnelle
@@ -48271,7 +48279,7 @@ rameau interventriculaire postérieur de l'artère coronaire droite
 rameau latéral de l'artère coronaire gauche
 rameau latéral de l'artère supérieure du cervelet
 rameau latéral de la veine lobaire moyenne de la veine pulmonaire supérieure droite
-rameau latéral du conduit hépatique gauche l.m.
+rameau latéral du conduit hépatique gauche
 rameau latéral du nerf supraorbitaire
 rameau latéral du nez de l'artère faciale
 rameau latéral du rameau postérieur des nerfs cervicaux
@@ -48636,7 +48644,6 @@ rameaux œsophagiens du nerf vague
 rameaux œsophagiens sympathiques
 rami caroticotympanici arteriae carotidis internae
 ramipril et diuretiques:::fph
-ramipril n.m.
 ramipril:::fph
 ramollissement cérébral
 ramollissement puriforme aseptique
@@ -48782,7 +48789,7 @@ reclassement professionnel
 recombinaison
 recombinaison conservative
 recombinaison générale
-recombinaison génétique l.f.
+recombinaison génétique
 recombinaison homologue
 recombinaison illégitime
 recombinaison in vitro
@@ -48798,7 +48805,7 @@ recombinant
 recombinase
 recombinateur
 recombiné
-recommandations de bonnes pratiques médicales l.f.p.
+recommandations de bonnes pratiques médicales
 recommandations temporaires d'utilisation
 reconnaissance
 reconnaissance conjointe
@@ -49032,7 +49039,7 @@ repolarisation
 repolarisation cardiaque
 repopulation
 repos compensateur
-reposition de cloison l.f.
+reposition de cloison
 repositionnement de médicaments
 reproduction
 reprogrammation
@@ -49165,13 +49172,13 @@ rhamnose
 rhinencéphale
 rhinion
 rhinite aigüe
-rhinite allergique l.f.
-rhinite atrophique l.f.
+rhinite allergique
+rhinite atrophique
 rhinite chronique
-rhinite chronique fétide l.f.
+rhinite chronique fétide
 rhinite et asthme atopiques
 rhinite hormonale
-rhinite hypertrophique l.f.
+rhinite hypertrophique
 rhinite hyperéosinophile non allergique
 rhinite médicamenteuse
 rhinite sénile
@@ -49248,7 +49255,7 @@ rhumatologie et thermalisme
 rhumatoïde
 rhume
 rhume de la hanche
-rhume des foins l.m.
+rhume des foins
 rhytidectomie
 rhénium 186
 rhéobase
@@ -49293,14 +49300,14 @@ rickettsie
 rickettsiose
 rickettsiose varicelliforme
 rictus
-rictus sardonique l.m.
+rictus sardonique
 ride
 ride ansérine
 ride de la patte d'oie
 ride du lion
 rideau stylien
 rideau trigonal
-ridectomie n.f.
+ridectomie
 ridule
 rifabutine:::fph
 rifadine iv:::fph
@@ -49708,6 +49715,7 @@ réaction de Singer et Plotz
 réaction de Teichmann
 réaction de Varangot
 réaction de Vaughan
+réaction de Voges-Proskauer
 réaction de Waaler-Rose
 réaction de Wassermann
 réaction de Weber
@@ -49753,7 +49761,7 @@ réadaptation
 réadaptation psychique des blessés
 réagine
 réalité
-réalité virtuelle l.
+réalité virtuelle
 réanimation
 réanimation cardiaque
 réanimation cardiorespiratoire
@@ -49971,7 +49979,7 @@ réflexe utérorénal de Sophian
 réflexe vagal
 réflexe veinoartériolaire
 réflexe vestibulo-oculaire
-réflexe vestibulo-oculomoteur l.m.
+réflexe vestibulo-oculomoteur
 réflexe à la menace
 réflexes cutanés abdominaux
 réflexes du tronc cérébral
@@ -50256,7 +50264,7 @@ réseau de Purkinje
 réseau de Wickham
 réseau de fréquences spatiales
 réseau de prise en charge
-réseau lichénien l.m.
+réseau lichénien
 réseau malléolaire latéral
 réseau malléolaire médial
 réseau neuronal convolutif
@@ -50279,7 +50287,7 @@ résection cunéiforme de l'ovaire
 résection d'un diaphragme vaginal
 résection de bulles géantes
 résection de la bifurcation trachéobronchique
-résection de la cloison l.f.
+résection de la cloison
 résection de la jonction pyélo-urétérale
 résection endo-utérine
 résection endoscopique
@@ -50336,7 +50344,7 @@ résistance vasculaire
 résistance vasculaire pulmonaire
 résistance vasculaire pulmonaire totale
 résistance vasculaire périphérique
-résistance à la protéine C l.f.
+résistance à la protéine C
 résistance à la vitamine D
 résistine
 résistome
@@ -50582,8 +50590,8 @@ rééducation psychomotrice
 rééducation périnéosphinctérienne
 rééducation respiratoire
 rééducation sphinctérienne
-rééducation vestibulaire l.f.
-rééducation vocale l.f.
+rééducation vestibulaire
+rééducation vocale
 rééducation vésicosphinctérienne
 rêve éveillé
 rôle
@@ -50842,7 +50850,7 @@ scalloping
 scalp
 scalpel
 scalène
-scalénotomie n.f.
+scalénotomie
 scan A
 scan B
 scanner
@@ -51097,7 +51105,7 @@ scorbut infantile
 score
 score ASA
 score ASRM
-score CHA2DS2‐VASc
+score CHA2DS2-VASc
 score EQ-5D
 score GEMEN
 score HAS-BLED
@@ -51502,7 +51510,7 @@ seuil ischémique
 seuil lumineux absolu
 seuil narinaire
 sevelamer:::fph
-sevoflurane n.
+sevoflurane
 sevrage
 sevredol:::fph
 sex hormone binding globulin
@@ -51905,7 +51913,7 @@ sillon atrio-ventriculaire
 sillon balano-préputial
 sillon basilaire du pont
 sillon bicipital externe
-sillon bicipital interne l.m.
+sillon bicipital interne
 sillon bicipital latéral
 sillon bicipital médial
 sillon bicipital radial
@@ -52199,7 +52207,7 @@ sinus du tronc pulmonaire
 sinus du tympan
 sinus ethmoïdal
 sinus frontal
-sinus galactophore l.m.
+sinus galactophore
 sinus intercaverneux
 sinus intercaverneux antérieur
 sinus intercaverneux postérieur
@@ -52568,15 +52576,16 @@ souffle cardiaque fonctionnel
 souffle caverneux
 souffle continu
 souffle d'éjection
+souffle de Graham-Steel
 souffle de régurgitation
 souffle diastolique
 souffle en écharpe
 souffle funiculaire
-souffle mésosystolique l. m.
+souffle mésosystolique
 souffle phonatoire
 souffle pleurétique
-souffle protomésosystolique l. m.
-souffle protosystolique l. m.
+souffle protomésosystolique
+souffle protosystolique
 souffle systolique
 souffle tubaire
 souffle tunnellaire
@@ -52842,9 +52851,9 @@ spin écho
 spina bifida
 spina bifida aperta
 spina bifida occulta
-spina bifida ulcéré l.m.
+spina bifida ulcéré
 spina bifida épidermisé
-spina ventosa l.m.
+spina ventosa
 spinacène
 spinaliome
 spincast
@@ -53030,7 +53039,6 @@ stagid:::fph
 stagnation de la dilatation
 stalevo:::fph
 standard de référence externe
-standard de référence externe l.m.
 standardisation
 stannose
 staphylocoagulase
@@ -53115,6 +53123,7 @@ stimulateur multisite
 stimulateur orthorythmique
 stimulateur sentinelle
 stimulateur électronique
+stimulation
 stimulation auriculaire
 stimulation cardiaque
 stimulation cérébrale profond
@@ -53122,7 +53131,6 @@ stimulation endocavitaire
 stimulation lumineuse intermittente
 stimulation magnétique transcraniale
 stimulation magnétique transcrânienne
-stimulation n.f.
 stimulation phrénique
 stimuline
 stimulodétection
@@ -53151,7 +53159,7 @@ stomatocytose expérimentale
 stomatocytose héréditaire
 stomatocéphale
 stomatologie
-stomatologie et thermalisme l.f.
+stomatologie et thermalisme
 stomatologiste
 stomatopage
 stomatoplastie
@@ -53244,7 +53252,7 @@ strie de la lame pyramidale externe de l'isocortex
 strie externe de Baillarger
 strie externe de la zone externe de la médullaire rénale
 strie graisseuse
-strie interne de la zone externe de la médullaire rénale l.f.
+strie interne de la zone externe de la médullaire rénale
 strie latérale grise
 strie lipidique
 strie longitudinale latérale
@@ -53454,7 +53462,7 @@ substance P
 substance adrénergique
 substance amorphe du cristallin
 substance amyloïde
-substance basale l.f.
+substance basale
 substance blanche
 substance blanche de la moelle allongée
 substance blanche de la moelle spinale
@@ -53672,7 +53680,7 @@ surcharge
 surcharge cardiaque
 surcharge et infiltration glycogénique
 surcharge ventriculaire
-surcharges en fer héréditaires l.f.
+surcharges en fer héréditaires
 surcharges hépatiques
 surcompensation
 surdiagnostic
@@ -54064,7 +54072,7 @@ syndrome NAO
 syndrome NEM
 syndrome ODED
 syndrome OHAHA
-syndrome OSSC l.m.
+syndrome OSSC
 syndrome PCM1-JAK2
 syndrome PEHO
 syndrome PFAPA
@@ -54319,6 +54327,8 @@ syndrome d'hyperpression de la patella
 syndrome d'hyperpression de la rotule
 syndrome d'hyperpression fémoropatellaire latérale
 syndrome d'hypertélorisme
+syndrome d'hypertélorisme - anomalie œsophagienne - hypospadias
+syndrome d'hypertélorisme - hypospadias
 syndrome d'hyperventilation
 syndrome d'hypospadias - dysphagie
 syndrome d'hypospadias et dysphagie
@@ -54715,6 +54725,7 @@ syndrome de Hoet-Abaza
 syndrome de Hoigné
 syndrome de Holmes-Gang
 syndrome de Holt-Oram
+syndrome de Holtermüller-Wiedemann
 syndrome de Hong et Good
 syndrome de Hornstein-Knickenberg
 syndrome de Houston-Harris
@@ -54961,7 +54972,6 @@ syndrome de Naegeli-Franceschetti-Jadassohn
 syndrome de Naffziger
 syndrome de Nager
 syndrome de Nager et Reynier
-syndrome de Nager l.m.
 syndrome de Nathalie
 syndrome de Neill-Dingwall
 syndrome de Nelson
@@ -54970,7 +54980,7 @@ syndrome de Neu-Laxová
 syndrome de Neuhaüser
 syndrome de Nezelof
 syndrome de Nicolaides et Baraitser
-syndrome de Nicolau et Băluş
+syndrome de Nicolau et Bălus
 syndrome de Nielsen
 syndrome de Nievergelt
 syndrome de Niikawa-Kuroki
@@ -55307,7 +55317,7 @@ syndrome de Wiskott-Aldrich
 syndrome de Wissler-Fanconi
 syndrome de Witkop-von Sallmann
 syndrome de Wohlfahrt-Welander-Kugelberg
-syndrome de Wohltmann-Cağlar
+syndrome de Wohltmann-Caglar
 syndrome de Wolf-Hirschhorn
 syndrome de Wolff-Parkinson-White
 syndrome de Wolfram
@@ -55319,7 +55329,7 @@ syndrome de Youssef
 syndrome de Ziemssen
 syndrome de Zieve
 syndrome de Zimmermann-Laband
-syndrome de Zlotogora-Oğur
+syndrome de Zlotogora-Ogur
 syndrome de Zunich-Kaye
 syndrome de ballooning apical transitoire du ventricule gauche
 syndrome de bas débit cardiaque
@@ -55337,6 +55347,7 @@ syndrome de de Morsier
 syndrome de de Morsier-Kallmann
 syndrome de de Saint-Yves
 syndrome de de Sanctis-Cacchione
+syndrome de de Toni-Debré-Fanconi
 syndrome de de Vaal
 syndrome de del Castillo-Trabucco-de la Balze
 syndrome de diplégie brachiale
@@ -55667,6 +55678,7 @@ syndrome happy puppet
 syndrome hydantoïne fœtal
 syndrome hydrocéphalie congénitale et malformation bilatérale des pouces
 syndrome hyperkinétique de la cirrhose
+syndrome hyperornithinémie - hyperammoniémie - homocitrullinurie
 syndrome hyperornithinémie, hyperammoniémie, homocitrullinurie
 syndrome hypertélorisme, hypospadias
 syndrome hypertélorisme, hypospadias, polysyndactylie
@@ -55731,7 +55743,6 @@ syndrome mégavessie-méga-uretères
 syndrome méningo-cutanéo-articulaire chronique de l'enfant
 syndrome méningé
 syndrome métabolique
-syndrome métabolique l.m.
 syndrome nail-platella
 syndrome neuro-anémique
 syndrome neuroanémique
@@ -56816,7 +56827,7 @@ temps de thrombine
 temps de transit des protons
 temps de vol des photons
 temps létal médian
-temps maximum de phonation l.m.
+temps maximum de phonation
 temps mort
 temps utile en IRM
 tempérament et psychiatrie
@@ -57092,7 +57103,7 @@ test de Wirt
 test de Worth
 test de complémentation fonctionnelle
 test de dU suppression
-test de diagnostic rapide des angines streptococciques l.m.
+test de diagnostic rapide des angines streptococciques
 test de diffraction de Gracis
 test de diffusion radiale de Mancini
 test de duction passive en ophtalmologie
@@ -57230,18 +57241,18 @@ thermalisme et ORL
 thermalisme et appareil digestif
 thermalisme et appareil respiratoire
 thermalisme et artériopathies
-thermalisme et cardiopathies l.m.
-thermalisme et dermatologie l.m.
-thermalisme et gynécologie l.m.
+thermalisme et cardiopathies
+thermalisme et dermatologie
+thermalisme et gynécologie
 thermalisme et maladies métaboliques
-thermalisme et neurologie l.m.
-thermalisme et phlébologie l.m.
-thermalisme et psychiatrie l.m.
-thermalisme et pédiatrie l.m.
+thermalisme et neurologie
+thermalisme et phlébologie
+thermalisme et psychiatrie
+thermalisme et pédiatrie
 thermalisme et rhumatologie
 thermalisme et stomatologie
 thermalisme et urologie
-thermie n.f.
+thermie
 thermistance
 thermo-ablation prostatique par aiguilles
 thermo-ablation prostatique par ultrasons focalisés
@@ -58129,7 +58140,6 @@ transforming growth factor alpha
 transformylase
 transformylation
 transformée de Fourier
-transformée de Fourier l.f.
 transformée de radon
 transfusion
 transfusion autologue
@@ -58248,7 +58258,7 @@ transposition corrigée des gros vaisseaux
 transposition des gros vaisseaux
 transposition du langage
 transposition du médius vers le pouce Böhler
-transposition du médius vers le pouce, type Böhler l.f.
+transposition du médius vers le pouce, type Böhler
 transposition musculaire oculomotrice
 transposition non réplicative
 transposition ovarienne
@@ -58289,7 +58299,7 @@ traumatisme cranio-encéphalique et catatonie
 traumatisme crânien
 traumatisme de la moelle épinière
 traumatisme hépatobiliaire
-traumatisme laryngé l.m.
+traumatisme laryngé
 traumatisme médullaire
 traumatisme obstétrical
 traumatisme psychique
@@ -58297,7 +58307,7 @@ traumatisme psychique chez les enfants
 traumatisme psychique et générations suivantes
 traumatisme psychique et évènement exceptionnel
 traumatisme somatique et névrose
-traumatisme sonore l.m.
+traumatisme sonore
 traumatisme thoracique
 traumatisme thoracique fermé
 traumatisme thoracique ouvert
@@ -58398,8 +58408,8 @@ triangle interpédonculaire
 triangle lombaire inférieur
 triangle lombaire supérieur
 triangle lombo-costal
-triangle lombo-costo-abdominal l.m.
-triangle lumineux l.m.
+triangle lombo-costo-abdominal
+triangle lumineux
 triangle omo-claviculaire
 triangle opto-pédonculaire
 triangle sterno-costal
@@ -58663,7 +58673,7 @@ trogocytose
 trois-quarts
 troisième - cunéiforme
 troisième - ventricule
-troisième dent molaire n.f.
+troisième dent molaire
 troisième ligament croisé de Robert
 troisième nerf occipital
 troisième trochanter
@@ -58889,7 +58899,6 @@ troubles du spectre de l'autisme
 troubles endocriniens, épilepsie et déficience mentale
 troubles envahissants du développement
 troubles intestinaux et surdité congénitale de perception
-troubles intestinaux et surdité congénitale de perception l.m.p.
 troubles musculaires de la maladie d'Addison
 troubles neuromusculaires, ophtalmoplégiques et mitochondrie anormale
 troubles psychiques aigus de guerre
@@ -59077,7 +59086,7 @@ tubercule pituitaire
 tubercule postérieur de l'atlas
 tubercule postérieur des vertèbres cervicales
 tubercule postéro-externe de l'astragale
-tubercule pubien l.m.
+tubercule pubien
 tubercule quadrijumeau antérieur
 tubercule quadrijumeau postérieur
 tubercule rétro-gassérien de Princeteau
@@ -59118,7 +59127,7 @@ tuberculose cutanée
 tuberculose génitale féminine
 tuberculose hépatique
 tuberculose iléocaecale
-tuberculose laryngée l.f.
+tuberculose laryngée
 tuberculose miliaire
 tuberculose méningée
 tuberculose neuroméningée
@@ -59260,12 +59269,12 @@ tumeur de malignité locale
 tumeur desmoïde
 tumeur desmoïde de la paroi thoracique
 tumeur différenciée
-tumeur du canal dermique l.f.
+tumeur du canal dermique
 tumeur du chorion cytogène
 tumeur du cordon ombilical
 tumeur du cœur
 tumeur du glomus carotidien
-tumeur du glomus jugulaire l.f.
+tumeur du glomus jugulaire
 tumeur du glomus tympanique
 tumeur du hile ovarien
 tumeur du quatrième ventricule
@@ -59328,7 +59337,7 @@ tumeur nécrosée
 tumeur ovarienne à stroma fonctionnel
 tumeur papillaire
 tumeur papillaire de vessie
-tumeur para-pharyngée l.f.
+tumeur para-pharyngée
 tumeur perlée de Cruveilhier
 tumeur phyllode du sein
 tumeur praevia
@@ -59369,7 +59378,7 @@ tumeur à cellules géantes des os
 tumeur à cellules lipidiques de l'ovaire
 tumeur à mastocytes
 tumeur à myéloplaxes
-tumeur à stroma remanié l.f.
+tumeur à stroma remanié
 tumeur épithéliale commune de l'ovaire
 tumeur épithélio-lympho-histiocytaire
 tumeur épithélio-mélanocytaire
@@ -59393,7 +59402,7 @@ tumor necrosis factor
 tumorectomie
 tumorigenèse
 tumorigénicité
-tumorlets m.
+tumorlets
 tumstatine
 tuméfaction
 tuméfaction isosmotique
@@ -59539,7 +59548,7 @@ typhoïdique
 typhus
 typhus de Sao Paulo
 typhus des broussailles
-typhus endémique l.
+typhus endémique
 typhus exanthématique
 typhus historique
 typhus mexicain
@@ -59632,7 +59641,7 @@ téléradiométrie
 téléradiophotographie
 téléradioscopie
 téléradiothérapie
-télésanté n.f.
+télésanté
 télésurveillance
 télésystole
 télésystolique
@@ -59897,7 +59906,7 @@ uranium
 uranostaphylorraphie
 urapidil:::fph
 urate
-urate-oxydase recombinante l.f.
+urate-oxydase recombinante
 uraturie
 uratémie
 urbanyl:::fph
@@ -60182,7 +60191,7 @@ uvéite postérieure
 uvéite purulente
 uvéite sympathique
 uvéite à hypopyon
-uvéoméningite l.f.
+uvéoméningite
 uvéonévraxite
 uvéoparotidite
 uvéopathie diabétique
@@ -61177,7 +61186,7 @@ veines de Breschet
 veines de Burow
 veines de Morax
 veines de Nuhn
-veines de Steinach l.f.p.
+veines de Steinach
 veines de Thebesius
 veines de la colonne vertébrale
 veines de la gouttière de la veine cave inférieure
@@ -61435,7 +61444,7 @@ ventilation maximale indirecte
 ventilation minute
 ventilation mécanique en pression positive
 ventilation par bouche à bouche
-ventilation par haute fréquence l.f.
+ventilation par haute fréquence
 ventilation pulmonaire
 ventilation volontaire maximale minute
 ventoline:::fph
@@ -61694,7 +61703,7 @@ vfend:::fph
 viabilité
 viable
 viagra
-viagra de l'Amazonie l.m.
+viagra de l'Amazonie
 vibice
 vibrance endocardique
 vibrance péricardique
@@ -62175,7 +62184,7 @@ vitréo-rétino-choroïdopathie de François
 vitréo-rétino-choroïdopathie de Kaufman
 vitréolyse
 vitréorétinochoroïdopathie de Gass
-vitréorétinopathie de Goldmann-Favre l.f.
+vitréorétinopathie de Goldmann-Favre
 vitréorétinopathie diabétique
 vitréorétinopathie en flocons de neige de Hirose
 vitréorétinopathie exsudative
@@ -63458,7 +63467,7 @@ zézaiement
 épine de l'omoplate
 épine de l'os sphénoïde
 épine de la scapula
-épine du pubis l.f.
+épine du pubis
 épine géni
 épine géni inférieure
 épine géni supérieure
@@ -63475,11 +63484,10 @@ zézaiement
 épine nasale antérieure du corps du maxillaire
 épine nasale de l'os frontal
 épine nasale postérieure
-épine pubienne l.f.
+épine pubienne
 épine sciatique
 épine supraméatale
 épine supraméatique
-épine supraméatique l.f.
 épine sus-méatique
 épine tibiale externe
 épine tibiale interne
@@ -63497,7 +63505,7 @@ zézaiement
 épiphyse
 épiphyse annulaire du corps vertébral
 épiphyse d'ivoire
-épiphyse en cône l.f.
+épiphyse en cône
 épiphyse pointillée
 épiphysiodèse
 épiphysiolyse
@@ -63889,7 +63897,7 @@ zézaiement
 établissement des axes corporels embryonnaires
 établissement français des greffes
 établissement français du sang
-établissement psychiatrique l.m.
+établissement psychiatrique
 établissement public
 établissement public de santé
 établissement thermal
@@ -63899,7 +63907,7 @@ zézaiement
 étage antérieur de la base du crâne
 étage moyen de la base du crâne
 étage olfactif de la cavité nasale
-étage postérieur de la base du crâne l.m.
+étage postérieur de la base du crâne
 étage supérieur du larynx
 étage sus-glottique du larynx
 étagé
@@ -64201,4 +64209,3 @@ zézaiement
 κ coefficient kappa
 λ constante radioactive
 χ² chi carré
- vitesse angulaire
