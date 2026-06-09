@@ -93,6 +93,45 @@ describe('compileBoostText filters untokenizable phrases', () => {
     assert.equal(artifact.vocabSig, vocabSig));
 });
 
+// The web UI warns (in the sidebar) on a phrase whose weight/min-p had to be
+// coerced (out of range / invalid -> reset to a default). The admin-facing
+// compile script must surface the SAME thing, so compileBoostText carries those
+// coercions out as `warnings` rather than dropping them: a clean compile that
+// hid what the browser flags was the bug this covers. The artifact stays valid
+// (the coercion is non-fatal), so this only pins the reporting channel.
+describe('compileBoostText surfaces coerced weight/min-p as warnings', () => {
+  const fixture = loadCachedFixture();
+  const encoder = new BpeEncoder(loadMergesAsset(), buildVocabToId(fixture.id2token));
+  const vocabSig = vocabSignature(fixture.id2token);
+
+  test('an out-of-range weight is reported (and still compiled at the default)', () => {
+    const { artifact, warnings } = compileBoostText('venlafaxine:99', encoder, vocabSig);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].phrase, 'venlafaxine');
+    assert.match(warnings[0].warning, /weight 99 out of range/);
+    // Non-fatal: the phrase is still encoded (the coerced weight is baked in).
+    assert.equal(artifact.encoded.length, 1);
+  });
+
+  test('an invalid min-p is reported', () => {
+    const { warnings } = compileBoostText('venlafaxine:5:5', encoder, vocabSig);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0].warning, /min-p 5 invalid/);
+  });
+
+  test('a clean list yields no warnings', () => {
+    const { warnings } = compileBoostText('venlafaxine:5:0.2', encoder, vocabSig);
+    assert.deepEqual(warnings, []);
+  });
+
+  test('each typed phrase is reported once, not once per casing variant', () => {
+    // Augmentation (`fa`) expands venlafaxine into 3 surface forms, but the
+    // warning is about the typed phrase, so it must appear exactly once.
+    const { warnings } = compileBoostText('venlafaxine:99:0.2:fa', encoder, vocabSig);
+    assert.equal(warnings.length, 1);
+  });
+});
+
 // A list's own `*:::AUG` defaults line is baked straight into `encoded` (it lives
 // in the .txt, like a per-phrase `:AUG`); the artifact's augmentDefault field
 // still records only the external opts/global-toggle value, so the reuse check

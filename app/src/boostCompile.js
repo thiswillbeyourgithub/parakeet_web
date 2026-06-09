@@ -110,7 +110,13 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
  * @param {Object} [opts]
  * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] The global "Augment" toggle value the expansion is baked at (a phrase's `:AUG` field or a `*` defaults line overrides it).
  * @param {(done:number, total:number)=>void} [opts.onProgress] Called once per phrase as it is encoded (the slow step); used by the offline compile script to draw a progress bar.
- * @returns {{ artifact: {version:number, vocabSig:string, augmentDefault:string, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number }}
+ * @returns {{ artifact: {version:number, vocabSig:string, augmentDefault:string, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number, warnings:Array<{phrase:string, warning:string}> }}
+ *   `warnings` are the per-phrase weight/min-p coercions `parseBoostPhrases`
+ *   recorded (an out-of-range weight or invalid min-p that was silently reset to
+ *   a default). They are non-fatal (the artifact is still valid), but the
+ *   admin-facing compile script surfaces them so a clean compile no longer hides
+ *   what the web UI would warn about. Conflicts (the other UI warning) are fatal
+ *   here and throw above; `skipped` (the third) lives on the artifact.
  */
 export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
   const { prefixes } = parseBoostDirectives(raw);
@@ -118,12 +124,18 @@ export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
   const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
   const conflicts = findBoostConflicts(parsed);
   if (conflicts.length) throw new BoostConflictError(conflicts);
+  // Same selection the web UI does (App.jsx `setBoostWarnings`): a coerced
+  // weight/min-p is non-fatal but must not vanish at compile time. Computed on
+  // `parsed` (pre-expansion), so each typed phrase is reported once, not once
+  // per casing variant.
+  const warnings = parsed.filter((p) => p.warning).map((p) => ({ phrase: p.phrase, warning: p.warning }));
   const entries = expandAugmentations(parsed, augmentDefault, prefixes);
   const { encoded, skipped } = encodePhrases(entries, encoder, { onProgress: opts.onProgress });
   return {
     artifact: { version: BOOST_ARTIFACT_VERSION, vocabSig, augmentDefault, encoded, skipped },
     parsedCount: parsed.length,
     expandedCount: entries.length,
+    warnings,
   };
 }
 
