@@ -573,14 +573,21 @@ export function expandAugmentations(entries, defaultAugment = '', prefixes = DEF
 export function encodePhrases(entries, encoder, opts = {}) {
   const unkId = encoder.unkId;
   const cache = opts.cache;
+  // Optional per-phrase progress hook (done, total). Used by the offline
+  // compile script (scripts/compile-boost.mjs) to draw a progress bar over the
+  // slow BPE merge loop; no-op in the browser, which omits it.
+  const onProgress = opts.onProgress;
+  const total = entries.length;
   const encoded = [];
   const skipped = [];
+  let done = 0;
   for (const { phrase, weight, minp } of entries) {
     let ids = cache?.get(phrase);
     if (ids === undefined) {
       ids = encoder.encode(phrase);
       cache?.set(phrase, ids);
     }
+    onProgress?.(++done, total);
     if (!ids.length) continue;
     if (unkId !== undefined && ids.includes(unkId)) {
       skipped.push(phrase);

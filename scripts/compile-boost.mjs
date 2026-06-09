@@ -87,6 +87,30 @@ function parseArgs(argv) {
   return { inputs, opts };
 }
 
+// Minimal in-place progress bar for the encode loop. Only draws to a TTY (so
+// piped/CI logs stay clean) and throttles redraws to ~50ms so a 100k-line list
+// does not spend its time writing to the terminal. Returns a render(done,total)
+// callback plus a done() to finish the line.
+function makeProgressBar(label) {
+  const tty = process.stderr.isTTY;
+  let last = 0;
+  const draw = (done, total, force) => {
+    if (!tty) return;
+    const now = Date.now();
+    if (!force && now - last < 50) return;
+    last = now;
+    const frac = total ? done / total : 1;
+    const width = 30;
+    const filled = Math.round(frac * width);
+    const bar = '#'.repeat(filled) + '-'.repeat(width - filled);
+    process.stderr.write(`\r${label} [${bar}] ${done}/${total} (${(frac * 100).toFixed(0)}%)`);
+  };
+  return {
+    render: (done, total) => draw(done, total, false),
+    done: (done, total) => { draw(done, total, true); if (tty) process.stderr.write('\n'); },
+  };
+}
+
 function resolveVocab(opts) {
   if (opts.vocab) {
     if (!existsSync(opts.vocab)) { console.error(`--vocab not found: ${opts.vocab}`); process.exit(1); }
@@ -126,8 +150,13 @@ for (const input of inputs) {
   const raw = readFileSync(input, 'utf-8');
   const t0 = Date.now();
   let compiled;
+  const bar = makeProgressBar(`[compile-boost] encoding ${input}`);
+  let lastTotal = 0;
   try {
-    compiled = compileBoostText(raw, encoder, vocabSig);
+    compiled = compileBoostText(raw, encoder, vocabSig, {
+      onProgress: (done, total) => { lastTotal = total; bar.render(done, total); },
+    });
+    if (lastTotal) bar.done(lastTotal, lastTotal);
   } catch (e) {
     // An inconsistent list (BoostConflictError) is the admin's bug, not a
     // transient: fail this file loudly with the conflict list and a non-zero

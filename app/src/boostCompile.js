@@ -109,6 +109,7 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
  * @param {string} vocabSig The encoder's vocab signature (recorded in the artifact).
  * @param {Object} [opts]
  * @param {string} [opts.augmentDefault=AUGMENT_DEFAULT] The global "Augment" toggle value the expansion is baked at (a phrase's `:AUG` field or a `*` defaults line overrides it).
+ * @param {(done:number, total:number)=>void} [opts.onProgress] Called once per phrase as it is encoded (the slow step); used by the offline compile script to draw a progress bar.
  * @returns {{ artifact: {version:number, vocabSig:string, augmentDefault:string, encoded:Array, skipped:string[]}, parsedCount:number, expandedCount:number }}
  */
 export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
@@ -118,7 +119,7 @@ export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
   const conflicts = findBoostConflicts(parsed);
   if (conflicts.length) throw new BoostConflictError(conflicts);
   const entries = expandAugmentations(parsed, augmentDefault, prefixes);
-  const { encoded, skipped } = encodePhrases(entries, encoder);
+  const { encoded, skipped } = encodePhrases(entries, encoder, { onProgress: opts.onProgress });
   return {
     artifact: { version: BOOST_ARTIFACT_VERSION, vocabSig, augmentDefault, encoded, skipped },
     parsedCount: parsed.length,

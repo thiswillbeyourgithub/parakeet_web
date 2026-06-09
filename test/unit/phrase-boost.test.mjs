@@ -451,6 +451,27 @@ describe('encodePhrases opts.cache (incremental re-encode)', () => {
   });
 });
 
+describe('encodePhrases opts.onProgress (compile-script bar)', () => {
+  const entries = [
+    { phrase: 'acetaminophen', weight: 1 },
+    { phrase: '東京', weight: 2 },   // <unk>, skipped but still counted as progress
+    { phrase: 'sœur', weight: 3 },
+  ];
+
+  test('fires once per entry with a monotonic done and constant total', () => {
+    const seen = [];
+    encodePhrases(entries, encoder, { onProgress: (done, total) => seen.push([done, total]) });
+    assert.deepEqual(seen, [[1, 3], [2, 3], [3, 3]]);
+  });
+
+  test('omitting onProgress is a no-op (no throw, same result)', () => {
+    const withCb = encodePhrases(entries, encoder, { onProgress: () => {} });
+    const without = encodePhrases(entries, encoder);
+    assert.equal(withCb.encoded.length, without.encoded.length);
+    assert.deepEqual(withCb.skipped, without.skipped);
+  });
+});
+
 describe('selectPrebuilt (reload fast-path gate)', () => {
   // This gate decides whether the reload/restore path can reuse the server
   // prebuilt encoding and so SKIP the in-browser parse + augment-expand + BPE
