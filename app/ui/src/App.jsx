@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, MAX_PHRASE_WEIGHT, FULL_AUGMENT } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT, FULL_AUGMENT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge } from './lib/format.js';
@@ -1864,6 +1864,14 @@ export default function App() {
   const boostParsed = useMemo(() => parseBoostPhrases(boostPhrases), [boostPhrases]);
   const boostPhraseCount = useMemo(
     () => boostParsed.filter(p => p.phrase).length,
+    [boostParsed],
+  );
+  // Actively-incompatible duplicate phrases (e.g. `venlafaxine:5` AND
+  // `venlafaxine:-5`): a hand-editing user is only warned here (the compile step
+  // hard-fails instead, see boostCompile.js). A plain repeated line with the
+  // same weight is NOT a conflict and is ignored. See findBoostConflicts.
+  const boostConflicts = useMemo(
+    () => findBoostConflicts(boostParsed.filter(p => p.phrase)),
     [boostParsed],
   );
   // A large *served* (non-Custom) list is collapsed to a read-only summary
@@ -4787,6 +4795,15 @@ export default function App() {
                 }}>
                   {t('boostWeightWarning').replace('{max}', MAX_PHRASE_WEIGHT)}{' '}
                   {boostWarnings.map(w => w.phrase).join(', ')}
+                </p>
+              )}
+              {boostConflicts.length > 0 && (
+                <p style={{
+                  fontSize: '0.78rem', color: '#b45309', margin: 0,
+                  overflowWrap: 'anywhere', wordBreak: 'break-word',
+                }}>
+                  {t('boostConflictWarning')}{' '}
+                  {boostConflicts.map(formatBoostConflict).join('; ')}
                 </p>
               )}
               {boostPhrases.trim() && (
