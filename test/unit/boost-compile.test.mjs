@@ -11,7 +11,7 @@ import { writeFileSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writePwc, readPwc, compileBoostText, isReusableArtifact, BOOST_ARTIFACT_VERSION } from '../../app/src/boostCompile.js';
+import { writePwc, readPwc, compileBoostText, isReusableArtifact, BOOST_ARTIFACT_VERSION, BoostConflictError } from '../../app/src/boostCompile.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from '../../app/src/bpeEncoder.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -116,5 +116,46 @@ describe('compileBoostText honours a * defaults line', () => {
     const { artifact } = compileBoostText('*:::fa\nvenlafaxine', encoder, vocabSig, { augmentDefault: '' });
     assert.equal(artifact.augmentDefault, '');
     assert.ok(isReusableArtifact(artifact, vocabSig, ''));
+  });
+});
+
+// The compile step bakes the shipped .pwc, so an actively-inconsistent list (the
+// same phrase given conflicting boosts) must crash loudly rather than silently
+// resolve to whichever entry happened to win. The web UI only warns; here the
+// admin is blocked.
+describe('compileBoostText rejects an inconsistent list', () => {
+  const fixture = loadCachedFixture();
+  const encoder = new BpeEncoder(loadMergesAsset(), buildVocabToId(fixture.id2token));
+  const vocabSig = vocabSignature(fixture.id2token);
+
+  test('conflicting weights (+5 / -5) throw BoostConflictError', () => {
+    assert.throws(
+      () => compileBoostText('venlafaxine:5\nvenlafaxine:-5', encoder, vocabSig),
+      (e) => e instanceof BoostConflictError && /venlafaxine/.test(e.message) && /5, -5/.test(e.message),
+    );
+  });
+
+  test('the error carries the structured conflicts', () => {
+    try {
+      compileBoostText('venlafaxine:5\nvenlafaxine:-5', encoder, vocabSig);
+      assert.fail('expected a throw');
+    } catch (e) {
+      assert.ok(e instanceof BoostConflictError);
+      assert.equal(e.conflicts.length, 1);
+      assert.equal(e.conflicts[0].phrase, 'venlafaxine');
+    }
+  });
+
+  test('a plain duplicate (same weight) compiles fine, not a conflict', () => {
+    // Two identical lines are harmless: same effective boost, no contradiction.
+    const { artifact } = compileBoostText('venlafaxine:5\nvenlafaxine:5', encoder, vocabSig);
+    assert.equal(artifact.encoded.length, 1);
+  });
+
+  test('same weight but different :AUG is not a conflict', () => {
+    // Augmentation only widens surface forms; it never contradicts the boost.
+    const { artifact } = compileBoostText('venlafaxine:5:0.2:f\nvenlafaxine:5:0.2:a', encoder, vocabSig);
+    // venlafaxine + Venlafaxine + VENLAFAXINE (union of f and a variants).
+    assert.equal(artifact.encoded.length, 3);
   });
 });

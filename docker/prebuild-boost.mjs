@@ -106,7 +106,18 @@ for (const file of txtFiles) {
 
   const raw = readFileSync(join(boostDir, file), 'utf-8');
   const t0 = Date.now();
-  const { artifact, parsedCount, expandedCount } = compileBoostText(raw, encoder, vocabSig);
+  let compiled;
+  try {
+    compiled = compileBoostText(raw, encoder, vocabSig);
+  } catch (e) {
+    // An inconsistent list (BoostConflictError) is an operator mistake: fail the
+    // prebuild loudly with the conflicting phrases rather than emitting an
+    // uncaught stack trace. The entrypoint treats a non-zero prebuild as
+    // non-fatal (the browser would then encode the .txt and only warn), so the
+    // clear message in the boot log is the operator's signal to fix the list.
+    fail(`${file}: ${e.message}`);
+  }
+  const { artifact, parsedCount, expandedCount } = compiled;
   const ms = Date.now() - t0;
   if (!parsedCount) {
     console.log(`[prebuild-boost] ${file}: no phrases, skipping.`);

@@ -125,7 +125,18 @@ for (const input of inputs) {
   const outPath = opts.out || (input.replace(/\.txt$/i, '') + '.pwc');
   const raw = readFileSync(input, 'utf-8');
   const t0 = Date.now();
-  const { artifact, parsedCount, expandedCount } = compileBoostText(raw, encoder, vocabSig);
+  let compiled;
+  try {
+    compiled = compileBoostText(raw, encoder, vocabSig);
+  } catch (e) {
+    // An inconsistent list (BoostConflictError) is the admin's bug, not a
+    // transient: fail this file loudly with the conflict list and a non-zero
+    // exit, but keep going so every bad list in the batch is reported at once.
+    console.error(`[compile-boost] ${input}: ${e.message}`);
+    failures++;
+    continue;
+  }
+  const { artifact, parsedCount, expandedCount } = compiled;
   const ms = Date.now() - t0;
   if (!parsedCount) {
     console.error(`[compile-boost] ${input}: no phrases found, not writing ${outPath}.`);

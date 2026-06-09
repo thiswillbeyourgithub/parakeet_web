@@ -30,7 +30,28 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { parseVocabText } from './tokenizer.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from './bpeEncoder.js';
-import { parseBoostPhrases, parseBoostDirectives, expandAugmentations, encodePhrases } from './phraseBoost.js';
+import { parseBoostPhrases, parseBoostDirectives, expandAugmentations, encodePhrases, findBoostConflicts, formatBoostConflict } from './phraseBoost.js';
+
+/**
+ * Thrown by {@link compileBoostText} when the list contains actively
+ * incompatible duplicate phrases (see {@link findBoostConflicts}). The compile
+ * step is admin-facing and bakes a shipped artifact, so an inconsistency must
+ * fail loudly rather than silently resolve to whichever entry happened to win;
+ * the web UI, by contrast, only warns. Carries the raw `conflicts` for callers
+ * that want to format them differently.
+ */
+export class BoostConflictError extends Error {
+  constructor(conflicts) {
+    const lines = conflicts.map((c) => '  - ' + formatBoostConflict(c));
+    super(
+      `Inconsistent boost list: ${conflicts.length} phrase(s) given conflicting boosts.\n`
+      + `${lines.join('\n')}\n`
+      + 'Fix the .txt so each phrase has a single weight/min-p, then recompile.',
+    );
+    this.name = 'BoostConflictError';
+    this.conflicts = conflicts;
+  }
+}
 
 /**
  * Augmentation-default baked into the compiled artifact: the value of the
@@ -94,6 +115,8 @@ export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
   const { prefixes } = parseBoostDirectives(raw);
   const augmentDefault = opts.augmentDefault ?? AUGMENT_DEFAULT;
   const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
+  const conflicts = findBoostConflicts(parsed);
+  if (conflicts.length) throw new BoostConflictError(conflicts);
   const entries = expandAugmentations(parsed, augmentDefault, prefixes);
   const { encoded, skipped } = encodePhrases(entries, encoder);
   return {
