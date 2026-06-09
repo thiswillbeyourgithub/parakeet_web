@@ -203,7 +203,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
   --model KEY              Model key for the architecture config (features /
                            subsampling). Default: the pipeline's default model.
   --quant int8|fp16|fp32   Encoder/decoder quantisation. Default int8. fp16 files
-                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py
+                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
   --ort wasm|node          ORT execution backend. Default: auto (wasm for int8,
@@ -212,7 +212,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            so the single-sidecar fp32 encoder ("File size > 2 GiB")
                            and any fp16 model need the native node backend, which
                            streams external data from disk. wasm can still load
-                           fp32 if the model dir is pre-sharded (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py,
+                           fp32 if the model dir is pre-sharded (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py,
                            each shard <2 GB).
 
 Decoding sweep (each is a comma-separated list; the grid is their product):

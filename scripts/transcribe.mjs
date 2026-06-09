@@ -253,7 +253,7 @@ Options:
                            Defaults to the HuggingFace cache for the model.
       --quant int8|fp16|fp32
                            Encoder/decoder quantisation. Default int8. fp16 files
-                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py
+                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32).
       --ort wasm|node      ORT backend. Default wasm (onnxruntime-web, the engine
                            the browser/e2e use). node = native onnxruntime-node
@@ -366,7 +366,7 @@ export function resolveModelDir(cliDir, repoId) {
   return snap;
 }
 
-// Per-quant filename suffix. fp16 files are produced by parakeet-tdt-0.6b-v3-smoothquant-onnx/quantize-fp16.py
+// Per-quant filename suffix. fp16 files are produced by parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
 // from the fp32 pieces; fp32 is the plain name (with an external .onnx.data for
 // the encoder); int8 is the onnxruntime-quantized variant shipped on HF.
 const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
@@ -403,7 +403,7 @@ export async function createSession(modelPath, opts, { ortMod = ort, fromPath = 
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
   // External weights live either in a single <model>.data sidecar (the upstream
-  // fp32 layout) or, for a sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py), in
+  // fp32 layout) or, for a sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), in
   // <model>.data.000, .001, ... each kept under 2 GB so no externalData buffer
   // trips the WASM ArrayBuffer / blob caps. Mount every matching file; the `path`
   // must equal the location string baked into the graph (the shard basename).

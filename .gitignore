@@ -29,7 +29,7 @@ bench_wer.md
 
 # E2E (tier 3) artifacts and local model weights (downloaded, never committed)
 fallback_models
-# Candidate symlink farm built by quantize-int8-smoothquant.py
+# Candidate symlink farm built by scripts/quantize-int8-smoothquant.py
 fallback_models_sq
 # Standalone HF model-repo folder (its own git repo + multi-GB LFS weights)
 parakeet-tdt-0.6b-v3-smoothquant-onnx

@@ -49,7 +49,7 @@ describe('listLocalRepoFiles', () => {
   });
 
   test('finds shards under a sharded/ subfolder and reports them as basenames', async () => {
-    // shard-fp32.py's default output puts the shards (and the rewritten encoder
+    // scripts/shard-fp32.py's default output puts the shards (and the rewritten encoder
     // graph) under sharded/. They are NOT flat under the base, so the flat probe
     // finds nothing and the sharded/ probe must pick them up, reported as bare
     // basenames so resolveModelQuant stays oblivious to the physical layout.

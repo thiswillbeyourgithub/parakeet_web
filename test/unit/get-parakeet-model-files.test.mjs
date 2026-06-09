@@ -76,7 +76,7 @@ const REPO_NO_FP16 = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
 ];
-// Sharded fp32 (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py): no single sidecar, two shards instead.
+// Sharded fp32 (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py): no single sidecar, two shards instead.
 const REPO_FP32_SHARDS = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001',
@@ -132,10 +132,10 @@ describe('getParakeetModel file selection: WASM', () => {
 });
 
 describe('getParakeetModel: sharded fp32 from a local mirror with a sharded/ subfolder', () => {
-  // shard-fp32.py's default output is a `sharded/` subfolder. A real Caddy mirror
+  // scripts/shard-fp32.py's default output is a `sharded/` subfolder. A real Caddy mirror
   // serves it at /models/sharded/... (the e2e serve.mjs fakes a flat rewrite that
   // production does NOT have). So the encoder graph + shards must be fetched from
-  // sharded/ while vocab + the int8 decoder (which shard-fp32.py does not copy
+  // sharded/ while vocab + the int8 decoder (which scripts/shard-fp32.py does not copy
   // into sharded/) stay at the flat root.
   let originalFetch2;
   beforeEach(() => { originalFetch2 = globalThis.fetch; });

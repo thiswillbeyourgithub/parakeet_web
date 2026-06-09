@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
 
   // Model weights: flat layout under /models, served from MODEL_DIR.
   //
-  // The sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/shard-fp32.py) lives in MODEL_DIR/sharded/:
+  // The sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) lives in MODEL_DIR/sharded/:
   // a rewritten encoder-model.onnx graph whose tensors point at the
   // encoder-model.onnx.data.NNN shards (each < 2 GB so the fp32 encoder can
   // ingest on WASM, exercised by transcription-fp32-wasm.spec.js). For exactly
@@ -84,7 +84,7 @@ const server = http.createServer((req, res) => {
   // single-sidecar encoder-model.onnx (external_data -> one 2.4 GB file WASM
   // cannot load); the sharded graph must win. Every other request (int8 weights,
   // vocab) is served straight from the root. When MODEL_DIR/sharded/ is absent
-  // (CI, or a checkout where shard-fp32.py was never run) the lookup falls
+  // (CI, or a checkout where scripts/shard-fp32.py was never run) the lookup falls
   // through to the root and the fp32 spec finds no shards and skips itself.
   if (pathname.startsWith('/models/')) {
     const rel = pathname.slice('/models'.length);
