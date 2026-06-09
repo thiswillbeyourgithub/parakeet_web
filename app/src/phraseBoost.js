@@ -397,6 +397,60 @@ export function parseBoostPhrases(raw) {
 }
 
 /**
+ * Find phrases that appear more than once with *actively incompatible* boost
+ * settings: the same phrase text mapped to two different effective boosts (a
+ * different weight or a different min-p gate). This is deliberately NOT a plain
+ * duplicate check: repeating a line verbatim (same phrase, same weight AND
+ * min-p, even with a different `:AUG` flag, since augmentation only widens the
+ * surface forms and never contradicts the boost) is harmless and ignored. Only
+ * a genuine contradiction (e.g. `venlafaxine:5` and `venlafaxine:-5`, where one
+ * boosts and the other penalises the same term) is reported.
+ *
+ * Single source of truth for both surfaces: the web UI shows these as a
+ * non-fatal warning (a hand-editing user is nudged to fix the list), while the
+ * compile step ({@link compileBoostText}) hard-fails on a non-empty result so an
+ * admin cannot ship an inconsistent curated list.
+ * @param {Array<{phrase: string, weight: number, minp: number}>} entries
+ *   Parsed entries with concrete weight/min-p (e.g. {@link parseBoostPhrases} output).
+ * @returns {Array<{phrase: string, settings: Array<{weight: number, minp: number}>}>}
+ *   One entry per conflicting phrase, with the distinct (weight, min-p) settings
+ *   it was given (in first-seen order); empty when the list is consistent.
+ */
+export function findBoostConflicts(entries) {
+  const byPhrase = new Map();
+  for (const { phrase, weight, minp } of entries) {
+    if (!phrase) continue;
+    let settings = byPhrase.get(phrase);
+    if (!settings) { settings = new Map(); byPhrase.set(phrase, settings); }
+    const key = `${weight} ${minp}`;
+    if (!settings.has(key)) settings.set(key, { weight, minp });
+  }
+  const conflicts = [];
+  for (const [phrase, settings] of byPhrase) {
+    if (settings.size > 1) conflicts.push({ phrase, settings: [...settings.values()] });
+  }
+  return conflicts;
+}
+
+/**
+ * Render one {@link findBoostConflicts} entry as a human-readable line. Reports
+ * the conflicting weights when those differ (the common case, e.g. a sign flip),
+ * otherwise the conflicting min-p gates. Shared by the UI warning and the
+ * compile-step error so the wording stays identical.
+ * @param {{phrase: string, settings: Array<{weight: number, minp: number}>}} conflict
+ * @returns {string}
+ */
+export function formatBoostConflict(conflict) {
+  const { phrase, settings } = conflict;
+  const weights = [...new Set(settings.map((s) => s.weight))];
+  if (weights.length > 1) {
+    return `"${phrase}" given conflicting weights (${weights.join(', ')})`;
+  }
+  const minps = [...new Set(settings.map((s) => s.minp))];
+  return `"${phrase}" given conflicting min-p gates (${minps.join(', ')})`;
+}
+
+/**
  * Whether a proclitic `prefix` may attach to `form`. A prefix ending in an
  * apostrophe (straight `'` or curly `’`) is an elision and only attaches before
  * a vowel or French silent `h` (so `l'amoxicilline` but never `l'beta`); any

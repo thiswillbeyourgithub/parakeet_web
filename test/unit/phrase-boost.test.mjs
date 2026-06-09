@@ -13,7 +13,7 @@ import { BpeEncoder, buildVocabToId } from '../../app/src/bpeEncoder.js';
 import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
-  isDefaultsLine, resolveBoostLines,
+  isDefaultsLine, resolveBoostLines, findBoostConflicts, formatBoostConflict,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -62,6 +62,43 @@ describe('parseBoostPhrases', () => {
   test(':fa is canonicalised', () => assert.ok(fl[8].phrase === 'i' && fl[8].augment === 'fa'));
   test(':h sets symbol-strip flag only', () => assert.ok(fl[9].phrase === 'j' && fl[9].augment === 'h'));
   test(':hpf is canonicalised to f,p,h order', () => assert.ok(fl[10].phrase === 'k' && fl[10].augment === 'fph'));
+});
+
+describe('findBoostConflicts (actively-incompatible duplicates)', () => {
+  test('same phrase with opposite-sign weights is a conflict', () => {
+    const c = findBoostConflicts(parseBoostPhrases('venlafaxine:5\nvenlafaxine:-5'));
+    assert.equal(c.length, 1);
+    assert.equal(c[0].phrase, 'venlafaxine');
+    assert.deepEqual(c[0].settings.map(s => s.weight), [5, -5]);
+  });
+
+  test('same phrase with different magnitudes is a conflict', () => {
+    const c = findBoostConflicts(parseBoostPhrases('foo:5\nfoo:3'));
+    assert.equal(c.length, 1);
+  });
+
+  test('different min-p for the same weight is a conflict', () => {
+    const c = findBoostConflicts(parseBoostPhrases('foo:5:0.1\nfoo:5:0.3'));
+    assert.equal(c.length, 1);
+    assert.match(formatBoostConflict(c[0]), /min-p/);
+  });
+
+  test('a verbatim duplicate (same weight AND min-p) is NOT a conflict', () => {
+    assert.equal(findBoostConflicts(parseBoostPhrases('foo:5\nfoo:5')).length, 0);
+  });
+
+  test('same weight/min-p but different :AUG is NOT a conflict', () => {
+    assert.equal(findBoostConflicts(parseBoostPhrases('foo:5:0.2:f\nfoo:5:0.2:a')).length, 0);
+  });
+
+  test('distinct phrases never conflict', () => {
+    assert.equal(findBoostConflicts(parseBoostPhrases('foo:5\nbar:-5')).length, 0);
+  });
+
+  test('formatBoostConflict reports the conflicting weights', () => {
+    const [c] = findBoostConflicts(parseBoostPhrases('venlafaxine:5\nvenlafaxine:-5'));
+    assert.equal(formatBoostConflict(c), '"venlafaxine" given conflicting weights (5, -5)');
+  });
 });
 
 describe('parseBoostDirectives (only #!prefixes survives)', () => {
