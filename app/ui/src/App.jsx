@@ -20,7 +20,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT, FULL_AUGMENT } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge } from './lib/format.js';
@@ -626,14 +626,11 @@ export default function App() {
   // unrelated state), and the strength slider just mutates trie.strength.
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
-  // Global default for surface-form augmentation (OFF by default): when ON, each
-  // typed phrase is expanded with the full FULL_AUGMENT set (Title Case, ALL
-  // CAPS, proclitic prefixes) before encoding, so e.g. "venlafaxine" also boosts
-  // "Venlafaxine"/"VENLAFAXINE" and "amoxicilline" also boosts "l'amoxicilline"
-  // (the BPE encoder is case-sensitive, so each form is a distinct token
-  // sequence / trie branch). A per-phrase `:AUG` suffix overrides this. See
+  // Surface-form augmentation (Title Case, ALL CAPS, proclitic prefixes,
+  // symbol-stripped forms) is opt-in per phrase via the `:AUG` field, or list-wide
+  // via a `*:::AUG` defaults line; there is no global UI toggle. The BPE encoder is
+  // case-sensitive, so each form is a distinct token sequence / trie branch. See
   // expandAugmentations.
-  const [boostAugment, setBoostAugment] = useState(false);
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
   // True while a long phrase list is (re)encoding+building so the header status
@@ -1122,8 +1119,6 @@ export default function App() {
           savedBoostStrength,
           savedBoostSource,
           savedBoostCustomText,
-          savedBoostAugment,
-          savedBoostCaseInsensitiveLegacy,
           savedSectionsOpen,
         ] = await Promise.all([
           loadSetting('backend', null),
@@ -1165,10 +1160,6 @@ export default function App() {
           // / VITE_PHRASE_BOOST_DEFAULT; an explicit Custom choice is honoured.
           loadSetting('boostSource', null),
           loadSetting('boostCustomText', ''),
-          // New "Augment" toggle key; null means never set so the legacy
-          // `boostCaseInsensitive` value below can seed it for returning users.
-          loadSetting('boostAugment', null),
-          loadSetting('boostCaseInsensitive', false),
           loadSetting('settingsSectionsOpen', {}),
         ]);
         if (booted) return; // watchdog won while we awaited; skip the stale restore
@@ -1237,9 +1228,6 @@ export default function App() {
         setBoostPhrases(restoredSource === BOOST_SOURCE_CUSTOM && typeof savedBoostPhrases === 'string'
           ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
-        // Prefer the new key; fall back to the legacy boostCaseInsensitive so a
-        // returning user's "Boost all casings" choice carries over to "Augment".
-        setBoostAugment((savedBoostAugment ?? savedBoostCaseInsensitiveLegacy) === true);
         {
           const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
           // Migration: pre-feature profiles have no boostCustomText but may
@@ -1633,7 +1621,6 @@ export default function App() {
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
   usePersistedSetting('boostStrength', boostStrength, settingsLoaded);
-  usePersistedSetting('boostAugment', boostAugment, settingsLoaded);
   usePersistedSetting('boostSource', boostSource, settingsLoaded);
   usePersistedSetting('boostCustomText', boostCustomText, settingsLoaded);
   usePersistedSetting('settingsSectionsOpen', sectionsOpen, settingsLoaded);
@@ -1928,23 +1915,22 @@ export default function App() {
     // load / recording transition, not just once.
     const pre = prebuiltBoostRef.current;
     const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
-    // A `*` defaults line or per-phrase `:AUG` (resolved in parseBoostPhrases)
-    // sets augmentation from the list text itself; this global default is just
-    // the UI "Augment" toggle, applied to phrases that specify neither. Parse
-    // directives for the `#!prefixes` the `p` flag uses.
+    // Augmentation is opt-in from the list text itself: a per-phrase `:AUG` field
+    // (resolved in parseBoostPhrases) or a `*:::AUG` defaults line. There is no
+    // global default, so the baseline here is empty. Parse directives for the
+    // `#!prefixes` the `p` flag uses.
     const directives = parseBoostDirectives(boostPhrases);
-    const augmentDefault = boostAugment ? FULL_AUGMENT : '';
-    // The prebuilt encoding bakes in the augmentation expansion at the global
-    // default it was built with; selectPrebuilt() validates text + vocab +
-    // augment toggle and, when rejected, explains why (see its docstring).
+    const augmentDefault = '';
+    // The prebuilt encoding bakes in the augmentation expansion; selectPrebuilt()
+    // validates text + vocab + augment default and, when rejected, explains why
+    // (see its docstring).
     const { usePrebuilt, reasons: prebuiltRejectReasons } = selectPrebuilt(pre, {
       text: boostPhrases, vocabSig: sig, augmentDefault,
     });
     // Augmentation expansion: turn each augmented phrase into one entry per
     // surface form so the case-sensitive encoder gets a trie branch for each.
-    // Only needed on the encode path; a per-phrase `:AUG` flag can opt a phrase
-    // in even when the global default is off (and `:s` can opt one out when it is
-    // on). The list's own `#!prefixes` directive drives the `p` flag.
+    // Only needed on the encode path; a per-phrase `:AUG` flag opts a phrase in.
+    // The list's own `#!prefixes` directive drives the `p` flag.
     const entries = usePrebuilt
       ? null
       : expandAugmentations(phraseEntries, augmentDefault, directives.prefixes);
@@ -1997,7 +1983,7 @@ export default function App() {
       }
     }, BOOST_REBUILD_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(timer); if (showSpinner) setBoostRebuilding(false); };
-  }, [boostPhrases, boostParsed, boostAugment, tokenizerVocabSig, encodeBoostPhrases]);
+  }, [boostPhrases, boostParsed, tokenizerVocabSig, encodeBoostPhrases]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {
@@ -4779,15 +4765,6 @@ export default function App() {
                   }}
                 />
               )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                <input
-                  type="checkbox"
-                  checked={boostAugment}
-                  onChange={e => setBoostAugment(e.target.checked)}
-                />
-                {t('boostAugment')}
-                <InfoTooltip text={t('tooltipBoostAugment')} />
-              </label>
               {boostWarnings.length > 0 && (
                 <p style={{
                   fontSize: '0.78rem', color: '#b45309', margin: 0,
