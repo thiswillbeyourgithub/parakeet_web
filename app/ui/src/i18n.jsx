@@ -213,7 +213,7 @@ const translations = {
     devModeBanner: '\u26a0\ufe0f Development version: this instance is under active development. Expect bugs, instability, and frequent changes.',
     // {age} is a localized relative time like "3 hours ago" (see the age* keys);
     // the banner renders a GitHub issues link between Intro and Outro.
-    devModeBannerIntro: '\u26a0\ufe0f Development version: this instance is under active development and was last restarted {age}, so it may be temporarily broken. Expect bugs, instability, and frequent changes. Please come back in a few hours, and if a problem persists, ',
+    devModeBannerIntro: '\u26a0\ufe0f Development version: this instance is under active development and was last restarted {age}, so it may be temporarily broken. Expect bugs, instability, and frequent changes. If you run into an issue, please come back in a few hours (the latest changes may not have been tested yet), and if the problem persists, ',
     devModeBannerIssueLink: 'open a GitHub issue',
     devModeBannerOutro: '.',
     ageJustNow: 'just now',
@@ -549,7 +549,7 @@ const translations = {
     devModeBanner: "\u26a0\ufe0f Version de d\u00e9veloppement : cette instance est en cours de d\u00e9veloppement actif. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents.",
     // {age} est un temps relatif localis\u00e9 comme \u00ab il y a 3 heures \u00bb (voir les cl\u00e9s age*) ;
     // la banni\u00e8re ins\u00e8re un lien vers les issues GitHub entre Intro et Outro.
-    devModeBannerIntro: "\u26a0\ufe0f Version de d\u00e9veloppement : cette instance est en cours de d\u00e9veloppement actif et a \u00e9t\u00e9 red\u00e9marr\u00e9e {age}, elle est donc peut-\u00eatre temporairement cass\u00e9e. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents. Revenez dans quelques heures, et si un probl\u00e8me persiste, ",
+    devModeBannerIntro: "\u26a0\ufe0f Version de d\u00e9veloppement : cette instance est en cours de d\u00e9veloppement actif et a \u00e9t\u00e9 red\u00e9marr\u00e9e {age}, elle est donc peut-\u00eatre temporairement cass\u00e9e. Attendez-vous \u00e0 des bugs, de l'instabilit\u00e9 et des changements fr\u00e9quents. En cas de probl\u00e8me, revenez dans quelques heures (les derniers changements n'ont peut-\u00eatre pas encore \u00e9t\u00e9 test\u00e9s), et si le probl\u00e8me persiste, ",
     devModeBannerIssueLink: 'ouvrez une issue GitHub',
     devModeBannerOutro: '.',
     ageJustNow: "\u00e0 l'instant",
