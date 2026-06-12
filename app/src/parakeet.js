@@ -796,40 +796,47 @@ export class ParakeetModel {
    * score and land on `t + frameStride`, leaving its score incomparable to
    * NeMo's and its landing frame wrong whenever the argmax duration is > 1.
    *
-   * Mutates `child` in place: bumps `score` and resets `t` to the closure frame.
-   * `overallLogProb` (the token-only confidence accumulator) is left untouched
-   * because the closing blank emits no token, matching greedy semantics. The
-   * joiner state minted here is a throwaway (a blank does not advance the
-   * decoder), so it is disposed; `child` keeps its post-emit state.
-   * @param {object} child Post-emit child hypothesis (carries the new state/lastTok).
-   * @param {number} parentT Frame the emission happened on (the closure frame).
+   * Mutates each `child` in place: bumps `score` and resets `t` to the closure
+   * frame. `overallLogProb` (the token-only confidence accumulator) is left
+   * untouched because the closing blank emits no token, matching greedy
+   * semantics. The joiner states minted here are throwaways (a blank does not
+   * advance the decoder), so they are disposed; each child keeps its post-emit
+   * state.
+   *
+   * All the closures of one expansion step share the same frame, so they are
+   * scored with ONE batched joiner call (`_runCombinedStepBatch`) instead of a
+   * serial batch-1 call per child.
+   * @param {Array<object>} children Post-emit child hypotheses (each carries
+   *   its new state/lastTok).
+   * @param {number} parentT Frame the emissions happened on (the closure frame).
    * @param {Float32Array} transposed
    * @param {number} D
    */
-  async _applyBlankClosure(child, parentT, transposed, D) {
-    const frameBuf = transposed.subarray(parentT * D, (parentT + 1) * D);
-    const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
-    const { tokenLogits, durLogits, newState, _logitsTensor } =
-      await this._runCombinedStep(encTensor, child.lastTok, child.state);
+  async _applyBlankClosureBatch(children, parentT, transposed, D) {
+    const entries = children.map((ch) => ({ t: parentT, lastTok: ch.lastTok, state: ch.state }));
+    const outs = await this._runCombinedStepBatch(entries, transposed, D);
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
 
-    const blankLogp = tokenLogits[this.blankId] - this._logSumExp(tokenLogits);
+      const blankLogp = tokenLogits[this.blankId] - this._logSumExp(tokenLogits);
 
-    // Argmax duration, forced to the smallest non-zero index so the closing
-    // blank always advances the frame (NeMo's min_non_zero_duration_idx == 1
-    // under this model's identity-indexed duration head).
-    let bestIdx = 0, bestVal = -Infinity;
-    for (let d = 0; d < durLogits.length; d++) {
-      if (durLogits[d] > bestVal) { bestVal = durLogits[d]; bestIdx = d; }
+      // Argmax duration, forced to the smallest non-zero index so the closing
+      // blank always advances the frame (NeMo's min_non_zero_duration_idx == 1
+      // under this model's identity-indexed duration head).
+      let bestIdx = 0, bestVal = -Infinity;
+      for (let d = 0; d < durLogits.length; d++) {
+        if (durLogits[d] > bestVal) { bestVal = durLogits[d]; bestIdx = d; }
+      }
+      if (bestIdx === 0) bestIdx = durLogits.length > 1 ? 1 : 0;
+      const durLogp = durLogits[bestIdx] - this._logSumExp(durLogits);
+
+      child.score += blankLogp + durLogp;
+      child.t = parentT + bestIdx;
+
+      _logitsTensor?.dispose?.();
+      if (newState) this._disposeDecoderState(newState);
     }
-    if (bestIdx === 0) bestIdx = durLogits.length > 1 ? 1 : 0;
-    const durLogp = durLogits[bestIdx] - this._logSumExp(durLogits);
-
-    child.score += blankLogp + durLogp;
-    child.t = parentT + bestIdx;
-
-    _logitsTensor?.dispose?.();
-    encTensor.dispose?.();
-    if (newState) this._disposeDecoderState(newState);
   }
 
   /**
@@ -862,6 +869,16 @@ export class ParakeetModel {
    * per-emission search bias applied during expansion, not re-applied here). All
    * decoder states allocated while scoring are throwaway and disposed; the
    * hypotheses' own stored states are never touched (scores only are updated).
+   *
+   * Runs in three passes so the joiner work batches: collect every
+   * (long, short) pair first (pure), then score all extensions in LOCKSTEP
+   * (one `_runCombinedStepBatch` call advances every still-active extension by
+   * one token; a chain step depends on its predecessor's decoder state, but
+   * distinct pairs are independent; at the NeMo-default alpha 1 every
+   * extension is a single token, so a frame's pairs cost ONE batched call),
+   * then fold the scores in the original pair order. Scoring never reads the
+   * scores this search updates (only the short side's stored state/lastTok and
+   * the long side's token ids), so the deferred folds are exact.
    * @param {Array<object>} beam
    * @param {Float32Array} transposed
    * @param {number} D
@@ -878,12 +895,13 @@ export class ParakeetModel {
       if (g) g.push(h); else byFrame.set(h.t, [h]);
     }
 
+    // Pass 1 (pure): collect the recombination pairs and their extensions.
+    const jobs = [];
     for (const [t, group] of byFrame) {
       if (group.length < 2) continue;
       const entries = group.map(h => ({ hyp: h, ids: this._hypIds(h) }));
       // Longest first so a long hypothesis can absorb every shorter prefix.
       entries.sort((a, b) => b.ids.length - a.ids.length);
-      const frameBuf = transposed.subarray(t * D, (t + 1) * D);
 
       for (let i = 0; i < entries.length; i++) {
         const longE = entries[i];
@@ -900,27 +918,47 @@ export class ParakeetModel {
 
           // Score the extension tokens (forced) from the short hypothesis'
           // decoder state, all at duration 0 on frame `t`.
-          const extension = longE.ids.slice(shortE.ids.length);
-          let state = shortE.hyp.state;
-          let prevTok = shortE.hyp.lastTok;
-          let extLogp = 0;
-          for (const tok of extension) {
-            const enc = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
-            const { tokenLogits, durLogits, newState, _logitsTensor } =
-              await this._runCombinedStep(enc, prevTok, state);
-            extLogp += (tokenLogits[tok] - this._logSumExp(tokenLogits))
-              + (durLogits[0] - this._logSumExp(durLogits));
-            _logitsTensor?.dispose?.();
-            enc.dispose?.();
-            if (state !== shortE.hyp.state) this._disposeDecoderState(state);
-            state = newState;
-            prevTok = tok;
-          }
-          if (state !== shortE.hyp.state) this._disposeDecoderState(state);
-
-          longE.hyp.score = this._logAddExp(longE.hyp.score, shortE.hyp.score + extLogp);
+          jobs.push({
+            long: longE.hyp, short: shortE.hyp, t,
+            extension: longE.ids.slice(shortE.ids.length),
+            k: 0, extLogp: 0,
+            state: shortE.hyp.state, prevTok: shortE.hyp.lastTok,
+          });
         }
       }
+    }
+    if (!jobs.length) return;
+
+    // Pass 2: lockstep-batched extension scoring.
+    let active = jobs;
+    while (active.length) {
+      const outs = await this._runCombinedStepBatch(
+        active.map((job) => ({ t: job.t, lastTok: job.prevTok, state: job.state })), transposed, D);
+      const next = [];
+      for (let i = 0; i < active.length; i++) {
+        const job = active[i];
+        const tok = job.extension[job.k];
+        const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
+        job.extLogp += (tokenLogits[tok] - this._logSumExp(tokenLogits))
+          + (durLogits[0] - this._logSumExp(durLogits));
+        _logitsTensor?.dispose?.();
+        if (job.state !== job.short.state) this._disposeDecoderState(job.state);
+        job.state = newState;
+        job.prevTok = tok;
+        if (++job.k < job.extension.length) {
+          next.push(job);
+        } else if (job.state !== job.short.state) {
+          this._disposeDecoderState(job.state);
+        }
+      }
+      active = next;
+    }
+
+    // Pass 3: fold each short prefix's mass into its extension, in the same
+    // pair order the serial nested loops used (folds onto the same long
+    // hypothesis accumulate in inner-pair order).
+    for (const job of jobs) {
+      job.long.score = this._logAddExp(job.long.score, job.short.score + job.extLogp);
     }
   }
 
@@ -946,7 +984,7 @@ export class ParakeetModel {
    * serial batch-1 calls were the decode bottleneck) and re-expands zero-duration
    * emissions on the same frame while sending duration>0 children to the future pool; a
    * zero-duration emission that exhausts the `maesNumSteps` budget is closed with
-   * NeMo's implicit best-duration blank (see `_applyBlankClosure`) rather than a
+   * NeMo's implicit best-duration blank (see `_applyBlankClosureBatch`) rather than a
    * bare advance; then duplicate-merge over the pool and prune to `beamWidth`.
    *
    * MAES knobs (defaults match NeMo): `beamWidth` is the global beam cap;
@@ -1033,6 +1071,8 @@ export class ParakeetModel {
           // stay per-hypothesis below, in the same order as the old serial
           // loop, so the decode is unchanged.
           const stepOuts = await this._runCombinedStepBatch(working, transposed, D);
+          const children = [];       // this step's children, in expansion order
+          const pendingClosure = []; // children owed the last-mAES-step blank closure
           for (let i = 0; i < working.length; i++) {
             const hyp = working[i];
             const { cands, newState } = this._expandHyp(hyp, stepOuts[i], expandOpts);
@@ -1044,21 +1084,30 @@ export class ParakeetModel {
               // implicit best-duration blank instead of a bare one-frame advance,
               // so its score and landing frame match
               // modified_adaptive_expansion_search. The cap condition mirrors
-              // _advanceDecision's forced-advance branch exactly.
+              // _advanceDecision's forced-advance branch exactly. Closures are
+              // deferred so the whole step shares one batched joiner call (every
+              // working hypothesis sits on timeIdx, so they all share the
+              // closure frame); routing below waits for the closed `t`/`score`.
               if (c.emit && c.step === 0 && hyp.emittedAtFrame + 1 >= maesNumSteps) {
-                await this._applyBlankClosure(child, hyp.t, transposed, D);
+                pendingClosure.push(child);
               }
-              if (child.t >= Tenc) {
-                // Finished: keep only the running best (finished scores are final).
-                if (best === null || child.score > best.score) {
-                  if (best) disposable.add(best.state); // old best may now be free
-                  best = child;
-                }
-              } else if (child.t > timeIdx) {
-                produced.push(child);
-              } else {
-                stayed.push(child); // emitted at duration 0: still on this frame
+              children.push(child);
+            }
+          }
+          if (pendingClosure.length) {
+            await this._applyBlankClosureBatch(pendingClosure, timeIdx, transposed, D);
+          }
+          for (const child of children) {
+            if (child.t >= Tenc) {
+              // Finished: keep only the running best (finished scores are final).
+              if (best === null || child.score > best.score) {
+                if (best) disposable.add(best.state); // old best may now be free
+                best = child;
               }
+            } else if (child.t > timeIdx) {
+              produced.push(child);
+            } else {
+              stayed.push(child); // emitted at duration 0: still on this frame
             }
           }
           // Bound the zero-duration fan-out the same way the beam is bounded.

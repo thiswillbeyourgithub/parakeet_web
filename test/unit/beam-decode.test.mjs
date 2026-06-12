@@ -80,7 +80,7 @@ function makeModel(script) {
     _logAddExp: proto._logAddExp,
     _topK: proto._topK,
     _expandHyp: proto._expandHyp,
-    _applyBlankClosure: proto._applyBlankClosure,
+    _applyBlankClosureBatch: proto._applyBlankClosureBatch,
     _prefixSearch: proto._prefixSearch,
     _hypIds: proto._hypIds,
     _decodeBeam: proto._decodeBeam,
@@ -335,10 +335,10 @@ describe('prefix-search recombination (#2)', () => {
     const long = { parent: short, emit: true, id: 1, t: 3, lastTok: 1, state: { tag: 'L' }, score: longScore };
     return { root, short, long, beam: [long, short] };
   }
-  function expectedExtLogp(model) {
+  function expectedExtLogp(model, tok = 1) {
     const lg = Float32Array.from(pScript[3].logits);
     const dl = Float32Array.from(pScript[3].durLogits);
-    return (lg[1] - model._logSumExp(lg)) + (dl[0] - model._logSumExp(dl));
+    return (lg[tok] - model._logSumExp(lg)) + (dl[0] - model._logSumExp(dl));
   }
 
   test('folds the prefix score into its extension via log-sum-exp', async () => {
@@ -372,16 +372,46 @@ describe('prefix-search recombination (#2)', () => {
     await model._prefixSearch([hypA, hypB], makeTransposed(4), D, { maesPrefixAlpha: 1 });
     assert.ok(close(hypA.score, aOrig) && close(hypB.score, bOrig), 'unrelated sequences are not recombined');
   });
+
+  test('scores multiple prefix pairs in one batched joiner call', async () => {
+    // Two independent (long, short) pairs on the SAME frame: "0"<"0,1" and
+    // "3"<"3,2". The lockstep scorer must run both extensions in ONE batched
+    // call and fold each pair exactly as the serial path would.
+    const model = makeModel(pScript);
+    const root = { parent: null, emit: false, id: null };
+    // Batched gather reads each short hypothesis' LSTM state, so use real
+    // fake tensors (long states are never read).
+    const mkHyp = (parent, id, score) => ({
+      parent, emit: true, id, t: 3, lastTok: id, score,
+      state: { state1: fakeState(), state2: fakeState() },
+    });
+    const short1 = mkHyp(root, 0, -0.4);
+    const long1 = mkHyp(short1, 1, -1.2);
+    const short2 = mkHyp(root, 3, -0.6);
+    const long2 = mkHyp(short2, 2, -1.5);
+    maxBatch = 0;
+    statesCreated = statesDisposed = 0;
+
+    await model._prefixSearch([long1, short1, long2, short2], makeTransposed(4), D, { maesPrefixAlpha: 1 });
+
+    assert.equal(maxBatch, 2, 'both extensions shared one batched joiner call');
+    assert.ok(close(long1.score, model._logAddExp(-1.2, -0.4 + expectedExtLogp(model, 1))), 'first pair folded');
+    assert.ok(close(long2.score, model._logAddExp(-1.5, -0.6 + expectedExtLogp(model, 2))), 'second pair folded');
+    assert.ok(close(short1.score, -0.4) && close(short2.score, -0.6), 'short (prefix) scores unchanged');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'extension states disposed, short states kept');
+  });
 });
 
 describe('last-mAES-step blank closure (#closure)', () => {
-  // _applyBlankClosure implements NeMo's modified_adaptive_expansion_search
+  // _applyBlankClosureBatch implements NeMo's modified_adaptive_expansion_search
   // n == maes_num_steps-1 branch: a non-blank zero-duration emission that
   // exhausts the per-frame symbol budget is closed with an implicit blank. The
   // closure must (a) advance by the argmax (forced non-zero) TDT duration and
   // (b) add logp(blank)+logp(best_dur) to the score, while leaving
   // overallLogProb (token-only confidence) untouched. A bare one-frame advance
   // (the pre-fix behaviour) gets both the score and the landing frame wrong.
+  // A step's closures all share the parent frame, so they run as ONE batched
+  // joiner call.
   const PARENT_T = 3;
 
   // NeMo-faithful expected (scoreDelta, bestIdx) for a frame's token+duration
@@ -412,7 +442,7 @@ describe('last-mAES-step blank closure (#closure)', () => {
     const origScore = child.score, origOverall = child.overallLogProb;
     statesCreated = statesDisposed = 0;
 
-    await model._applyBlankClosure(child, PARENT_T, makeTransposed(PARENT_T + 1), D);
+    await model._applyBlankClosureBatch([child], PARENT_T, makeTransposed(PARENT_T + 1), D);
 
     const { scoreDelta, bestIdx } = expectClosure(model, lg, dl);
     assert.equal(bestIdx, 2, 'argmax duration is index 2');
@@ -431,13 +461,40 @@ describe('last-mAES-step blank closure (#closure)', () => {
     const origScore = child.score;
     statesCreated = statesDisposed = 0;
 
-    await model._applyBlankClosure(child, PARENT_T, makeTransposed(PARENT_T + 1), D);
+    await model._applyBlankClosureBatch([child], PARENT_T, makeTransposed(PARENT_T + 1), D);
 
     const { scoreDelta, bestIdx } = expectClosure(model, lg, dl);
     assert.equal(bestIdx, 1, 'zero-duration argmax falls back to min non-zero index 1');
     assert.ok(close(child.score, origScore + scoreDelta), 'score uses the fallback (index 1) duration logp');
     assert.equal(child.t, PARENT_T + 1, 'advances by 1 frame (the min non-zero duration)');
     assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'closure joiner state disposed');
+  });
+
+  test('closes multiple children in one batched joiner call', async () => {
+    const lg = [-1.0, 0.5, -2.0, -20, -20, -0.3];
+    const dl = [0.0, 0.2, 2.5]; // argmax index 2
+    const script = []; script[PARENT_T] = { logits: lg, durLogits: dl, step: 0 };
+    const model = makeModel(script);
+    // Batched gather reads each child's LSTM state, so use real fake tensors.
+    const mkChild = (lastTok, score) => ({
+      emit: true, id: lastTok, lastTok,
+      state: { state1: fakeState(), state2: fakeState() },
+      t: PARENT_T + 1, score, overallLogProb: -0.9,
+    });
+    const childA = mkChild(1, -1.7);
+    const childB = mkChild(2, -2.4);
+    statesCreated = statesDisposed = 0;
+    maxBatch = 0;
+
+    await model._applyBlankClosureBatch([childA, childB], PARENT_T, makeTransposed(PARENT_T + 1), D);
+
+    const { scoreDelta } = expectClosure(model, lg, dl);
+    assert.equal(maxBatch, 2, 'both closures shared one batched joiner call');
+    assert.ok(close(childA.score, -1.7 + scoreDelta), 'first child gains logp(blank)+logp(best_dur)');
+    assert.ok(close(childB.score, -2.4 + scoreDelta), 'second child gains logp(blank)+logp(best_dur)');
+    assert.equal(childA.t, PARENT_T + 2);
+    assert.equal(childB.t, PARENT_T + 2);
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'both throwaway joiner states disposed');
   });
 
   test('fires within _decodeBeam on a zero-duration burst and stays leak-safe', async () => {
@@ -451,8 +508,8 @@ describe('last-mAES-step blank closure (#closure)', () => {
       { logits: [-20, -20, -20, -20, -20, 4.0], step: 1, durLogits: [-20, 2.0, -20] }, // f1: blank, dur1 -> finish
     ];
     const model = makeModel(burst);
-    let closureCalls = 0;
-    model._applyBlankClosure = (...args) => { closureCalls++; return proto._applyBlankClosure.apply(model, args); };
+    let closureCalls = 0; // children closed (the batch may close several at once)
+    model._applyBlankClosureBatch = (...args) => { closureCalls += args[0].length; return proto._applyBlankClosureBatch.apply(model, args); };
     statesCreated = statesDisposed = 0;
     await model._decodeBeam(makeTransposed(2), D, 2, {
       beamWidth: 4, temperature: 1.0, frameStride: 1, phraseBoost: null,
@@ -660,6 +717,51 @@ describe('batched joiner expansion (#batch)', () => {
     for (let i = 0; i < serial.tokenTimes.length; i++) {
       assert.ok(eqFloatArr(batched.tokenTimes[i], serial.tokenTimes[i]), `tokenTimes[${i}] match`);
     }
+  });
+
+  test('batched decode == serial decode on a zero-duration burst (closures fire)', async () => {
+    // Frames favouring duration 0 make zero-duration emissions hit the
+    // maesNumSteps cap, so the deferred batched blank closures fire (the
+    // previous test's script never emits at duration 0). The batched run must
+    // still reproduce the serial per-hypothesis loop exactly.
+    const zScript = [];
+    for (let t = 0; t < 12; t++) {
+      const logits = [0.2, 0.2, 0.2, 0.2, 0.2, 0.2];
+      logits[t % 5] = 2.2;
+      logits[(t + 1) % 5] = 1.4;
+      if (t % 5 === 4) logits[BLANK] = 2.0;
+      // Every third frame favours duration 0 so the symbol cap triggers closures.
+      zScript.push({ logits, step: 1, durLogits: (t % 3 === 0) ? [1.2, 0.6, -20] : [-20, 0.8, 0.2] });
+    }
+    const beamOpts = {
+      beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: true, returnConfidences: true, timeStride: 0.08,
+      maesNumSteps: 2, maesExpansionBeta: 3, maesExpansionGamma: 4.0, maesPrefixAlpha: 1,
+    };
+
+    const serialModel = makeModel(zScript);
+    serialModel._runCombinedStepBatch = async function (hyps, transposed, dim) {
+      const outs = [];
+      for (const h of hyps) {
+        const enc = new fakeOrt.Tensor('float32', transposed.subarray(h.t * dim, (h.t + 1) * dim), [1, dim, 1]);
+        outs.push(await this._runCombinedStep(enc, h.lastTok, h.state));
+      }
+      return outs;
+    };
+    const serial = await serialModel._decodeBeam(makeTransposed(12), D, 12, beamOpts);
+
+    statesCreated = statesDisposed = 0;
+    const batchedModel = makeModel(zScript);
+    let closedChildren = 0;
+    batchedModel._applyBlankClosureBatch = (...args) => { closedChildren += args[0].length; return proto._applyBlankClosureBatch.apply(batchedModel, args); };
+    const batched = await batchedModel._decodeBeam(makeTransposed(12), D, 12, beamOpts);
+
+    assert.ok(closedChildren > 0, 'blank closures fired during the batched decode');
+    assert.ok(batched.ids.length > 0, 'produced a non-empty transcript');
+    assert.ok(eqArr(batched.ids, serial.ids), 'ids match the serial decode');
+    assert.ok(close(batched.overallLogProb, serial.overallLogProb), 'overallLogProb matches');
+    assert.ok(eqFloatArr(batched.frameConfs, serial.frameConfs), 'frameConfs match');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak with closures batched');
   });
 });
 
