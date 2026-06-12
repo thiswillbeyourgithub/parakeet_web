@@ -312,6 +312,136 @@ export class ParakeetModel {
   }
 
   /**
+   * Run the combined decoder+joiner over a BATCH of beam hypotheses in one
+   * `joinerSession.run` call (one batch row per hypothesis) instead of
+   * `hyps.length` serial batch-1 calls. A batch-1 joiner call is almost pure
+   * per-call overhead (its matmuls are too small for ORT's intra-op threads),
+   * so the serial loop was the MAES bottleneck: on the int8 decoder_joint one
+   * batch-10 call costs ~1/6th of 10 serial batch-1 calls.
+   *
+   * Gather: each hypothesis contributes its encoder frame (`encoder_outputs`
+   * row), its last token (`targets` row) and its LSTM state. The state inputs
+   * are [layers, B, hidden], so a hypothesis is a COLUMN: its per-layer rows
+   * land at offset (layer*B + b)*hidden. A null state falls back to the shared
+   * zero state, exactly like `_runCombinedStep`.
+   *
+   * Scatter: the batched logits and output states are copied back out
+   * per-hypothesis (the row copy lets the batched ORT tensors be disposed
+   * before returning, so no caller ever holds a view into a freed buffer).
+   * Each result entry matches the `_runCombinedStep` contract `_expandHyp`
+   * consumes ({tokenLogits, durLogits, newState}); the minted states are plain
+   * CPU tensors, owned by the caller via the usual `_disposeDecoderState`
+   * sweep.
+   *
+   * A single hypothesis delegates to `_runCombinedStep` so the batch-1 path
+   * (and its pre-allocated input tensors) stays shared with the greedy loop.
+   *
+   * @param {Array<object>} hyps - Hypotheses to expand ({t, lastTok, state}).
+   * @param {Float32Array} transposed - Encoder output, [Tenc, D] row-major.
+   * @param {number} D - Encoder feature dim.
+   * @returns {Promise<Array<{tokenLogits: Float32Array, durLogits: Float32Array, newState: object}>>}
+   *   Index-aligned with `hyps`.
+   */
+  async _runCombinedStepBatch(hyps, transposed, D) {
+    if (hyps.length === 1) {
+      const hyp = hyps[0];
+      const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
+      const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
+      const out = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
+      encTensor.dispose?.();
+      return [out];
+    }
+
+    const B = hyps.length;
+    const L = this.predLayers, H = this.predHidden;
+    const vocab = this.tokenizer.id2token.length;
+
+    const encData = new Float32Array(B * D);
+    const targetIds = new Int32Array(B);
+    const s1 = new Float32Array(L * B * H);
+    const s2 = new Float32Array(L * B * H);
+    for (let b = 0; b < B; b++) {
+      const h = hyps[b];
+      encData.set(transposed.subarray(h.t * D, (h.t + 1) * D), b * D);
+      targetIds[b] = typeof h.lastTok === 'number' ? h.lastTok : this.blankId;
+      const st1 = h.state?.state1 || this._combState1;
+      const st2 = h.state?.state2 || this._combState2;
+      for (let l = 0; l < L; l++) {
+        s1.set(st1.data.subarray(l * H, (l + 1) * H), (l * B + b) * H);
+        s2.set(st2.data.subarray(l * H, (l + 1) * H), (l * B + b) * H);
+      }
+    }
+
+    const feeds = {
+      encoder_outputs: new this.ort.Tensor('float32', encData, [B, D, 1]),
+      targets: new this.ort.Tensor('int32', targetIds, [B, 1]),
+      target_length: new this.ort.Tensor('int32', new Int32Array(B).fill(1), [B]),
+      input_states_1: new this.ort.Tensor('float32', s1, [L, B, H]),
+      input_states_2: new this.ort.Tensor('float32', s2, [L, B, H]),
+    };
+    let out;
+    try {
+      out = await this.joinerSession.run(feeds);
+    } finally {
+      for (const t of Object.values(feeds)) t.dispose?.();
+    }
+
+    const logits = out['outputs'];
+    const outputState1 = out['output_states_1'];
+    const outputState2 = out['output_states_2'];
+    const disposeOutputs = () => {
+      logits?.dispose?.();
+      outputState1?.dispose?.();
+      outputState2?.dispose?.();
+    };
+
+    // Mirror _runCombinedStep's early shape validation so callers see a clear
+    // error, with every batched buffer freed on the failure paths.
+    if (!logits || !logits.data || typeof logits.data.subarray !== 'function') {
+      disposeOutputs();
+      throw new Error('ParakeetModel batched decoder output did not include a valid `outputs` tensor.');
+    }
+    if (!outputState1 || !outputState2) {
+      disposeOutputs();
+      throw new Error('ParakeetModel batched decoder output did not include both decoder state tensors.');
+    }
+    const data = logits.data;
+    const total = data.length / B;
+    if (!Number.isInteger(total) || total <= vocab) {
+      disposeOutputs();
+      throw new Error(`ParakeetModel batched decoder output is too small (${data.length}) for batch ${B} and vocab size ${vocab}.`);
+    }
+    const sd1 = outputState1.data, sd2 = outputState2.data;
+    if (sd1.length !== L * B * H || sd2.length !== L * B * H) {
+      disposeOutputs();
+      throw new Error(`ParakeetModel batched decoder state size is ${sd1.length}/${sd2.length}, expected ${L * B * H}.`);
+    }
+
+    const results = [];
+    for (let b = 0; b < B; b++) {
+      // slice() copies the row out of the batched buffer; the token/duration
+      // split then views the copy (same zero-copy split as _runCombinedStep).
+      const row = data.slice(b * total, (b + 1) * total);
+      const n1 = new Float32Array(L * H);
+      const n2 = new Float32Array(L * H);
+      for (let l = 0; l < L; l++) {
+        n1.set(sd1.subarray((l * B + b) * H, (l * B + b + 1) * H), l * H);
+        n2.set(sd2.subarray((l * B + b) * H, (l * B + b + 1) * H), l * H);
+      }
+      results.push({
+        tokenLogits: row.subarray(0, vocab),
+        durLogits: row.subarray(vocab, total),
+        newState: {
+          state1: new this.ort.Tensor('float32', n1, [L, 1, H]),
+          state2: new this.ort.Tensor('float32', n2, [L, 1, H]),
+        },
+      });
+    }
+    disposeOutputs();
+    return results;
+  }
+
+  /**
    * Dispose ORT tensors inside a decoder state object.
    * Safely skips null states, pre-allocated initial states, and tensors
    * shared with a `keepState` (to avoid double-dispose when the joiner
@@ -545,15 +675,18 @@ export class ParakeetModel {
    *
    * The caller owns `newState`: it must retain it for surviving emit-children
    * and dispose it if no emit-child references it.
+   * @param {object} hyp - The hypothesis being expanded.
+   * @param {object} stepOut - This hypothesis' joiner output, one entry of a
+   *   `_runCombinedStepBatch` result (the caller batches the joiner over every
+   *   hypothesis due on the frame; scoring stays per-hypothesis here).
+   * @param {object} opts
    * @returns {{cands: Array<object>, newState: object}}
    */
-  async _expandHyp(hyp, transposed, D, opts) {
+  _expandHyp(hyp, stepOut, opts) {
     const { temperature, expandK, maesExpansionGamma, phraseBoost } = opts;
-    const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
-    const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
     // The beam scores over the raw duration logits (see below), so it ignores
     // the pre-argmaxed `step` the greedy path consumes.
-    const { tokenLogits, durLogits, newState, _logitsTensor } = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
+    const { tokenLogits, durLogits, newState, _logitsTensor } = stepOut;
 
     // Boost selection: borrow the trie's active set for this hypothesis.
     if (phraseBoost) phraseBoost.active = hyp.active;
@@ -649,7 +782,6 @@ export class ParakeetModel {
     }
 
     _logitsTensor?.dispose?.();
-    encTensor.dispose?.();
     return { cands, newState };
   }
 
@@ -809,8 +941,10 @@ export class ParakeetModel {
    * loop (each hyp owning its own frame pointer) where they rarely line up.
    *
    * Per frame: prefix-search recombination over the due hypotheses; then an inner
-   * expansion loop (up to `maesNumSteps`) that re-expands zero-duration emissions
-   * on the same frame while sending duration>0 children to the future pool; a
+   * expansion loop (up to `maesNumSteps`) whose every step runs ONE batched
+   * joiner call over the hypotheses still on the frame (`_runCombinedStepBatch`;
+   * serial batch-1 calls were the decode bottleneck) and re-expands zero-duration
+   * emissions on the same frame while sending duration>0 children to the future pool; a
    * zero-duration emission that exhausts the `maesNumSteps` budget is closed with
    * NeMo's implicit best-duration blank (see `_applyBlankClosure`) rather than a
    * bare advance; then duplicate-merge over the pool and prune to `beamWidth`.
@@ -894,8 +1028,14 @@ export class ParakeetModel {
         let working = current; // hypotheses still emitting at this frame
         for (let n = 0; n < maesNumSteps && working.length; n++) {
           const stayed = []; // zero-duration emissions, re-expanded on this frame
-          for (const hyp of working) {
-            const { cands, newState } = await this._expandHyp(hyp, transposed, D, expandOpts);
+          // One batched joiner call covers every hypothesis still on this frame
+          // (results index-aligned with `working`); scoring and child-building
+          // stay per-hypothesis below, in the same order as the old serial
+          // loop, so the decode is unchanged.
+          const stepOuts = await this._runCombinedStepBatch(working, transposed, D);
+          for (let i = 0; i < working.length; i++) {
+            const hyp = working[i];
+            const { cands, newState } = this._expandHyp(hyp, stepOuts[i], expandOpts);
             if (newState) disposable.add(newState);
             for (const c of cands) {
               const child = makeChild(hyp, c, newState);

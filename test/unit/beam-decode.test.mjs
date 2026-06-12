@@ -1,10 +1,17 @@
 // Tier-1 unit test for the TDT beam decoder (app/src/parakeet.js) and its pure
 // helpers. No ONNX/model download is needed: we borrow the prototype methods
-// onto a stub `model` and mock _runCombinedStep with a scripted, context-free
-// joiner (logits depend only on the frame index, encoded into the fake encoder
-// tensor). That makes greedy globally optimal, so beam search of ANY width must
-// reproduce the greedy output exactly. We then check that phrase boosting steers
-// the beam.
+// onto a stub `model` and mock the joiner with a scripted, context-free
+// response (logits depend only on the frame index, encoded into the fake
+// encoder tensor). That makes greedy globally optimal, so beam search of ANY
+// width must reproduce the greedy output exactly. We then check that phrase
+// boosting steers the beam.
+//
+// The stub scripts the joiner at BOTH entry points the decoder uses: the
+// batch-1 `_runCombinedStep` (greedy path, prefix-search, blank closure, and
+// single-hypothesis expansion steps) and a batched fake `joinerSession.run`
+// consumed by the REAL `_runCombinedStepBatch` (multi-hypothesis expansion
+// steps), so every multi-width test exercises the real batch gather/scatter
+// plumbing against the same script.
 //
 // Migrated from scripts/test-beam-decode.mjs to node:test. Built with Claude Code.
 
@@ -24,21 +31,48 @@ const D = 2;        // fake encoder feature dim
 // Counters wired into the stub so we can assert leak-safety.
 let statesCreated = 0;
 let statesDisposed = 0;
-let joinerCalls = 0;
+let joinerCalls = 0;   // scripted joiner evaluations (one per hypothesis row)
+let maxBatch = 0;      // largest batch the fake batched session received
 
 const fakeOrt = {
   Tensor: class { constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims; } dispose() {} },
 };
 
+// Tiny prediction-net dims for the stub (real model: 2 layers x 640 hidden).
+const PRED_L = 2;
+const PRED_H = 3;
+const fakeState = () =>
+  new fakeOrt.Tensor('float32', new Float32Array(PRED_L * PRED_H), [PRED_L, 1, PRED_H]);
+
+// Scripted duration logits for frame spec: explicit durLogits, else one-hot at
+// spec.step (chosen) so the beam's (token, duration) branching picks the same
+// duration the greedy argmax would, keeping the context-free script
+// greedy-optimal. Tests that exercise duration branching override this by
+// supplying spec.durLogits.
+const specDurLogits = (spec) =>
+  spec.durLogits
+    ? Float32Array.from(spec.durLogits)
+    : Float32Array.from({ length: spec.step + 1 }, (_, i) => (i === spec.step ? 0 : -Infinity));
+
 // Build a stub that delegates to the real prototype methods under test.
 const proto = ParakeetModel.prototype;
 function makeModel(script) {
+  // Fixed duration-logit width for the batched output rows (a real model has a
+  // constant duration head; the per-spec arrays just vary in the mock). Rows
+  // are padded with -Infinity, which carries no probability mass, so the
+  // batched and batch-1 paths score identically.
+  const nDur = Math.max(2, ...script.filter(Boolean).map((s) => (s.durLogits ? s.durLogits.length : s.step + 1)));
   return {
     blankId: BLANK,
     maxTokensPerStep: 10,
     subsampling: 8,
     windowStride: 0.01,
     ort: fakeOrt,
+    predLayers: PRED_L,
+    predHidden: PRED_H,
+    tokenizer: { id2token: new Array(V) },
+    _combState1: fakeState(),
+    _combState2: fakeState(),
     _pickArgmax: proto._pickArgmax,
     _frameConfidence: proto._frameConfidence,
     _advanceDecision: proto._advanceDecision,
@@ -50,6 +84,7 @@ function makeModel(script) {
     _prefixSearch: proto._prefixSearch,
     _hypIds: proto._hypIds,
     _decodeBeam: proto._decodeBeam,
+    _runCombinedStepBatch: proto._runCombinedStepBatch,
     _disposeDecoderState: () => { statesDisposed++; },
     _runCombinedStep: async (encTensor) => {
       joinerCalls++;
@@ -59,16 +94,33 @@ function makeModel(script) {
       return {
         tokenLogits: Float32Array.from(spec.logits),
         step: spec.step,
-        // Duration logits: one-hot at spec.step (chosen) so the beam's (token,
-        // duration) branching picks the same duration the greedy argmax would,
-        // keeping the context-free script greedy-optimal. Tests that exercise
-        // duration branching override this by supplying spec.durLogits.
-        durLogits: spec.durLogits
-          ? Float32Array.from(spec.durLogits)
-          : Float32Array.from({ length: spec.step + 1 }, (_, i) => (i === spec.step ? 0 : -Infinity)),
-        newState: { state1: {}, state2: {} },
+        durLogits: specDurLogits(spec),
+        newState: { state1: fakeState(), state2: fakeState() },
         _logitsTensor: { dispose() {} },
       };
+    },
+    // Batched scripted joiner consumed by the real _runCombinedStepBatch
+    // (multi-hypothesis expansion steps): one logit row per batch entry,
+    // recovered from the frame index in that entry's encoder row.
+    joinerSession: {
+      run: async (feeds) => {
+        const B = feeds.targets.dims[0];
+        maxBatch = Math.max(maxBatch, B);
+        const total = V + nDur;
+        const out = new Float32Array(B * total).fill(-Infinity);
+        for (let b = 0; b < B; b++) {
+          joinerCalls++;
+          statesCreated++; // _runCombinedStepBatch mints one newState per row
+          const spec = script[Math.round(feeds.encoder_outputs.data[b * D])];
+          out.set(spec.logits, b * total);
+          out.set(specDurLogits(spec), b * total + V);
+        }
+        return {
+          outputs: new fakeOrt.Tensor('float32', out, [B, 1, 1, total]),
+          output_states_1: new fakeOrt.Tensor('float32', new Float32Array(PRED_L * B * PRED_H), [PRED_L, B, PRED_H]),
+          output_states_2: new fakeOrt.Tensor('float32', new Float32Array(PRED_L * B * PRED_H), [PRED_L, B, PRED_H]),
+        };
+      },
     },
   };
 }
@@ -471,6 +523,144 @@ describe('frame-synchronous state GC (#frame-sync)', () => {
       assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak');
     });
   }
+});
+
+describe('batched joiner expansion (#batch)', () => {
+  // _runCombinedStepBatch turns the per-hypothesis serial joiner calls of a
+  // MAES expansion step into ONE batched joinerSession.run. These tests pin the
+  // batch plumbing: the gather layout it feeds the session, the scatter that
+  // splits the session output back per hypothesis, the batch-1 delegation, and
+  // end-to-end equivalence with a serial per-hypothesis loop.
+
+  test('gathers per-hypothesis feeds and scatters per-row results', async () => {
+    // A capturing fake session whose outputs are index-valued, so every element
+    // of the scattered results can be traced back to its expected batch slot.
+    const ND = 2;            // duration-logit width
+    const total = V + ND;
+    let captured = null;
+    const m = {
+      blankId: BLANK,
+      ort: fakeOrt,
+      predLayers: PRED_L,
+      predHidden: PRED_H,
+      tokenizer: { id2token: new Array(V) },
+      _combState1: fakeState(),
+      _combState2: fakeState(),
+      _runCombinedStepBatch: proto._runCombinedStepBatch,
+      _runCombinedStep: () => { throw new Error('B>1 must not delegate to the batch-1 path'); },
+      joinerSession: {
+        run: async (feeds) => {
+          captured = feeds;
+          const B = feeds.targets.dims[0];
+          return {
+            outputs: new fakeOrt.Tensor('float32', Float32Array.from({ length: B * total }, (_, i) => i), [B, 1, 1, total]),
+            output_states_1: new fakeOrt.Tensor('float32', Float32Array.from({ length: PRED_L * B * PRED_H }, (_, i) => 100 + i), [PRED_L, B, PRED_H]),
+            output_states_2: new fakeOrt.Tensor('float32', Float32Array.from({ length: PRED_L * B * PRED_H }, (_, i) => 200 + i), [PRED_L, B, PRED_H]),
+          };
+        },
+      },
+    };
+    // Distinguishable per-hypothesis LSTM states ([PRED_L, 1, PRED_H], layers concatenated).
+    const mkState = (base) => ({
+      state1: new fakeOrt.Tensor('float32', Float32Array.from({ length: PRED_L * PRED_H }, (_, i) => base + i), [PRED_L, 1, PRED_H]),
+      state2: new fakeOrt.Tensor('float32', Float32Array.from({ length: PRED_L * PRED_H }, (_, i) => base + 50 + i), [PRED_L, 1, PRED_H]),
+    });
+    const hyps = [
+      { t: 0, lastTok: 1, state: mkState(1000) },
+      { t: 2, lastTok: 4, state: null },        // null state -> shared zero state
+      { t: 1, lastTok: 3, state: mkState(2000) },
+    ];
+    const B = hyps.length;
+    const res = await m._runCombinedStepBatch(hyps, makeTransposed(3), D);
+
+    // Gather: encoder rows carry each hypothesis' own frame (feature 0 == t).
+    assert.ok(eqArr([...captured.encoder_outputs.dims], [B, D, 1]));
+    assert.ok(eqFloatArr([captured.encoder_outputs.data[0], captured.encoder_outputs.data[D], captured.encoder_outputs.data[2 * D]], [0, 2, 1]));
+    assert.ok(eqArr([...captured.targets.dims], [B, 1]));
+    assert.ok(eqArr([...captured.targets.data], [1, 4, 3]));
+    assert.ok(eqArr([...captured.target_length.data], [1, 1, 1]));
+    // Gather: hypothesis b is COLUMN b of the [PRED_L, B, PRED_H] state, per layer.
+    const colAt = (data, l, b) => Array.from(data.subarray((l * B + b) * PRED_H, (l * B + b + 1) * PRED_H));
+    assert.ok(eqArr([...captured.input_states_1.dims], [PRED_L, B, PRED_H]));
+    assert.ok(eqFloatArr(colAt(captured.input_states_1.data, 0, 0), [1000, 1001, 1002]));
+    assert.ok(eqFloatArr(colAt(captured.input_states_1.data, 1, 0), [1003, 1004, 1005]));
+    assert.ok(eqFloatArr(colAt(captured.input_states_1.data, 0, 1), [0, 0, 0]), 'null state gathers the zero state');
+    assert.ok(eqFloatArr(colAt(captured.input_states_1.data, 1, 2), [2003, 2004, 2005]));
+    assert.ok(eqFloatArr(colAt(captured.input_states_2.data, 0, 2), [2050, 2051, 2052]));
+
+    // Scatter: row b's logits split into token/duration views of its own copy.
+    assert.equal(res.length, B);
+    assert.ok(eqFloatArr(Array.from(res[1].tokenLogits), [8, 9, 10, 11, 12, 13]));
+    assert.ok(eqFloatArr(Array.from(res[1].durLogits), [14, 15]));
+    assert.ok(eqFloatArr(Array.from(res[2].tokenLogits), [16, 17, 18, 19, 20, 21]));
+    // Scatter: newState column b regrouped into a [PRED_L, 1, PRED_H] tensor.
+    // output_states value at flat index (l*B + b)*PRED_H + i is 100 + that
+    // index (state1) / 200 + it (state2), so column b of layer l starts at
+    // 100 + (l*B + b)*PRED_H.
+    const expectedCol = (base, b) =>
+      [0, 1].flatMap((l) => [0, 1, 2].map((i) => base + (l * B + b) * PRED_H + i));
+    assert.ok(eqArr([...res[1].newState.state1.dims], [PRED_L, 1, PRED_H]));
+    assert.ok(eqFloatArr(Array.from(res[1].newState.state1.data), expectedCol(100, 1)));
+    assert.ok(eqFloatArr(Array.from(res[2].newState.state2.data), expectedCol(200, 2)));
+  });
+
+  test('a single hypothesis delegates to the batch-1 _runCombinedStep path', async () => {
+    const model = makeModel(script);
+    let singleCalls = 0;
+    const orig = model._runCombinedStep;
+    model._runCombinedStep = (...a) => { singleCalls++; return orig.apply(model, a); };
+    model.joinerSession = { run: async () => { throw new Error('batch-1 must not hit the batched session'); } };
+    const res = await model._runCombinedStepBatch([{ t: 1, lastTok: BLANK, state: null }], makeTransposed(2), D);
+    assert.equal(singleCalls, 1, 'delegated to _runCombinedStep');
+    assert.equal(res.length, 1);
+    // Compare in float32 (the scripted joiner stores logits as Float32Array).
+    assert.ok(eqFloatArr(Array.from(res[0].tokenLogits), Array.from(Float32Array.from(script[1].logits))));
+  });
+
+  test('batched decode == serial per-hypothesis decode (width 8, prefix+merge on)', async () => {
+    // Same longScript shape as the GC suite: branching, varied TDT durations,
+    // multi-hypothesis frames. The batched run must reproduce the serial loop
+    // exactly (the -Infinity duration padding in the batched rows carries no
+    // probability mass).
+    const longScript = [];
+    for (let t = 0; t < 16; t++) {
+      const logits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
+      logits[t % 5] = 2.0 + (t % 3) * 0.3;
+      logits[(t + 2) % 5] = 1.0;
+      if (t % 4 === 3) logits[BLANK] = 2.5;
+      longScript.push({ logits, step: (t % 3) + 1 });
+    }
+    const beamOpts = {
+      beamWidth: 8, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: true, returnConfidences: true, timeStride: 0.08,
+      maesNumSteps: 3, maesExpansionBeta: 4, maesExpansionGamma: 4.0, maesPrefixAlpha: 1,
+    };
+
+    const serialModel = makeModel(longScript);
+    serialModel._runCombinedStepBatch = async function (hyps, transposed, dim) {
+      const outs = [];
+      for (const h of hyps) {
+        const enc = new fakeOrt.Tensor('float32', transposed.subarray(h.t * dim, (h.t + 1) * dim), [1, dim, 1]);
+        outs.push(await this._runCombinedStep(enc, h.lastTok, h.state));
+      }
+      return outs;
+    };
+    const serial = await serialModel._decodeBeam(makeTransposed(16), D, 16, beamOpts);
+
+    maxBatch = 0;
+    const batchedModel = makeModel(longScript);
+    const batched = await batchedModel._decodeBeam(makeTransposed(16), D, 16, beamOpts);
+
+    assert.ok(maxBatch > 1, 'the batched session actually received multi-hypothesis batches');
+    assert.ok(eqArr(batched.ids, serial.ids), 'ids match the serial decode');
+    assert.ok(close(batched.overallLogProb, serial.overallLogProb), 'overallLogProb matches');
+    assert.ok(eqFloatArr(batched.frameConfs, serial.frameConfs), 'frameConfs match');
+    assert.ok(eqFloatArr(batched.tokenConfs, serial.tokenConfs), 'tokenConfs match');
+    assert.equal(batched.tokenTimes.length, serial.tokenTimes.length);
+    for (let i = 0; i < serial.tokenTimes.length; i++) {
+      assert.ok(eqFloatArr(batched.tokenTimes[i], serial.tokenTimes[i]), `tokenTimes[${i}] match`);
+    }
+  });
 });
 
 describe('degenerate input', () => {
