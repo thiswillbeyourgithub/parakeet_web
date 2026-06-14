@@ -26,6 +26,8 @@ phrase_boosting/*
 
 # WER bench run history (appended by scripts/wer-bench.mjs)
 bench_wer.md
+# wer-quants.py run log (appended; a RUN START banner delimits each run)
+wer-quants.log
 
 # E2E (tier 3) artifacts and local model weights (downloaded, never committed)
 fallback_models
