@@ -73,10 +73,19 @@ This model exports the decoder and joint network as one fused file, so this knob
 covers both. The per-section oracle reference stays fully matched at
 --reference-quant (no decoder swap), so it remains a clean reference.
 
+--audio accepts a single file OR a FOLDER. A folder is expanded to every audio
+file inside it and each is analysed in turn (its own two tables), then a final
+cross-file overall-WER summary is printed. Point it at the model repo's
+calibration_audio/ folder of long French/English speeches to get the long-pass
+degradation numbers across a whole set in one run instead of one clip at a time.
+A folder sweep uses the per-section oracle per file, so --reference (one overall
+text) only applies to a single --audio file.
+
 Usage (deps are declared inline via PEP 723, so uv installs them on first run):
   uv run scripts/wer-quants.py
   uv run scripts/wer-quants.py --section-sec 90
   uv run scripts/wer-quants.py --audio clip.mp3 --reference @ref.txt
+  uv run scripts/wer-quants.py --audio fallback_models/.../calibration_audio   # sweep a folder
   uv run scripts/wer-quants.py --quants int8,fp16 --reference-quant fp32
   uv run scripts/wer-quants.py --quants int8,fp16,fp32 --decoder-quant fp32
 
@@ -101,10 +110,37 @@ QUANT_ARG = {"int8": "int8", "fp16": "fp16", "fp32": None}
 
 DEFAULT_AUDIO = ROOT / "test/e2e/.cache/jfk-moon/full.mp3"
 
+# Audio extensions recognised when --audio points at a FOLDER (e.g. the model
+# repo's calibration_audio/ of long speeches), so the bench can sweep a whole set
+# of clips in one run instead of one --audio at a time.
+AUDIO_EXTS = {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
+
 # The encoder's exported positional-encoding table caps at 5000 frames @ 12.5
 # frames/s = 400.0 s; a single pass past that aborts in the first attention
 # layer. Default the cap just under it. (Empirically: 400 s OK, 410 s fails.)
 DEFAULT_MAX_PASS_SEC = 390.0
+
+
+def collect_audio_files(audio_arg):
+    """Resolve --audio to a list of audio files. A directory is expanded to every
+    audio file (by extension) directly inside it, sorted by name, so you can point
+    --audio at a folder of clips (e.g. the calibration speeches) and get one
+    per-file analysis each plus a cross-file summary. A single file is returned
+    as a one-element list. Exits with guidance when nothing usable is found."""
+    p = Path(audio_arg)
+    if p.is_dir():
+        files = sorted(c for c in p.iterdir()
+                       if c.is_file() and c.suffix.lower() in AUDIO_EXTS)
+        if not files:
+            sys.exit(f"--audio folder {p} has no audio files "
+                     f"(looked for {', '.join(sorted(AUDIO_EXTS))}).")
+        return files
+    if not p.exists():
+        sys.exit(f"audio not found: {audio_arg}\n"
+                 "Generate the full moon-speech cache first:\n"
+                 "  node scripts/gen-jfk-moon-fixtures.mjs\n"
+                 "or pass --audio <file-or-folder>.")
+    return [p]
 
 
 def peak_rss_mb():
@@ -204,15 +240,17 @@ def emit(obj):
     print("__RESULT__" + json.dumps(obj))
 
 
-def spawn(args, mode, quant, decoder_quant):
-    """Run this script as a child in the given mode/quant; parse its JSON result.
+def spawn(args, audio, mode, quant, decoder_quant):
+    """Run this script as a child on `audio` in the given mode/quant; parse its JSON.
 
-    `decoder_quant` is the decoder_joint quant for this child: the swept encoder
-    quant pairs with --decoder-quant for the measured passes, while the oracle
-    pass is given decoder_quant == quant so it stays a fully-matched reference.
+    `audio` is the single file this child transcribes (the parent passes each file
+    of a folder sweep in turn). `decoder_quant` is the decoder_joint quant for this
+    child: the swept encoder quant pairs with --decoder-quant for the measured
+    passes, while the oracle pass is given decoder_quant == quant so it stays a
+    fully-matched reference.
     """
     cmd = [sys.executable, __file__, "--_child", mode, "--quant", quant, "--decoder-quant", decoder_quant,
-           "--audio", args.audio, "--model", args.model, "--model-dir", args.model_dir,
+           "--audio", str(audio), "--model", args.model, "--model-dir", args.model_dir,
            "--section-sec", str(args.section_sec), "--max-pass-sec", str(args.max_pass_sec)]
     label = quant if decoder_quant == quant else f"{quant}+dec:{decoder_quant}"
     print(f"  [{mode}/{label}] running...", file=sys.stderr, flush=True)
@@ -279,50 +317,27 @@ def parse_args(argv):
     return p.parse_args(argv)
 
 
-def main(argv):
-    args = parse_args(argv)
-    if args.child == "full":
-        return child_full(args)
-    if args.child == "oracle":
-        return child_oracle(args)
-
+def analyze_one(args, audio_path, quants):
+    """Run the full-pass + per-section analysis for ONE audio file: print the
+    overall and per-section tables, and return {quant: overall_wer} (None for a
+    failed quant) so a folder sweep can build a cross-file summary."""
     from jiwer import wer
 
-    if not Path(args.audio).exists():
-        sys.exit(f"audio not found: {args.audio}\n"
-                 "Generate the full moon-speech cache first:\n"
-                 "  node scripts/gen-jfk-moon-fixtures.mjs\n"
-                 "or pass --audio <file>.")
-
-    requested = [q.strip() for q in args.quants.split(",") if q.strip()]
-    for q in requested:
-        if q not in QUANT_ARG:
-            sys.exit(f"unknown quant {q!r} (choose from {list(QUANT_ARG)})")
-    # Always process in the canonical order int8 -> fp16 -> fp32, whatever the
-    # order they were given in.
-    quants = [q for q in QUANT_ARG if q in requested]
-
-    print(f"audio: {args.audio}")
-    print(f"       single pass, NO chunking; encoder quants = {', '.join(quants)}; "
-          f"decoder = {args.decoder_quant}; sections = {args.section_sec:g}s; "
-          f"oracle = {args.reference_quant}")
-    print(f"       single pass capped at {args.max_pass_sec:g}s (encoder pos-encoding wall "
-          f"is ~400s / 5000 frames; a longer pass aborts)\n")
-    print("transcribing (each pass in its own process):", file=sys.stderr)
+    print(f"\naudio: {audio_path}")
 
     # Single full pass per quant first, in canonical int8 -> fp16 -> fp32 order so
     # the cheapest/fastest result lands first.
     results = {}
     for q in quants:
         try:
-            results[q] = spawn(args, "full", q, args.decoder_quant)
+            results[q] = spawn(args, audio_path, "full", q, args.decoder_quant)
         except Exception as e:  # one bad quant should not kill the others
             results[q] = {"error": str(e)}
 
     # Then the per-section oracle reference: independent short-clip transcription
     # per window (order does not affect results; tables are built below). The
     # oracle stays fully matched at reference_quant (decoder == encoder, no swap).
-    oracle = spawn(args, "oracle", args.reference_quant, args.reference_quant)
+    oracle = spawn(args, audio_path, "oracle", args.reference_quant, args.reference_quant)
     sections = oracle["sections"]
     audio_sec = oracle["audio_sec"]
 
@@ -334,18 +349,21 @@ def main(argv):
         overall_ref = " ".join(s["text"] for s in sections)
         ref_label = f"{args.reference_quant} oracle (independent {args.section_sec:g}s clips, concatenated)"
 
-    print(f"\nreference (overall): {ref_label}")
+    print(f"reference (overall): {ref_label}")
     print(f"transcribed: {audio_sec:.1f}s ({audio_sec / 60:.1f} min) of the single pass "
           f"(capped at {args.max_pass_sec:g}s)\n")
     print("== Overall (full single pass) ==")
     print("quant   WER       load     infer     RTF     peak RAM   model RAM   words")
     print("-----   -------   ------   -------   -----   --------   ---------   -----")
+    summary = {}
     for q in quants:
         r = results[q]
         if "error" in r:
             print(f"{q:<6}  FAILED: {r['error']}")
+            summary[q] = None
             continue
         w = wer(overall_ref, r["text"])
+        summary[q] = w
         rtf = r["infer_s"] / r["audio_sec"]
         model_mb = r["peak_mb"] - r["baseline_mb"]
         n = len(r["text"].split())
@@ -376,6 +394,72 @@ def main(argv):
           "independent short-clip transcription of the same window; a trend of rising WER "
           "down the table is the long-pass degradation you suspected. "
           "RAM is host memory, not VRAM (see the module docstring).")
+    return summary
+
+
+def print_cross_file_summary(summaries, quants):
+    """Cross-file overall-WER table after a folder sweep: one row per audio file,
+    one column per encoder quant, plus a mean row over the files each quant
+    transcribed. Gives the headline 'does int8 degrade vs fp16/fp32 across many
+    long speeches' answer at a glance; each file's per-section trend is in its own
+    table above."""
+    name_w = max(len("mean"), max(len(Path(p).name) for p, _ in summaries))
+    print("\n== Cross-file overall WER (encoder quant) ==")
+    header = f"{'file':<{name_w}}  " + "  ".join(f"{q:>7}" for q in quants)
+    print(header)
+    print("-" * len(header))
+    for path, summary in summaries:
+        cells = "  ".join(f"{fmt_pct(summary.get(q)):>7}" for q in quants)
+        print(f"{Path(path).name:<{name_w}}  {cells}")
+    print("-" * len(header))
+    means = []
+    for q in quants:
+        vals = [s[q] for _, s in summaries if s.get(q) is not None]
+        means.append(sum(vals) / len(vals) if vals else None)
+    print(f"{'mean':<{name_w}}  " + "  ".join(f"{fmt_pct(m):>7}" for m in means))
+    print("\nLower WER is better. The mean is over the files each quant transcribed; a "
+          "per-file per-section breakdown is in that file's table above.")
+
+
+def main(argv):
+    args = parse_args(argv)
+    if args.child == "full":
+        return child_full(args)
+    if args.child == "oracle":
+        return child_oracle(args)
+
+    requested = [q.strip() for q in args.quants.split(",") if q.strip()]
+    for q in requested:
+        if q not in QUANT_ARG:
+            sys.exit(f"unknown quant {q!r} (choose from {list(QUANT_ARG)})")
+    # Always process in the canonical order int8 -> fp16 -> fp32, whatever the
+    # order they were given in.
+    quants = [q for q in QUANT_ARG if q in requested]
+
+    audio_files = collect_audio_files(args.audio)
+    # A single overall --reference text cannot be matched to many clips; the
+    # per-section oracle is the right reference for a folder sweep.
+    if args.reference is not None and len(audio_files) > 1:
+        sys.exit("--reference is one overall reference text and cannot apply to a folder "
+                 "of clips; pass a single --audio file, or drop --reference so each clip "
+                 "uses its own per-section oracle.")
+
+    print(f"single pass, NO chunking; encoder quants = {', '.join(quants)}; "
+          f"decoder = {args.decoder_quant}; sections = {args.section_sec:g}s; "
+          f"oracle = {args.reference_quant}; capped at {args.max_pass_sec:g}s "
+          f"(encoder pos-encoding wall is ~400s / 5000 frames; a longer pass aborts)")
+    if len(audio_files) > 1:
+        print(f"sweeping {len(audio_files)} audio file(s):")
+        for f in audio_files:
+            print(f"  - {f}")
+    print("\ntranscribing (each pass in its own process):", file=sys.stderr)
+
+    summaries = []
+    for audio_path in audio_files:
+        summaries.append((audio_path, analyze_one(args, audio_path, quants)))
+
+    if len(audio_files) > 1:
+        print_cross_file_summary(summaries, quants)
 
 
 if __name__ == "__main__":
