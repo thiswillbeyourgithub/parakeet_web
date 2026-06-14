@@ -888,32 +888,6 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 /* ─── Audio player (inline, per transcript entry) ────────────────────────── */
 .audio-player { flex: 1; height: 40px; }
 
-/* ─── Heatmap + display-mode toggles ────────────────────────────────────── */
-.heatmap-toggle-button {
-  padding: 0.4rem 0.75rem;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 500;
-  transition: background 0.2s, border-color 0.2s, transform 0.1s;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.heatmap-toggle-button:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border-strong);
-}
-
-.heatmap-toggle-button:active {
-  background: var(--border);
-  transform: scale(0.98);
-}
-
 .display-mode-button {
   padding: 0.3rem 0.6rem;
   background: var(--bg-card);
