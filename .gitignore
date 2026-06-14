@@ -10,6 +10,7 @@ docker/.env
 *.pem
 docs/
 
+__pycache__
 .git_original_during_wip
 .aider*
 data
@@ -23,6 +24,8 @@ TODO.md
 phrase_boosting/*
 !phrase_boosting/french_medical.txt
 !phrase_boosting/french_medical.pwc
+!phrase_boosting/lorn.txt
+!phrase_boosting/lorn.pwc
 
 # WER bench run history (appended by scripts/wer-bench.mjs)
 bench_wer.md

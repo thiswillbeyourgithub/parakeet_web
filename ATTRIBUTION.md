@@ -35,8 +35,8 @@ content.
 > Microbiology* 70, 5607-5612. https://doi.org/10.1099/ijsem.0.004332
 
 - Source: <https://lpsn.dsmz.de/>
-- Data obtained via the official LPSN download page: <https://lpsn.dsmz.de/downloads>
-  (TODO: confirm this is the exact page the `lpsn_gss_*.csv` export came from)
+- Data obtained via the official LPSN download page (requires a free LPSN/DSMZ
+  account to log in): <https://lpsn.dsmz.de/downloads>
 - License terms: <https://lpsn.dsmz.de/text/copyright>
 
 LPSN forbids automated / bulk download except through its official download page
