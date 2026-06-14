@@ -86,6 +86,52 @@ describe('resolveFiles: per-quant encoder/decoder/vocab resolution', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test('an explicit decoderQuant resolves the decoder independently of the encoder', () => {
+    // The headline mix: keep the heavy encoder int8 but run the small
+    // decoder_joint at full fp32 precision (the new default for the CLIs).
+    const dir = makeModelDir([
+      'encoder-model.int8.smoothquant.onnx', // working-folder int8 encoder
+      'decoder_joint-model.int8.onnx',
+      'decoder_joint-model.onnx',             // fp32 decoder also present
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'int8', 'fp32');
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.smoothquant.onnx');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('decoderQuant defaults to the encoder quant when omitted (matched, legacy behaviour)', () => {
+    const dir = makeModelDir([
+      'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+      'decoder_joint-model.onnx', // fp32 decoder present but must NOT be picked
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'int8'); // no decoderQuant -> matches encoder
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.int8.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a missing decoder for the requested decoderQuant names that decoder file', () => {
+    // int8 encoder present, fp32 decoder requested but absent -> error names the
+    // fp32 decoder, not the int8 one.
+    const dir = makeModelDir([
+      'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt',
+    ]);
+    assert.throws(() => resolveFiles(dir, 'int8', 'fp32'), (e) => {
+      assert.match(e.message, /Missing decoder/);
+      assert.match(e.message, /decoder_joint-model\.onnx/);
+      return true;
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('an unknown decoderQuant throws', () => {
+    const dir = makeModelDir(['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt']);
+    assert.throws(() => resolveFiles(dir, 'int8', 'int4'), /Unknown decoder quant "int4"/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('a missing int8 encoder names BOTH candidates it tried', () => {
     // Decoder + vocab present, but neither encoder name -> the error must list both.
     const dir = makeModelDir(['decoder_joint-model.int8.onnx', 'vocab.txt']);

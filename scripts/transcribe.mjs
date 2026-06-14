@@ -95,7 +95,8 @@ function parseArgs(argv) {
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
     model: DEFAULT_MODEL,
     modelDir: null,
-    quant: 'int8',
+    quant: 'int8',          // encoder quantisation
+    decoderQuant: 'fp32',   // decoder/joiner quantisation, chosen independently (default full precision)
     ortBackend: 'wasm',
     threads: 0,            // 0 => ORT default
     timestamps: false,
@@ -131,6 +132,7 @@ function parseArgs(argv) {
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quant = val(flag); break;
+      case '--decoder-quant': a.decoderQuant = val(flag); break;
       case '--ort': a.ortBackend = val(flag); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
       case '--ffmpeg': a.ffmpeg = val(flag); break;
@@ -145,6 +147,7 @@ function parseArgs(argv) {
   }
   if (!a.audio) throw new Error('No audio file given. See --help.');
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
+  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
   if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ortBackend})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
   if (a.boostMinp !== null && (!Number.isFinite(a.boostMinp) || a.boostMinp <= 0 || a.boostMinp > 1)) {
@@ -252,9 +255,20 @@ Options:
       --model-dir DIR      Directory holding the .onnx files + vocab.txt.
                            Defaults to the HuggingFace cache for the model.
       --quant int8|fp16|fp32
-                           Encoder/decoder quantisation. Default int8. fp16 files
-                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
+                           ENCODER quantisation. Default int8. fp16 files come
+                           from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32).
+      --decoder-quant int8|fp16|fp32
+                           DECODER/joiner quantisation, chosen independently of
+                           --quant. Default fp32. The decoder_joint model is small
+                           (~70 MB fp32 vs ~18 MB int8), so running it at full
+                           precision is cheap and avoids the int8 joiner's quality
+                           loss while keeping the heavy encoder quantised. NOTE:
+                           this repo exports the decoder and the joint network as a
+                           single fused decoder_joint-model file, so this one knob
+                           covers BOTH (there is no separate joint file to quantise
+                           on its own). fp32 = decoder_joint-model.onnx; int8/fp16
+                           use the matching .int8/.fp16 file.
       --ort wasm|node      ORT backend. Default wasm (onnxruntime-web, the engine
                            the browser/e2e use). node = native onnxruntime-node
                            (64-bit memory), required to load fp16/fp32 encoders
@@ -371,6 +385,12 @@ export function resolveModelDir(cliDir, repoId) {
 // parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py from the fp32
 // pieces; fp32 is the plain name (with an external .onnx.data for the encoder).
 //
+// The encoder and decoder quant are resolved INDEPENDENTLY (resolveFiles takes a
+// separate decoderQuant), so the heavy encoder can stay int8 while the small
+// decoder_joint runs at full fp32 precision. The "decoder" here is the fused
+// decoder_joint-model graph (prediction network + joint network in one file): this
+// model export has no standalone joint file, so the decoder quant covers both.
+//
 // int8 has TWO valid encoder names: the published HF repo renames the SmoothQuant
 // int8 encoder to the canonical `encoder-model.int8.onnx` (what App.jsx/hub.js and
 // fetch-e2e-models.mjs download), while the model-repo working folder
@@ -394,9 +414,14 @@ const QUANT_FILES = {
   },
 };
 
-export function resolveFiles(dir, quant) {
-  const spec = QUANT_FILES[quant];
-  if (!spec) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
+// `decoderQuant` defaults to the encoder `quant` (matched, the historical
+// behaviour) so existing 2-arg callers are unchanged; pass it explicitly to mix
+// (e.g. an int8 encoder with an fp32 decoder_joint).
+export function resolveFiles(dir, quant, decoderQuant = quant) {
+  const encSpec = QUANT_FILES[quant];
+  if (!encSpec) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
+  const decSpec = QUANT_FILES[decoderQuant];
+  if (!decSpec) throw new Error(`Unknown decoder quant "${decoderQuant}" (expected int8, fp16 or fp32)`);
   // First existing candidate wins; if none exist, name every alternative we tried.
   const pick = (candidates, label) => {
     const found = candidates.find((f) => existsSync(join(dir, f)));
@@ -406,8 +431,8 @@ export function resolveFiles(dir, quant) {
     }
     return found;
   };
-  const enc = pick(spec.encoder, 'encoder');
-  const dec = pick(spec.decoder, 'decoder');
+  const enc = pick(encSpec.encoder, 'encoder');
+  const dec = pick(decSpec.decoder, 'decoder');
   const vocab = 'vocab.txt';
   if (!existsSync(join(dir, vocab))) throw new Error(`Missing ${vocab} in model dir ${dir}`);
   return {
@@ -512,6 +537,7 @@ export async function loadParakeetModel({
   model: modelKey = DEFAULT_MODEL,
   modelDir = null,
   quant = 'int8',
+  decoderQuant = quant,   // decoder/joiner quant; defaults to matching the encoder
   threads = 0,
   verbose = false,
   ortBackend = 'wasm',
@@ -520,7 +546,7 @@ export async function loadParakeetModel({
   if (!cfg) throw new Error(`Unknown model "${modelKey}". Known: ${listModels().join(', ')}`);
 
   const dir = resolveModelDir(modelDir, cfg.repoId);
-  const { encoderPath, decoderPath, vocabPath } = resolveFiles(dir, quant);
+  const { encoderPath, decoderPath, vocabPath } = resolveFiles(dir, quant, decoderQuant);
 
   const ortMod = await getOrt(ortBackend);
   const fromPath = ortBackend === 'node';
@@ -654,11 +680,12 @@ async function main() {
     model: args.model,
     modelDir: args.modelDir,
     quant: args.quant,
+    decoderQuant: args.decoderQuant,
     threads: args.threads,
     verbose: args.verbose,
     ortBackend: args.ortBackend,
   });
-  console.error(`[transcribe] model: ${args.model} (${args.quant}, ort=${args.ortBackend})`);
+  console.error(`[transcribe] model: ${args.model} (enc ${args.quant} / dec ${args.decoderQuant}, ort=${args.ortBackend})`);
   console.error(`[transcribe] dir:   ${dir}`);
 
   const ffmpeg = findFfmpeg(args.ffmpeg);
