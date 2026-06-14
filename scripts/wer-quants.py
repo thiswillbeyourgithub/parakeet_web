@@ -76,15 +76,18 @@ Quantisation -> files in the model dir:
 Encoder vs decoder quant: --quants sweeps the ENCODER quant (that is what this
 bench measures), while --decoder-quant (default fp32) holds the fused
 decoder_joint at a fixed precision for every swept encoder. onnx-asr exposes a
-single `quantization` that selects both files, so when the decoder quant differs
-from the encoder quant we load the model normally for the encoder and then swap
-its decoder_joint InferenceSession for one built from the decoder-quant file
-(resolving only that one path via onnx-asr's own resolver, so no second encoder
-is loaded and the RAM figure stays honest). The decoder is small (~70 MB fp32 vs
+single `quantization` that selects BOTH files, so to mix them we override the
+model's file map for just that one load to resolve the encoder at the swept quant
+and the decoder_joint at --decoder-quant in a single pass (see load_mixed). Only
+the files actually used are required: e.g. an int8 encoder with an fp32 decoder
+needs encoder-model.int8.onnx + decoder_joint-model.onnx and does NOT require a
+decoder_joint-model.int8.onnx to exist (previously the load crashed on that
+missing file even though --decoder-quant fp32 never uses it). No second encoder is
+ever loaded, so the RAM figure stays honest. The decoder is small (~70 MB fp32 vs
 ~18 MB int8), so fp32 there is cheap and avoids the int8 joiner's quality loss.
 This model exports the decoder and joint network as one fused file, so this knob
 covers both. The per-section oracle reference stays fully matched at
---reference-quant (no decoder swap), so it remains a clean reference.
+--reference-quant (encoder == decoder, no override), so it remains a clean reference.
 
 --audio accepts a single file OR a FOLDER. A folder is expanded to every audio
 file inside it and each is analysed in turn (its own two tables), then a final
@@ -265,40 +268,61 @@ def windows(audio_sec, section_sec):
 # --- child modes (each runs in its own process for clean RAM accounting) ----
 
 def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=False):
-    """Load the onnx-asr model with `encoder_quant`, then (if it differs) swap in
-    a decoder_joint session built from `decoder_quant`.
+    """Load the onnx-asr model with the encoder at `encoder_quant` and the fused
+    decoder_joint at `decoder_quant`.
 
-    onnx-asr's `quantization` argument selects BOTH the encoder and the decoder
-    file, so to mix them we load normally for the encoder and replace only the
-    decoder_joint InferenceSession. We resolve the decoder path through onnx-asr's
-    OWN resolver (paths only, no sessions), so no second encoder is ever loaded
-    and the peak-RSS figure keeps reflecting just `encoder_quant` + `decoder_quant`.
+    onnx-asr's single `quantization` argument selects BOTH the encoder file AND the
+    decoder_joint file, so a plain load_model(quantization=encoder_quant) REQUIRES
+    the encoder-quant decoder file to exist on disk (e.g. decoder_joint-model.int8.onnx)
+    even when --decoder-quant asks for fp32 and that int8 decoder is never used: it
+    raises ModelFileNotFoundError before any session is built. (That was a real bug:
+    --decoder-quant fp32 still crashed on a folder that only shipped an int8 encoder
+    and an fp32 decoder.) To honour --decoder-quant we override the model class's
+    file map for JUST this one load so it resolves the encoder at encoder_quant and
+    the decoder_joint at decoder_quant in a single pass: only the files we actually
+    use are required, the decoder session is built straight from the decoder-quant
+    file, and no second encoder is ever loaded (so the peak-RSS figure stays honest).
+    The override is restored in a finally, so it cannot leak into a later load.
 
-    `use_cuda` selects the providers: CUDA (+CPU for op coverage) vs CPU-only. The
-    providers are stored on the model's runtime_config, so the decoder swap below
-    inherits the same EP without any extra wiring.
+    `use_cuda` selects the providers: CUDA (+CPU for op coverage) vs CPU-only.
     """
     import onnx_asr
 
     if use_cuda:
         preload_cuda_dlls()
     providers = CUDA_PROVIDERS if use_cuda else CPU_PROVIDERS
-    model = onnx_asr.load_model(model_name, path=model_dir,
-                                quantization=QUANT_ARG[encoder_quant], providers=providers)
-    if decoder_quant != encoder_quant:
-        import onnxruntime as rt
-        from onnx_asr.loader import create_asr_resolver
 
-        asr = model.asr  # underlying NemoConformerTdt (the adapter wraps it as .asr)
-        if not hasattr(asr, "_decoder_joint"):
-            raise RuntimeError(
-                f"model {model_name!r} has no fused decoder_joint session to swap; "
-                "--decoder-quant only applies to TDT/RNN-T transducer models.",
-            )
-        files = create_asr_resolver(model_name, model_dir).resolve_model(quantization=QUANT_ARG[decoder_quant])
-        # Same session options onnx-asr used for the original decoder (providers etc.).
-        asr._decoder_joint = rt.InferenceSession(str(files["decoder_joint"]), **asr.runtime_config)
-    return model
+    if decoder_quant == encoder_quant:
+        return onnx_asr.load_model(model_name, path=model_dir,
+                                   quantization=QUANT_ARG[encoder_quant], providers=providers)
+
+    from onnx_asr.loader import create_asr_resolver
+
+    model_type = create_asr_resolver(model_name, model_dir).model_type
+    # _get_model_files(quant) maps {"encoder": ..., "decoder_joint": ..., "vocab": ...}.
+    # A model with no fused decoder_joint (e.g. a CTC model) cannot take this knob.
+    if "decoder_joint" not in model_type._get_model_files(QUANT_ARG[encoder_quant]):
+        raise RuntimeError(
+            f"model {model_name!r} has no fused decoder_joint file to set independently; "
+            "--decoder-quant only applies to TDT/RNN-T transducer models.",
+        )
+    original = model_type._get_model_files               # staticmethod -> plain function
+    had_own = "_get_model_files" in model_type.__dict__  # defined here vs inherited from a base
+
+    def mixed_model_files(quantization=None):
+        files = dict(original(QUANT_ARG[encoder_quant]))
+        files["decoder_joint"] = original(QUANT_ARG[decoder_quant])["decoder_joint"]
+        return files
+
+    model_type._get_model_files = staticmethod(mixed_model_files)
+    try:
+        return onnx_asr.load_model(model_name, path=model_dir,
+                                   quantization=QUANT_ARG[encoder_quant], providers=providers)
+    finally:
+        if had_own:
+            model_type._get_model_files = staticmethod(original)
+        else:
+            del model_type._get_model_files
 
 
 def child_full(args):
@@ -329,7 +353,7 @@ def child_oracle(args):
     wav, sr = load_audio(args.audio, args.max_pass_sec)
     audio_sec = len(wav) / sr
     # The oracle is the clean reference; it stays fully matched at its quant (the
-    # parent passes decoder-quant == quant for the oracle spawn, so no swap here).
+    # parent passes decoder-quant == quant for the oracle spawn, so no override here).
     model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant, args.cuda)
 
     sections = []
