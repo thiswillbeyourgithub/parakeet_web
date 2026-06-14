@@ -42,3 +42,5 @@ test-results
 playwright-report
 .playwright
 test/e2e/.cache
+
+audio_testfiles
