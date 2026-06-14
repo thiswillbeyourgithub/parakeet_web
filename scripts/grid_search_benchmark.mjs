@@ -10,13 +10,16 @@
 // beyond ffmpeg decode to 16 kHz mono float32 (same as transcribe.mjs).
 //
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
-// grid: beam-width x (no-boost baseline + each boost strength x each boost
-// depth-scaling x each boost min-p) and prints one row per combination in the
-// accuracy table (beam/boost knobs + corpus WER %, CER % and RTF), followed by a
-// top-5-by-CER and a top-5-by-WER shortlist. The min-p axis overrides the
-// per-phrase boost gate, so one prebuilt trie is reused across every min-p value
-// (no re-encode per value); depth-scaling, by contrast, is baked into the trie at
-// build time, so each value rebuilds the trie (one per strength x depth-scaling).
+// grid: quant x beam-width x (no-boost baseline + each boost strength x each
+// boost depth-scaling x each boost min-p) and prints one row per combination in
+// the accuracy table (quant/beam/boost knobs + corpus WER %, CER % and RTF),
+// followed by a top-5-by-CER and a top-5-by-WER shortlist. --quant takes a
+// comma-separated list (e.g. "int8,fp16,fp32"); each quant is the OUTER sweep
+// dimension, loaded once with its own model + encoder cache (the encoder output
+// is quant-specific). The min-p axis overrides the per-phrase boost gate, so one
+// prebuilt trie is reused across every min-p value (no re-encode per value);
+// depth-scaling, by contrast, is baked into the trie at build time, so each value
+// rebuilds the trie (one per strength x depth-scaling, per quant).
 // Rows are sorted by the cell's corpus-level (micro-averaged) CER by default, or
 // WER with --sort-by wer (best first). It APPENDS those tables to a .md file
 // (successive runs accumulate, separated by a dated rule) and writes every
@@ -30,14 +33,17 @@
 // is how you check that a phrase boost tuned for one domain does not degrade WER
 // on unrelated data.
 //
-// Audio is decoded once and cached across rows, and so is the encoder output:
-// only the decoding (beam width / phrase boost) changes between grid cells, so
-// each utterance is run through preprocessing + the encoder a single time
-// (model.encode()) and that cacheable result is decoded once per cell. Since
-// the encoder dominates runtime, this makes a multi-cell sweep roughly as fast
-// as a single full pass plus the (cheap) extra decodes. The reported preproc/
-// encode timings are the shared one-time cost; the per-cell wall time / RTF
-// reflect just the decode work (the encoder is amortized away).
+// Audio is decoded once and cached across every row (decode is quant- and
+// knob-independent), and the encoder output is cached too WITHIN a quant: for a
+// given quant only the decoding (beam width / phrase boost) changes between grid
+// cells, so each utterance is run through preprocessing + the encoder a single
+// time per quant (model.encode()) and that cacheable result is decoded once per
+// cell. Since the encoder dominates runtime, this makes a multi-cell sweep
+// roughly as fast as one full pass per quant plus the (cheap) extra decodes. The
+// encoder cache resets when a new quant's model is loaded (the encoder output is
+// quant-specific). The reported preproc/encode timings are the shared one-time
+// cost; the per-cell wall time / RTF reflect just the decode work (the encoder is
+// amortized away).
 //
 // Example (two datasets at once):
 //   node grid_search_benchmark.mjs \
@@ -76,8 +82,9 @@ function parseArgs(argv) {
     parakeetWeb: process.env.PARAKEET_WEB || DEFAULT_PARAKEET_WEB,
     model: null,            // null => loadParakeetModel uses its DEFAULT_MODEL
     modelDir: null,
-    quant: 'int8',
-    ort: null,              // null => auto: 'wasm' for int8, 'node' for fp16/fp32
+    quants: ['int8'],       // swept dimension: one model load per quant (encoder
+                            // output is quant-specific, so its cache resets per quant)
+    ort: null,              // null => auto per quant: 'wasm' for int8, 'node' for fp16/fp32
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
     minps: [null],          // swept dimension: min-p gate override (null = each phrase's baked min-p)
@@ -103,6 +110,7 @@ function parseArgs(argv) {
     return argv[i + 1];
   };
   const numList = (s) => s.split(',').map((x) => x.trim()).filter(Boolean).map(Number);
+  const strList = (s) => s.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const eq = arg.indexOf('=');
@@ -116,7 +124,7 @@ function parseArgs(argv) {
       case '--parakeet-web': a.parakeetWeb = val(flag); break;
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
-      case '--quant': a.quant = val(flag); break;
+      case '--quant': a.quants = strList(val(flag)); break;
       case '--ort': a.ort = val(flag); break;
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
@@ -144,14 +152,23 @@ function parseArgs(argv) {
   }
   if (!a.manifests.length) throw new Error('No --manifest given. See --help.');
   if (a.sortBy !== 'wer' && a.sortBy !== 'cer') throw new Error(`--sort-by must be wer or cer (got ${a.sortBy})`);
-  if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
+  // --quant is a swept dimension: a comma-separated list (e.g. "int8,fp16,fp32")
+  // benchmarks each quant in turn (one model load + encoder-cache reset apiece).
+  // Dedupe while preserving order so a repeated quant can't collide on its
+  // resume key or waste a re-run.
+  if (!a.quants.length) throw new Error('--quant must be a comma-separated list of int8/fp16/fp32');
+  for (const q of a.quants) {
+    if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${q})`);
+  }
+  a.quants = [...new Set(a.quants)];
   // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
   // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
   // fp32 encoder and any fp16 model can only load on the native onnxruntime-node
-  // backend (it resolves external data from disk, no buffering). Auto-pick node
-  // for fp16/fp32 unless the user forces a backend; int8 stays on wasm.
-  if (a.ort === null) a.ort = a.quant === 'int8' ? 'wasm' : 'node';
-  if (a.ort !== 'wasm' && a.ort !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ort})`);
+  // backend (it resolves external data from disk, no buffering). When --ort is
+  // left to auto (null) the backend is picked PER quant at load time
+  // (ortForQuant): node for fp16/fp32, wasm for int8. An explicit --ort applies
+  // to every quant.
+  if (a.ort !== null && a.ort !== 'wasm' && a.ort !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ort})`);
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
     throw new Error('--beam-width must be a comma-separated list of integers in [1, 25]');
   }
@@ -202,18 +219,26 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            omitted, the HuggingFace cache for --model is used.
   --model KEY              Model key for the architecture config (features /
                            subsampling). Default: the pipeline's default model.
-  --quant int8|fp16|fp32   Encoder/decoder quantisation. Default int8. fp16 files
+  --quant LIST             Encoder/decoder quantisation(s) to benchmark, a
+                           comma-separated list of int8/fp16/fp32 (e.g.
+                           "int8,fp16,fp32"). Default int8. Each quant is an OUTER
+                           sweep dimension: the grid (beam x boost) runs once per
+                           quant, loading that quant's model and resetting the
+                           encoder cache (the encoder output is quant-specific).
+                           The accuracy table gains a "quant" column. fp16 files
                            come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
-  --ort wasm|node          ORT execution backend. Default: auto (wasm for int8,
-                           node for fp16/fp32). The WASM EP reads each weight file
-                           into a <2 GiB Node Buffer and has no fp16 CPU kernels,
-                           so the single-sidecar fp32 encoder ("File size > 2 GiB")
-                           and any fp16 model need the native node backend, which
-                           streams external data from disk. wasm can still load
-                           fp32 if the model dir is pre-sharded (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py,
-                           each shard <2 GB).
+  --ort wasm|node          ORT execution backend. Default: auto, picked PER quant
+                           (wasm for int8, node for fp16/fp32). The WASM EP reads
+                           each weight file into a <2 GiB Node Buffer and has no
+                           fp16 CPU kernels, so the single-sidecar fp32 encoder
+                           ("File size > 2 GiB") and any fp16 model need the native
+                           node backend, which streams external data from disk.
+                           wasm can still load fp32 if the model dir is pre-sharded
+                           (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py,
+                           each shard <2 GB). An explicit --ort applies to every
+                           swept quant.
 
 Decoding sweep (each is a comma-separated list; the grid is their product):
   -w, --beam-width LIST    Beam widths to test, e.g. "1,2,4,8". 1 = greedy.
@@ -577,7 +602,7 @@ function renderMarkdown(headers, body) {
 // real-time factor (decode work only; the encoder is amortized away). The
 // per-utterance WER spread (mean/median/stdev) and the raw edit/ref counts are
 // dropped from the table to keep it readable; they remain in the JSONL records.
-const ACC_HEAD = ['beam', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF'];
+const ACC_HEAD = ['beam', 'quant', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF'];
 // RTF is a per-cell figure (same across a cell's dataset rows); guard the timings
 // lookup so synthetic rows (unit tests) without a timings field render "-".
 function cellRtf(r) {
@@ -590,6 +615,7 @@ function accuracyBody(rows) {
     for (const d of r.datasets) {
       body.push([
         String(r.beamWidth),
+        r.quant == null ? '-' : String(r.quant),
         r.boostLabel,
         r.strength == null ? '-' : String(r.strength),
         r.minp == null ? '-' : String(r.minp),
@@ -612,6 +638,7 @@ function topBody(rows) {
     const d = repDataset(r);
     return [
       String(r.beamWidth),
+      r.quant == null ? '-' : String(r.quant),
       r.boostLabel,
       r.strength == null ? '-' : String(r.strength),
       r.minp == null ? '-' : String(r.minp),
@@ -665,63 +692,49 @@ async function main() {
   const ffmpeg = findFfmpeg(args.ffmpeg);
   console.error(`[bench] ffmpeg: ${ffmpeg}`);
 
-  const { model, tokenizer, dir } = await loadParakeetModel({
-    model: args.model ?? undefined,
-    modelDir: args.modelDir,
-    quant: args.quant,
-    ortBackend: args.ort,
-    threads: args.threads,
-    verbose: args.verbose,
-  });
-  console.error(`[bench] model dir: ${dir} (${args.quant}, ${args.ort})`);
+  // The model is NOT loaded up front: --quant is a swept dimension, so each quant
+  // is loaded inside the grid loop (one model + its own tokenizer per quant).
+  // ORT backend per quant: auto picks node for fp16/fp32 (no WASM fp16 kernels /
+  // >2 GiB single-file fp32) and wasm for int8; an explicit --ort overrides all.
+  const ortForQuant = (quant) => args.ort ?? (quant === 'int8' ? 'wasm' : 'node');
 
-  // Build the boost dimension of the sweep:
+  // Build the boost dimension of the sweep as quant-INDEPENDENT descriptors (the
+  // trie itself is built later, per quant, from that quant's tokenizer):
   //   - always a no-boost baseline (unless --no-baseline AND boosts given), and
-  //   - when --phrase-boost is set, one config per --boost-strength.
-  // Each config carries a prebuilt trie so we build each trie only once and
-  // reuse it across all beam widths and all utterances.
-  const boostConfigs = [];
+  //   - when --phrase-boost is set, one descriptor per (strength, depth-scaling,
+  //     min-p) combination.
   const hasBoost = args.boosts.length > 0;
   // Content hash of the boost sources, folded into the boost cells' resume key.
   const bDigest = boostDigest(args.boosts);
+  const boostDescriptors = [];
   if (!hasBoost || !args.noBaseline) {
-    boostConfigs.push({ label: 'none', strength: null, minp: null, depthScaling: null, phraseBoost: null, boostDigest: null });
+    boostDescriptors.push({ label: 'none', strength: null, minp: null, depthScaling: null, boostDigest: null });
   }
   if (hasBoost) {
-    // depth-scaling is baked into each node's bonus at insert time (unlike min-p,
-    // which is a decode-time gate), so each (strength, depth-scaling) pair needs
-    // its OWN trie. min-p, by contrast, is then swept over that one trie for free.
     for (const strength of args.strengths) {
       for (const depthScaling of args.depthScalings) {
-        const phraseBoost = await buildPhraseBoost({
-          boosts: args.boosts,
-          strength,
-          depthScaling: depthScaling ?? undefined, // null => trie's built-in default
-          tokenizer,
-          quiet: !args.verbose,
-          verbose: args.verbose,
-        });
-        if (!phraseBoost) {
-          console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
-        }
-        // This (strength, depth-scaling) trie is swept across every requested
-        // min-p override (null = the phrase's baked min-p). The override is set
-        // on the shared trie per cell at decode time, so all min-p cells reuse it.
+        // depth-scaling is baked into each node's bonus at insert time (unlike
+        // min-p, which is a decode-time gate), so each (strength, depth-scaling)
+        // pair needs its OWN trie; min-p is then swept over that one trie for free.
         for (const minp of args.minps) {
-          boostConfigs.push({ label: 'boost', strength, minp, depthScaling, phraseBoost, boostDigest: bDigest });
+          boostDescriptors.push({ label: 'boost', strength, minp, depthScaling, boostDigest: bDigest });
         }
       }
     }
   }
 
-  // The full grid: beam widths x boost configs.
+  // The full grid: quants x beam widths x boost descriptors. Quant is the OUTER
+  // dimension because each quant needs its own model load + (quant-specific)
+  // encoder-output cache; beam/boost are the cheap inner sweep.
   const grid = [];
-  for (const beamWidth of args.beamWidths) {
-    for (const bc of boostConfigs) grid.push({ beamWidth, ...bc });
+  for (const quant of args.quants) {
+    for (const beamWidth of args.beamWidths) {
+      for (const bc of boostDescriptors) grid.push({ quant, beamWidth, ...bc });
+    }
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
-  console.error(`[bench] sweep: ${args.beamWidths.length} beam width(s) x ${boostConfigs.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
+  console.error(`[bench] sweep: ${args.quants.length} quant(s) [${args.quants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -733,14 +746,19 @@ async function main() {
     return pcm;
   }
 
-  // Encode each audio once and cache the encoder output (preprocessing + the
-  // encoder), the single most expensive stage. It depends only on the audio,
-  // never on the decode knobs, so the same cached result is decoded by every
-  // grid cell (passed back via opts.encoded). model.encode() returns plain JS
-  // memory (no live ORT tensors), so caching it is leak-free. Like pcmCache
-  // this trades memory for speed; the PCM is kept too (transcribe() still reads
-  // its length for RTF).
-  const encCache = new Map();
+  // The currently-loaded model (set per quant inside the grid loop) and its
+  // encoder-output cache. Encode each audio once and cache the encoder output
+  // (preprocessing + the encoder), the single most expensive stage. Within one
+  // quant it depends only on the audio, never on the decode knobs, so the same
+  // cached result is decoded by every grid cell of that quant (passed back via
+  // opts.encoded). model.encode() returns plain JS memory (no live ORT tensors),
+  // so caching it is leak-free. The encoder output IS quant-specific, so encCache
+  // is reset whenever a new quant's model is loaded (below). Like pcmCache this
+  // trades memory for speed; the PCM is kept too (transcribe() still reads its
+  // length for RTF) and the PCM cache is shared across quants (decode is
+  // quant-independent).
+  let model = null;
+  let encCache = new Map();
   async function getEncoded(p) {
     let enc = encCache.get(p);
     if (!enc) { enc = await model.encode(await getPcm(p), 16000, { enableProfiling: true }); encCache.set(p, enc); }
@@ -785,7 +803,11 @@ async function main() {
     // null depth-scaling appends nothing, so a sweep without --depth-scaling
     // keeps the same resume key as before (existing jsonl stays reusable).
     const depthPart = row.depthScaling == null ? '' : '^' + row.depthScaling;
-    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}`;
+    // int8 (the default) appends nothing too, so an int8-only sweep keeps the
+    // same resume key as before this multi-quant change; fp16/fp32 always carry
+    // their quant so cells never collide across quants.
+    const quantPart = row.quant === 'int8' ? '' : ' quant=' + row.quant;
+    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}`;
   };
 
   // Reconstruct a summary row (the shape the final tables consume) from a
@@ -810,7 +832,9 @@ async function main() {
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
       timings.rtf.push(m.rtf ?? 0);
     }
-    return { beamWidth: s.beam, boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
+    // Pre-multi-quant summary records have no "quant" field; they were always
+    // int8 cells (whose tag carries no quant), so default to int8 on read-back.
+    return { beamWidth: s.beam, quant: s.quant ?? 'int8', boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
       depthScaling: s.depthScaling ?? null,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
@@ -869,93 +893,152 @@ async function main() {
   // changing per-utterance pace across cells instead of a flat average.
   const gridEta = makeEtaEstimator(ETA_EMA_ALPHA, gridT0);
 
-  for (let gi = 0; gi < pending.length; gi++) {
-    const row = pending[gi];
-    const tag = tagOf(row);
-    // Apply this cell's min-p gate override to the shared per-strength trie
-    // (null restores the phrases' baked min-p). Cells run sequentially, so
-    // mutating the shared trie here is safe and avoids re-encoding per value.
-    if (row.phraseBoost) row.phraseBoost.minpOverride = row.minp ?? null;
-    // Per-dataset accuracy tallies for this run (keyed by dataset name).
-    const perDs = new Map();
-    const ensureDs = (name) => { let acc = perDs.get(name); if (!acc) { acc = newAcc(); perDs.set(name, acc); } return acc; };
-    // Per-phase timing samples (one entry per utterance) for this run.
-    const timings = { rtf: [] };
-    for (const [key] of PHASES) timings[key] = [];
-    const t0 = Date.now();
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      const pcm = await getPcm(e.audioPath);
-      const encoded = await getEncoded(e.audioPath);
-      const result = await transcribeQuiet(pcm, { ...decodeOpts(row), encoded });
-      const hyp = result.utterance_text ?? '';
-      const metrics = result.metrics ?? {};
-      const refNorm = normalizeText(e.text, args.stripAccents);
-      const hypNorm = normalizeText(hyp, args.stripAccents);
-      const sc = score(refNorm, hypNorm);
-      addScore(ensureDs(e.dataset), sc);
-      // Accumulate per-phase timings for this run's mean/median.
-      for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
-      timings.rtf.push(metrics.rtf ?? 0);
-      writeJsonl({
-        type: 'utterance', run: tag,
-        beam: row.beamWidth, boost: row.label, strength: row.strength, minp: row.minp ?? null,
-        depthScaling: row.depthScaling ?? null,
-        dataset: e.dataset,
-        audio: e.audioPath, duration: e.duration,
-        ref: e.text, hyp, refNorm, hypNorm,
-        wordEdits: sc.wordEdits, refWords: sc.refWords,
-        charEdits: sc.charEdits, refChars: sc.refChars,
-        metrics,
-      });
-      // Progress on a single rewritten line: this run, then the whole grid.
-      doneUtts++;
-      const now = Date.now();
-      const runP = progress(i + 1, entries.length, now - t0);
-      const gridP = progress(doneUtts, totalUtts, now - gridT0, gridEta(now, totalUtts - doneUtts));
-      process.stderr.write(`\r[bench] run ${gi + 1}/${pending.length} ${tag}  ${runP}  |  all runs ${gridP}   `);
-    }
-    const timeMs = Date.now() - t0;
-    process.stderr.write('\n');
-    const datasets = buildDatasets(perDs, datasetNames);
-    const r = { beamWidth: row.beamWidth, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
-      depthScaling: row.depthScaling ?? null, timeMs, timings, datasets };
-    summaryByTag.set(tag, r);
-    // The "overall" pool (or the single dataset) supplies the top-level corpus
-    // figures; the per-dataset breakdown is listed under "datasets".
-    const overall = repDataset(r);
-    const dsSummary = (d) => ({
-      name: d.name,
-      utterances: d.werSamples.length,
-      wer_pct: +pct(d.wordEdits, d.refWords).toFixed(4),
-      wer_mean_pct: +mean(d.werSamples).toFixed(4),
-      wer_median_pct: +median(d.werSamples).toFixed(4),
-      wer_stdev_pct: +stdev(d.werSamples).toFixed(4),
-      cer_pct: +pct(d.charEdits, d.refChars).toFixed(4),
-      wordEdits: d.wordEdits, refWords: d.refWords, charEdits: d.charEdits, refChars: d.refChars,
-    });
-    writeJsonl({
-      type: 'summary', run: tag,
-      beam: row.beamWidth, boost: row.label, strength: row.strength, minp: row.minp ?? null,
-      depthScaling: row.depthScaling ?? null,
-      utterances: entries.length,
-      wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
-      wer_mean_pct: +mean(overall.werSamples).toFixed(4),
-      wer_median_pct: +median(overall.werSamples).toFixed(4),
-      wer_stdev_pct: +stdev(overall.werSamples).toFixed(4),
-      cer_pct: +pct(overall.charEdits, overall.refChars).toFixed(4),
-      wordEdits: overall.wordEdits, refWords: overall.refWords, charEdits: overall.charEdits, refChars: overall.refChars,
-      datasets: datasets.map(dsSummary),
-      wall_ms: timeMs,
-      timing_ms: phaseStats(timings),
-    });
-    const perDsLog = datasets.length > 1
-      ? '  [' + datasets.filter((d) => d.name !== OVERALL).map((d) => `${d.name} ${pct(d.wordEdits, d.refWords).toFixed(2)}%`).join(', ') + ']'
-      : '';
-    console.error(`[bench] -> WER ${pct(overall.wordEdits, overall.refWords).toFixed(2)}%  CER ${pct(overall.charEdits, overall.refChars).toFixed(2)}%${perDsLog}  (${(timeMs / 1000).toFixed(1)}s)`);
-  }
+  // Model dir captured from the first quant actually loaded (same dir for every
+  // quant; null only if every cell was resumed and nothing had to be loaded).
+  let loadedDir = null;
+  let gi = 0; // 0-based index over pending cells, across every quant group
 
-  model.dispose();
+  // Quant is the OUTER sweep dimension: for each quant, load its model once,
+  // build that quant's boost tries from its tokenizer, reset the encoder cache
+  // (encoder output is quant-specific), then run every pending cell of that quant.
+  for (const quant of args.quants) {
+    const quantCells = pending.filter((cell) => cell.quant === quant);
+    if (!quantCells.length) continue; // all this quant's cells resumed -> don't load
+
+    const ortBackend = ortForQuant(quant);
+    const loaded = await loadParakeetModel({
+      model: args.model ?? undefined,
+      modelDir: args.modelDir,
+      quant,
+      ortBackend,
+      threads: args.threads,
+      verbose: args.verbose,
+    });
+    model = loaded.model;
+    const tokenizer = loaded.tokenizer;
+    if (!loadedDir) loadedDir = loaded.dir;
+    encCache = new Map(); // encoder output is quant-specific; start this quant fresh
+    console.error(`[bench] model dir: ${loaded.dir} (${quant}, ${ortBackend})`);
+
+    // Build one trie per (strength, depth-scaling) from THIS quant's tokenizer
+    // (vocab is shared across quants, but the tokenizer object is rebuilt with
+    // each model load), then attach it to every matching cell. min-p is swept
+    // over the shared trie per cell at decode time, so all min-p cells reuse it.
+    const trieByKey = new Map();
+    if (hasBoost) {
+      for (const strength of args.strengths) {
+        for (const depthScaling of args.depthScalings) {
+          const phraseBoost = await buildPhraseBoost({
+            boosts: args.boosts,
+            strength,
+            depthScaling: depthScaling ?? undefined, // null => trie's built-in default
+            tokenizer,
+            quiet: !args.verbose,
+            verbose: args.verbose,
+          });
+          if (!phraseBoost) {
+            console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
+          }
+          trieByKey.set(`${strength}|${depthScaling}`, phraseBoost ?? null);
+        }
+      }
+    }
+    for (const cell of quantCells) {
+      cell.phraseBoost = cell.label === 'boost'
+        ? (trieByKey.get(`${cell.strength}|${cell.depthScaling}`) ?? null)
+        : null;
+    }
+
+    for (const row of quantCells) {
+      const tag = tagOf(row);
+      // Apply this cell's min-p gate override to the shared per-strength trie
+      // (null restores the phrases' baked min-p). Cells run sequentially, so
+      // mutating the shared trie here is safe and avoids re-encoding per value.
+      if (row.phraseBoost) row.phraseBoost.minpOverride = row.minp ?? null;
+      // Per-dataset accuracy tallies for this run (keyed by dataset name).
+      const perDs = new Map();
+      const ensureDs = (name) => { let acc = perDs.get(name); if (!acc) { acc = newAcc(); perDs.set(name, acc); } return acc; };
+      // Per-phase timing samples (one entry per utterance) for this run.
+      const timings = { rtf: [] };
+      for (const [key] of PHASES) timings[key] = [];
+      const t0 = Date.now();
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        const pcm = await getPcm(e.audioPath);
+        const encoded = await getEncoded(e.audioPath);
+        const result = await transcribeQuiet(pcm, { ...decodeOpts(row), encoded });
+        const hyp = result.utterance_text ?? '';
+        const metrics = result.metrics ?? {};
+        const refNorm = normalizeText(e.text, args.stripAccents);
+        const hypNorm = normalizeText(hyp, args.stripAccents);
+        const sc = score(refNorm, hypNorm);
+        addScore(ensureDs(e.dataset), sc);
+        // Accumulate per-phase timings for this run's mean/median.
+        for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
+        timings.rtf.push(metrics.rtf ?? 0);
+        writeJsonl({
+          type: 'utterance', run: tag,
+          beam: row.beamWidth, quant: row.quant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+          depthScaling: row.depthScaling ?? null,
+          dataset: e.dataset,
+          audio: e.audioPath, duration: e.duration,
+          ref: e.text, hyp, refNorm, hypNorm,
+          wordEdits: sc.wordEdits, refWords: sc.refWords,
+          charEdits: sc.charEdits, refChars: sc.refChars,
+          metrics,
+        });
+        // Progress on a single rewritten line: this run, then the whole grid.
+        doneUtts++;
+        const now = Date.now();
+        const runP = progress(i + 1, entries.length, now - t0);
+        const gridP = progress(doneUtts, totalUtts, now - gridT0, gridEta(now, totalUtts - doneUtts));
+        process.stderr.write(`\r[bench] run ${gi + 1}/${pending.length} ${tag}  ${runP}  |  all runs ${gridP}   `);
+      }
+      const timeMs = Date.now() - t0;
+      process.stderr.write('\n');
+      const datasets = buildDatasets(perDs, datasetNames);
+      const r = { beamWidth: row.beamWidth, quant: row.quant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
+        depthScaling: row.depthScaling ?? null, timeMs, timings, datasets };
+      summaryByTag.set(tag, r);
+      // The "overall" pool (or the single dataset) supplies the top-level corpus
+      // figures; the per-dataset breakdown is listed under "datasets".
+      const overall = repDataset(r);
+      const dsSummary = (d) => ({
+        name: d.name,
+        utterances: d.werSamples.length,
+        wer_pct: +pct(d.wordEdits, d.refWords).toFixed(4),
+        wer_mean_pct: +mean(d.werSamples).toFixed(4),
+        wer_median_pct: +median(d.werSamples).toFixed(4),
+        wer_stdev_pct: +stdev(d.werSamples).toFixed(4),
+        cer_pct: +pct(d.charEdits, d.refChars).toFixed(4),
+        wordEdits: d.wordEdits, refWords: d.refWords, charEdits: d.charEdits, refChars: d.refChars,
+      });
+      writeJsonl({
+        type: 'summary', run: tag,
+        beam: row.beamWidth, quant: row.quant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+        depthScaling: row.depthScaling ?? null,
+        utterances: entries.length,
+        wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
+        wer_mean_pct: +mean(overall.werSamples).toFixed(4),
+        wer_median_pct: +median(overall.werSamples).toFixed(4),
+        wer_stdev_pct: +stdev(overall.werSamples).toFixed(4),
+        cer_pct: +pct(overall.charEdits, overall.refChars).toFixed(4),
+        wordEdits: overall.wordEdits, refWords: overall.refWords, charEdits: overall.charEdits, refChars: overall.refChars,
+        datasets: datasets.map(dsSummary),
+        wall_ms: timeMs,
+        timing_ms: phaseStats(timings),
+      });
+      const perDsLog = datasets.length > 1
+        ? '  [' + datasets.filter((d) => d.name !== OVERALL).map((d) => `${d.name} ${pct(d.wordEdits, d.refWords).toFixed(2)}%`).join(', ') + ']'
+        : '';
+      console.error(`[bench] -> WER ${pct(overall.wordEdits, overall.refWords).toFixed(2)}%  CER ${pct(overall.charEdits, overall.refChars).toFixed(2)}%${perDsLog}  (${(timeMs / 1000).toFixed(1)}s)`);
+      gi++;
+    }
+
+    // Free this quant's sessions before loading the next quant's model.
+    model.dispose();
+    model = null;
+  }
 
   // Emit every cell (resumed + freshly run), sorted ascending by the cell's
   // word/char-weighted corpus CER (default) or WER (--sort-by wer) so the
@@ -990,7 +1073,7 @@ async function main() {
       '',
       `Dataset(s): ${datasetNames.map((n) => '`' + n + '`').join(', ')} (${entries.length} utterances total)  `,
       `Manifest(s): ${args.manifests.map((m) => '`' + m + '`').join(', ')}  `,
-      `Model: \`${dir}\` (${args.quant})`,
+      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (quant(s): ${args.quants.join(', ')})`,
       '',
       '## Accuracy',
       '',

@@ -173,6 +173,9 @@ describe('cellRate: word/char-weighted corpus WER or CER for a cell', () => {
 describe('accuracyBody: one row per dataset per grid cell', () => {
   test('has a dataset column and emits per-dataset + overall rows', () => {
     const dsCol = ACC_HEAD.indexOf('dataset');
+    const beamCol = ACC_HEAD.indexOf('beam');
+    const boostCol = ACC_HEAD.indexOf('boost');
+    const strengthCol = ACC_HEAD.indexOf('strength');
     assert.ok(dsCol >= 0, 'ACC_HEAD must include a dataset column');
 
     const perDs = new Map([['medical', newAcc()], ['general', newAcc()]]);
@@ -187,10 +190,25 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     assert.deepEqual(body.map((r) => r[dsCol]), ['medical', 'general', OVERALL]);
     // Beam / boost / strength repeat across a cell's rows.
     for (const r of body) {
-      assert.equal(r[0], '4');
-      assert.equal(r[1], 'boost');
-      assert.equal(r[2], '2');
+      assert.equal(r[beamCol], '4');
+      assert.equal(r[boostCol], 'boost');
+      assert.equal(r[strengthCol], '2');
     }
+  });
+
+  test('renders the quant sweep column (value, and "-" when unset)', () => {
+    const quantCol = ACC_HEAD.indexOf('quant');
+    assert.ok(quantCol >= 0, 'ACC_HEAD must include a quant column');
+
+    const mk = (quant) => {
+      const perDs = new Map([['medical', newAcc()]]);
+      addScore(perDs.get('medical'), sc(10, 1));
+      return { beamWidth: 1, quant, boostLabel: 'none', strength: null, minp: null, depthScaling: null,
+        datasets: buildDatasets(perDs, ['medical']) };
+    };
+    assert.equal(accuracyBody([mk('fp16')])[0][quantCol], 'fp16', 'a swept quant renders its value');
+    assert.equal(accuracyBody([mk('int8')])[0][quantCol], 'int8', 'int8 renders as int8');
+    assert.equal(accuracyBody([mk(undefined)])[0][quantCol], '-', 'an absent quant renders "-"');
   });
 
   test('renders the min-p sweep column (value, and "-" when unset)', () => {
@@ -241,16 +259,18 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     const perDs = new Map([['medical', newAcc()], ['general', newAcc()]]);
     addScore(perDs.get('medical'), sc(10, 1)); // 1/10 words, 5/50 chars
     addScore(perDs.get('general'), sc(5, 1));   // 1/5 words, 5/25 chars
-    const row = { beamWidth: 4, boostLabel: 'boost', strength: 2, minp: null, depthScaling: null,
+    const row = { beamWidth: 4, quant: 'fp16', boostLabel: 'boost', strength: 2, minp: null, depthScaling: null,
       timings: { rtf: [0.5] }, datasets: buildDatasets(perDs, ['medical', 'general']) };
 
     const body = topBody([row]);
     assert.equal(body.length, 1, 'one row per cell, not per dataset');
     const dsCol = ACC_HEAD.indexOf('dataset');
+    const quantCol = ACC_HEAD.indexOf('quant');
     const werCol = ACC_HEAD.indexOf('WER %');
     const cerCol = ACC_HEAD.indexOf('CER %');
     const rtfCol = ACC_HEAD.indexOf('RTF');
     assert.equal(body[0][dsCol], OVERALL, 'uses the overall pool as the representative row');
+    assert.equal(body[0][quantCol], 'fp16', 'carries the cell quant into the top table');
     // Micro-averaged: (1+1)/(10+5) words, (5+5)/(50+25) chars.
     assert.equal(body[0][werCol], (100 * 2 / 15).toFixed(2));
     assert.equal(body[0][cerCol], (100 * 10 / 75).toFixed(2));
