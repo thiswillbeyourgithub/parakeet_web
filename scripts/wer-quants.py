@@ -314,6 +314,14 @@ def parse_args(argv):
     p.add_argument("--quants", default="int8,fp16,fp32")
     p.add_argument("--model", default="nemo-parakeet-tdt-0.6b-v3")
     p.add_argument("--model-dir", default=str(ROOT / "fallback_models"))
+    p.add_argument(
+        "--log-file", default="wer-quants.log",
+        help="fixed log file, APPENDED to across runs: stdout+stderr (both tables and "
+             "progress) are mirrored into it, and each run is delimited by a RUN START "
+             "banner with the command line and every resolved argument. Output still "
+             "prints to the console. Default: ./wer-quants.log (parent process only; the "
+             "per-pass --_child subprocesses do not write to it).",
+    )
     # internal: child dispatch
     p.add_argument("--_child", dest="child", choices=["full", "oracle"], help=argparse.SUPPRESS)
     p.add_argument("--quant", help=argparse.SUPPRESS)
@@ -450,12 +458,66 @@ def print_cross_file_summary(summaries, quants):
           "per-file per-section breakdown is in that file's table above.")
 
 
+class _Tee:
+    """Mirror a stream (stdout/stderr) into the run-log file so the whole run is
+    captured without touching every print site. Anything else (encoding, isatty,
+    fileno, colour handling) delegates to the real stream so the console keeps
+    behaving normally."""
+
+    def __init__(self, stream, logfh):
+        self._stream = stream
+        self._logfh = logfh
+
+    def write(self, data):
+        self._stream.write(data)
+        self._logfh.write(data)
+        return len(data)
+
+    def flush(self):
+        self._stream.flush()
+        self._logfh.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def open_run_log(args, argv):
+    """Open the fixed log in APPEND mode and tee stdout+stderr into it, then write a
+    run-start banner: a separator, the timestamp, the exact command line and every
+    resolved argument. Like quantize-int8-smoothquant.py's log, one fixed file
+    accumulates every run, so the banner is what makes each run in the file
+    self-describing (which clip / quants / section settings it used). Parent process
+    only: the --_child passes return before main() reaches here, so a child never
+    writes to the log. (The banner is a deliberate small duplicate of the quantize
+    script's, which lives in a separate repo, so it cannot be a shared import.)"""
+    import shlex
+    from datetime import datetime
+
+    logfh = open(args.log_file, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.stdout, logfh)
+    sys.stderr = _Tee(sys.stderr, logfh)
+    bar = "=" * 78
+    cmd = " ".join(shlex.quote(a) for a in (Path(sys.argv[0]).name, *argv))
+    print(bar)
+    print(f"=== RUN START {datetime.now():%Y-%m-%d %H:%M:%S} ===")
+    print(f"command: {cmd}")
+    print(f"log file (appended): {args.log_file}")
+    print("arguments:")
+    for key, value in sorted(vars(args).items()):
+        if key in ("child", "quant"):  # internal --_child dispatch, not a user arg
+            continue
+        print(f"  {key} = {value!r}")
+    print(bar, flush=True)
+
+
 def main(argv):
     args = parse_args(argv)
     if args.child == "full":
         return child_full(args)
     if args.child == "oracle":
         return child_oracle(args)
+
+    open_run_log(args, argv)
 
     requested = [q.strip() for q in args.quants.split(",") if q.strip()]
     for q in requested:
