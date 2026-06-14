@@ -533,7 +533,7 @@ export default function App() {
   // are hosted) instead of being silently downgraded to a different quant.
   const [modelLoadError, setModelLoadError] = useState(null);
   const [backend, setBackend] = useState('wasm');
-  // Encoder precision for the WASM/CPU backend: 'int8' (default; ~600 MB, fast,
+  // Encoder precision for the WASM/CPU backend: 'int8' (default; ~800 MB, fast,
   // good quality on long audio with the SmoothQuant encoder) or 'fp32' (sharded
   // ~2.4 GB, full quality, ~2x slower). fp32 is opt-in: only honoured when the
   // repo actually ships the fp32 shards, else hub.js falls back to int8
@@ -2050,7 +2050,7 @@ export default function App() {
       // 1. Download all model files (from HF or local fallback).
       // Pass `backend` and a per-backend quant preference; hub.js resolves the
       // final quant against what the repo actually ships (resolveModelQuant):
-      //   - WASM: int8 encoder (~600 MB), the only one that fits the 32-bit WASM
+      //   - WASM: int8 encoder (~800 MB), the only one that fits the 32-bit WASM
       //     heap / Chromium's ~2 GB blob limit.
       //   - WebGPU: prefer the fp16 encoder (~1.2 GB, near-lossless vs fp32 and
       //     lighter to serve) when the repo ships encoder-model.fp16.onnx, else
@@ -4067,7 +4067,7 @@ export default function App() {
   //     saved 'webgpu-hybrid' would otherwise fail at load).
   //   - No explicit user choice yet: default by RAM. WebGPU runs the fp32
   //     encoder (~2.4 GB), so default to it only on devices that don't look
-  //     low on memory; otherwise WASM (int8 encoder, ~600 MB).
+  //     low on memory; otherwise WASM (int8 encoder, ~800 MB).
   useEffect(() => {
     if (!settingsLoaded || webgpuAvailable === null) return;
     if (webgpuAvailable === false) {

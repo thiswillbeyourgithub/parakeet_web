@@ -420,7 +420,7 @@ export async function sweepOrphanedFiles({ repoId, revision = 'main', subfolder 
 // ORT InferenceSession.create accepts a Uint8Array as well as a URL string.
 // For the big WebGPU encoder/decoder we hand it bytes rather than a blob: URL,
 // because fetching a >1 GB blob URL trips Chromium's ERR_BLOB_OUT_OF_MEMORY
-// (the WASM int8 encoder at ~600 MB stays under the cap; fp16/fp32 do not).
+// (the WASM int8 encoder at ~800 MB stays under the cap; fp16/fp32 do not).
 // Caching is unaffected: the blob is still persisted to IndexedDB first.
 async function blobToBytes(blob) {
   return new Uint8Array(await blob.arrayBuffer());
