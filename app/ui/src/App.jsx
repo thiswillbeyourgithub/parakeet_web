@@ -234,8 +234,8 @@ async function loadPersistedTranscripts() {
 }
 
 // F-130: persist only the minimum the history UI needs to render on reload
-// (id, text, timestamp, wordCount). filename, words[] (per-word confidences
-// and start/end timestamps), metrics, and duration stay in-memory and are
+// (id, text, timestamp, wordCount). filename, words[] (per-word start/end
+// timestamps), metrics, and duration stay in-memory and are
 // re-derived/absent on reload. Narrows the on-disk record so a LevelDB
 // recovery cannot reconstruct the audio fingerprint of the original recording
 // (per-word timings, file name that may itself carry PHI like a patient
@@ -970,7 +970,7 @@ export default function App() {
   // buttons are not reachable by Tab+Enter from inside the modal.
   useEffect(() => { if (anyModalOpen) setOpenKebabId(null); }, [anyModalOpen]);
 
-  // Per-entry display mode override (id -> 'raw'|'confidence'|'dictation').
+  // Per-entry display mode override (id -> 'raw'|'dictation').
   // Entries default to the global `transcriptDisplayMode` (the "default
   // transcript display" setting) until the user toggles them individually.
   const [entryDisplayModes, setEntryDisplayModes] = useState({});
@@ -983,7 +983,6 @@ export default function App() {
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
 
-  // Tracks which history item is showing its confidence score overlay
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -993,7 +992,6 @@ export default function App() {
   // settingsLoaded=true would let it write the still-empty array over the
   // on-disk history before the read resolves. See the load effect below.
   const transcriptsRestoredRef = useRef(false);
-  const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState(false);
   // Auto-copy: when enabled, every transcription is written to the system
   // clipboard. F-125: default OFF so the headline "audio never leaves your
   // device" promise also holds for transcript text. The system clipboard is
@@ -1029,7 +1027,7 @@ export default function App() {
   const [dictationSuspectedNoWebhid, setDictationSuspectedNoWebhid] = useState(false);
 
   // Dictation regex post-processing
-  // Display mode: 'raw' = plain transcription, 'confidence' = with heatmap, 'dictation' = regex-cleaned
+  // Display mode: 'raw' = plain transcription, 'dictation' = regex-cleaned
   const [transcriptDisplayMode, setTranscriptDisplayMode] = useState('raw');
   const [dictationRegexRules, setDictationRegexRules] = useState([]); // [{regex, replacement, source}]
   const [dictationRegexLoaded, setDictationRegexLoaded] = useState(false);
@@ -1105,7 +1103,6 @@ export default function App() {
           savedEchoCancellation,
           savedAutoGainControl,
           savedRemoteMicGain,
-          savedShowConfidenceHeatmap,
           savedAutoCopyToClipboard,
           savedPersistTranscripts,
           savedShowAdvancedInfo,
@@ -1137,7 +1134,6 @@ export default function App() {
           loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
-          loadSetting('showConfidenceHeatmap', false),
           loadSetting('autoCopyToClipboard', false),
           // Load with `null` so the F-132 default below can tell "never set"
           // apart from an explicit choice (see the setPersistTranscripts comment).
@@ -1187,7 +1183,6 @@ export default function App() {
         setEchoCancellation(savedEchoCancellation);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
-        setShowConfidenceHeatmap(savedShowConfidenceHeatmap);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
         // F-132: strict privacy-first default. When the toggle key is null
         // (fresh install, profile import without the toggle, manual DevTools
@@ -1206,7 +1201,8 @@ export default function App() {
         // it. When absent, chunkDuration keeps its DEFAULT_CHUNK_DURATION_SEC
         // initial value.
         if (savedChunkDuration != null) setChunkDuration(savedChunkDuration);
-        setTranscriptDisplayMode(savedTranscriptDisplayMode);
+        // 'confidence' was a removed display mode; map any persisted value to 'raw'.
+        setTranscriptDisplayMode(savedTranscriptDisplayMode === 'confidence' ? 'raw' : savedTranscriptDisplayMode);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
         // Whether the user has an explicit saved boost choice. When they don't
@@ -1608,7 +1604,6 @@ export default function App() {
       });
     } catch (_) { /* channel may be closing */ }
   }, [isRemoteMic, noiseSuppression, echoCancellation, autoGainControl, remoteMicGain]);
-  usePersistedSetting('showConfidenceHeatmap', showConfidenceHeatmap, settingsLoaded);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
   usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
   usePersistedSetting('keyboardShortcutsEnabled', keyboardShortcutsEnabled, settingsLoaded);
@@ -3523,12 +3518,11 @@ export default function App() {
         chunkDurationSec: MAX_CHUNK_DURATION,
         overlapSec: 2,
         returnTimestamps: true,
-        returnConfidences: true,
         frameStride,
         // Pinned to 0: temperature never changes the transcript (greedy argmax
-        // is scale-invariant; MAES ranks at temperature 1 regardless), it only
-        // feeds confidence scores, where any value above 0 just adds noise.
-        // Passed explicitly so we don't inherit transcribe()'s 1.2 default.
+        // is scale-invariant; MAES ranks at temperature 1 regardless), so it has
+        // no effect on output. Passed explicitly so we don't inherit
+        // transcribe()'s 1.2 default.
         temperature: 0,
         beamWidth,
         maesNumSteps,
@@ -3600,9 +3594,8 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString(),
         duration: audioDuration, // original duration (without padding)
         wordCount: res.words?.length || 0,
-        confidence: res.confidence_scores?.token_avg ?? res.confidence_scores?.word_avg ?? null,
         metrics: res.metrics,
-        words: res.words || [] // Store word-level data with confidence scores
+        words: res.words || [] // Store word-level data (timestamps)
       };
 
       if (replaceId != null) {
@@ -4035,32 +4028,6 @@ export default function App() {
     };
   }, [openKebabId]);
 
-  // Adaptive confidence color mapping per transcript
-  // Maps confidence to a red gradient: lowest confidence = most red, 100% = transparent
-  // Uses 80% threshold: if min confidence >= 80%, colors are less intense
-  function getConfidenceColor(confidence, minConf = 0, maxConf = 1) {
-    if (!confidence || confidence >= 1.0) return 'transparent';
-  
-    // Apply 80% threshold - if minimum confidence is high, use gentler coloring
-    const effectiveMin = Math.max(minConf, 0.8);
-  
-    // Normalize confidence within the effective range
-    const range = 1.0 - effectiveMin;
-    if (range <= 0) return 'transparent';
-  
-    // Clamp confidence to effective range
-    const clampedConf = Math.max(effectiveMin, Math.min(1.0, confidence));
-  
-    // Map to 0 (at effectiveMin) to 1 (at 100%)
-    const normalized = (clampedConf - effectiveMin) / range;
-  
-    // Invert so lowest confidence = highest opacity
-    // Use quadratic easing for smoother visual transition
-    const opacity = (1 - normalized * normalized) * 0.35; // Max 35% opacity for visibility
-  
-    return `rgba(239, 68, 68, ${opacity})`;
-  }
-
   // Low-RAM / mobile detection. Triggers when JS heap limit is below the shared
   // RAM_THRESHOLD_GB cutoff (the model needs ~100-200 MB plus runtime
   // overhead). Falls back to navigator.deviceMemory (Chrome/Edge) or mobile UA
@@ -4437,17 +4404,8 @@ export default function App() {
                 style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
               >
                 <option value="raw">{t('raw')}</option>
-                <option value="confidence">{t('confidence')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
               </select>
-            </div>
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={showConfidenceHeatmap} onChange={e => setShowConfidenceHeatmap(e.target.checked)} />
-                {t('showCertaintyHeatmap')}
-                <InfoTooltip text={t('tooltipHeatmap')} />
-              </label>
             </div>
           </CollapsibleSection>
 
@@ -5253,10 +5211,6 @@ export default function App() {
           </div>
           <div>
             {transcriptions.map((trans) => {
-              // Calculate average and minimum confidence from words
-              const wordConfs = trans.words?.map(w => w.confidence).filter(c => c != null) || [];
-              const avgConf = wordConfs.length > 0 ? wordConfs.reduce((a, b) => a + b, 0) / wordConfs.length : null;
-              const minConf = wordConfs.length > 0 ? Math.min(...wordConfs) : null;
               const entryMode = getEntryMode(trans.id);
               const audioOpen = openAudioIds.has(trans.id);
 
@@ -5267,13 +5221,12 @@ export default function App() {
                     {showAdvancedInfo && (
                       <span style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
                         {typeof trans.duration === 'number' && `${formatDuration(trans.duration)} | `}{trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
-                        {avgConf !== null && minConf !== null && ` | Avg: ${(avgConf * 100).toFixed(1)}% | Min: ${(minConf * 100).toFixed(1)}%`}
                       </span>
                     )}
                     <span>{trans.timestamp}</span>
                   </div>
 
-                  {/* Per-entry control row: [Audio][Raw][Confidence][Dictation?]
+                  {/* Per-entry control row: [Audio][Raw][Dictation?]
                       on the left, always-visible kebab on the right. */}
                   <div className="history-controls">
                     <div className="history-modes">
@@ -5293,13 +5246,6 @@ export default function App() {
                         title="Raw transcription"
                       >
                         {t('raw')}
-                      </button>
-                      <button
-                        onClick={() => { setEntryMode(trans.id, 'confidence'); setShowConfidenceHeatmap(true); }}
-                        className={`display-mode-button${entryMode === 'confidence' ? ' active' : ''}`}
-                        title={t('confidence')}
-                      >
-                        {t('confidence')}
                       </button>
                       {dictationRegexRules.length > 0 && (
                         <button
@@ -5367,42 +5313,9 @@ export default function App() {
 
                   <div className="history-text-container">
                     <div className="history-text">
-                      {showConfidenceHeatmap && entryMode === 'confidence' && trans.words && trans.words.length > 0 ? (
-                        // Render word-by-word with adaptive confidence heatmap
-                        (() => {
-                          // Calculate min/max confidence for adaptive coloring
-                          const confidences = trans.words.map(w => w.confidence).filter(c => c != null);
-                          const minConf = confidences.length > 0 ? Math.min(...confidences) : 0;
-                          const maxConf = confidences.length > 0 ? Math.max(...confidences) : 1;
-
-                          return trans.words.map((word, i) => (
-                            <span
-                              key={i}
-                              style={{
-                                backgroundColor: getConfidenceColor(word.confidence, minConf, maxConf),
-                                padding: '2px 3px',
-                                borderRadius: '3px',
-                                display: 'inline-block',
-                                marginRight: '0.2em',
-                                transition: 'background-color 0.2s'
-                              }}
-                              title={word.confidence ? `"${word.text}" - Confidence: ${(word.confidence * 100).toFixed(1)}% (Range: ${(minConf * 100).toFixed(1)}%-${(maxConf * 100).toFixed(1)}%)` : word.text}
-                            >
-                              {word.text}
-                            </span>
-                          ));
-                        })()
-                      ) : (
-                        // Show raw or dictation-cleaned text
-                        <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
-                      )}
+                      {/* Show raw or dictation-cleaned text */}
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
                     </div>
-                    {/* Confidence score overlay shown in per-entry confidence mode */}
-                    {entryMode === 'confidence' && avgConf !== null && (
-                      <div className="confidence-overlay">
-                        Avg: {(avgConf * 100).toFixed(1)}% &nbsp;|&nbsp; Min: {(minConf * 100).toFixed(1)}%
-                      </div>
-                    )}
                   </div>
                 </div>
               );
