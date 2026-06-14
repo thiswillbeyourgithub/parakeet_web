@@ -35,12 +35,22 @@ than it does on its own?" Rising WER down the table = long-pass degradation.
 Each quant (and the reference pass) runs in its OWN subprocess so peak RAM is
 isolated and attributable; loading several models in one process would just pile
 their memory together. RAM is peak process RSS (resource.ru_maxrss), reported
-absolute (whole CPU-EP process) and as the delta over the pre-load baseline (the
-model's own footprint). NOTE: this is host RAM because onnx-asr here uses the
-CPU execution provider; it is NOT a VRAM figure. On WebGPU the weights live in
-GPU memory instead (encoder sizes per CLAUDE.md: int8 ~600 MB, fp16 ~1.2 GB,
-fp32 ~2.4 GB), and the CPU/WASM EP cannot even load fp16/fp32, so those
-WebGPU/VRAM numbers can only be observed on a real GPU, not here.
+absolute (whole process) and as the delta over the pre-load baseline (the
+model's own footprint). NOTE: this is host RAM, NOT a VRAM figure, on BOTH
+backends. By default onnx-asr uses the CPU execution provider here; pass --cuda
+to run the encoder/decoder on an NVIDIA GPU (CUDA EP, see below). Even under
+--cuda the RAM column is still host RSS, not VRAM, so watch nvidia-smi for the
+GPU memory (encoder sizes per CLAUDE.md: int8 ~600 MB, fp16 ~1.2 GB, fp32
+~2.4 GB). The CPU EP cannot load fp16/fp32 at all, so for those quants --cuda is
+the only way to bench them here.
+
+GPU (--cuda): the inline deps pin onnx-asr[cpu] (the CPU onnxruntime wheel, which
+has no CUDA EP), so --cuda RE-LAUNCHES the script once through uv with the gpu
+extra (onnx-asr[gpu] -> onnxruntime-gpu) and the local NVIDIA CUDA-12 / cuDNN-9
+wheel libs put on LD_LIBRARY_PATH, then requests CUDAExecutionProvider (with a
+CPU provider after it for op coverage). It needs `uv` on PATH plus a working
+NVIDIA GPU + CUDA 12 + cuDNN 9 (onnxruntime-gpu 1.26's requirement); if the CUDA
+EP can't initialise the run fails rather than silently using CPU.
 
 Default subject: the FULL JFK "We choose to go to the Moon" speech (~17.7 min),
 the gitignored cache produced by scripts/gen-jfk-moon-fixtures.mjs at
@@ -91,15 +101,18 @@ Usage (deps are declared inline via PEP 723, so uv installs them on first run):
   uv run scripts/wer-quants.py --audio fallback_models/.../calibration_audio   # sweep a folder
   uv run scripts/wer-quants.py --quants int8,fp16 --reference-quant fp32
   uv run scripts/wer-quants.py --quants int8,fp16,fp32 --decoder-quant fp32
+  uv run scripts/wer-quants.py --cuda                 # run on the NVIDIA GPU
 
 Or with an environment that already has the deps: python scripts/wer-quants.py
-(needs onnx-asr, librosa, jiwer).
+(needs onnx-asr, librosa, jiwer; for --cuda, onnxruntime-gpu instead of the CPU
+onnxruntime, and CUDA 12 + cuDNN 9 reachable by the dynamic linker).
 
 Built with Claude Code.
 """
 
 import argparse
 import json
+import os
 import resource
 import subprocess
 import sys
@@ -122,6 +135,85 @@ AUDIO_EXTS = {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
 # frames/s = 400.0 s; a single pass past that aborts in the first attention
 # layer. Default the cap just under it. (Empirically: 400 s OK, 410 s fails.)
 DEFAULT_MAX_PASS_SEC = 390.0
+
+# onnxruntime CUDA EP providers (CUDA first; CPU after it ONLY for ops the CUDA
+# EP doesn't implement, it does NOT rescue a failed CUDA-library load).
+CUDA_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+CPU_PROVIDERS = ["CPUExecutionProvider"]
+
+
+# --- GPU (--cuda) runtime bootstrap -----------------------------------------
+
+def cuda_lib_dirs():
+    """Discover local NVIDIA CUDA-12 / cuDNN-9 shared-library dirs to put on the
+    re-exec's LD_LIBRARY_PATH. onnxruntime-gpu 1.26 needs CUDA 12 + cuDNN 9; on a
+    box whose default toolkit is a different CUDA major (e.g. CUDA 13) the libs
+    typically live in the pip `nvidia-*-cu12` wheels or a side-by-side cuda-12.x
+    toolkit, neither on the default loader path. Glob the usual spots and keep the
+    dirs that exist (deduped, order-preserving). Empty is fine: the linker then
+    falls back to the system path and onnxruntime reports the real load error."""
+    import glob
+    patterns = [
+        "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/lib/python*/dist-packages/nvidia/*/lib",
+        os.path.expanduser("~/.local/lib/python*/site-packages/nvidia/*/lib"),
+        os.path.join(sys.prefix, "lib", "python*", "site-packages", "nvidia", "*", "lib"),
+        "/usr/local/cuda-12*/targets/*/lib",
+    ]
+    seen, out = set(), []
+    for pat in patterns:
+        for d in sorted(glob.glob(pat)):
+            if os.path.isdir(d) and d not in seen:
+                seen.add(d)
+                out.append(d)
+    return out
+
+
+def preload_cuda_dlls():
+    """Best-effort: ask onnxruntime to preload the CUDA/cuDNN DLLs from installed
+    nvidia-*-cu12 wheels (onnxruntime >= 1.21). Harmless if unavailable or already
+    loaded; LD_LIBRARY_PATH (set by the re-exec) is the primary mechanism."""
+    try:
+        import onnxruntime as rt
+        if hasattr(rt, "preload_dlls"):
+            rt.preload_dlls()
+    except Exception:
+        pass
+
+
+def ensure_cuda_runtime(argv, args):
+    """For --cuda: guarantee an onnxruntime build with the CUDA EP is active.
+
+    The inline PEP 723 deps pin onnx-asr[cpu] (CPU onnxruntime, no CUDA EP), so
+    when the CUDA EP isn't present we RE-EXEC the whole command once through uv
+    with the gpu extra and the local CUDA-12 libs on LD_LIBRARY_PATH. We invoke
+    `python <script>` (not `uv run <script>`) so uv does NOT read this script's
+    [cpu] inline block, which would otherwise drag the CPU onnxruntime wheel in
+    alongside onnxruntime-gpu and clash. A --_rt-ready sentinel caps it at one
+    re-exec; spawned children always carry it (they inherit the gpu env), so they
+    skip straight through. No-op unless --cuda."""
+    import onnxruntime as rt
+    if "CUDAExecutionProvider" in rt.get_available_providers():
+        return  # gpu runtime already active (re-exec'd, or user supplied it)
+    if args.rt_ready:
+        sys.exit("--cuda: onnxruntime-gpu loaded but CUDAExecutionProvider is still "
+                 f"unavailable (have {rt.get_available_providers()}). Check nvidia-smi "
+                 "and that CUDA 12 + cuDNN 9 are installed.")
+    import shutil
+    uv = shutil.which("uv")
+    if not uv:
+        sys.exit("--cuda needs onnxruntime-gpu but `uv` is not on PATH to install it. "
+                 "Install uv, or run under an environment that already has onnxruntime-gpu.")
+    env = os.environ.copy()
+    libs = cuda_lib_dirs()
+    if libs:
+        prev = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = ":".join(libs + ([prev] if prev else []))
+    cmd = [uv, "run", "--with", "onnx-asr[gpu]", "--with", "librosa", "--with", "jiwer",
+           "python", str(Path(__file__).resolve()), *argv, "--_rt-ready"]
+    print("[wer-quants] --cuda: re-launching under onnxruntime-gpu via uv "
+          f"({len(libs)} CUDA lib dir(s) on LD_LIBRARY_PATH)...", file=sys.stderr, flush=True)
+    os.execvpe(uv, cmd, env)
 
 
 def collect_audio_files(audio_arg):
@@ -172,7 +264,7 @@ def windows(audio_sec, section_sec):
 
 # --- child modes (each runs in its own process for clean RAM accounting) ----
 
-def load_mixed(model_name, model_dir, encoder_quant, decoder_quant):
+def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=False):
     """Load the onnx-asr model with `encoder_quant`, then (if it differs) swap in
     a decoder_joint session built from `decoder_quant`.
 
@@ -181,10 +273,18 @@ def load_mixed(model_name, model_dir, encoder_quant, decoder_quant):
     decoder_joint InferenceSession. We resolve the decoder path through onnx-asr's
     OWN resolver (paths only, no sessions), so no second encoder is ever loaded
     and the peak-RSS figure keeps reflecting just `encoder_quant` + `decoder_quant`.
+
+    `use_cuda` selects the providers: CUDA (+CPU for op coverage) vs CPU-only. The
+    providers are stored on the model's runtime_config, so the decoder swap below
+    inherits the same EP without any extra wiring.
     """
     import onnx_asr
 
-    model = onnx_asr.load_model(model_name, path=model_dir, quantization=QUANT_ARG[encoder_quant])
+    if use_cuda:
+        preload_cuda_dlls()
+    providers = CUDA_PROVIDERS if use_cuda else CPU_PROVIDERS
+    model = onnx_asr.load_model(model_name, path=model_dir,
+                                quantization=QUANT_ARG[encoder_quant], providers=providers)
     if decoder_quant != encoder_quant:
         import onnxruntime as rt
         from onnx_asr.loader import create_asr_resolver
@@ -207,7 +307,7 @@ def child_full(args):
     baseline_mb = peak_rss_mb()  # interpreter + libs + decoded audio, before the model
 
     t0 = time.perf_counter()
-    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant)
+    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant, args.cuda)
     t1 = time.perf_counter()
     res = model.with_timestamps().recognize(wav)
     t2 = time.perf_counter()
@@ -230,7 +330,7 @@ def child_oracle(args):
     audio_sec = len(wav) / sr
     # The oracle is the clean reference; it stays fully matched at its quant (the
     # parent passes decoder-quant == quant for the oracle spawn, so no swap here).
-    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant)
+    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant, args.cuda)
 
     sections = []
     for start, end in windows(audio_sec, args.section_sec):
@@ -255,6 +355,10 @@ def spawn(args, audio, mode, quant, decoder_quant):
     cmd = [sys.executable, __file__, "--_child", mode, "--quant", quant, "--decoder-quant", decoder_quant,
            "--audio", str(audio), "--model", args.model, "--model-dir", args.model_dir,
            "--section-sec", str(args.section_sec), "--max-pass-sec", str(args.max_pass_sec)]
+    if args.cuda:
+        # Children run in the already-bootstrapped gpu env (sys.executable +
+        # inherited LD_LIBRARY_PATH); --_rt-ready makes them skip the re-exec.
+        cmd += ["--cuda", "--_rt-ready"]
     label = quant if decoder_quant == quant else f"{quant}+dec:{decoder_quant}"
     print(f"  [{mode}/{label}] running...", file=sys.stderr, flush=True)
     out = subprocess.run(cmd, capture_output=True, text=True)
@@ -312,6 +416,12 @@ def parse_args(argv):
              "the encoder aborts past ~400 s / 5000 frames).",
     )
     p.add_argument("--quants", default="int8,fp16,fp32")
+    p.add_argument(
+        "--cuda", action="store_true",
+        help="run the encoder/decoder on an NVIDIA GPU (CUDA EP) instead of CPU. "
+             "Re-launches once under onnxruntime-gpu via uv (needs uv + a working "
+             "GPU/CUDA 12/cuDNN 9); fails loudly if the CUDA EP can't init. Default: CPU.",
+    )
     p.add_argument("--model", default="nemo-parakeet-tdt-0.6b-v3")
     p.add_argument("--model-dir", default=str(ROOT / "fallback_models"))
     p.add_argument(
@@ -325,6 +435,9 @@ def parse_args(argv):
     # internal: child dispatch
     p.add_argument("--_child", dest="child", choices=["full", "oracle"], help=argparse.SUPPRESS)
     p.add_argument("--quant", help=argparse.SUPPRESS)
+    # internal: set on the --cuda re-exec (and on spawned children) so the gpu
+    # runtime bootstrap re-execs at most once.
+    p.add_argument("--_rt-ready", dest="rt_ready", action="store_true", help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
 
@@ -504,7 +617,7 @@ def open_run_log(args, argv):
     print(f"log file (appended): {args.log_file}")
     print("arguments:")
     for key, value in sorted(vars(args).items()):
-        if key in ("child", "quant"):  # internal --_child dispatch, not a user arg
+        if key in ("child", "quant", "rt_ready"):  # internal dispatch flags, not user args
             continue
         print(f"  {key} = {value!r}")
     print(bar, flush=True)
@@ -512,6 +625,11 @@ def open_run_log(args, argv):
 
 def main(argv):
     args = parse_args(argv)
+    # For --cuda: make sure a CUDA-capable onnxruntime is active before anything
+    # imports/loads a model (re-execs once via uv when needed; no-op otherwise).
+    # Runs for children too, where it's a fast no-op (they carry --_rt-ready).
+    if args.cuda:
+        ensure_cuda_runtime(argv, args)
     if args.child == "full":
         return child_full(args)
     if args.child == "oracle":
@@ -535,7 +653,8 @@ def main(argv):
                  "of clips; pass a single --audio file, or drop --reference so each clip "
                  "uses its own per-section oracle.")
 
-    print(f"single pass, NO chunking; encoder quants = {', '.join(quants)}; "
+    print(f"single pass, NO chunking; backend = {'cuda (GPU)' if args.cuda else 'cpu'}; "
+          f"encoder quants = {', '.join(quants)}; "
           f"decoder = {args.decoder_quant}; sections = {args.section_sec:g}s; "
           f"oracle = {args.reference_quant}; capped at {args.max_pass_sec:g}s "
           f"(encoder pos-encoding wall is ~400s / 5000 frames; a longer pass aborts)")
