@@ -19,7 +19,10 @@ single pass with NO chunking. It prints two tables:
   1. OVERALL: WER, wall-clock time and peak RAM for each quant.
   2. PER SECTION: WER of each quant in successive time windows, to expose whether
      accuracy decays as the single uninterrupted pass gets longer (the web app
-     never hits this because it chunks; here we deliberately do not).
+     never hits this because it chunks; here we deliberately do not). The table
+     ends with a 'worst chunk' row: the MAXIMUM per-section WER per quant, so a
+     single catastrophic window is reported exactly even when two quants share a
+     near-identical overall WER (the overall figure would average that away).
 
 How the per-section reference is built (the honest part): the model is reliable
 on SHORT audio, so for each time window we transcribe that window *independently*
@@ -378,6 +381,10 @@ def analyze_one(args, audio_path, quants):
     header = "section          ref words  " + "  ".join(f"{q:>6}" for q in ok)
     print(header)
     print("-" * len(header))
+    # Track each quant's WORST (highest) per-section WER and the window it hit, so a
+    # single catastrophic chunk is reported exactly even when the overall WER barely
+    # moves (two quants can agree on every other chunk while one tanks just one).
+    worst = {q: None for q in ok}  # q -> (wer, window-label)
     for i, sec in enumerate(sections):
         ref_i = sec["text"]
         label = f"{sec['start']:6.0f}-{sec['end']:<6.0f}s"
@@ -387,37 +394,59 @@ def analyze_one(args, audio_path, quants):
             r = results[q]
             hyp_i = slice_tokens(r["tokens"], r["timestamps"], sec["start"], sec["end"])
             w = None if not ref_i.strip() else wer(ref_i, hyp_i)
+            if w is not None and (worst[q] is None or w > worst[q][0]):
+                worst[q] = (w, label.strip())
             cells.append(fmt_pct(w))
         print(f"{label}      {ref_n:5d}     " + "  ".join(f"{c:>6}" for c in cells))
+    # Worst-chunk row: the MAXIMUM per-section WER per quant (its single worst
+    # window). Aligned under the data columns (data cells start at column 30).
+    print("-" * len(header))
+    worst_cells = [fmt_pct(worst[q][0] if worst[q] else None) for q in ok]
+    print(f"{'worst chunk':<30}" + "  ".join(f"{c:>6}" for c in worst_cells))
+    where = ", ".join(f"{q} @ {worst[q][1]}" for q in ok if worst[q]) or "n/a"
+    print(f"worst chunk window: {where}")
 
     print("\nLower WER is better. Per-section WER measures the single long pass against an "
           "independent short-clip transcription of the same window; a trend of rising WER "
-          "down the table is the long-pass degradation you suspected. "
+          "down the table is the long-pass degradation you suspected. The 'worst chunk' row "
+          "is the maximum per-section WER for each quant, surfacing a single bad window the "
+          "overall WER would otherwise average away. "
           "RAM is host memory, not VRAM (see the module docstring).")
-    return summary
+    return {q: {"overall": summary[q], "worst": (worst[q][0] if worst.get(q) else None)}
+            for q in quants}
 
 
 def print_cross_file_summary(summaries, quants):
-    """Cross-file overall-WER table after a folder sweep: one row per audio file,
-    one column per encoder quant, plus a mean row over the files each quant
-    transcribed. Gives the headline 'does int8 degrade vs fp16/fp32 across many
-    long speeches' answer at a glance; each file's per-section trend is in its own
-    table above."""
+    """Cross-file tables after a folder sweep: one row per audio file, one column
+    per encoder quant. Two tables (each with a mean row over the files each quant
+    transcribed):
+      1. overall WER  -- the headline 'does int8 degrade vs fp16/fp32 across many
+         long speeches' answer at a glance.
+      2. worst-chunk WER -- each file's single worst per-section window, so a
+         one-chunk collapse the overall mean would otherwise hide still shows up.
+    Each file's full per-section trend is in its own table above."""
     name_w = max(len("mean"), max(len(Path(p).name) for p, _ in summaries))
-    print("\n== Cross-file overall WER (encoder quant) ==")
-    header = f"{'file':<{name_w}}  " + "  ".join(f"{q:>7}" for q in quants)
-    print(header)
-    print("-" * len(header))
-    for path, summary in summaries:
-        cells = "  ".join(f"{fmt_pct(summary.get(q)):>7}" for q in quants)
-        print(f"{Path(path).name:<{name_w}}  {cells}")
-    print("-" * len(header))
-    means = []
-    for q in quants:
-        vals = [s[q] for _, s in summaries if s.get(q) is not None]
-        means.append(sum(vals) / len(vals) if vals else None)
-    print(f"{'mean':<{name_w}}  " + "  ".join(f"{fmt_pct(m):>7}" for m in means))
-    print("\nLower WER is better. The mean is over the files each quant transcribed; a "
+
+    def table(title, key):
+        print(f"\n== Cross-file {title} (encoder quant) ==")
+        header = f"{'file':<{name_w}}  " + "  ".join(f"{q:>7}" for q in quants)
+        print(header)
+        print("-" * len(header))
+        for path, summary in summaries:
+            cells = "  ".join(f"{fmt_pct(summary[q][key]):>7}" for q in quants)
+            print(f"{Path(path).name:<{name_w}}  {cells}")
+        print("-" * len(header))
+        means = []
+        for q in quants:
+            vals = [summary[q][key] for _, summary in summaries if summary[q][key] is not None]
+            means.append(sum(vals) / len(vals) if vals else None)
+        print(f"{'mean':<{name_w}}  " + "  ".join(f"{fmt_pct(m):>7}" for m in means))
+
+    table("overall WER", "overall")
+    table("worst-chunk WER", "worst")
+    print("\nLower WER is better. 'overall WER' is the whole single pass; 'worst-chunk WER' "
+          "is each file's single worst per-section window (a one-chunk collapse the overall "
+          "mean would otherwise hide). The mean is over the files each quant transcribed; a "
           "per-file per-section breakdown is in that file's table above.")
 
 
