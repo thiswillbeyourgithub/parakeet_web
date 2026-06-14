@@ -6,8 +6,11 @@
 // The behaviour this pins: the benchmark CLIs (wer-bench.mjs,
 // grid_search_benchmark.mjs) default to CPU (wasm/node) and only touch the GPU
 // when explicitly asked via --cuda / --ort cuda. The 'cuda' backend must use the
-// native binding (fromPath) and request the CUDA EP with a 'cpu' fallback so a
-// box without a usable CUDA/cuDNN install degrades to CPU instead of failing.
+// native binding (fromPath) and request the CUDA EP first, then 'cpu' for op
+// coverage (ops the CUDA EP lacks run on CPU). NOTE: that trailing 'cpu' does
+// NOT mask a broken GPU stack: if the CUDA provider library can't load, ORT
+// throws at session creation (verified), so a real GPU run is confirmed by VRAM
+// use, not by the EP list alone.
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
@@ -30,11 +33,11 @@ describe('ortRuntimeConfig: ORT backend -> EP / from-path mapping', () => {
     });
   });
 
-  test('cuda uses the native binding (fromPath) on the CUDA EP with a CPU fallback', () => {
+  test('cuda uses the native binding (fromPath) on the CUDA EP, CPU for op coverage', () => {
     const cfg = ortRuntimeConfig('cuda');
     assert.equal(cfg.fromPath, true);
-    // CUDA must be FIRST (ORT tries providers in order) and CPU last so the load
-    // degrades to CPU on a box without a working CUDA/cuDNN install.
+    // CUDA must be FIRST (ORT tries providers in order); CPU follows for ops the
+    // CUDA EP doesn't implement. (It does not rescue a failed CUDA library load.)
     assert.deepEqual(cfg.executionProviders, ['cuda', 'cpu']);
   });
 

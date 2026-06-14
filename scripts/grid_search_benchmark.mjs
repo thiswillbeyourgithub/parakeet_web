@@ -133,7 +133,7 @@ function parseArgs(argv) {
       case '--decoder-quant': a.decoderQuant = val(flag).trim().toLowerCase(); break;
       case '--ort': a.ort = val(flag); break;
       // Sugar for --ort cuda: force the NVIDIA GPU (native onnxruntime-node CUDA
-      // EP, CPU fallback) for every swept quant. Default is CPU (auto per quant).
+      // EP) for every swept quant. Default is CPU (auto per quant).
       case '--cuda': a.ort = 'cuda'; break;
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
@@ -254,10 +254,12 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            resume key only when it differs from a cell's encoder
                            quant (matched runs keep their old key).
       --ort BACKEND        ORT runtime: wasm, node (native CPU) or cuda (NVIDIA
-                           GPU via the native onnxruntime-node CUDA EP, with a CPU
-                           fallback). Default: auto per quant (wasm for int8, node
-                           for fp16/fp32). The WASM EP reads each weight file into
-                           a <2 GiB Node Buffer and has no fp16 CPU kernels, so the
+                           GPU via the native onnxruntime-node CUDA EP; needs
+                           CUDA 12 + cuDNN 9 on the loader path, and FAILS loudly
+                           if the CUDA library can't load). Default: auto per quant
+                           (wasm for int8, node for fp16/fp32). The WASM EP reads
+                           each weight file into a <2 GiB Node Buffer and has no
+                           fp16 CPU kernels, so the
                            single-sidecar fp32 encoder ("File size > 2 GiB") and
                            any fp16 model need the native node backend, which
                            streams external data from disk. wasm can still load
@@ -266,9 +268,9 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            each shard <2 GB). An explicit --ort applies to every
                            swept quant.
       --cuda               Sugar for --ort cuda: run every quant on the NVIDIA GPU
-                           (native onnxruntime-node CUDA EP, CPU fallback). Default
-                           is CPU. Confirm the GPU is actually used via VRAM, since
-                           ORT silently falls back to CPU if CUDA cannot init.
+                           (native onnxruntime-node CUDA EP). Default is CPU. The
+                           load fails loudly if the CUDA library can't load; once
+                           it runs, confirm the GPU is actually in use via VRAM.
 
 Decoding sweep (each is a comma-separated list; the grid is their product):
   -w, --beam-width LIST    Beam widths to test, e.g. "1,2,4,8". 1 = greedy.

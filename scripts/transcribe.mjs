@@ -64,11 +64,14 @@ async function getOrt(backend) {
 // to its ORT executionProviders list:
 //   'wasm' -> WASM EP (onnxruntime-web), bytes loaded into a Buffer.
 //   'node' -> native CPU EP.
-//   'cuda' -> native CUDA EP with a 'cpu' fallback, so a box WITHOUT a usable
-//             CUDA/cuDNN install degrades to CPU rather than failing the load.
-//             (ORT registers providers in order and silently skips any that
-//             cannot initialise, so 'cuda' may quietly run on CPU; that is why
-//             VRAM use is the real confirmation the GPU is actually in play.)
+//   'cuda' -> native CUDA EP, with 'cpu' AFTER it for op coverage only (ops the
+//             CUDA EP doesn't implement run on CPU). The 'cpu' entry does NOT
+//             rescue a broken GPU stack: if the CUDA provider library can't load
+//             (missing/incompatible CUDA or cuDNN) ORT throws at session
+//             creation rather than silently running on CPU. onnxruntime-node
+//             1.26 needs CUDA 12 + cuDNN 9 on the loader path; if the system
+//             default is a different CUDA major, point LD_LIBRARY_PATH at the
+//             matching libs (e.g. the pip nvidia-*-cu12 wheel lib dirs).
 // Exported so the backend->EP mapping is unit-testable without loading a model.
 export function ortRuntimeConfig(ortBackend) {
   switch (ortBackend) {
@@ -295,9 +298,11 @@ Options:
                            the browser/e2e use). node = native onnxruntime-node
                            (64-bit memory, CPU EP), required to load fp16/fp32
                            encoders that overflow the 32-bit WASM heap. cuda =
-                           native onnxruntime-node on the CUDA EP (NVIDIA GPU;
-                           needs a matching CUDA/cuDNN install), with a CPU
-                           fallback if CUDA cannot initialise.
+                           native onnxruntime-node on the CUDA EP (NVIDIA GPU).
+                           Needs CUDA 12 + cuDNN 9 on the loader path (point
+                           LD_LIBRARY_PATH at them if the system default is a
+                           different CUDA major); the load FAILS loudly if the
+                           CUDA provider library cannot be loaded.
       --threads N          WASM thread count (default: ORT chooses).
       --timestamps         Include word timestamps and confidences in output.
       --json               Print the full result object as JSON.
