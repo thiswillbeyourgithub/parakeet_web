@@ -16,7 +16,10 @@
 // followed by a top-5-by-CER and a top-5-by-WER shortlist. --quant takes a
 // comma-separated list (e.g. "int8,fp16,fp32"); each quant is the OUTER sweep
 // dimension, loaded once with its own model + encoder cache (the encoder output
-// is quant-specific). The min-p axis overrides the per-phrase boost gate, so one
+// is quant-specific). --decoder-quant is NOT swept: it is one decoder_joint quant
+// (default fp32) applied to every cell, chosen independently of the encoder
+// quant(s), so the heavy encoder can stay int8 while the small decoder runs full
+// precision. The min-p axis overrides the per-phrase boost gate, so one
 // prebuilt trie is reused across every min-p value (no re-encode per value);
 // depth-scaling, by contrast, is baked into the trie at build time, so each value
 // rebuilds the trie (one per strength x depth-scaling, per quant).
@@ -84,6 +87,8 @@ function parseArgs(argv) {
     modelDir: null,
     quants: ['int8'],       // swept dimension: one model load per quant (encoder
                             // output is quant-specific, so its cache resets per quant)
+    decoderQuant: 'fp32',   // decoder_joint quant, chosen independently of the swept
+                            // encoder quant(s); constant across the grid (default full precision)
     ort: null,              // null => auto per quant: 'wasm' for int8, 'node' for fp16/fp32
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
@@ -125,6 +130,7 @@ function parseArgs(argv) {
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quants = strList(val(flag)); break;
+      case '--decoder-quant': a.decoderQuant = val(flag).trim().toLowerCase(); break;
       case '--ort': a.ort = val(flag); break;
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
@@ -161,6 +167,11 @@ function parseArgs(argv) {
     if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${q})`);
   }
   a.quants = [...new Set(a.quants)];
+  // --decoder-quant is a single value (NOT swept): the decoder_joint quant applied
+  // to every cell, chosen independently of the swept encoder quant(s).
+  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') {
+    throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
+  }
   // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
   // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
   // fp32 encoder and any fp16 model can only load on the native onnxruntime-node
@@ -229,7 +240,16 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
-  --ort wasm|node          ORT execution backend. Default: auto, picked PER quant
+  --decoder-quant Q        DECODER/joiner quantisation (int8/fp16/fp32), a SINGLE
+                           value (not swept) applied to every cell, chosen
+                           independently of the swept encoder --quant. Default fp32:
+                           the fused decoder_joint model is small (~70 MB fp32), so
+                           full precision is cheap and avoids the int8 joiner's
+                           quality loss while the encoder stays quantised. This repo
+                           has no standalone joint graph, so this one knob covers the
+                           decoder and joint networks together. Folded into the
+                           resume key only when it differs from a cell's encoder
+                           quant (matched runs keep their old key).
                            (wasm for int8, node for fp16/fp32). The WASM EP reads
                            each weight file into a <2 GiB Node Buffer and has no
                            fp16 CPU kernels, so the single-sidecar fp32 encoder
@@ -734,7 +754,7 @@ async function main() {
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
-  console.error(`[bench] sweep: ${args.quants.length} quant(s) [${args.quants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
+  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] (decoder ${args.decoderQuant}) x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -807,7 +827,14 @@ async function main() {
     // same resume key as before this multi-quant change; fp16/fp32 always carry
     // their quant so cells never collide across quants.
     const quantPart = row.quant === 'int8' ? '' : ' quant=' + row.quant;
-    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}`;
+    // The decoder quant is constant for the whole run. Append it ONLY when it
+    // differs from this cell's encoder quant: that is exactly the historical
+    // "decoder matches encoder" case, so matched runs keep their old resume key
+    // (pre-decoder-quant jsonl stays reusable), while a mismatched decoder (e.g.
+    // the new int8-encoder/fp32-decoder default) gets a distinct key so it never
+    // falsely reuses a cell decoded with a different decoder.
+    const decPart = args.decoderQuant === row.quant ? '' : ' dec=' + args.decoderQuant;
+    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}${decPart}`;
   };
 
   // Reconstruct a summary row (the shape the final tables consume) from a
@@ -834,7 +861,10 @@ async function main() {
     }
     // Pre-multi-quant summary records have no "quant" field; they were always
     // int8 cells (whose tag carries no quant), so default to int8 on read-back.
-    return { beamWidth: s.beam, quant: s.quant ?? 'int8', boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
+    // Pre-decoder-quant records have no "decoderQuant"; back then the decoder
+    // matched the encoder, so default to this run's encoder quant on read-back.
+    return { beamWidth: s.beam, quant: s.quant ?? 'int8', decoderQuant: s.decoderQuant ?? s.quant ?? 'int8',
+      boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
       depthScaling: s.depthScaling ?? null,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
@@ -910,6 +940,7 @@ async function main() {
       model: args.model ?? undefined,
       modelDir: args.modelDir,
       quant,
+      decoderQuant: args.decoderQuant,
       ortBackend,
       threads: args.threads,
       verbose: args.verbose,
@@ -918,7 +949,7 @@ async function main() {
     const tokenizer = loaded.tokenizer;
     if (!loadedDir) loadedDir = loaded.dir;
     encCache = new Map(); // encoder output is quant-specific; start this quant fresh
-    console.error(`[bench] model dir: ${loaded.dir} (${quant}, ${ortBackend})`);
+    console.error(`[bench] model dir: ${loaded.dir} (enc ${quant} / dec ${args.decoderQuant}, ${ortBackend})`);
 
     // Build one trie per (strength, depth-scaling) from THIS quant's tokenizer
     // (vocab is shared across quants, but the tokenizer object is rebuilt with
@@ -978,7 +1009,7 @@ async function main() {
         timings.rtf.push(metrics.rtf ?? 0);
         writeJsonl({
           type: 'utterance', run: tag,
-          beam: row.beamWidth, quant: row.quant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+          beam: row.beamWidth, quant: row.quant, decoderQuant: args.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
           depthScaling: row.depthScaling ?? null,
           dataset: e.dataset,
           audio: e.audioPath, duration: e.duration,
@@ -1015,7 +1046,7 @@ async function main() {
       });
       writeJsonl({
         type: 'summary', run: tag,
-        beam: row.beamWidth, quant: row.quant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+        beam: row.beamWidth, quant: row.quant, decoderQuant: args.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
         utterances: entries.length,
         wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
@@ -1073,7 +1104,7 @@ async function main() {
       '',
       `Dataset(s): ${datasetNames.map((n) => '`' + n + '`').join(', ')} (${entries.length} utterances total)  `,
       `Manifest(s): ${args.manifests.map((m) => '`' + m + '`').join(', ')}  `,
-      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (quant(s): ${args.quants.join(', ')})`,
+      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (encoder quant(s): ${args.quants.join(', ')}; decoder quant: ${args.decoderQuant})`,
       '',
       '## Accuracy',
       '',
