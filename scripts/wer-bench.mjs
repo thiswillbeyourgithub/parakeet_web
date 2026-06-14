@@ -44,9 +44,12 @@ function parseArgs(argv) {
     expected: null,         // optional second golden (int8 repo transcript)
     modelDir: resolve(ROOT, 'fallback_models'),
     ortBackend: 'node',
+    decoderQuant: 'fp32',   // decoder_joint quant, independent of each config's encoder quant
     overlap: 2,
-    // (quant, chunkDurationSec). The default matrix sweeps chunk windows per
-    // quant: int8 at 20 s and 60 s vs fp16/fp32 at a 60 s window.
+    // (quant, chunkDurationSec). The quant here is the ENCODER quant; the fused
+    // decoder_joint quant is the separate --decoder-quant (default fp32), applied
+    // to every config. The default matrix sweeps chunk windows per encoder quant:
+    // int8 at 20 s and 60 s vs fp16/fp32 at a 60 s window.
     configs: [
       ['int8', 20], ['int8', 60], ['fp16', 60], ['fp32', 60],
     ],
@@ -62,6 +65,7 @@ function parseArgs(argv) {
       case '--expected': a.expected = next(); break;
       case '--model-dir': a.modelDir = next(); break;
       case '--ort': a.ortBackend = next(); break;
+      case '--decoder-quant': a.decoderQuant = next().trim().toLowerCase(); break;
       case '--overlap': a.overlap = Number(next()); break;
       case '--configs':
         a.configs = next().split(',').map((s) => {
@@ -70,11 +74,14 @@ function parseArgs(argv) {
         });
         break;
       case '-h': case '--help':
-        console.log('Usage: node scripts/wer-bench.mjs [--audio f] [--reference t|@file] [--configs int8@20,fp16@60] [--ort node|wasm] [--model-dir d]');
+        console.log('Usage: node scripts/wer-bench.mjs [--audio f] [--reference t|@file] [--configs int8@20,fp16@60] [--ort node|wasm] [--decoder-quant int8|fp16|fp32] [--model-dir d]\n  --configs quant is the ENCODER quant per chunk window; --decoder-quant (default fp32) sets the fused decoder_joint quant for every config.');
         process.exit(0);
         break;
       default: throw new Error(`Unknown option: ${arg}`);
     }
+  }
+  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') {
+    throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
   }
   return a;
 }
@@ -120,7 +127,7 @@ async function main() {
   const pcm = await decodePcm(ffmpeg, args.audio);
   const audioSec = pcm.length / 16000;
   console.log(`audio: ${args.audio}`);
-  console.log(`       ${audioSec.toFixed(1)}s, reference ${refWords.length} words, ort=${args.ortBackend}\n`);
+  console.log(`       ${audioSec.toFixed(1)}s, reference ${refWords.length} words, ort=${args.ortBackend}, decoder=${args.decoderQuant}\n`);
 
   // Group configs by quant so each model is loaded once.
   const byQuant = new Map();
@@ -134,7 +141,7 @@ async function main() {
     let model;
     try {
       ({ model } = await loadParakeetModel({
-        modelDir: args.modelDir, quant, ortBackend: args.ortBackend,
+        modelDir: args.modelDir, quant, decoderQuant: args.decoderQuant, ortBackend: args.ortBackend,
       }));
     } catch (e) {
       for (const c of chunks) rows.push({ quant, chunk: c, error: e.message });
@@ -187,7 +194,7 @@ async function main() {
     `## ${new Date().toISOString()}`,
     '',
     `- audio: \`${args.audio}\` (${audioSec.toFixed(1)}s, reference ${refWords.length} words)`,
-    `- ort backend: ${args.ortBackend}, overlap ${args.overlap}s`,
+    `- ort backend: ${args.ortBackend}, decoder quant ${args.decoderQuant}, overlap ${args.overlap}s`,
     '',
   ].join('\n');
   appendFileSync(reportPath, `${header}\n\`\`\`\n${table}\n\`\`\`\n\n`);
