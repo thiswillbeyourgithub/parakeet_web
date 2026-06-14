@@ -366,22 +366,50 @@ export function resolveModelDir(cliDir, repoId) {
   return snap;
 }
 
-// Per-quant filename suffix. fp16 files are produced by parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
-// from the fp32 pieces; fp32 is the plain name (with an external .onnx.data for
-// the encoder); int8 is the onnxruntime-quantized variant shipped on HF.
-const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
+// Per-quant filename candidates for the encoder and decoder, in preference
+// order (the first that exists on disk wins). fp16 files are produced by
+// parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py from the fp32
+// pieces; fp32 is the plain name (with an external .onnx.data for the encoder).
+//
+// int8 has TWO valid encoder names: the published HF repo renames the SmoothQuant
+// int8 encoder to the canonical `encoder-model.int8.onnx` (what App.jsx/hub.js and
+// fetch-e2e-models.mjs download), while the model-repo working folder
+// (parakeet-tdt-0.6b-v3-smoothquant-onnx/) keeps it under the descriptive
+// `encoder-model.int8.smoothquant.onnx`. Try the canonical name first so the
+// published/cached layout is unchanged, then fall back to the SmoothQuant name so
+// `--model-dir` can point straight at the working folder. The int8 DECODER keeps
+// the single `decoder_joint-model.int8.onnx` name in both layouts.
+const QUANT_FILES = {
+  int8: {
+    encoder: ['encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
+    decoder: ['decoder_joint-model.int8.onnx'],
+  },
+  fp16: {
+    encoder: ['encoder-model.fp16.onnx'],
+    decoder: ['decoder_joint-model.fp16.onnx'],
+  },
+  fp32: {
+    encoder: ['encoder-model.onnx'],
+    decoder: ['decoder_joint-model.onnx'],
+  },
+};
 
 export function resolveFiles(dir, quant) {
-  const suffix = QUANT_SUFFIX[quant];
-  if (!suffix) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
-  const enc = `encoder-model${suffix}`;
-  const dec = `decoder_joint-model${suffix}`;
-  const vocab = 'vocab.txt';
-  for (const f of [enc, dec, vocab]) {
-    if (!existsSync(join(dir, f))) {
-      throw new Error(`Missing ${f} in model dir ${dir}`);
+  const spec = QUANT_FILES[quant];
+  if (!spec) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
+  // First existing candidate wins; if none exist, name every alternative we tried.
+  const pick = (candidates, label) => {
+    const found = candidates.find((f) => existsSync(join(dir, f)));
+    if (!found) {
+      const tried = candidates.length > 1 ? `${candidates.join(' or ')}` : candidates[0];
+      throw new Error(`Missing ${label} (${tried}) in model dir ${dir}`);
     }
-  }
+    return found;
+  };
+  const enc = pick(spec.encoder, 'encoder');
+  const dec = pick(spec.decoder, 'decoder');
+  const vocab = 'vocab.txt';
+  if (!existsSync(join(dir, vocab))) throw new Error(`Missing ${vocab} in model dir ${dir}`);
   return {
     encoderPath: join(dir, enc),
     decoderPath: join(dir, dec),
