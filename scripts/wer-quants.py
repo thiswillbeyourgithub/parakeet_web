@@ -60,11 +60,25 @@ Quantisation -> files in the model dir:
   fp16 -> encoder-model.fp16.onnx + decoder_joint-model.fp16.onnx
   fp32 -> encoder-model.onnx (+ .data)  + decoder_joint-model.onnx
 
+Encoder vs decoder quant: --quants sweeps the ENCODER quant (that is what this
+bench measures), while --decoder-quant (default fp32) holds the fused
+decoder_joint at a fixed precision for every swept encoder. onnx-asr exposes a
+single `quantization` that selects both files, so when the decoder quant differs
+from the encoder quant we load the model normally for the encoder and then swap
+its decoder_joint InferenceSession for one built from the decoder-quant file
+(resolving only that one path via onnx-asr's own resolver, so no second encoder
+is loaded and the RAM figure stays honest). The decoder is small (~70 MB fp32 vs
+~18 MB int8), so fp32 there is cheap and avoids the int8 joiner's quality loss.
+This model exports the decoder and joint network as one fused file, so this knob
+covers both. The per-section oracle reference stays fully matched at
+--reference-quant (no decoder swap), so it remains a clean reference.
+
 Usage (deps are declared inline via PEP 723, so uv installs them on first run):
   uv run scripts/wer-quants.py
   uv run scripts/wer-quants.py --section-sec 90
   uv run scripts/wer-quants.py --audio clip.mp3 --reference @ref.txt
   uv run scripts/wer-quants.py --quants int8,fp16 --reference-quant fp32
+  uv run scripts/wer-quants.py --quants int8,fp16,fp32 --decoder-quant fp32
 
 Or with an environment that already has the deps: python scripts/wer-quants.py
 (needs onnx-asr, librosa, jiwer).
@@ -119,15 +133,42 @@ def windows(audio_sec, section_sec):
 
 # --- child modes (each runs in its own process for clean RAM accounting) ----
 
-def child_full(args):
-    """Single full-pass transcription with token timestamps; emit JSON result."""
+def load_mixed(model_name, model_dir, encoder_quant, decoder_quant):
+    """Load the onnx-asr model with `encoder_quant`, then (if it differs) swap in
+    a decoder_joint session built from `decoder_quant`.
+
+    onnx-asr's `quantization` argument selects BOTH the encoder and the decoder
+    file, so to mix them we load normally for the encoder and replace only the
+    decoder_joint InferenceSession. We resolve the decoder path through onnx-asr's
+    OWN resolver (paths only, no sessions), so no second encoder is ever loaded
+    and the peak-RSS figure keeps reflecting just `encoder_quant` + `decoder_quant`.
+    """
     import onnx_asr
 
+    model = onnx_asr.load_model(model_name, path=model_dir, quantization=QUANT_ARG[encoder_quant])
+    if decoder_quant != encoder_quant:
+        import onnxruntime as rt
+        from onnx_asr.loader import create_asr_resolver
+
+        asr = model.asr  # underlying NemoConformerTdt (the adapter wraps it as .asr)
+        if not hasattr(asr, "_decoder_joint"):
+            raise RuntimeError(
+                f"model {model_name!r} has no fused decoder_joint session to swap; "
+                "--decoder-quant only applies to TDT/RNN-T transducer models.",
+            )
+        files = create_asr_resolver(model_name, model_dir).resolve_model(quantization=QUANT_ARG[decoder_quant])
+        # Same session options onnx-asr used for the original decoder (providers etc.).
+        asr._decoder_joint = rt.InferenceSession(str(files["decoder_joint"]), **asr.runtime_config)
+    return model
+
+
+def child_full(args):
+    """Single full-pass transcription with token timestamps; emit JSON result."""
     wav, sr = load_audio(args.audio, args.max_pass_sec)
     baseline_mb = peak_rss_mb()  # interpreter + libs + decoded audio, before the model
 
     t0 = time.perf_counter()
-    model = onnx_asr.load_model(args.model, path=args.model_dir, quantization=QUANT_ARG[args.quant])
+    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant)
     t1 = time.perf_counter()
     res = model.with_timestamps().recognize(wav)
     t2 = time.perf_counter()
@@ -146,11 +187,11 @@ def child_full(args):
 
 def child_oracle(args):
     """Transcribe each time window independently; emit the per-window reference."""
-    import onnx_asr
-
     wav, sr = load_audio(args.audio, args.max_pass_sec)
     audio_sec = len(wav) / sr
-    model = onnx_asr.load_model(args.model, path=args.model_dir, quantization=QUANT_ARG[args.quant])
+    # The oracle is the clean reference; it stays fully matched at its quant (the
+    # parent passes decoder-quant == quant for the oracle spawn, so no swap here).
+    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant)
 
     sections = []
     for start, end in windows(audio_sec, args.section_sec):
@@ -163,12 +204,18 @@ def emit(obj):
     print("__RESULT__" + json.dumps(obj))
 
 
-def spawn(args, mode, quant):
-    """Run this script as a child in the given mode/quant; parse its JSON result."""
-    cmd = [sys.executable, __file__, "--_child", mode, "--quant", quant,
+def spawn(args, mode, quant, decoder_quant):
+    """Run this script as a child in the given mode/quant; parse its JSON result.
+
+    `decoder_quant` is the decoder_joint quant for this child: the swept encoder
+    quant pairs with --decoder-quant for the measured passes, while the oracle
+    pass is given decoder_quant == quant so it stays a fully-matched reference.
+    """
+    cmd = [sys.executable, __file__, "--_child", mode, "--quant", quant, "--decoder-quant", decoder_quant,
            "--audio", args.audio, "--model", args.model, "--model-dir", args.model_dir,
            "--section-sec", str(args.section_sec), "--max-pass-sec", str(args.max_pass_sec)]
-    print(f"  [{mode}/{quant}] running...", file=sys.stderr, flush=True)
+    label = quant if decoder_quant == quant else f"{quant}+dec:{decoder_quant}"
+    print(f"  [{mode}/{label}] running...", file=sys.stderr, flush=True)
     out = subprocess.run(cmd, capture_output=True, text=True)
     for line in out.stdout.splitlines():
         if line.startswith("__RESULT__"):
@@ -207,7 +254,15 @@ def parse_args(argv):
     )
     p.add_argument(
         "--reference-quant", default="fp32", choices=list(QUANT_ARG),
-        help="quant used to build the per-section oracle reference (default fp32).",
+        help="quant used to build the per-section oracle reference (default fp32; "
+             "fully matched encoder+decoder, no swap).",
+    )
+    p.add_argument(
+        "--decoder-quant", default="fp32", choices=list(QUANT_ARG),
+        help="decoder_joint quant held fixed across the swept encoder --quants "
+             "(default fp32). The fused decoder is small, so full precision is "
+             "cheap and avoids the int8 joiner's quality loss. Only affects the "
+             "measured passes; the oracle reference stays matched at --reference-quant.",
     )
     p.add_argument("--section-sec", type=float, default=60.0, help="section window length (s).")
     p.add_argument(
@@ -248,8 +303,9 @@ def main(argv):
     quants = [q for q in QUANT_ARG if q in requested]
 
     print(f"audio: {args.audio}")
-    print(f"       single pass, NO chunking; quants = {', '.join(quants)}; "
-          f"sections = {args.section_sec:g}s; oracle = {args.reference_quant}")
+    print(f"       single pass, NO chunking; encoder quants = {', '.join(quants)}; "
+          f"decoder = {args.decoder_quant}; sections = {args.section_sec:g}s; "
+          f"oracle = {args.reference_quant}")
     print(f"       single pass capped at {args.max_pass_sec:g}s (encoder pos-encoding wall "
           f"is ~400s / 5000 frames; a longer pass aborts)\n")
     print("transcribing (each pass in its own process):", file=sys.stderr)
@@ -259,13 +315,14 @@ def main(argv):
     results = {}
     for q in quants:
         try:
-            results[q] = spawn(args, "full", q)
+            results[q] = spawn(args, "full", q, args.decoder_quant)
         except Exception as e:  # one bad quant should not kill the others
             results[q] = {"error": str(e)}
 
     # Then the per-section oracle reference: independent short-clip transcription
-    # per window (order does not affect results; tables are built below).
-    oracle = spawn(args, "oracle", args.reference_quant)
+    # per window (order does not affect results; tables are built below). The
+    # oracle stays fully matched at reference_quant (decoder == encoder, no swap).
+    oracle = spawn(args, "oracle", args.reference_quant, args.reference_quant)
     sections = oracle["sections"]
     audio_sec = oracle["audio_sec"]
 
