@@ -16,10 +16,12 @@
 // followed by a top-5-by-CER and a top-5-by-WER shortlist. --quant takes a
 // comma-separated list (e.g. "int8,fp16,fp32"); each quant is the OUTER sweep
 // dimension, loaded once with its own model + encoder cache (the encoder output
-// is quant-specific). --decoder-quant is NOT swept: it is one decoder_joint quant
-// (default fp32) applied to every cell, chosen independently of the encoder
-// quant(s), so the heavy encoder can stay int8 while the small decoder runs full
-// precision. The min-p axis overrides the per-phrase boost gate, so one
+// is quant-specific). --decoder-quants takes a comma-separated list too and is
+// swept as an INNER dimension nested under each encoder quant: the encoder output
+// is cached per encoder quant and reused across every decoder quant beneath it, so
+// a decoder sweep pays only a model reload + the cheap decode, never a re-encode.
+// The heavy encoder can stay int8 while the small decoder_joint is varied (default
+// fp32). The min-p axis overrides the per-phrase boost gate, so one
 // prebuilt trie is reused across every min-p value (no re-encode per value);
 // depth-scaling, by contrast, is baked into the trie at build time, so each value
 // rebuilds the trie (one per strength x depth-scaling, per quant).
@@ -43,8 +45,9 @@
 // time per quant (model.encode()) and that cacheable result is decoded once per
 // cell. Since the encoder dominates runtime, this makes a multi-cell sweep
 // roughly as fast as one full pass per quant plus the (cheap) extra decodes. The
-// encoder cache resets when a new quant's model is loaded (the encoder output is
-// quant-specific). The reported preproc/encode timings are the shared one-time
+// encoder cache resets when a new ENCODER quant's model is loaded (the encoder
+// output is encoder-quant-specific) and is reused across every decoder quant nested
+// under that encoder quant. The reported preproc/encode timings are the shared one-time
 // cost; the per-cell wall time / RTF reflect just the decode work (the encoder is
 // amortized away).
 //
@@ -87,8 +90,9 @@ function parseArgs(argv) {
     modelDir: null,
     quants: ['int8'],       // swept dimension: one model load per quant (encoder
                             // output is quant-specific, so its cache resets per quant)
-    decoderQuant: 'fp32',   // decoder_joint quant, chosen independently of the swept
-                            // encoder quant(s); constant across the grid (default full precision)
+    decoderQuants: ['fp32'], // swept dimension (nested under each encoder quant):
+                            // decoder_joint quant(s), chosen independently of the
+                            // swept encoder quant(s) (default full precision)
     ort: null,              // null => auto per quant: 'wasm' for int8, 'node' for fp16/fp32
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
@@ -130,7 +134,7 @@ function parseArgs(argv) {
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
       case '--quant': a.quants = strList(val(flag)); break;
-      case '--decoder-quant': a.decoderQuant = val(flag).trim().toLowerCase(); break;
+      case '--decoder-quants': a.decoderQuants = strList(val(flag)); break;
       case '--ort': a.ort = val(flag); break;
       // Sugar for --ort cuda: force the NVIDIA GPU (native onnxruntime-node CUDA
       // EP) for every swept quant. Default is CPU (auto per quant).
@@ -170,11 +174,16 @@ function parseArgs(argv) {
     if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${q})`);
   }
   a.quants = [...new Set(a.quants)];
-  // --decoder-quant is a single value (NOT swept): the decoder_joint quant applied
-  // to every cell, chosen independently of the swept encoder quant(s).
-  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') {
-    throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
+  // --decoder-quants is a swept dimension nested under each encoder --quant: a
+  // comma-separated list of decoder_joint quant(s), each applied in turn to every
+  // cell, chosen independently of the swept encoder quant(s). Dedupe while
+  // preserving order like --quant so a repeated value can't collide on its resume
+  // key or waste a re-run.
+  if (!a.decoderQuants.length) throw new Error('--decoder-quants must be a comma-separated list of int8/fp16/fp32');
+  for (const q of a.decoderQuants) {
+    if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--decoder-quants must be int8, fp16 or fp32 (got ${q})`);
   }
+  a.decoderQuants = [...new Set(a.decoderQuants)];
   // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
   // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
   // fp32 encoder and any fp16 model can only load on the native onnxruntime-node
@@ -243,16 +252,24 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
-  --decoder-quant Q        DECODER/joiner quantisation (int8/fp16/fp32), a SINGLE
-                           value (not swept) applied to every cell, chosen
-                           independently of the swept encoder --quant. Default fp32:
-                           the fused decoder_joint model is small (~70 MB fp32), so
-                           full precision is cheap and avoids the int8 joiner's
-                           quality loss while the encoder stays quantised. This repo
-                           has no standalone joint graph, so this one knob covers the
-                           decoder and joint networks together. Folded into the
-                           resume key only when it differs from a cell's encoder
-                           quant (matched runs keep their old key).
+  --decoder-quants LIST    DECODER/joiner quantisation(s) to benchmark, a
+                           comma-separated list of int8/fp16/fp32 (e.g.
+                           "int8,fp32"). Default fp32. A swept dimension nested
+                           INSIDE each encoder --quant: the encoder output is cached
+                           per encoder quant and reused across every decoder quant
+                           beneath it, so sweeping the decoder pays only a model
+                           reload + the cheap decode (never a re-encode). The fused
+                           decoder_joint model is small (~70 MB fp32), so full
+                           precision is cheap and avoids the int8 joiner's quality
+                           loss while the encoder stays quantised; this repo has no
+                           standalone joint graph, so this knob covers the decoder
+                           and joint networks together. The accuracy table gains a
+                           "dec" column. The chosen ORT backend follows the ENCODER
+                           quant (int8 -> wasm, fp16/fp32 -> node); an fp16 decoder
+                           there upcasts to fp32 for compute (faithful fp16-quality
+                           proxy). Folded into the resume key only when it differs
+                           from a cell's encoder quant (matched runs keep their old
+                           key).
       --ort BACKEND        ORT runtime: wasm, node (native CPU) or cuda (NVIDIA
                            GPU via the native onnxruntime-node CUDA EP; needs
                            CUDA 12 + cuDNN 9 on the loader path, and FAILS loudly
@@ -651,7 +668,7 @@ function renderMarkdown(headers, body) {
 // real-time factor (decode work only; the encoder is amortized away). The
 // per-utterance WER spread (mean/median/stdev) and the raw edit/ref counts are
 // dropped from the table to keep it readable; they remain in the JSONL records.
-const ACC_HEAD = ['beam', 'quant', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF'];
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF'];
 // RTF is a per-cell figure (same across a cell's dataset rows); guard the timings
 // lookup so synthetic rows (unit tests) without a timings field render "-".
 function cellRtf(r) {
@@ -665,6 +682,7 @@ function accuracyBody(rows) {
       body.push([
         String(r.beamWidth),
         r.quant == null ? '-' : String(r.quant),
+        r.decoderQuant == null ? '-' : String(r.decoderQuant),
         r.boostLabel,
         r.strength == null ? '-' : String(r.strength),
         r.minp == null ? '-' : String(r.minp),
@@ -688,6 +706,7 @@ function topBody(rows) {
     return [
       String(r.beamWidth),
       r.quant == null ? '-' : String(r.quant),
+      r.decoderQuant == null ? '-' : String(r.decoderQuant),
       r.boostLabel,
       r.strength == null ? '-' : String(r.strength),
       r.minp == null ? '-' : String(r.minp),
@@ -772,18 +791,22 @@ async function main() {
     }
   }
 
-  // The full grid: quants x beam widths x boost descriptors. Quant is the OUTER
-  // dimension because each quant needs its own model load + (quant-specific)
-  // encoder-output cache; beam/boost are the cheap inner sweep.
+  // The full grid: encoder quants x decoder quants x beam widths x boost
+  // descriptors. Encoder quant is the OUTER dimension (each needs its own model
+  // load + encoder-quant-specific output cache); decoder quant is nested directly
+  // under it (it reloads the model but reuses the cached encoder outputs); beam/
+  // boost are the cheap inner sweep.
   const grid = [];
   for (const quant of args.quants) {
-    for (const beamWidth of args.beamWidths) {
-      for (const bc of boostDescriptors) grid.push({ quant, beamWidth, ...bc });
+    for (const decoderQuant of args.decoderQuants) {
+      for (const beamWidth of args.beamWidths) {
+        for (const bc of boostDescriptors) grid.push({ quant, decoderQuant, beamWidth, ...bc });
+      }
     }
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
-  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] (decoder ${args.decoderQuant}) x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
+  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -795,16 +818,17 @@ async function main() {
     return pcm;
   }
 
-  // The currently-loaded model (set per quant inside the grid loop) and its
-  // encoder-output cache. Encode each audio once and cache the encoder output
-  // (preprocessing + the encoder), the single most expensive stage. Within one
-  // quant it depends only on the audio, never on the decode knobs, so the same
-  // cached result is decoded by every grid cell of that quant (passed back via
-  // opts.encoded). model.encode() returns plain JS memory (no live ORT tensors),
-  // so caching it is leak-free. The encoder output IS quant-specific, so encCache
-  // is reset whenever a new quant's model is loaded (below). Like pcmCache this
-  // trades memory for speed; the PCM is kept too (transcribe() still reads its
-  // length for RTF) and the PCM cache is shared across quants (decode is
+  // The currently-loaded model (set per encoder/decoder quant inside the grid loop)
+  // and its encoder-output cache. Encode each audio once and cache the encoder
+  // output (preprocessing + the encoder), the single most expensive stage. Within
+  // one encoder quant it depends only on the audio, never on the decode knobs OR the
+  // decoder quant, so the same cached result is decoded by every grid cell of that
+  // encoder quant (passed back via opts.encoded). model.encode() returns plain JS
+  // memory (no live ORT tensors), so caching it is leak-free. The encoder output IS
+  // encoder-quant-specific, so encCache is reset whenever a new ENCODER quant is
+  // entered (below) and reused across every decoder quant nested under it. Like
+  // pcmCache this trades memory for speed; the PCM is kept too (transcribe() still
+  // reads its length for RTF) and the PCM cache is shared across quants (decode is
   // quant-independent).
   let model = null;
   let encCache = new Map();
@@ -856,13 +880,13 @@ async function main() {
     // same resume key as before this multi-quant change; fp16/fp32 always carry
     // their quant so cells never collide across quants.
     const quantPart = row.quant === 'int8' ? '' : ' quant=' + row.quant;
-    // The decoder quant is constant for the whole run. Append it ONLY when it
-    // differs from this cell's encoder quant: that is exactly the historical
-    // "decoder matches encoder" case, so matched runs keep their old resume key
-    // (pre-decoder-quant jsonl stays reusable), while a mismatched decoder (e.g.
-    // the new int8-encoder/fp32-decoder default) gets a distinct key so it never
-    // falsely reuses a cell decoded with a different decoder.
-    const decPart = args.decoderQuant === row.quant ? '' : ' dec=' + args.decoderQuant;
+    // Append the decoder quant ONLY when it differs from this cell's encoder quant:
+    // that is exactly the historical "decoder matches encoder" case, so matched
+    // runs keep their old resume key (pre-decoder-quant jsonl stays reusable), while
+    // a mismatched decoder (e.g. the int8-encoder/fp32-decoder default, or any swept
+    // decoder quant) gets a distinct key so it never falsely reuses a cell decoded
+    // with a different decoder.
+    const decPart = row.decoderQuant === row.quant ? '' : ' dec=' + row.decoderQuant;
     return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}${decPart}`;
   };
 
@@ -975,24 +999,40 @@ async function main() {
     liveLineCount = 0;
   };
 
-  // Model dir captured from the first quant actually loaded (same dir for every
-  // quant; null only if every cell was resumed and nothing had to be loaded).
+  // Model dir captured from the first (encoder, decoder) pair actually loaded (same
+  // dir for every pair; null only if every cell was resumed and nothing was loaded).
   let loadedDir = null;
-  let gi = 0; // 0-based index over pending cells, across every quant group
+  let gi = 0; // 0-based index over pending cells, across every quant-pair group
 
-  // Quant is the OUTER sweep dimension: for each quant, load its model once,
-  // build that quant's boost tries from its tokenizer, reset the encoder cache
-  // (encoder output is quant-specific), then run every pending cell of that quant.
-  for (const quant of args.quants) {
-    const quantCells = pending.filter((cell) => cell.quant === quant);
-    if (!quantCells.length) continue; // all this quant's cells resumed -> don't load
+  // The model-load order: encoder quant is MAJOR, decoder quant is MINOR (nested
+  // under it). Iterating these (encoder, decoder) pairs in encoder-major order lets
+  // the encoder-output cache and the boost tries (both encoder-quant-specific) be
+  // reset once when the encoder quant changes and then reused across every decoder
+  // quant beneath it: the decoder sweep reloads the model but never re-encodes.
+  const quantPairs = [];
+  for (const encQuant of args.quants) for (const decQuant of args.decoderQuants) quantPairs.push([encQuant, decQuant]);
 
-    const ortBackend = ortForQuant(quant);
+  let prevEncQuant = null; // encoder quant of the previous loaded pair
+  let trieByKey = null;    // boost tries for the current encoder quant (rebuilt on change)
+  for (const [encQuant, decQuant] of quantPairs) {
+    const cells = pending.filter((cell) => cell.quant === encQuant && cell.decoderQuant === decQuant);
+    if (!cells.length) continue; // all this pair's cells resumed -> don't load
+
+    // Entering a new encoder quant: the cached encoder outputs and boost tries (both
+    // encoder-quant-specific) are stale, so drop them. Same encoder quant, new
+    // decoder quant: keep both (the encoder output and tokenizer are unchanged).
+    if (encQuant !== prevEncQuant) {
+      encCache = new Map();
+      trieByKey = null;
+      prevEncQuant = encQuant;
+    }
+
+    const ortBackend = ortForQuant(encQuant);
     const loaded = await loadParakeetModel({
       model: args.model ?? undefined,
       modelDir: args.modelDir,
-      quant,
-      decoderQuant: args.decoderQuant,
+      quant: encQuant,
+      decoderQuant: decQuant,
       ortBackend,
       threads: args.threads,
       verbose: args.verbose,
@@ -1000,15 +1040,15 @@ async function main() {
     model = loaded.model;
     const tokenizer = loaded.tokenizer;
     if (!loadedDir) loadedDir = loaded.dir;
-    encCache = new Map(); // encoder output is quant-specific; start this quant fresh
-    console.error(`[bench] model dir: ${loaded.dir} (enc ${quant} / dec ${args.decoderQuant}, ${ortBackend})`);
+    console.error(`[bench] model dir: ${loaded.dir} (enc ${encQuant} / dec ${decQuant}, ${ortBackend})`);
 
-    // Build one trie per (strength, depth-scaling) from THIS quant's tokenizer
-    // (vocab is shared across quants, but the tokenizer object is rebuilt with
-    // each model load), then attach it to every matching cell. min-p is swept
-    // over the shared trie per cell at decode time, so all min-p cells reuse it.
-    const trieByKey = new Map();
-    if (hasBoost) {
+    // Build one trie per (strength, depth-scaling) from the tokenizer. The vocab is
+    // shared across quants, so build the tries ONCE per encoder quant (lazily, on the
+    // first decoder quant that loads a model) and reuse across the decoder sweep.
+    // min-p is swept over the shared trie per cell at decode time, so all min-p cells
+    // reuse it.
+    if (hasBoost && !trieByKey) {
+      trieByKey = new Map();
       for (const strength of args.strengths) {
         for (const depthScaling of args.depthScalings) {
           const phraseBoost = await buildPhraseBoost({
@@ -1026,13 +1066,13 @@ async function main() {
         }
       }
     }
-    for (const cell of quantCells) {
+    for (const cell of cells) {
       cell.phraseBoost = cell.label === 'boost'
-        ? (trieByKey.get(`${cell.strength}|${cell.depthScaling}`) ?? null)
+        ? (trieByKey?.get(`${cell.strength}|${cell.depthScaling}`) ?? null)
         : null;
     }
 
-    for (const row of quantCells) {
+    for (const row of cells) {
       const tag = tagOf(row);
       // Apply this cell's min-p gate override to the shared per-strength trie
       // (null restores the phrases' baked min-p). Cells run sequentially, so
@@ -1061,7 +1101,7 @@ async function main() {
         timings.rtf.push(metrics.rtf ?? 0);
         writeJsonl({
           type: 'utterance', run: tag,
-          beam: row.beamWidth, quant: row.quant, decoderQuant: args.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+          beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
           depthScaling: row.depthScaling ?? null,
           dataset: e.dataset,
           audio: e.audioPath, duration: e.duration,
@@ -1084,7 +1124,7 @@ async function main() {
       const timeMs = Date.now() - t0;
       commitProgress();
       const datasets = buildDatasets(perDs, datasetNames);
-      const r = { beamWidth: row.beamWidth, quant: row.quant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
+      const r = { beamWidth: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null, timeMs, timings, datasets };
       summaryByTag.set(tag, r);
       // The "overall" pool (or the single dataset) supplies the top-level corpus
@@ -1102,7 +1142,7 @@ async function main() {
       });
       writeJsonl({
         type: 'summary', run: tag,
-        beam: row.beamWidth, quant: row.quant, decoderQuant: args.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+        beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
         utterances: entries.length,
         wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
@@ -1122,7 +1162,9 @@ async function main() {
       gi++;
     }
 
-    // Free this quant's sessions before loading the next quant's model.
+    // Free this (encoder, decoder) pair's sessions before loading the next pair's
+    // model. The encoder-output cache (encCache) survives so the next decoder quant
+    // of the same encoder quant reuses it.
     model.dispose();
     model = null;
   }
@@ -1160,7 +1202,7 @@ async function main() {
       '',
       `Dataset(s): ${datasetNames.map((n) => '`' + n + '`').join(', ')} (${entries.length} utterances total)  `,
       `Manifest(s): ${args.manifests.map((m) => '`' + m + '`').join(', ')}  `,
-      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (encoder quant(s): ${args.quants.join(', ')}; decoder quant: ${args.decoderQuant})`,
+      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (encoder quant(s): ${args.quants.join(', ')}; decoder quant(s): ${args.decoderQuants.join(', ')})`,
       '',
       '## Accuracy',
       '',

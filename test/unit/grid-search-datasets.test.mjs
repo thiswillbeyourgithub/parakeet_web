@@ -211,6 +211,27 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     assert.equal(accuracyBody([mk(undefined)])[0][quantCol], '-', 'an absent quant renders "-"');
   });
 
+  test('renders the decoder-quant sweep column (value, and "-" when unset)', () => {
+    const decCol = ACC_HEAD.indexOf('dec');
+    assert.ok(decCol >= 0, 'ACC_HEAD must include a decoder-quant column');
+
+    const mk = (decoderQuant) => {
+      const perDs = new Map([['medical', newAcc()]]);
+      addScore(perDs.get('medical'), sc(10, 1));
+      return { beamWidth: 1, quant: 'int8', decoderQuant, boostLabel: 'none', strength: null, minp: null, depthScaling: null,
+        datasets: buildDatasets(perDs, ['medical']) };
+    };
+    assert.equal(accuracyBody([mk('fp32')])[0][decCol], 'fp32', 'a swept decoder quant renders its value');
+    assert.equal(accuracyBody([mk('int8')])[0][decCol], 'int8', 'an int8 decoder renders as int8');
+    assert.equal(accuracyBody([mk(undefined)])[0][decCol], '-', 'an absent decoder quant renders "-"');
+    // The decoder quant is an independent column: an int8 encoder with an fp32
+    // decoder must show both, not collapse to a single quant.
+    const quantCol = ACC_HEAD.indexOf('quant');
+    const mixed = accuracyBody([mk('fp32')])[0];
+    assert.equal(mixed[quantCol], 'int8', 'encoder quant stays in the quant column');
+    assert.equal(mixed[decCol], 'fp32', 'decoder quant is reported separately');
+  });
+
   test('renders the min-p sweep column (value, and "-" when unset)', () => {
     const minpCol = ACC_HEAD.indexOf('minp');
     assert.ok(minpCol >= 0, 'ACC_HEAD must include a min-p column');
@@ -259,18 +280,20 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     const perDs = new Map([['medical', newAcc()], ['general', newAcc()]]);
     addScore(perDs.get('medical'), sc(10, 1)); // 1/10 words, 5/50 chars
     addScore(perDs.get('general'), sc(5, 1));   // 1/5 words, 5/25 chars
-    const row = { beamWidth: 4, quant: 'fp16', boostLabel: 'boost', strength: 2, minp: null, depthScaling: null,
+    const row = { beamWidth: 4, quant: 'fp16', decoderQuant: 'int8', boostLabel: 'boost', strength: 2, minp: null, depthScaling: null,
       timings: { rtf: [0.5] }, datasets: buildDatasets(perDs, ['medical', 'general']) };
 
     const body = topBody([row]);
     assert.equal(body.length, 1, 'one row per cell, not per dataset');
     const dsCol = ACC_HEAD.indexOf('dataset');
     const quantCol = ACC_HEAD.indexOf('quant');
+    const decCol = ACC_HEAD.indexOf('dec');
     const werCol = ACC_HEAD.indexOf('WER %');
     const cerCol = ACC_HEAD.indexOf('CER %');
     const rtfCol = ACC_HEAD.indexOf('RTF');
     assert.equal(body[0][dsCol], OVERALL, 'uses the overall pool as the representative row');
-    assert.equal(body[0][quantCol], 'fp16', 'carries the cell quant into the top table');
+    assert.equal(body[0][quantCol], 'fp16', 'carries the cell encoder quant into the top table');
+    assert.equal(body[0][decCol], 'int8', 'carries the cell decoder quant into the top table');
     // Micro-averaged: (1+1)/(10+5) words, (5+5)/(50+25) chars.
     assert.equal(body[0][werCol], (100 * 2 / 15).toFixed(2));
     assert.equal(body[0][cerCol], (100 * 10 / 75).toFixed(2));
