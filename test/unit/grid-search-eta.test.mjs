@@ -1,17 +1,20 @@
-// Tier-1 unit test for the grid-level ETA estimator in
-// scripts/grid_search_benchmark.mjs. The grid sweep does not run at a uniform
-// pace (the first cell pays the one-time preprocess+encode for every utterance,
-// then it is cached, and later cells change the beam width), so the overall ETA
-// must NOT be a flat elapsed/done average: it has to track the current pace and
-// weight the most recent steps. makeEtaEstimator is an exponential moving
-// average over per-step durations; these tests pin that behaviour with injected
-// timestamps so nothing depends on wall-clock timing.
+// Tier-1 unit test for the grid-level ETA estimator AND the tqdm-style stacked
+// progress region in scripts/grid_search_benchmark.mjs. The grid sweep does not
+// run at a uniform pace (the first cell pays the one-time preprocess+encode for
+// every utterance, then it is cached, and later cells change the beam width), so
+// the overall ETA must NOT be a flat elapsed/done average: it has to track the
+// current pace and weight the most recent steps. makeEtaEstimator is an
+// exponential moving average over per-step durations; these tests pin that
+// behaviour with injected timestamps so nothing depends on wall-clock timing.
+// renderLiveRegion builds the cursor-addressing bytes that redraw the two
+// stacked bars in place; the tests assert that escape-sequence shape without a
+// real terminal.
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeEtaEstimator, fmtDuration } from '../../scripts/grid_search_benchmark.mjs';
+import { makeEtaEstimator, fmtDuration, renderLiveRegion } from '../../scripts/grid_search_benchmark.mjs';
 
 describe('makeEtaEstimator: EMA-smoothed ETA that weights recent steps', () => {
   test('no estimate before the first step is measured (unseeded)', () => {
@@ -75,5 +78,39 @@ describe('makeEtaEstimator: EMA-smoothed ETA that weights recent steps', () => {
   test('NaN ETA renders as the placeholder duration', () => {
     const eta = makeEtaEstimator(0.2); // unseeded
     assert.equal(fmtDuration(eta(0, 5)), '--:--');
+  });
+});
+
+describe('renderLiveRegion: in-place redraw of the stacked progress bars', () => {
+  const UP = (n) => `\x1b[${n}A`; // cursor up n lines
+  const CLR = '\x1b[2K\r';        // clear whole line, return to column 0
+
+  test('first draw (prevCount 0) does not move the cursor up', () => {
+    const out = renderLiveRegion(['run bar', 'grid bar'], 0);
+    assert.ok(!/\x1b\[\d+A/.test(out), 'no cursor-up escape at all on the first draw');
+    // Both lines are cleared+written and the block ends on a fresh line below.
+    assert.equal(out, `${CLR}run bar\n${CLR}grid bar\n`);
+  });
+
+  test('a redraw moves up exactly prevCount lines before rewriting', () => {
+    const out = renderLiveRegion(['run bar 2', 'grid bar 2'], 2);
+    assert.equal(out, `${UP(2)}${CLR}run bar 2\n${CLR}grid bar 2\n`);
+  });
+
+  test('each line is cleared (\\x1b[2K\\r) so a shorter line cannot leave a tail', () => {
+    const out = renderLiveRegion(['short', 'x'], 2);
+    // Every line must be preceded by the clear-line + carriage-return sequence.
+    const clears = out.split(CLR).length - 1;
+    assert.equal(clears, 2, 'both lines are individually cleared before rewrite');
+  });
+
+  test('the block always ends on a fresh line below (trailing newline)', () => {
+    assert.ok(renderLiveRegion(['a', 'b'], 0).endsWith('\n'));
+    assert.ok(renderLiveRegion(['a', 'b'], 2).endsWith('\n'));
+  });
+
+  test('supports an arbitrary line count (not hard-coded to two)', () => {
+    const out = renderLiveRegion(['l1', 'l2', 'l3'], 3);
+    assert.equal(out, `${UP(3)}${CLR}l1\n${CLR}l2\n${CLR}l3\n`);
   });
 });

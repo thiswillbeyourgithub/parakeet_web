@@ -571,6 +571,23 @@ function progress(done, total, elapsedMs, etaMs) {
   return `${bar(frac)} ${done}/${total} ${(frac * 100).toFixed(0).padStart(3)}% ETA ${fmtDuration(eta)}`;
 }
 
+// tqdm-style stacked progress: build the bytes that redraw a multi-line "live
+// region" in place on a TTY. `prevCount` is how many lines the region drew last
+// time; we move the cursor up that many lines to the top of the block, then for
+// each new line clear it (\x1b[2K) and rewrite from column 0 (\r). The cursor
+// ends on a fresh line BELOW the block, so the next redraw moves up again (no
+// accumulation) and a permanent log line printed after a `commit` lands under
+// it. The line count is assumed stable while a block is live (callers reset
+// prevCount to 0 to commit a block to scrollback before starting a new one), so
+// this does not need to erase leftover lines when the count shrinks. Pure, so
+// it is unit-testable without a real terminal; non-TTY callers skip it (ANSI
+// cursor moves would only litter a piped log / CI file).
+function renderLiveRegion(lines, prevCount) {
+  const up = prevCount > 0 ? `\x1b[${prevCount}A` : '';
+  const body = lines.map((l) => `\x1b[2K\r${l}`).join('\n');
+  return `${up}${body}\n`;
+}
+
 // How fast the grid ETA forgets old steps (EMA smoothing factor in (0, 1]):
 // 0.2 keeps the estimate responsive to the last ~5 steps while still smoothing
 // per-utterance noise. Higher = more weight on the most recent steps.
@@ -923,6 +940,29 @@ async function main() {
   // changing per-utterance pace across cells instead of a flat average.
   const gridEta = makeEtaEstimator(ETA_EMA_ALPHA, gridT0);
 
+  // Two stacked progress bars (tqdm-style): line 1 = the current run's
+  // utterances, line 2 = the whole grid. On a TTY we redraw both in place via
+  // renderLiveRegion (cursor addressing); on a non-TTY (piped log / CI) we fall
+  // back to the old single \r line so ANSI cursor moves don't litter the file.
+  const isTty = !!process.stderr.isTTY;
+  let liveLineCount = 0;
+  const drawProgress = (runLine, gridLine) => {
+    if (isTty) {
+      process.stderr.write(renderLiveRegion([runLine, gridLine], liveLineCount));
+      liveLineCount = 2;
+    } else {
+      process.stderr.write(`\r${runLine}  |  ${gridLine}   `);
+    }
+  };
+  // Commit the live region to scrollback so the next permanent log line lands
+  // below it and the next run starts a fresh block. On a TTY the cursor is
+  // already below the block (renderLiveRegion's trailing newline), so we just
+  // stop tracking it; on a non-TTY we end the rewritten \r line with a newline.
+  const commitProgress = () => {
+    if (!isTty) process.stderr.write('\n');
+    liveLineCount = 0;
+  };
+
   // Model dir captured from the first quant actually loaded (same dir for every
   // quant; null only if every cell was resumed and nothing had to be loaded).
   let loadedDir = null;
@@ -1018,15 +1058,19 @@ async function main() {
           charEdits: sc.charEdits, refChars: sc.refChars,
           metrics,
         });
-        // Progress on a single rewritten line: this run, then the whole grid.
+        // Two stacked progress bars: this run, then the whole grid (one line
+        // each on a TTY; folded onto one \r line when piped).
         doneUtts++;
         const now = Date.now();
         const runP = progress(i + 1, entries.length, now - t0);
         const gridP = progress(doneUtts, totalUtts, now - gridT0, gridEta(now, totalUtts - doneUtts));
-        process.stderr.write(`\r[bench] run ${gi + 1}/${pending.length} ${tag}  ${runP}  |  all runs ${gridP}   `);
+        drawProgress(
+          `[bench] run ${gi + 1}/${pending.length} ${tag}  ${runP}`,
+          `[bench] all runs  ${gridP}`,
+        );
       }
       const timeMs = Date.now() - t0;
-      process.stderr.write('\n');
+      commitProgress();
       const datasets = buildDatasets(perDs, datasetNames);
       const r = { beamWidth: row.beamWidth, quant: row.quant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null, timeMs, timings, datasets };
@@ -1142,5 +1186,5 @@ export {
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset, cellRate,
   ACC_HEAD, accuracyBody, topBody, OVERALL,
-  makeEtaEstimator, fmtDuration,
+  makeEtaEstimator, fmtDuration, renderLiveRegion,
 };
