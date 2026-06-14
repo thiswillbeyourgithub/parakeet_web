@@ -8,7 +8,9 @@
 // fp16 is the candidate middle ground (~1.2 GB, near-lossless), but it cannot load
 // on the WASM backend (the CPU/WASM EP upcasts fp16->fp32 and overflows the 32-bit
 // heap), so this bench runs on the NATIVE onnxruntime-node backend (--ort node),
-// which loads fp16/fp32 fine and is a faithful proxy for fp16 *quality*.
+// which loads fp16/fp32 fine and is a faithful proxy for fp16 *quality*. By default
+// it runs on the CPU; pass --cuda (or --ort cuda) to run on an NVIDIA GPU via the
+// onnxruntime-node CUDA EP (needs a matching CUDA/cuDNN install; CPU fallback).
 //
 // It reuses the real pipeline verbatim (loadParakeetModel + transcribeChunked
 // from transcribe.mjs, the same chunking/TDT decode the web app uses) and the
@@ -65,6 +67,9 @@ function parseArgs(argv) {
       case '--expected': a.expected = next(); break;
       case '--model-dir': a.modelDir = next(); break;
       case '--ort': a.ortBackend = next(); break;
+      // Sugar for --ort cuda: run on the NVIDIA GPU (native onnxruntime-node
+      // CUDA EP, CPU fallback). Default stays CPU (--ort node).
+      case '--cuda': a.ortBackend = 'cuda'; break;
       case '--decoder-quant': a.decoderQuant = next().trim().toLowerCase(); break;
       case '--overlap': a.overlap = Number(next()); break;
       case '--configs':
@@ -74,7 +79,7 @@ function parseArgs(argv) {
         });
         break;
       case '-h': case '--help':
-        console.log('Usage: node scripts/wer-bench.mjs [--audio f] [--reference t|@file] [--configs int8@20,fp16@60] [--ort node|wasm] [--decoder-quant int8|fp16|fp32] [--model-dir d]\n  --configs quant is the ENCODER quant per chunk window; --decoder-quant (default fp32) sets the fused decoder_joint quant for every config.');
+        console.log('Usage: node scripts/wer-bench.mjs [--audio f] [--reference t|@file] [--configs int8@20,fp16@60] [--ort node|wasm|cuda] [--cuda] [--decoder-quant int8|fp16|fp32] [--model-dir d]\n  --configs quant is the ENCODER quant per chunk window; --decoder-quant (default fp32) sets the fused decoder_joint quant for every config.\n  --ort selects the runtime: node (native CPU, default), wasm, or cuda (NVIDIA GPU via onnxruntime-node CUDA EP, CPU fallback). --cuda is sugar for --ort cuda.');
         process.exit(0);
         break;
       default: throw new Error(`Unknown option: ${arg}`);
