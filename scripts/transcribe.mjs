@@ -41,20 +41,42 @@ const ort = ortmod.default || ortmod;
 
 // Resolve the ORT module for the requested backend. 'wasm' (default) uses the
 // vendored onnxruntime-web Node build, the same engine family as the browser,
-// so the CLI and the tier-3 e2e behave identically. 'node' uses the native
-// onnxruntime-node binding (a devDependency): same JS Tensor/InferenceSession
-// API, so parakeet.js runs unchanged, but 64-bit memory, so it can load the
-// fp16 (~1.2 GB) and fp32 (~2.4 GB external) encoders that overflow the 32-bit
-// WASM heap. Native CPU upcasts fp16 to fp32 for compute, so it is a faithful
-// proxy for fp16 *quality* (the WebGPU path users would actually hit), not for
-// WASM memory limits. Lazy-imported so the default path never requires the
-// native package.
+// so the CLI and the tier-3 e2e behave identically. 'node' and 'cuda' both use
+// the native onnxruntime-node binding (a devDependency): same JS
+// Tensor/InferenceSession API, so parakeet.js runs unchanged, but 64-bit
+// memory, so it can load the fp16 (~1.2 GB) and fp32 (~2.4 GB external) encoders
+// that overflow the 32-bit WASM heap. 'node' runs on the CPU EP, where fp16 is
+// upcast to fp32 for compute (a faithful proxy for fp16 *quality*, the WebGPU
+// path users hit, not for WASM memory limits). 'cuda' runs the CUDA EP on an
+// NVIDIA GPU (needs a working CUDA/cuDNN install matching the onnxruntime-node
+// build), with real fp16 kernels. Lazy-imported so the default path never
+// requires the native package.
 async function getOrt(backend) {
-  if (backend === 'node') {
+  if (backend === 'node' || backend === 'cuda') {
     const m = await import('onnxruntime-node');
     return m.default || m;
   }
   return ort;
+}
+
+// Map an --ort backend to whether the session is built from a file PATH (native
+// bindings stream external .data from disk, dodging the >2 GB Buffer wall) and
+// to its ORT executionProviders list:
+//   'wasm' -> WASM EP (onnxruntime-web), bytes loaded into a Buffer.
+//   'node' -> native CPU EP.
+//   'cuda' -> native CUDA EP with a 'cpu' fallback, so a box WITHOUT a usable
+//             CUDA/cuDNN install degrades to CPU rather than failing the load.
+//             (ORT registers providers in order and silently skips any that
+//             cannot initialise, so 'cuda' may quietly run on CPU; that is why
+//             VRAM use is the real confirmation the GPU is actually in play.)
+// Exported so the backend->EP mapping is unit-testable without loading a model.
+export function ortRuntimeConfig(ortBackend) {
+  switch (ortBackend) {
+    case 'wasm': return { fromPath: false, executionProviders: ['wasm'] };
+    case 'node': return { fromPath: true, executionProviders: ['cpu'] };
+    case 'cuda': return { fromPath: true, executionProviders: ['cuda', 'cpu'] };
+    default: throw new Error(`Unknown ort backend "${ortBackend}" (expected wasm, node or cuda)`);
+  }
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -148,7 +170,7 @@ function parseArgs(argv) {
   if (!a.audio) throw new Error('No audio file given. See --help.');
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
   if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
-  if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ortBackend})`);
+  if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node' && a.ortBackend !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ortBackend})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
   if (a.boostMinp !== null && (!Number.isFinite(a.boostMinp) || a.boostMinp <= 0 || a.boostMinp > 1)) {
     throw new Error('--boost-minp must be a number in (0, 1]');
@@ -269,10 +291,13 @@ Options:
                            covers BOTH (there is no separate joint file to quantise
                            on its own). fp32 = decoder_joint-model.onnx; int8/fp16
                            use the matching .int8/.fp16 file.
-      --ort wasm|node      ORT backend. Default wasm (onnxruntime-web, the engine
+      --ort wasm|node|cuda ORT backend. Default wasm (onnxruntime-web, the engine
                            the browser/e2e use). node = native onnxruntime-node
-                           (64-bit memory), required to load fp16/fp32 encoders
-                           that overflow the 32-bit WASM heap.
+                           (64-bit memory, CPU EP), required to load fp16/fp32
+                           encoders that overflow the 32-bit WASM heap. cuda =
+                           native onnxruntime-node on the CUDA EP (NVIDIA GPU;
+                           needs a matching CUDA/cuDNN install), with a CPU
+                           fallback if CUDA cannot initialise.
       --threads N          WASM thread count (default: ORT chooses).
       --timestamps         Include word timestamps and confidences in output.
       --json               Print the full result object as JSON.
@@ -549,8 +574,7 @@ export async function loadParakeetModel({
   const { encoderPath, decoderPath, vocabPath } = resolveFiles(dir, quant, decoderQuant);
 
   const ortMod = await getOrt(ortBackend);
-  const fromPath = ortBackend === 'node';
-  const executionProviders = fromPath ? ['cpu'] : ['wasm'];
+  const { fromPath, executionProviders } = ortRuntimeConfig(ortBackend);
 
   if (ortBackend === 'wasm') {
     if (threads > 0) ortMod.env.wasm.numThreads = threads;
