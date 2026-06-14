@@ -132,6 +132,9 @@ function parseArgs(argv) {
       case '--quant': a.quants = strList(val(flag)); break;
       case '--decoder-quant': a.decoderQuant = val(flag).trim().toLowerCase(); break;
       case '--ort': a.ort = val(flag); break;
+      // Sugar for --ort cuda: force the NVIDIA GPU (native onnxruntime-node CUDA
+      // EP, CPU fallback) for every swept quant. Default is CPU (auto per quant).
+      case '--cuda': a.ort = 'cuda'; break;
       case '-w': case '--beam-width': a.beamWidths = numList(val(flag)); break;
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
       case '--boost-minp': a.minps = numList(val(flag)); break;
@@ -177,9 +180,9 @@ function parseArgs(argv) {
   // fp32 encoder and any fp16 model can only load on the native onnxruntime-node
   // backend (it resolves external data from disk, no buffering). When --ort is
   // left to auto (null) the backend is picked PER quant at load time
-  // (ortForQuant): node for fp16/fp32, wasm for int8. An explicit --ort applies
-  // to every quant.
-  if (a.ort !== null && a.ort !== 'wasm' && a.ort !== 'node') throw new Error(`--ort must be wasm or node (got ${a.ort})`);
+  // (ortForQuant): node for fp16/fp32, wasm for int8. An explicit --ort (incl.
+  // cuda, which runs the native CUDA EP on the GPU) applies to every quant.
+  if (a.ort !== null && a.ort !== 'wasm' && a.ort !== 'node' && a.ort !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ort})`);
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
     throw new Error('--beam-width must be a comma-separated list of integers in [1, 25]');
   }
@@ -250,15 +253,22 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            decoder and joint networks together. Folded into the
                            resume key only when it differs from a cell's encoder
                            quant (matched runs keep their old key).
-                           (wasm for int8, node for fp16/fp32). The WASM EP reads
-                           each weight file into a <2 GiB Node Buffer and has no
-                           fp16 CPU kernels, so the single-sidecar fp32 encoder
-                           ("File size > 2 GiB") and any fp16 model need the native
-                           node backend, which streams external data from disk.
-                           wasm can still load fp32 if the model dir is pre-sharded
+      --ort BACKEND        ORT runtime: wasm, node (native CPU) or cuda (NVIDIA
+                           GPU via the native onnxruntime-node CUDA EP, with a CPU
+                           fallback). Default: auto per quant (wasm for int8, node
+                           for fp16/fp32). The WASM EP reads each weight file into
+                           a <2 GiB Node Buffer and has no fp16 CPU kernels, so the
+                           single-sidecar fp32 encoder ("File size > 2 GiB") and
+                           any fp16 model need the native node backend, which
+                           streams external data from disk. wasm can still load
+                           fp32 if the model dir is pre-sharded
                            (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py,
                            each shard <2 GB). An explicit --ort applies to every
                            swept quant.
+      --cuda               Sugar for --ort cuda: run every quant on the NVIDIA GPU
+                           (native onnxruntime-node CUDA EP, CPU fallback). Default
+                           is CPU. Confirm the GPU is actually used via VRAM, since
+                           ORT silently falls back to CPU if CUDA cannot init.
 
 Decoding sweep (each is a comma-separated list; the grid is their product):
   -w, --beam-width LIST    Beam widths to test, e.g. "1,2,4,8". 1 = greedy.
