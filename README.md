@@ -298,11 +298,14 @@ signaling server, Docker packaging and the test suite) see
 
 ## License
 
-AGPLv3 – See LICENSE file
+The application code is licensed under **AGPLv3** (see the LICENSE file).
+
+Some bundled phrase-boosting lists include bacterial names derived from LPSN (List of Prokaryotic names with Standing in Nomenclature), which is licensed **CC BY-SA 4.0**, not AGPLv3: the `lorn` (List of Recommended Names for bacteria of medical importance) list, and the bacterial names merged into the `french_medical` list. See [ATTRIBUTION.md](./ATTRIBUTION.md) for details and the required attribution.
 
 ## Acknowledgments
 
 - **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.js)** – Original project this is forked from
+- **[LPSN (List of Prokaryotic names with Standing in Nomenclature)](https://lpsn.dsmz.de/)** – Source of the bacterial names in the `lorn` (List of Recommended Names for bacteria of medical importance) and `french_medical` boost lists, used under CC BY-SA 4.0 (see [ATTRIBUTION.md](./ATTRIBUTION.md))
 - **[nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)** – The underlying ASR model by NVIDIA
 - **[istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)** – ONNX conversion of the model
   - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
