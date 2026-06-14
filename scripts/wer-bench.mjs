@@ -13,6 +13,11 @@
 // onnxruntime-node CUDA EP (needs CUDA 12 + cuDNN 9 on the loader path; the load
 // fails loudly if the CUDA library can't load, it does not silently use CPU).
 //
+// A quant that FAILS TO LOAD is fatal: the bench throws and exits nonzero rather
+// than printing a FAILED row and continuing, so a missing or unloadable encoder is
+// never silently skipped. (A per-chunk transcribe failure still degrades to a
+// FAILED row, marked per config.)
+//
 // It reuses the real pipeline verbatim (loadParakeetModel + transcribeChunked
 // from transcribe.mjs, the same chunking/TDT decode the web app uses) and the
 // shared WER/word helpers (test/e2e/text-overlap.mjs), so nothing here
@@ -150,8 +155,10 @@ async function main() {
         modelDir: args.modelDir, quant, decoderQuant: args.decoderQuant, ortBackend: args.ortBackend,
       }));
     } catch (e) {
-      for (const c of chunks) rows.push({ quant, chunk: c, error: e.message });
-      continue;
+      // A quant that fails to LOAD crashes the whole bench (by request): an
+      // unloadable encoder must not become a silent FAILED row while the run still
+      // exits 0. (A per-chunk transcribe failure below stays soft, marked per row.)
+      throw new Error(`failed to load ${quant} encoder (decoder ${args.decoderQuant}, ort ${args.ortBackend}): ${e.message}`);
     }
     for (const chunk of chunks) {
       try {

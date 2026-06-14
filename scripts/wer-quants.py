@@ -42,7 +42,10 @@ to run the encoder/decoder on an NVIDIA GPU (CUDA EP, see below). Even under
 --cuda the RAM column is still host RSS, not VRAM, so watch nvidia-smi for the
 GPU memory (encoder sizes per CLAUDE.md: int8 ~600 MB, fp16 ~1.2 GB, fp32
 ~2.4 GB). The CPU EP cannot load fp16/fp32 at all, so for those quants --cuda is
-the only way to bench them here.
+the only way to bench them here; and because a quant that fails to load is now
+FATAL (it crashes the whole bench instead of printing a FAILED row and exiting 0),
+the default int8,fp16,fp32 sweep on a CPU-only box must be run with --cuda or
+narrowed with --quants int8.
 
 GPU (--cuda): the inline deps pin onnx-asr[cpu] (the CPU onnxruntime wheel, which
 has no CUDA EP), so --cuda RE-LAUNCHES the script once through uv with the gpu
@@ -143,6 +146,17 @@ DEFAULT_MAX_PASS_SEC = 390.0
 # EP doesn't implement, it does NOT rescue a failed CUDA-library load).
 CUDA_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 CPU_PROVIDERS = ["CPUExecutionProvider"]
+
+# A --_child pass reports a model LOAD failure (as opposed to a later inference
+# failure) by printing this sentinel + the json-encoded message, then exiting
+# nonzero. The parent's spawn() turns that into a ModelLoadError, which is FATAL: a
+# quant that cannot even load must crash the whole bench rather than become a
+# silent FAILED table row while the run still exits 0. Inference failures stay soft.
+LOAD_ERROR_SENTINEL = "__LOAD_ERROR__"
+
+
+class ModelLoadError(RuntimeError):
+    """Raised in the parent when a --_child pass reports its model failed to LOAD."""
 
 
 # --- GPU (--cuda) runtime bootstrap -----------------------------------------
@@ -325,13 +339,26 @@ def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=Fal
             del model_type._get_model_files
 
 
+def load_or_die(args):
+    """load_mixed wrapper for the --_child passes: on a LOAD failure, emit the
+    load-error sentinel and exit nonzero so the parent's spawn() raises
+    ModelLoadError and the whole bench crashes (by request) instead of recording a
+    silent FAILED row. This is what makes an unloadable quant (e.g. fp16/fp32 on the
+    CPU EP, or a missing weight file) fatal rather than quietly skippable."""
+    try:
+        return load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant, args.cuda)
+    except Exception as e:
+        print(LOAD_ERROR_SENTINEL + json.dumps(str(e)))
+        sys.exit(3)
+
+
 def child_full(args):
     """Single full-pass transcription with token timestamps; emit JSON result."""
     wav, sr = load_audio(args.audio, args.max_pass_sec)
     baseline_mb = peak_rss_mb()  # interpreter + libs + decoded audio, before the model
 
     t0 = time.perf_counter()
-    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant, args.cuda)
+    model = load_or_die(args)
     t1 = time.perf_counter()
     res = model.with_timestamps().recognize(wav)
     t2 = time.perf_counter()
@@ -354,7 +381,7 @@ def child_oracle(args):
     audio_sec = len(wav) / sr
     # The oracle is the clean reference; it stays fully matched at its quant (the
     # parent passes decoder-quant == quant for the oracle spawn, so no override here).
-    model = load_mixed(args.model, args.model_dir, args.quant, args.decoder_quant, args.cuda)
+    model = load_or_die(args)
 
     sections = []
     for start, end in windows(audio_sec, args.section_sec):
@@ -387,6 +414,8 @@ def spawn(args, audio, mode, quant, decoder_quant):
     print(f"  [{mode}/{label}] running...", file=sys.stderr, flush=True)
     out = subprocess.run(cmd, capture_output=True, text=True)
     for line in out.stdout.splitlines():
+        if line.startswith(LOAD_ERROR_SENTINEL):  # the model failed to LOAD -> fatal
+            raise ModelLoadError(json.loads(line[len(LOAD_ERROR_SENTINEL):]))
         if line.startswith("__RESULT__"):
             return json.loads(line[len("__RESULT__"):])
     raise RuntimeError((out.stderr or out.stdout).strip()[-500:] or "no result from child")
@@ -479,7 +508,12 @@ def analyze_one(args, audio_path, quants):
     for q in quants:
         try:
             results[q] = spawn(args, audio_path, "full", q, args.decoder_quant)
-        except Exception as e:  # one bad quant should not kill the others
+        except ModelLoadError:
+            # A quant that fails to LOAD crashes the whole bench (by request): an
+            # unloadable encoder must not be reported as a silent FAILED row while
+            # the run still exits 0. Only a later inference failure stays soft below.
+            raise
+        except Exception as e:  # a non-load failure should not kill the other quants
             results[q] = {"error": str(e)}
 
     # Then the per-section oracle reference: independent short-clip transcription
