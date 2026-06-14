@@ -47,6 +47,7 @@ function parseArgs(argv) {
     langs: ['en', 'fr'],
     perLang: 10,
     modelDir: resolve(ROOT, 'fallback_models'),
+    decoderQuant: 'fp32', // decoder_joint quant (encoder is pinned int8); default full precision
     seed: 1234,
     minOverlap: 0.85, // overlap(reference, model transcript) needed to keep a clip
     minDuration: 4,   // skip very short clips (too few words to score robustly)
@@ -67,6 +68,7 @@ function parseArgs(argv) {
       case '--langs': a.langs = val().split(',').map((s) => s.trim()).filter(Boolean); break;
       case '--per-lang': a.perLang = parseInt(val(), 10); break;
       case '--model-dir': a.modelDir = val(); break;
+      case '--decoder-quant': a.decoderQuant = val().trim().toLowerCase(); break;
       case '--seed': a.seed = parseInt(val(), 10); break;
       case '--min-overlap': a.minOverlap = Number(val()); break;
       case '--min-duration': a.minDuration = Number(val()); break;
@@ -76,6 +78,9 @@ function parseArgs(argv) {
       case '--ffmpeg': a.ffmpeg = val(); break;
       default: throw new Error(`Unknown option: ${arg}`);
     }
+  }
+  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') {
+    throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
   }
   return a;
 }
@@ -88,6 +93,10 @@ Options:
   --langs a,b         Languages to sample (default: en,fr)
   --per-lang N        Clips to keep per language (default: 10)
   --model-dir DIR     int8 weights dir (default: ./fallback_models)
+  --decoder-quant Q   decoder_joint quant int8/fp16/fp32 (default: fp32; encoder
+                      stays int8). NOTE: the browser/e2e app decodes with an int8
+                      decoder, so regenerating the goldens with a non-int8 decoder
+                      can shift them away from what the e2e actually produces.
   --seed N            RNG seed for the shuffle (default: 1234)
   --min-overlap F     Keep a clip only if overlap(reference, model) >= F (default: 0.85)
   --min-duration S    Skip clips shorter than S seconds (default: 4)
@@ -146,8 +155,11 @@ async function main() {
 
   const ffmpeg = findFfmpeg(args.ffmpeg);
   console.error(`[gen-fleurs] ffmpeg: ${ffmpeg}`);
-  console.error(`[gen-fleurs] loading int8 model from ${args.modelDir} ...`);
-  const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8' });
+  console.error(`[gen-fleurs] loading model from ${args.modelDir} (encoder int8 / decoder ${args.decoderQuant}) ...`);
+  if (args.decoderQuant !== 'int8') {
+    console.error(`[gen-fleurs] WARNING: the browser/e2e app decodes with an int8 decoder; goldens built with a ${args.decoderQuant} decoder may diverge from what the e2e produces.`);
+  }
+  const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8', decoderQuant: args.decoderQuant });
 
   // Same single-pass greedy decode transcribe.mjs uses by default, so these
   // goldens match the ones the existing jfk/sample fixtures were made with. The

@@ -114,21 +114,28 @@ export function ensureFullCompact(ffmpeg, { full = FULL_COMPACT_PATH } = {}) {
 
 // --- args --------------------------------------------------------------------
 function parseArgs(argv) {
-  const a = { cropSec: CROP_SEC, modelDir: resolve(ROOT, 'fallback_models'), ffmpeg: null };
+  const a = { cropSec: CROP_SEC, modelDir: resolve(ROOT, 'fallback_models'), decoderQuant: 'fp32', ffmpeg: null };
   for (const arg of argv) {
     const eq = arg.indexOf('=');
     const [k, v] = eq === -1 ? [arg, null] : [arg.slice(0, eq), arg.slice(eq + 1)];
     switch (k) {
       case '--crop-sec': a.cropSec = Number(v); break;
       case '--model-dir': a.modelDir = v; break;
+      case '--decoder-quant': a.decoderQuant = String(v).trim().toLowerCase(); break;
       case '--ffmpeg': a.ffmpeg = v; break;
       case '-h': case '--help':
         console.log(`Usage: node scripts/gen-jfk-moon-fixtures.mjs [options]
-  --crop-sec N    Seconds to crop from the start for the chunk fixture (default: ${CROP_SEC})
-  --model-dir D   int8 weights dir (default: ./fallback_models)
-  --ffmpeg PATH   ffmpeg binary (else auto-detected; or set FFMPEG)`);
+  --crop-sec N        Seconds to crop from the start for the chunk fixture (default: ${CROP_SEC})
+  --model-dir D       int8 weights dir (default: ./fallback_models)
+  --decoder-quant Q   decoder_joint quant int8/fp16/fp32 (default: fp32; encoder stays int8).
+                      NOTE: the browser/e2e app decodes with an int8 decoder, so a
+                      non-int8 decoder can shift the golden away from the e2e runtime.
+  --ffmpeg PATH       ffmpeg binary (else auto-detected; or set FFMPEG)`);
         process.exit(0);
     }
+  }
+  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') {
+    throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
   }
   return a;
 }
@@ -152,8 +159,11 @@ async function main() {
   // with the same int8 pipeline the WASM app uses, at a small 20 s chunk window
   // (STITCH_STRESS_CHUNK_SEC) so the golden carries many seams. The chunk e2e then
   // asserts the live app recovers this content across those seams.
-  console.error(`[gen-jfk-moon] loading int8 model from ${args.modelDir} ...`);
-  const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8' });
+  console.error(`[gen-jfk-moon] loading model from ${args.modelDir} (encoder int8 / decoder ${args.decoderQuant}) ...`);
+  if (args.decoderQuant !== 'int8') {
+    console.error(`[gen-jfk-moon] WARNING: the browser/e2e app decodes with an int8 decoder; a golden built with a ${args.decoderQuant} decoder may diverge from what the e2e produces.`);
+  }
+  const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8', decoderQuant: args.decoderQuant });
   const pcm = await decodePcm(ffmpeg, FIXTURE_MP3);
   const r = await model.transcribeChunked(pcm, 16000, {
     enableChunking: true, chunkDurationSec: STITCH_STRESS_CHUNK_SEC, overlapSec: 2,
