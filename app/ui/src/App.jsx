@@ -2062,13 +2062,14 @@ export default function App() {
       // stays int8 on WASM regardless (tiny, runs fine).
       const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
       // On WebGPU the user picks fp16 (default) or fp32; int8 is not offered
-      // (no GPU int8 encoder kernel). The decoder follows to fp16 only when the
-      // encoder is fp16 (and the repo ships decoder_joint-model.fp16.onnx);
-      // otherwise it stays int8, which the GPU EP runs fine.
+      // (no GPU int8 encoder kernel). The fused decoder_joint always runs int8:
+      // on this model the int8 joiner is as accurate as fp32/fp16 (measured) while
+      // being smaller and faster, and the GPU EP runs the int8 decoder fine. int8
+      // was already the default on every path except WebGPU-fp16, which now matches.
       const webgpuFp32 = wantWebgpu && webgpuEncoderQuant === 'fp32';
       const downloadOpts = {
         encoderQuant: wantWebgpu ? (webgpuFp32 ? 'fp32' : 'fp16') : (wasmWantsFp32 ? 'fp32' : 'int8'),
-        decoderQuant: (wantWebgpu && !webgpuFp32) ? 'fp16' : 'int8',
+        decoderQuant: 'int8',
         allowWasmFp32: wasmWantsFp32,
         // When the GPU lacks shader-f16, hub.js resolves the fp16 request above
         // to fp32 (fp16 shaders won't compile). null/unknown -> assume supported.
