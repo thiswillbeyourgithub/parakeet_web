@@ -121,7 +121,7 @@ function parseArgs(argv) {
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',          // encoder quantisation
-    decoderQuant: 'fp32',   // decoder/joiner quantisation, chosen independently (default full precision)
+    decoderQuant: 'int8',   // decoder/joiner quantisation, chosen independently (int8 matches fp32 quality here, smaller+faster)
     ortBackend: 'wasm',
     threads: 0,            // 0 => ORT default
     timestamps: false,
@@ -285,15 +285,15 @@ Options:
                            (~1.2 GB encoder, near-lossless vs fp32).
       --decoder-quant int8|fp16|fp32
                            DECODER/joiner quantisation, chosen independently of
-                           --quant. Default fp32. The decoder_joint model is small
-                           (~70 MB fp32 vs ~18 MB int8), so running it at full
-                           precision is cheap and avoids the int8 joiner's quality
-                           loss while keeping the heavy encoder quantised. NOTE:
-                           this repo exports the decoder and the joint network as a
-                           single fused decoder_joint-model file, so this one knob
-                           covers BOTH (there is no separate joint file to quantise
-                           on its own). fp32 = decoder_joint-model.onnx; int8/fp16
-                           use the matching .int8/.fp16 file.
+                           --quant. Default int8: on this model the int8 joiner is
+                           as accurate as fp32 (measured) while being smaller
+                           (~18 MB vs ~70 MB) and faster, so int8 is the default
+                           here and in the web app. NOTE: this repo exports the
+                           decoder and the joint network as a single fused
+                           decoder_joint-model file, so this one knob covers BOTH
+                           (there is no separate joint file to quantise on its
+                           own). int8/fp16 use the matching .int8/.fp16 file;
+                           fp32 = decoder_joint-model.onnx.
       --ort wasm|node|cuda ORT backend. Default wasm (onnxruntime-web, the engine
                            the browser/e2e use). node = native onnxruntime-node
                            (64-bit memory, CPU EP), required to load fp16/fp32
