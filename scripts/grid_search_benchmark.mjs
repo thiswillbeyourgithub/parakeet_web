@@ -12,8 +12,9 @@
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
 // grid: quant x beam-width x (no-boost baseline + each boost strength x each
 // boost depth-scaling x each boost min-p) and prints one row per combination in
-// the accuracy table (quant/beam/boost knobs + corpus WER %, CER %, RTF and the
-// per-dataset decode-time-to-audio-length ratio "dec_t/aud"),
+// the accuracy table (quant/beam/boost knobs + corpus WER %, CER %, the per-call
+// processing-to-audio ratio "proc_t/dur_t" and the per-dataset
+// decode-time-to-audio-length ratio "dec_t/aud", both lower-is-faster),
 // followed by a top-5-by-CER and a top-5-by-WER shortlist. --quant takes a
 // comma-separated list (e.g. "int8,fp16,fp32"); each quant is the OUTER sweep
 // dimension, loaded once with its own model + encoder cache (the encoder output
@@ -49,7 +50,7 @@
 // encoder cache resets when a new ENCODER quant's model is loaded (the encoder
 // output is encoder-quant-specific) and is reused across every decoder quant nested
 // under that encoder quant. The reported preproc/encode timings are the shared one-time
-// cost; the per-cell wall time / RTF reflect just the decode work (the encoder is
+// cost; the per-cell wall time / proc_t/dur_t reflect just the decode work (the encoder is
 // amortized away).
 //
 // Example (two datasets at once):
@@ -685,30 +686,31 @@ function renderMarkdown(headers, body) {
 // dataset). Blocks are sorted by the cell's corpus-level (micro-averaged) CER or
 // WER (see --sort-by) ascending so the best config is at the top, and a cell's
 // dataset rows stay grouped together. "WER %" / "CER %" are the corpus-level
-// rates (total word/char edits / total refs); "RTF" is the cell's mean
-// real-time factor (decode work only; the encoder is amortized away). "dec_t/aud"
-// is the per-DATASET ratio of total decode time to total audio length (decode
-// seconds per second of audio, i.e. the standard-convention RTF for the decode
-// phase only) so the beam width's impact on decode speed is visible. The
-// per-utterance WER spread (mean/median/stdev) and the raw edit/ref counts are
-// dropped from the table to keep it readable; they remain in the JSONL records.
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF', 'dec_t/aud'];
-// RTF is a per-cell figure (same across a cell's dataset rows); guard the timings
-// lookup so synthetic rows (unit tests) without a timings field render "-".
-function cellRtf(r) {
-  return r.timings && r.timings.rtf && r.timings.rtf.length ? mean(r.timings.rtf).toFixed(2) : '-';
+// rates (total word/char edits / total refs); "proc_t/dur_t" is the cell's mean
+// processing-time / audio-duration ratio (lower is faster; decode work only, the
+// encoder is amortized away). "dec_t/aud" is the per-DATASET ratio of total
+// decode time to total audio length (decode seconds per second of audio, the
+// same lower-is-faster convention, decode phase only) so the beam width's impact
+// on decode speed is visible. The per-utterance WER spread (mean/median/stdev)
+// and the raw edit/ref counts are dropped from the table to keep it readable;
+// they remain in the JSONL records.
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud'];
+// proc_t/dur_t is a per-cell figure (same across a cell's dataset rows); guard the
+// timings lookup so synthetic rows (unit tests) without a timings field render "-".
+function cellProcPerDur(r) {
+  return r.timings && r.timings.procPerDur && r.timings.procPerDur.length ? mean(r.timings.procPerDur).toFixed(2) : '-';
 }
 // Per-DATASET decode-time-to-audio-length ratio (decode seconds / audio seconds):
 // summed decode_ms divided by summed audio seconds for one dataset row. Renders
 // "-" when the audio length is unknown (synthetic rows / pre-audioSec records),
-// matching how RTF guards its absent timings.
+// matching how proc_t/dur_t guards its absent timings.
 function datasetDecAud(d) {
   return d.audioSec > 0 ? ((d.decodeMs / 1000) / d.audioSec).toFixed(3) : '-';
 }
 function accuracyBody(rows) {
   const body = [];
   for (const r of rows) {
-    const rtf = cellRtf(r);
+    const procPerDur = cellProcPerDur(r);
     for (const d of r.datasets) {
       body.push([
         String(r.beamWidth),
@@ -721,7 +723,7 @@ function accuracyBody(rows) {
         d.name,
         pct(d.wordEdits, d.refWords).toFixed(2),
         pct(d.charEdits, d.refChars).toFixed(2),
-        rtf,
+        procPerDur,
         datasetDecAud(d),
       ]);
     }
@@ -746,7 +748,7 @@ function topBody(rows) {
       d.name,
       pct(d.wordEdits, d.refWords).toFixed(2),
       pct(d.charEdits, d.refChars).toFixed(2),
-      cellRtf(r),
+      cellProcPerDur(r),
       datasetDecAud(d),
     ];
   });
@@ -758,7 +760,7 @@ function phaseStats(timings) {
   for (const [key, label] of PHASES) {
     out[label] = { mean: +mean(timings[key]).toFixed(2), median: +median(timings[key]).toFixed(2) };
   }
-  out.rtf = { mean: +mean(timings.rtf).toFixed(3), median: +median(timings.rtf).toFixed(3) };
+  out.procPerDur = { mean: +mean(timings.procPerDur).toFixed(3), median: +median(timings.procPerDur).toFixed(3) };
   return out;
 }
 
@@ -861,7 +863,7 @@ async function main() {
   // encoder-quant-specific, so encCache is reset whenever a new ENCODER quant is
   // entered (below) and reused across every decoder quant nested under it. Like
   // pcmCache this trades memory for speed; the PCM is kept too (transcribe() still
-  // reads its length for RTF) and the PCM cache is shared across quants (decode is
+  // reads its length for proc_t/dur_t) and the PCM cache is shared across quants (decode is
   // quant-independent).
   let model = null;
   let encCache = new Map();
@@ -930,7 +932,7 @@ async function main() {
   // resume correct even across format tweaks. Pre-multi-dataset records have no
   // tag; they fold into a single unnamed dataset.
   const rowFromRecords = (utts, s) => {
-    const timings = { rtf: [] };
+    const timings = { procPerDur: [] };
     for (const [key] of PHASES) timings[key] = [];
     const perDs = new Map();
     const order = [];
@@ -939,8 +941,9 @@ async function main() {
       if (!perDs.has(name)) { perDs.set(name, newAcc()); order.push(name); }
       const m = u.metrics || {};
       // Audio length for the decode/audio ratio: prefer the recorded audioSec,
-      // else recover it from rtf*total_ms (rtf = audio/total, so the product is
-      // the audio seconds) for pre-audioSec records, else fall back to duration.
+      // else recover it from a legacy record's rtf*total_ms (the old `rtf` field
+      // was audio/total, so the product is the audio seconds), else fall back to
+      // duration. Only ancient pre-audioSec records hit this path.
       const audioSec = Number.isFinite(u.audioSec) ? u.audioSec
         : (Number.isFinite(m.rtf) && Number.isFinite(m.total_ms)) ? (m.rtf * m.total_ms) / 1000
         : (Number.isFinite(u.duration) ? u.duration : 0);
@@ -949,7 +952,7 @@ async function main() {
         refChars: u.refChars || 0, charEdits: u.charEdits || 0,
       }, m.decode_ms ?? 0, audioSec);
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
-      timings.rtf.push(m.rtf ?? 0);
+      timings.procPerDur.push(m.procPerDur ?? 0);
     }
     // Pre-multi-quant summary records have no "quant" field; they were always
     // int8 cells (whose tag carries no quant), so default to int8 on read-back.
@@ -1121,7 +1124,7 @@ async function main() {
       const perDs = new Map();
       const ensureDs = (name) => { let acc = perDs.get(name); if (!acc) { acc = newAcc(); perDs.set(name, acc); } return acc; };
       // Per-phase timing samples (one entry per utterance) for this run.
-      const timings = { rtf: [] };
+      const timings = { procPerDur: [] };
       for (const [key] of PHASES) timings[key] = [];
       const t0 = Date.now();
       for (let i = 0; i < entries.length; i++) {
@@ -1140,7 +1143,7 @@ async function main() {
         addScore(ensureDs(e.dataset), sc, metrics.decode_ms ?? 0, audioSec);
         // Accumulate per-phase timings for this run's mean/median.
         for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
-        timings.rtf.push(metrics.rtf ?? 0);
+        timings.procPerDur.push(metrics.procPerDur ?? 0);
         writeJsonl({
           type: 'utterance', run: tag,
           beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
