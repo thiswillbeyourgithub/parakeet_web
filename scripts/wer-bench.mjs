@@ -52,10 +52,10 @@ function parseArgs(argv) {
     expected: null,         // optional second golden (int8 repo transcript)
     modelDir: resolve(ROOT, 'fallback_models'),
     ortBackend: 'node',
-    decoderQuant: 'fp32',   // decoder_joint quant, independent of each config's encoder quant
+    decoderQuant: 'int8',   // decoder_joint quant, independent of each config's encoder quant (int8 matches fp32 quality here, faster)
     overlap: 2,
     // (quant, chunkDurationSec). The quant here is the ENCODER quant; the fused
-    // decoder_joint quant is the separate --decoder-quant (default fp32), applied
+    // decoder_joint quant is the separate --decoder-quant (default int8), applied
     // to every config. The default matrix sweeps chunk windows per encoder quant:
     // int8 at 20 s and 60 s vs fp16/fp32 at a 60 s window.
     configs: [
@@ -85,7 +85,7 @@ function parseArgs(argv) {
         });
         break;
       case '-h': case '--help':
-        console.log('Usage: node scripts/wer-bench.mjs [--audio f] [--reference t|@file] [--configs int8@20,fp16@60] [--ort node|wasm|cuda] [--cuda] [--decoder-quant int8|fp16|fp32] [--model-dir d]\n  --configs quant is the ENCODER quant per chunk window; --decoder-quant (default fp32) sets the fused decoder_joint quant for every config.\n  --ort selects the runtime: node (native CPU, default), wasm, or cuda (NVIDIA GPU via onnxruntime-node CUDA EP; needs CUDA 12 + cuDNN 9 on the loader path). --cuda is sugar for --ort cuda.');
+        console.log('Usage: node scripts/wer-bench.mjs [--audio f] [--reference t|@file] [--configs int8@20,fp16@60] [--ort node|wasm|cuda] [--cuda] [--decoder-quant int8|fp16|fp32] [--model-dir d]\n  --configs quant is the ENCODER quant per chunk window; --decoder-quant (default int8) sets the fused decoder_joint quant for every config.\n  --ort selects the runtime: node (native CPU, default), wasm, or cuda (NVIDIA GPU via onnxruntime-node CUDA EP; needs CUDA 12 + cuDNN 9 on the loader path). --cuda is sugar for --ort cuda.');
         process.exit(0);
         break;
       default: throw new Error(`Unknown option: ${arg}`);

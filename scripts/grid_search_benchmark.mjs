@@ -21,7 +21,7 @@
 // is cached per encoder quant and reused across every decoder quant beneath it, so
 // a decoder sweep pays only a model reload + the cheap decode, never a re-encode.
 // The heavy encoder can stay int8 while the small decoder_joint is varied (default
-// fp32). The min-p axis overrides the per-phrase boost gate, so one
+// int8). The min-p axis overrides the per-phrase boost gate, so one
 // prebuilt trie is reused across every min-p value (no re-encode per value);
 // depth-scaling, by contrast, is baked into the trie at build time, so each value
 // rebuilds the trie (one per strength x depth-scaling, per quant).
@@ -90,9 +90,10 @@ function parseArgs(argv) {
     modelDir: null,
     quants: ['int8'],       // swept dimension: one model load per quant (encoder
                             // output is quant-specific, so its cache resets per quant)
-    decoderQuants: ['fp32'], // swept dimension (nested under each encoder quant):
+    decoderQuants: ['int8'], // swept dimension (nested under each encoder quant):
                             // decoder_joint quant(s), chosen independently of the
-                            // swept encoder quant(s) (default full precision)
+                            // swept encoder quant(s) (default int8: matches fp32
+                            // quality here while being smaller and faster)
     ort: null,              // null => auto per quant: 'wasm' for int8, 'node' for fp16/fp32
     beamWidths: [1],        // swept dimension
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
