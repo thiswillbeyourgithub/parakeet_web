@@ -274,9 +274,9 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     assert.equal(accuracyBody([base])[0][rtfCol], '-');
   });
 
-  test('renders the per-dataset decode/aud ratio (summed decode / summed audio), micro-averaged in overall', () => {
-    const decAudCol = ACC_HEAD.indexOf('decode/aud');
-    assert.ok(decAudCol >= 0, 'ACC_HEAD must include a decode/aud column');
+  test('renders the per-dataset dec_t/aud ratio (summed decode / summed audio), micro-averaged in overall', () => {
+    const decAudCol = ACC_HEAD.indexOf('dec_t/aud');
+    assert.ok(decAudCol >= 0, 'ACC_HEAD must include a dec_t/aud column');
 
     const perDs = new Map([['medical', newAcc()], ['general', newAcc()]]);
     // medical: 100 ms decode over 4 s audio -> 0.025; general: 300 ms over 2 s -> 0.150.
@@ -292,8 +292,8 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     assert.notEqual(body[2][decAudCol], '0.088');
   });
 
-  test('decode/aud renders "-" when the audio length is unknown', () => {
-    const decAudCol = ACC_HEAD.indexOf('decode/aud');
+  test('dec_t/aud renders "-" when the audio length is unknown', () => {
+    const decAudCol = ACC_HEAD.indexOf('dec_t/aud');
     const perDs = new Map([['medical', newAcc()]]);
     // No decode/audio timing passed (synthetic / pre-audioSec rows): audioSec = 0.
     addScore(perDs.get('medical'), sc(10, 1));
@@ -319,7 +319,7 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     const werCol = ACC_HEAD.indexOf('WER %');
     const cerCol = ACC_HEAD.indexOf('CER %');
     const rtfCol = ACC_HEAD.indexOf('RTF');
-    const decAudCol = ACC_HEAD.indexOf('decode/aud');
+    const decAudCol = ACC_HEAD.indexOf('dec_t/aud');
     assert.equal(body[0][dsCol], OVERALL, 'uses the overall pool as the representative row');
     assert.equal(body[0][quantCol], 'fp16', 'carries the cell encoder quant into the top table');
     assert.equal(body[0][decCol], 'int8', 'carries the cell decoder quant into the top table');
@@ -327,7 +327,7 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     assert.equal(body[0][werCol], (100 * 2 / 15).toFixed(2));
     assert.equal(body[0][cerCol], (100 * 10 / 75).toFixed(2));
     assert.equal(body[0][rtfCol], '0.50');
-    // decode/aud is the overall pool's summed decode / summed audio: 0.4 s / 6 s.
+    // dec_t/aud is the overall pool's summed decode / summed audio: 0.4 s / 6 s.
     assert.equal(body[0][decAudCol], '0.067');
   });
 });

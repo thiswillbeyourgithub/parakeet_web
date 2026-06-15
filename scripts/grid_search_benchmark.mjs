@@ -13,7 +13,7 @@
 // grid: quant x beam-width x (no-boost baseline + each boost strength x each
 // boost depth-scaling x each boost min-p) and prints one row per combination in
 // the accuracy table (quant/beam/boost knobs + corpus WER %, CER %, RTF and the
-// per-dataset decode-time-to-audio-length ratio "decode/aud"),
+// per-dataset decode-time-to-audio-length ratio "dec_t/aud"),
 // followed by a top-5-by-CER and a top-5-by-WER shortlist. --quant takes a
 // comma-separated list (e.g. "int8,fp16,fp32"); each quant is the OUTER sweep
 // dimension, loaded once with its own model + encoder cache (the encoder output
@@ -673,13 +673,13 @@ function renderMarkdown(headers, body) {
 // WER (see --sort-by) ascending so the best config is at the top, and a cell's
 // dataset rows stay grouped together. "WER %" / "CER %" are the corpus-level
 // rates (total word/char edits / total refs); "RTF" is the cell's mean
-// real-time factor (decode work only; the encoder is amortized away). "decode/aud"
+// real-time factor (decode work only; the encoder is amortized away). "dec_t/aud"
 // is the per-DATASET ratio of total decode time to total audio length (decode
 // seconds per second of audio, i.e. the standard-convention RTF for the decode
 // phase only) so the beam width's impact on decode speed is visible. The
 // per-utterance WER spread (mean/median/stdev) and the raw edit/ref counts are
 // dropped from the table to keep it readable; they remain in the JSONL records.
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF', 'decode/aud'];
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF', 'dec_t/aud'];
 // RTF is a per-cell figure (same across a cell's dataset rows); guard the timings
 // lookup so synthetic rows (unit tests) without a timings field render "-".
 function cellRtf(r) {
