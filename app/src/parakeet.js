@@ -31,6 +31,45 @@ export function buildExternalData(source, modelFilename) {
 }
 
 /**
+ * Build the per-transcription perf metrics object and, when `perfEnabled`, log
+ * the `[Perf]` summary plus the per-phase table. `proc_t/dur_t` is the
+ * processing-time / audio-duration ratio (lower is faster; < 1 = faster than
+ * real time). The log and the metrics share a single total measurement, so
+ * `total_ms` matches the logged time exactly. Returns `null` when perf is off.
+ *
+ * @param {boolean} perfEnabled Whether perf logging/metrics are requested.
+ * @param {object} timings Timing inputs.
+ * @param {number} timings.t0 `performance.now()` captured at the run start.
+ * @param {number} timings.audioSec Audio duration in seconds.
+ * @param {number} timings.preprocessMs Preprocessing time in ms.
+ * @param {number} timings.encodeMs Encoder time in ms.
+ * @param {number} timings.decodeMs Decoder time in ms.
+ * @param {number} timings.tokenizeMs Tokenizer time in ms.
+ * @returns {object|null} The metrics object, or null when perf is disabled.
+ */
+function buildPerfMetrics(perfEnabled, { t0, audioSec, preprocessMs, encodeMs, decodeMs, tokenizeMs }) {
+  if (!perfEnabled) return null;
+  const totalMs = performance.now() - t0;
+  const procPerDur = (totalMs / 1000) / audioSec;
+  console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioSec.toFixed(2)} s, time ${(totalMs / 1000).toFixed(2)} s)`);
+  console.table({
+    Preprocess: `${preprocessMs.toFixed(1)} ms`,
+    Encode: `${encodeMs.toFixed(1)} ms`,
+    Decode: `${decodeMs.toFixed(1)} ms`,
+    Tokenize: `${tokenizeMs.toFixed(1)} ms`,
+    Total: `${totalMs.toFixed(1)} ms`,
+  });
+  return {
+    preprocess_ms: +preprocessMs.toFixed(1),
+    encode_ms: +encodeMs.toFixed(1),
+    decode_ms: +decodeMs.toFixed(1),
+    tokenize_ms: +tokenizeMs.toFixed(1),
+    total_ms: +totalMs.toFixed(1),
+    procPerDur: +procPerDur.toFixed(2),
+  };
+}
+
+/**
  * Lightweight Parakeet model wrapper designed for browser usage.
  * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
  * transformerjs style) exported by parakeet TDT.
@@ -1499,21 +1538,10 @@ export class ParakeetModel {
 
     // Early exit if no extras requested
     if (!returnTimestamps && !returnConfidences) {
-      if (perfEnabled) {
-        const total = performance.now() - t0;
-        const audioDur = audio.length / sampleRate;
-        const procPerDur = (total / 1000) / audioDur;
-        console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioDur.toFixed(2)} s, time ${(total/1000).toFixed(2)} s)`);
-        console.table({Preprocess:`${tPreproc.toFixed(1)} ms`, Encode:`${tEncode.toFixed(1)} ms`, Decode:`${tDecode.toFixed(1)} ms`, Tokenize:`${tToken.toFixed(1)} ms`, Total:`${total.toFixed(1)} ms`});
-      }
-      const metrics = perfEnabled ? {
-        preprocess_ms: +tPreproc.toFixed(1),
-        encode_ms: +tEncode.toFixed(1),
-        decode_ms: +tDecode.toFixed(1),
-        tokenize_ms: +tToken.toFixed(1),
-        total_ms: +( (performance.now() - t0).toFixed(1) ),
-        procPerDur: +(((performance.now() - t0) / 1000) / (audio.length / sampleRate)).toFixed(2)
-      } : null;
+      const metrics = buildPerfMetrics(perfEnabled, {
+        t0, audioSec: audio.length / sampleRate,
+        preprocessMs: tPreproc, encodeMs: tEncode, decodeMs: tDecode, tokenizeMs: tToken,
+      });
       const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
       return earlyOut;
@@ -1565,13 +1593,10 @@ export class ParakeetModel {
     const avgWordConf = words.length && returnConfidences ? words.reduce((a,b)=>a+b.confidence,0)/words.length : null;
     const avgTokenConf = tokensDetailed.length && returnConfidences ? tokensDetailed.reduce((a,b)=>a+(b.confidence||0),0)/tokensDetailed.length : null;
 
-    if (perfEnabled) {
-      const total = performance.now() - t0;
-      const audioDur = audio.length / sampleRate;
-      const procPerDur = (total / 1000) / audioDur;
-      console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioDur.toFixed(2)} s, time ${(total/1000).toFixed(2)} s)`);
-      console.table({Preprocess:`${tPreproc.toFixed(1)} ms`, Encode:`${tEncode.toFixed(1)} ms`, Decode:`${tDecode.toFixed(1)} ms`, Tokenize:`${tToken.toFixed(1)} ms`, Total:`${total.toFixed(1)} ms`});
-    }
+    const metrics = buildPerfMetrics(perfEnabled, {
+      t0, audioSec: audio.length / sampleRate,
+      preprocessMs: tPreproc, encodeMs: tEncode, decodeMs: tDecode, tokenizeMs: tToken,
+    });
 
     const fullOut = {
       utterance_text: text,
@@ -1586,14 +1611,7 @@ export class ParakeetModel {
         frame_avg: frameConfs.length ? +(frameConfs.reduce((a,b)=>a+b,0)/frameConfs.length).toFixed(4) : null,
         overall_log_prob: +overallLogProb.toFixed(6)
       } : { overall_log_prob: null, frame: null, frame_avg: null },
-      metrics: perfEnabled ? {
-        preprocess_ms: +tPreproc.toFixed(1),
-        encode_ms: +tEncode.toFixed(1),
-        decode_ms: +tDecode.toFixed(1),
-        tokenize_ms: +tToken.toFixed(1),
-        total_ms: +( (performance.now() - t0).toFixed(1) ),
-        procPerDur: +(((performance.now() - t0) / 1000) / (audio.length / sampleRate)).toFixed(2)
-      } : null,
+      metrics,
       is_final: !returnDecoderState,
     };
     if (returnDecoderState) fullOut.decoderState = finalDecoderState;
