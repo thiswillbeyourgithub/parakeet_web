@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import {
   parseManifestSpec, datasetNameFor, loadManifests, newAcc, addScore, buildDatasets, repDataset,
   cellRate, ACC_HEAD, accuracyBody, topBody, OVERALL,
+  nonEmptyColumnIndices, pickColumns,
 } from '../../scripts/grid_search_benchmark.mjs';
 
 describe('parseManifestSpec: optional "label=path"', () => {
@@ -330,5 +331,58 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     assert.equal(body[0][ppdCol], '0.500');
     // dec_t/aud is the overall pool's summed decode / summed audio: 0.4 s / 6 s.
     assert.equal(body[0][decAudCol], '0.067');
+  });
+});
+
+describe('nonEmptyColumnIndices / pickColumns: hide unswept ("always -") columns', () => {
+  // One cell with two unswept knobs (minp, depthScaling both null -> "-") and the
+  // rest carrying values; the accuracy body is what the pruning decides off.
+  const mkBody = () => {
+    const perDs = new Map([['medical', newAcc()]]);
+    addScore(perDs.get('medical'), sc(10, 1));
+    const row = { beamWidth: 4, quant: 'int8', decoderQuant: 'int8', boostLabel: 'boost',
+      strength: 1, minp: null, depthScaling: null, datasets: buildDatasets(perDs, ['medical']) };
+    return accuracyBody([row]);
+  };
+
+  test('drops a column that is "-" in every row, keeps the ones that carry a value', () => {
+    const body = mkBody();
+    const cols = nonEmptyColumnIndices(ACC_HEAD, body);
+    const head = cols.map((c) => ACC_HEAD[c]);
+    // The unswept knobs vanish; the swept/valued ones and the metric columns stay.
+    assert.ok(!head.includes('minp'), 'an all-"-" minp column is hidden');
+    assert.ok(!head.includes('dscale'), 'an all-"-" depth-scaling column is hidden');
+    for (const keep of ['beam', 'quant', 'dec', 'boost', 'strength', 'dataset', 'WER %', 'CER %']) {
+      assert.ok(head.includes(keep), `${keep} carries a value and must stay`);
+    }
+  });
+
+  test('a knob with a value in ANY row is kept (not all rows need a value)', () => {
+    // Two cells, only the second sets minp: the column is no longer all-"-".
+    const perA = new Map([['medical', newAcc()]]); addScore(perA.get('medical'), sc(10, 1));
+    const perB = new Map([['medical', newAcc()]]); addScore(perB.get('medical'), sc(10, 1));
+    const body = accuracyBody([
+      { beamWidth: 1, boostLabel: 'boost', strength: 1, minp: null, depthScaling: null, datasets: buildDatasets(perA, ['medical']) },
+      { beamWidth: 1, boostLabel: 'boost', strength: 1, minp: 0.1, depthScaling: null, datasets: buildDatasets(perB, ['medical']) },
+    ]);
+    const head = nonEmptyColumnIndices(ACC_HEAD, body).map((c) => ACC_HEAD[c]);
+    assert.ok(head.includes('minp'), 'minp is kept because one row carries 0.1');
+    assert.ok(!head.includes('dscale'), 'dscale is still all-"-" and hidden');
+  });
+
+  test('pickColumns projects a row down to the surviving columns, in order', () => {
+    const body = mkBody();
+    const cols = nonEmptyColumnIndices(ACC_HEAD, body);
+    const head = cols.map((c) => ACC_HEAD[c]);
+    const pick = pickColumns(cols);
+    const projected = pick(body[0]);
+    assert.equal(projected.length, head.length, 'row width matches the pruned header width');
+    // The projected dataset cell sits at the dataset column's NEW position.
+    assert.equal(projected[head.indexOf('dataset')], 'medical');
+    assert.equal(projected[head.indexOf('beam')], '4');
+  });
+
+  test('an empty body keeps every column (nothing to prune from)', () => {
+    assert.deepEqual(nonEmptyColumnIndices(ACC_HEAD, []), ACC_HEAD.map((_, c) => c));
   });
 });

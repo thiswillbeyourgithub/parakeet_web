@@ -394,7 +394,9 @@ Output / misc:
       --md FILE            APPEND the summary tables (accuracy, top-5-by-CER,
                            top-5-by-WER) as markdown; successive runs accumulate
                            in the file, separated by a dated rule. Default
-                           benchmark_results.md.
+                           benchmark_results.md. A parameter column that was not
+                           swept (so every row shows "-") is hidden from all three
+                           tables, so only the knobs that actually varied appear.
       --resume             Reuse an existing --jsonl: any grid cell whose
                            "summary" record is already present is skipped (and
                            still shown in the final tables). Orphan records from
@@ -704,6 +706,19 @@ function renderMarkdown(headers, body) {
   const row = (cells) => '| ' + cells.map(esc).join(' | ') + ' |';
   return [row(headers), '| ' + headers.map(() => '---').join(' | ') + ' |', ...body.map(row)].join('\n');
 }
+
+// Drop "always -" columns: a knob that was not swept this run shows "-" in every
+// body row, so its column is pure noise and is hidden. The surviving columns are
+// decided from one (full) body and the SAME selection is then applied to the
+// other tables so they stay column-aligned. Metric columns (WER %, dataset,
+// dec_t/aud, ...) carry a value on real rows, so only unswept knobs ever drop; an
+// empty body keeps every column (nothing to prune from). Returns the surviving
+// column indices, in order.
+function nonEmptyColumnIndices(headers, body) {
+  return headers.map((_, c) => c).filter((c) => body.length === 0 || body.some((row) => row[c] !== '-'));
+}
+// Project a header row or a body row down to the given column indices.
+const pickColumns = (cols) => (row) => cols.map((c) => row[c]);
 
 // Accuracy table: one block per run (grid combination), expanded into one row
 // per dataset (plus an "overall" row pooling all utterances when more than one
@@ -1330,13 +1345,24 @@ async function main() {
   if (args.maesExpansionBeta.length > 1) maesShow.add('eb');
   if (args.maesExpansionGamma.length > 1) maesShow.add('eg');
   if (args.maesPrefixAlpha.length > 1) maesShow.add('pa');
-  const HEAD = accHead(maesShow);
+  const FULL_HEAD = accHead(maesShow);
+
+  // Hide parameter columns that were not swept this run (every row would show "-"):
+  // build the accuracy body once, decide the surviving columns from it, and apply
+  // that same column selection to all three tables so they stay column-aligned.
+  const accBody = accuracyBody(summary, maesShow);
+  const cols = nonEmptyColumnIndices(FULL_HEAD, accBody);
+  const pick = pickColumns(cols);
+  const HEAD = cols.map((c) => FULL_HEAD[c]);
+  const accRows = accBody.map(pick);
+  const topCerRows = topBody(topCer, maesShow).map(pick);
+  const topWerRows = topBody(topWer, maesShow).map(pick);
 
   // Final tables: the full accuracy table plus a top-5-by-CER and top-5-by-WER
   // shortlist (one row per cell, using the overall figures).
-  console.log('\nAccuracy:\n' + renderAligned(HEAD, accuracyBody(summary, maesShow)));
-  console.log('\nTop 5 by CER (overall):\n' + renderAligned(HEAD, topBody(topCer, maesShow)));
-  console.log('\nTop 5 by WER (overall):\n' + renderAligned(HEAD, topBody(topWer, maesShow)) + '\n');
+  console.log('\nAccuracy:\n' + renderAligned(HEAD, accRows));
+  console.log('\nTop 5 by CER (overall):\n' + renderAligned(HEAD, topCerRows));
+  console.log('\nTop 5 by WER (overall):\n' + renderAligned(HEAD, topWerRows) + '\n');
 
   if (args.jsonl) console.error(`[bench] wrote ${args.jsonl}`);
   if (args.md) {
@@ -1353,15 +1379,15 @@ async function main() {
       '',
       '## Accuracy',
       '',
-      renderMarkdown(HEAD, accuracyBody(summary, maesShow)),
+      renderMarkdown(HEAD, accRows),
       '',
       '## Top 5 by CER (overall)',
       '',
-      renderMarkdown(HEAD, topBody(topCer, maesShow)),
+      renderMarkdown(HEAD, topCerRows),
       '',
       '## Top 5 by WER (overall)',
       '',
-      renderMarkdown(HEAD, topBody(topWer, maesShow)),
+      renderMarkdown(HEAD, topWerRows),
       '',
       '_Built with Claude Code._',
       '',
@@ -1387,5 +1413,6 @@ export {
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset, cellRate,
   ACC_HEAD, accuracyBody, topBody, OVERALL,
+  nonEmptyColumnIndices, pickColumns,
   makeEtaEstimator, fmtDuration, renderLiveRegion,
 };
