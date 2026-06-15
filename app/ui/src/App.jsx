@@ -1173,7 +1173,7 @@ export default function App() {
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setFrameStride(savedFrameStride);
-        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(25, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
+        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(10, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
         setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 3);
         setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 4);
         setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 4.0);
@@ -4548,18 +4548,18 @@ export default function App() {
 
             <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
               <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                {t('beamWidth')} (1-25):
+                {t('beamWidth')} (1-10):
                 <InfoTooltip text={t('tooltipBeamWidth')} />
               </span>
               <input
                 type="number"
                 inputMode="numeric"
                 min="1"
-                max="25"
+                max="10"
                 value={beamWidth}
                 onChange={e=>{
                   const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(25, Math.round(v))));
+                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(10, Math.round(v))));
                 }}
                 style={{ width: '4.5rem' }}
               />
