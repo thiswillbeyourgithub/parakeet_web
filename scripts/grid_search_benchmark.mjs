@@ -1277,7 +1277,7 @@ async function main() {
       });
       writeJsonl({
         type: 'summary', run: tag,
-        beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
+        beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, backend: ortForQuant(row.quant), boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
@@ -1349,7 +1349,7 @@ async function main() {
       '',
       `Dataset(s): ${datasetNames.map((n) => '`' + n + '`').join(', ')} (${entries.length} utterances total)  `,
       `Manifest(s): ${args.manifests.map((m) => '`' + m + '`').join(', ')}  `,
-      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (encoder quant(s): ${args.quants.join(', ')}; decoder quant(s): ${args.decoderQuants.join(', ')})`,
+      `Model: \`${loadedDir ?? '(model not loaded; all cells resumed)'}\` (backend: ${[...new Set(args.quants.map(ortForQuant))].join(', ')}; encoder quant(s): ${args.quants.join(', ')}; decoder quant(s): ${args.decoderQuants.join(', ')})`,
       '',
       '## Accuracy',
       '',
