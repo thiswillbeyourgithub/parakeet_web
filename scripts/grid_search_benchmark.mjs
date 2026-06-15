@@ -297,10 +297,20 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
   -b, --phrase-boost SPEC  Phrase-boost source: inline "phrase:WEIGHT:MINP:FLAG"
                            text, a .txt list, or a precompiled .pwc. Repeatable;
                            all specs are merged into one boost set. When given,
-                           the sweep adds one row per --boost-strength (plus a
-                           no-boost baseline row unless --no-baseline).
+                           the sweep adds one row per --boost-strength AND, unless
+                           --no-baseline, one extra no-boost baseline row. So N
+                           strengths produce N+1 boost configs (the "+1" is the
+                           baseline, NOT a swept strength of 0); a lone
+                           --boost-strength 1 already gives 2 configs (baseline +
+                           strength 1).
   -s, --boost-strength LIST  Boost-strength multipliers to test, e.g. "1,2".
-                           Only used when --phrase-boost is set. Default 1.
+                           Each is a global multiplier on every phrase's bonus.
+                           Only used when --phrase-boost is set. Default 1. Note a
+                           strength of 0 is a no-op (the bonus is multiplied by 0),
+                           so it is identical to the no-boost baseline row that is
+                           added automatically: use the baseline (or --no-baseline
+                           to drop it), not a 0 in this list, for the unboosted
+                           reference.
       --boost-minp LIST    Per-phrase min-p gate values to sweep, e.g.
                            "0.01,0.05,0.1" (each in (0, 1]). Overrides the gate
                            baked into every boost phrase, so one trie is swept
@@ -322,7 +332,10 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
                            (one per strength x depth-scaling). Only used when
                            --phrase-boost is set. Default: the trie's built-in
                            default (no override).
-      --no-baseline        Drop the no-boost baseline row from the sweep.
+      --no-baseline        Drop the auto-added no-boost baseline row from the
+                           sweep (the row labelled boost=none, equivalent to a
+                           strength of 0). Without it every boosted run keeps a
+                           baseline row to compare against.
 
 MAES knobs (used only when a beam width > 1; defaults match NeMo's maes):
       --maes-num-steps N         Max symbols per frame. Default 2.
