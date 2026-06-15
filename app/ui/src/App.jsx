@@ -23,7 +23,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
 import { requestPersistentStorage } from './lib/persistStorage.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
@@ -3503,9 +3503,11 @@ export default function App() {
       // and single-pass branches below) plus an accumulator for the decode
       // phase. Decode is the only stage whose cost scales ~linearly with beam
       // width (preprocess/encode/tokenize run once per chunk regardless), so
-      // summing decode_ms lets us estimate the single-beam (greedy) wall time.
-      // decode_ms is only populated when profiling is on, which we enable below
-      // whenever beamWidth > 1 (the only case the estimate is meaningful).
+      // summing decode_ms lets us estimate the single-beam (greedy) wall time
+      // (only meaningful, and only logged, when beamWidth > 1). Per-stage
+      // timings are collected on every run (enableProfiling below) so the
+      // history timestamp's hover tooltip can show encode/decode times; that
+      // collection is just a few performance.now() reads and does not log.
       const transcribeStartTime = performance.now();
       let totalDecodeMs = 0;
 
@@ -3534,7 +3536,10 @@ export default function App() {
         maesExpansionBeta,
         maesExpansionGamma,
         maesPrefixAlpha,
-        enableProfiling: beamWidth > 1,
+        // Always collect per-stage timings (cheap; no console output unless the
+        // model is in verbose/debug mode) so every transcription has metrics for
+        // the timestamp hover tooltip and the advanced perf panel.
+        enableProfiling: true,
         phraseBoost: phraseBoostRef.current,
       }, async ({ chunkNum, totalChunks, result, partialText, elapsedMs }) => {
         // decode_ms scales with beam width; sum it for the single-beam estimate.
@@ -5228,7 +5233,20 @@ export default function App() {
                         {typeof trans.duration === 'number' && `${formatDuration(trans.duration)} | `}{trans.wordCount} words{trans.metrics && ` | proc_t/dur_t: ${trans.metrics.procPerDur?.toFixed(2)}`}
                       </span>
                     )}
-                    <span>{trans.timestamp}</span>
+                    {(() => {
+                      // Hover the timestamp to see this run's timing breakdown
+                      // (encode/decode time, their ratios over the audio
+                      // duration, total processing time). Metrics are in-memory
+                      // only, so a reloaded entry has none and gets a plain span.
+                      const tip = formatMetricsTooltip(trans.metrics, trans.duration, {
+                        encode: t('encode'),
+                        decode: t('decode'),
+                        decodePerDur: t('decodePerDur'),
+                        encodeDecodePerDur: t('encodeDecodePerDur'),
+                        total: t('total'),
+                      });
+                      return <span title={tip || undefined} style={tip ? { cursor: 'help' } : undefined}>{trans.timestamp}</span>;
+                    })()}
                   </div>
 
                   {/* Per-entry control row: [Audio][Raw][Dictation?]

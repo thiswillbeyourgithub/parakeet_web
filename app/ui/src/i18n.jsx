@@ -244,6 +244,8 @@ const translations = {
     encode: 'Encode',
     decode: 'Decode',
     tokenize: 'Tokenize',
+    decodePerDur: 'Decode / duration',
+    encodeDecodePerDur: '(Encode + decode) / duration',
 
     // Misc
     help: 'Help',
@@ -577,6 +579,8 @@ const translations = {
     encode: 'Encodage',
     decode: 'D\u00e9codage',
     tokenize: 'Tokenisation',
+    decodePerDur: 'D\u00e9codage / dur\u00e9e',
+    encodeDecodePerDur: '(Encodage + d\u00e9codage) / dur\u00e9e',
 
     // Misc
     help: 'Aide',

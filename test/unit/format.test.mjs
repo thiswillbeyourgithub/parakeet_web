@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge } from '../../app/ui/src/lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
   test('zero', () => assert.equal(formatTime(0), '0:00'));
@@ -33,6 +33,51 @@ describe('formatBytes (base 1024)', () => {
   test('negative / non-finite -> 0 B', () => {
     assert.equal(formatBytes(-1), '0 B');
     assert.equal(formatBytes(NaN), '0 B');
+  });
+});
+
+describe('formatMetricsTooltip', () => {
+  const LABELS = {
+    encode: 'Encode',
+    decode: 'Decode',
+    decodePerDur: 'Decode / duration',
+    encodeDecodePerDur: '(Encode + decode) / duration',
+    total: 'Total',
+  };
+
+  test('lists encode/decode/total times and both ratios', () => {
+    // encode 2.0 s, decode 0.5 s, total 3.0 s over a 10 s clip.
+    const tip = formatMetricsTooltip(
+      { encode_ms: 2000, decode_ms: 500, total_ms: 3000 }, 10, LABELS);
+    assert.equal(tip, [
+      'Encode: 2.00 s',
+      'Decode: 0.50 s',
+      'Decode / duration: 0.05',          // 0.5 / 10
+      '(Encode + decode) / duration: 0.25', // 2.5 / 10
+      'Total: 3.00 s',
+    ].join('\n'));
+  });
+
+  test('omits the ratio lines when duration is unknown (0)', () => {
+    const tip = formatMetricsTooltip(
+      { encode_ms: 2000, decode_ms: 500, total_ms: 3000 }, 0, LABELS);
+    assert.equal(tip, ['Encode: 2.00 s', 'Decode: 0.50 s', 'Total: 3.00 s'].join('\n'));
+  });
+
+  test('missing stage fields read as zero', () => {
+    const tip = formatMetricsTooltip({ total_ms: 1000 }, 10, LABELS);
+    assert.equal(tip, [
+      'Encode: 0.00 s',
+      'Decode: 0.00 s',
+      'Decode / duration: 0.00',
+      '(Encode + decode) / duration: 0.00',
+      'Total: 1.00 s',
+    ].join('\n'));
+  });
+
+  test('returns empty string when there are no metrics', () => {
+    assert.equal(formatMetricsTooltip(null, 10, LABELS), '');
+    assert.equal(formatMetricsTooltip(undefined, 10, LABELS), '');
   });
 });
 

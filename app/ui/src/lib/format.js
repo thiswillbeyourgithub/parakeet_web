@@ -84,6 +84,35 @@ export function formatEta(seconds) {
 }
 
 /**
+ * Build the multi-line tooltip (native `title`) shown when hovering a
+ * transcription's timestamp: encode time, decode time, the decode/duration and
+ * (encode+decode)/duration ratios, and total processing time. Pure: `labels`
+ * carries the already-translated strings (encode, decode, decodePerDur,
+ * encodeDecodePerDur, total) so this stays i18n-agnostic and unit-testable.
+ *
+ * Times come from the engine's metrics object (ms). The ratios are only emitted
+ * when `durationSec > 0` (a known audio length). Returns '' when there are no
+ * metrics (e.g. a reloaded entry whose in-memory timings were dropped), so the
+ * caller can leave the `title` attribute off.
+ */
+export function formatMetricsTooltip(metrics, durationSec, labels) {
+  if (!metrics) return '';
+  const encS = (metrics.encode_ms ?? 0) / 1000;
+  const decS = (metrics.decode_ms ?? 0) / 1000;
+  const totS = (metrics.total_ms ?? 0) / 1000;
+  const lines = [
+    `${labels.encode}: ${encS.toFixed(2)} s`,
+    `${labels.decode}: ${decS.toFixed(2)} s`,
+  ];
+  if (durationSec > 0) {
+    lines.push(`${labels.decodePerDur}: ${(decS / durationSec).toFixed(2)}`);
+    lines.push(`${labels.encodeDecodePerDur}: ${((encS + decS) / durationSec).toFixed(2)}`);
+  }
+  lines.push(`${labels.total}: ${totS.toFixed(2)} s`);
+  return lines.join('\n');
+}
+
+/**
  * Exponential-moving-average tracker for download speed and ETA. It is pure:
  * pass the previous `state` (or `null` to start) and the latest byte-progress
  * sample, and it returns `{ state, rate, eta }` where `rate` is bytes/second

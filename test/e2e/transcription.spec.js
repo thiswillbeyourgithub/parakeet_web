@@ -76,6 +76,18 @@ for (const fx of FIXTURES) {
       expect(o, `transcript "${got}" vs golden "${GOLDEN}" overlap ${o.toFixed(2)}`).toBeGreaterThanOrEqual(0.7);
     }).toPass({ timeout: 60 * 1000 });
 
+    // The entry's timestamp carries a hover tooltip with this run's timing
+    // breakdown. Metrics are collected on every transcription now, so the title
+    // is present and labels encode/decode time, their ratios over the audio
+    // duration, and the total. (Asserting the native `title` attribute is the
+    // headless-safe proxy for the hover; Playwright can't paint a real tooltip.)
+    const tip = await page.locator('.history-meta span[title]').first().getAttribute('title');
+    expect(tip, `timestamp tooltip "${tip}"`).toContain('Encode:');
+    expect(tip).toContain('Decode:');
+    expect(tip).toContain('Decode / duration:');
+    expect(tip).toContain('(Encode + decode) / duration:');
+    expect(tip).toContain('Total:');
+
     // The audio is attached to the entry: toggle its inline player open and
     // assert an <audio> element appears inside the entry.
     await page.locator('.history-modes button', { hasText: 'Audio' }).first().click();
