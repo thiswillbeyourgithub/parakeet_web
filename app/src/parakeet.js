@@ -1339,11 +1339,16 @@ export class ParakeetModel {
       timeOffset = 0,
       phraseBoost = null,
       beamWidth = 1,
-      // MAES knobs (used only when beamWidth > 1). Defaults match NeMo's `maes`.
+      // MAES knobs (used only when beamWidth > 1). num-steps/beta/gamma match
+      // NeMo's `maes`. maesPrefixAlpha deviates from NeMo's 1: a grid search over
+      // French-medical + FLEURS-fr (494 utts, int8, beam 5), repeated on both the
+      // CPU (node) and GPU (cuda) backends, found prefix-search recombination
+      // (alpha=1) gave WER/CER identical to alpha=0 within noise while costing
+      // ~15-20% more decode time, so it defaults off (0). See _prefixSearch.
       maesNumSteps = 2,
       maesExpansionBeta = 2,
       maesExpansionGamma = 2.3,
-      maesPrefixAlpha = 1,
+      maesPrefixAlpha = 0,
     } = opts;
 
     // Beam search is full-file only: a beam of N hypotheses cannot be serialized

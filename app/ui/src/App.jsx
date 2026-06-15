@@ -599,11 +599,15 @@ export default function App() {
   // path forces width 1 in the decoder.
   const [beamWidth, setBeamWidth] = useState(DEFAULT_BEAM_WIDTH);
   // MAES (Modified Adaptive Expansion Search) knobs, used only when beamWidth>1.
-  // Defaults match NeMo's `maes` strategy.
+  // num-steps/beta/gamma match NeMo's `maes` strategy. prefixAlpha defaults to 0
+  // (NeMo uses 1): a grid search over French-medical + FLEURS-fr (494 utts, int8,
+  // beam 5) on both the CPU and GPU backends found prefix-search recombination
+  // gave WER/CER identical to off within noise while costing ~15-20% more decode
+  // time, so it ships off. Users can still re-enable it from the sidebar.
   const [maesNumSteps, setMaesNumSteps] = useState(3);
   const [maesExpansionBeta, setMaesExpansionBeta] = useState(4);
   const [maesExpansionGamma, setMaesExpansionGamma] = useState(4.0);
-  const [maesPrefixAlpha, setMaesPrefixAlpha] = useState(1);
+  const [maesPrefixAlpha, setMaesPrefixAlpha] = useState(0);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
   const [chunkDuration, setChunkDuration] = useState(DEFAULT_CHUNK_DURATION_SEC); // seconds
@@ -1128,7 +1132,7 @@ export default function App() {
           loadSetting('maesNumSteps', 3),
           loadSetting('maesExpansionBeta', 4),
           loadSetting('maesExpansionGamma', 4.0),
-          loadSetting('maesPrefixAlpha', 1),
+          loadSetting('maesPrefixAlpha', 0), // off by default (see useState above)
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
           loadSetting('echoCancellation', false),

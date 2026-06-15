@@ -113,7 +113,9 @@ function parseArgs(argv) {
     maesNumSteps: 2,       // MAES: max symbols emitted per frame
     maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
     maesExpansionGamma: 2.3, // MAES: log-prob prune threshold
-    maesPrefixAlpha: 1,    // MAES: prefix-search length gap (0 = off)
+    maesPrefixAlpha: 0,    // MAES: prefix-search length gap (0 = off). Off by default:
+                           // benchmarked equal WER/CER to alpha=1 at ~15-20% less
+                           // decode time (beam 5, int8, CPU+GPU). See parakeet.js.
     frameStride: 1,        // sidebar: decimate encoder frames (1 = none)
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: 60,     // sidebar: max chunk length, seconds
