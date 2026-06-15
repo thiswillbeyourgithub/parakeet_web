@@ -352,10 +352,20 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
                            strength of 0). Without it every boosted run keeps a
                            baseline row to compare against.
 
-MAES knobs (used only when a beam width > 1; defaults match NeMo's maes):
-      --maes-num-steps N         Max symbols per frame. Default 2.
-      --maes-expansion-beta N    Over-generation budget. Default 2.
-      --maes-expansion-gamma F   Log-prob prune threshold. Default 2.3.
+MAES knobs (used only when a beam width > 1; defaults match NeMo's maes). Each
+is a comma-separated list folded into the grid product, so a value's column only
+appears in the tables when it is actually swept:
+      --maes-num-steps LIST      Max symbols emitted per frame, e.g. "1,2". This is
+                                 the one purely-sequential per-frame cost (each step
+                                 is a dependent decoder call GPU batching can't hide),
+                                 so it is the main latency lever. Default 2.
+      --maes-expansion-beta LIST  Over-generation budget: top-(beam+beta) tokens per
+                                 hypothesis. Mostly post-call CPU fan-out. Default 2.
+      --maes-expansion-gamma LIST  Log-prob prune threshold; lower prunes harder
+                                 (fewer survivors, faster). Default 2.3.
+      --maes-prefix-alpha LIST   Prefix-search recombination length gap, e.g. "0,1".
+                                 0 disables it (drops per-frame recombination passes);
+                                 NeMo default 1. Default 1.
       --frame-stride N           Decimate encoder frames [1,4]. Default 1.
 
 WER:
@@ -740,10 +750,11 @@ function cellProcPerDur(r) {
 function datasetDecAud(d) {
   return d.audioSec > 0 ? ((d.decodeMs / 1000) / d.audioSec).toFixed(3) : '-';
 }
-function accuracyBody(rows) {
+function accuracyBody(rows, show = EMPTY_SHOW) {
   const body = [];
   for (const r of rows) {
     const procPerDur = cellProcPerDur(r);
+    const maes = maesCells(r, show);
     for (const d of r.datasets) {
       body.push([
         String(r.beamWidth),
@@ -753,6 +764,7 @@ function accuracyBody(rows) {
         r.strength == null ? '-' : String(r.strength),
         r.minp == null ? '-' : String(r.minp),
         r.depthScaling == null ? '-' : String(r.depthScaling),
+        ...maes,
         d.name,
         pct(d.wordEdits, d.refWords).toFixed(2),
         pct(d.charEdits, d.refChars).toFixed(2),
@@ -767,7 +779,7 @@ function accuracyBody(rows) {
 // Top-N table: one row per grid cell (no per-dataset expansion), using the
 // cell's representative (overall when multi-dataset, else the single dataset)
 // row. Same columns as the accuracy table so the renderers stay shared.
-function topBody(rows) {
+function topBody(rows, show = EMPTY_SHOW) {
   return rows.map((r) => {
     const d = repDataset(r);
     return [
@@ -778,6 +790,7 @@ function topBody(rows) {
       r.strength == null ? '-' : String(r.strength),
       r.minp == null ? '-' : String(r.minp),
       r.depthScaling == null ? '-' : String(r.depthScaling),
+      ...maesCells(r, show),
       d.name,
       pct(d.wordEdits, d.refWords).toFixed(2),
       pct(d.charEdits, d.refChars).toFixed(2),
@@ -859,22 +872,39 @@ async function main() {
     }
   }
 
+  // MAES decode knobs are a decode-time-only sweep (no model reload, no trie
+  // rebuild), so they are the cheapest, innermost dimension: their product runs
+  // against every (quant, decoder, beam, boost) cell.
+  const maesConfigs = [];
+  for (const maesNumSteps of args.maesNumSteps) {
+    for (const maesExpansionBeta of args.maesExpansionBeta) {
+      for (const maesExpansionGamma of args.maesExpansionGamma) {
+        for (const maesPrefixAlpha of args.maesPrefixAlpha) {
+          maesConfigs.push({ maesNumSteps, maesExpansionBeta, maesExpansionGamma, maesPrefixAlpha });
+        }
+      }
+    }
+  }
+
   // The full grid: encoder quants x decoder quants x beam widths x boost
-  // descriptors. Encoder quant is the OUTER dimension (each needs its own model
-  // load + encoder-quant-specific output cache); decoder quant is nested directly
-  // under it (it reloads the model but reuses the cached encoder outputs); beam/
-  // boost are the cheap inner sweep.
+  // descriptors x MAES configs. Encoder quant is the OUTER dimension (each needs
+  // its own model load + encoder-quant-specific output cache); decoder quant is
+  // nested directly under it (it reloads the model but reuses the cached encoder
+  // outputs); beam / boost / MAES are the cheap inner sweep.
   const grid = [];
   for (const quant of args.quants) {
     for (const decoderQuant of args.decoderQuants) {
       for (const beamWidth of args.beamWidths) {
-        for (const bc of boostDescriptors) grid.push({ quant, decoderQuant, beamWidth, ...bc });
+        for (const bc of boostDescriptors) {
+          for (const mc of maesConfigs) grid.push({ quant, decoderQuant, beamWidth, ...bc, ...mc });
+        }
       }
     }
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
-  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s) = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
+  const maesNote = maesConfigs.length > 1 ? ` x ${maesConfigs.length} MAES config(s)` : '';
+  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s)${maesNote} = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -910,9 +940,10 @@ async function main() {
     enableChunking: false, // manifest utterances are short; one pass each
     phraseBoost: row.phraseBoost,
     beamWidth: row.beamWidth,
-    maesNumSteps: args.maesNumSteps,
-    maesExpansionBeta: args.maesExpansionBeta,
-    maesExpansionGamma: args.maesExpansionGamma,
+    maesNumSteps: row.maesNumSteps,
+    maesExpansionBeta: row.maesExpansionBeta,
+    maesExpansionGamma: row.maesExpansionGamma,
+    maesPrefixAlpha: row.maesPrefixAlpha,
     frameStride: args.frameStride,
     temperature: 0,            // mirror the web UI (transcript-neutral)
     returnTimestamps: false,
@@ -955,7 +986,16 @@ async function main() {
     // decoder quant) gets a distinct key so it never falsely reuses a cell decoded
     // with a different decoder.
     const decPart = row.decoderQuant === row.quant ? '' : ' dec=' + row.decoderQuant;
-    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}${decPart}`;
+    // MAES knobs at their NeMo defaults (num-steps 2, beta 2, gamma 2.3, prefix-alpha 1)
+    // append nothing, so a sweep that leaves them at default keeps the same resume key
+    // as before this change (existing jsonl stays reusable); any non-default value
+    // carries its knob so cells never collide across MAES configs.
+    const maesPart =
+      (row.maesNumSteps === 2 ? '' : ' ns=' + row.maesNumSteps) +
+      (row.maesExpansionBeta === 2 ? '' : ' eb=' + row.maesExpansionBeta) +
+      (row.maesExpansionGamma === 2.3 ? '' : ' eg=' + row.maesExpansionGamma) +
+      (row.maesPrefixAlpha === 1 ? '' : ' pa=' + row.maesPrefixAlpha);
+    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}${decPart}${maesPart}`;
   };
 
   // Reconstruct a summary row (the shape the final tables consume) from a
@@ -995,9 +1035,14 @@ async function main() {
     // int8 cells (whose tag carries no quant), so default to int8 on read-back.
     // Pre-decoder-quant records have no "decoderQuant"; back then the decoder
     // matched the encoder, so default to this run's encoder quant on read-back.
+    // Pre-MAES-sweep summary records carry no MAES fields; back then every cell ran
+    // at NeMo's defaults, so default to those on read-back (matches tagOf appending
+    // nothing for them, so resumed default cells still line up).
     return { beamWidth: s.beam, quant: s.quant ?? 'int8', decoderQuant: s.decoderQuant ?? s.quant ?? 'int8',
       boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
       depthScaling: s.depthScaling ?? null,
+      maesNumSteps: s.maesNumSteps ?? 2, maesExpansionBeta: s.maesExpansionBeta ?? 2,
+      maesExpansionGamma: s.maesExpansionGamma ?? 2.3, maesPrefixAlpha: s.maesPrefixAlpha ?? 1,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
 
@@ -1210,7 +1255,10 @@ async function main() {
       commitProgress();
       const datasets = buildDatasets(perDs, datasetNames);
       const r = { beamWidth: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
-        depthScaling: row.depthScaling ?? null, timeMs, timings, datasets };
+        depthScaling: row.depthScaling ?? null,
+        maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
+        maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
+        timeMs, timings, datasets };
       summaryByTag.set(tag, r);
       // The "overall" pool (or the single dataset) supplies the top-level corpus
       // figures; the per-dataset breakdown is listed under "datasets".
@@ -1231,6 +1279,8 @@ async function main() {
         type: 'summary', run: tag,
         beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
+        maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
+        maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         utterances: entries.length,
         wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
         wer_mean_pct: +mean(overall.werSamples).toFixed(4),
@@ -1272,11 +1322,21 @@ async function main() {
   const topCer = top5('cer');
   const topWer = top5('wer');
 
+  // Show a MAES knob's column only when it is actually swept (more than one value),
+  // so a normal run's tables are unchanged and a MAES sweep gains just the columns
+  // that vary. The header and every body row stay in lockstep via the same set.
+  const maesShow = new Set();
+  if (args.maesNumSteps.length > 1) maesShow.add('ns');
+  if (args.maesExpansionBeta.length > 1) maesShow.add('eb');
+  if (args.maesExpansionGamma.length > 1) maesShow.add('eg');
+  if (args.maesPrefixAlpha.length > 1) maesShow.add('pa');
+  const HEAD = accHead(maesShow);
+
   // Final tables: the full accuracy table plus a top-5-by-CER and top-5-by-WER
   // shortlist (one row per cell, using the overall figures).
-  console.log('\nAccuracy:\n' + renderAligned(ACC_HEAD, accuracyBody(summary)));
-  console.log('\nTop 5 by CER (overall):\n' + renderAligned(ACC_HEAD, topBody(topCer)));
-  console.log('\nTop 5 by WER (overall):\n' + renderAligned(ACC_HEAD, topBody(topWer)) + '\n');
+  console.log('\nAccuracy:\n' + renderAligned(HEAD, accuracyBody(summary, maesShow)));
+  console.log('\nTop 5 by CER (overall):\n' + renderAligned(HEAD, topBody(topCer, maesShow)));
+  console.log('\nTop 5 by WER (overall):\n' + renderAligned(HEAD, topBody(topWer, maesShow)) + '\n');
 
   if (args.jsonl) console.error(`[bench] wrote ${args.jsonl}`);
   if (args.md) {
@@ -1293,15 +1353,15 @@ async function main() {
       '',
       '## Accuracy',
       '',
-      renderMarkdown(ACC_HEAD, accuracyBody(summary)),
+      renderMarkdown(HEAD, accuracyBody(summary, maesShow)),
       '',
       '## Top 5 by CER (overall)',
       '',
-      renderMarkdown(ACC_HEAD, topBody(topCer)),
+      renderMarkdown(HEAD, topBody(topCer, maesShow)),
       '',
       '## Top 5 by WER (overall)',
       '',
-      renderMarkdown(ACC_HEAD, topBody(topWer)),
+      renderMarkdown(HEAD, topBody(topWer, maesShow)),
       '',
       '_Built with Claude Code._',
       '',
