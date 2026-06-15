@@ -535,8 +535,8 @@ def analyze_one(args, audio_path, quants):
     print(f"transcribed: {audio_sec:.1f}s ({audio_sec / 60:.1f} min) of the single pass "
           f"(capped at {args.max_pass_sec:g}s)\n")
     print("== Overall (full single pass) ==")
-    print("quant   WER       load     infer     RTF     peak RAM   model RAM   words")
-    print("-----   -------   ------   -------   -----   --------   ---------   -----")
+    print("quant   WER       load     infer     proc_t/dur_t   peak RAM   model RAM   words")
+    print("-----   -------   ------   -------   ------------   --------   ---------   -----")
     summary = {}
     for q in quants:
         r = results[q]
@@ -546,12 +546,12 @@ def analyze_one(args, audio_path, quants):
             continue
         w = wer(overall_ref, r["text"])
         summary[q] = w
-        rtf = r["infer_s"] / r["audio_sec"]
+        proc_per_dur = r["infer_s"] / r["audio_sec"]
         model_mb = r["peak_mb"] - r["baseline_mb"]
         n = len(r["text"].split())
         print(
             f"{q:<6}  {100 * w:6.2f}%   {r['load_s']:5.1f}s   {r['infer_s']:6.1f}s   "
-            f"{rtf:5.3f}   {r['peak_mb']:6.0f} MB   {model_mb:6.0f} MB   {n:5d}"
+            f"{proc_per_dur:>12.3f}   {r['peak_mb']:6.0f} MB   {model_mb:6.0f} MB   {n:5d}"
         )
 
     # ---- Table 2: per-section WER ----
