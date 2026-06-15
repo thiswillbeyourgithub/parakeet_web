@@ -268,8 +268,9 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     const base = { beamWidth: 1, boostLabel: 'none', strength: null, minp: null, depthScaling: null,
       datasets: buildDatasets(perDs, ['medical']) };
 
-    // With timings: the column is the mean proc_t/dur_t over the cell's utterances.
-    assert.equal(accuracyBody([{ ...base, timings: { procPerDur: [0.2, 0.4] } }])[0][ppdCol], '0.30');
+    // With timings: the column is the mean proc_t/dur_t over the cell's utterances
+    // (3 decimals, matching dec_t/aud: the decode-only ratio is tiny here).
+    assert.equal(accuracyBody([{ ...base, timings: { procPerDur: [0.2, 0.4] } }])[0][ppdCol], '0.300');
     // Without a timings field (e.g. synthetic rows): renders "-", does not throw.
     assert.equal(accuracyBody([base])[0][ppdCol], '-');
   });
@@ -326,7 +327,7 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     // Micro-averaged: (1+1)/(10+5) words, (5+5)/(50+25) chars.
     assert.equal(body[0][werCol], (100 * 2 / 15).toFixed(2));
     assert.equal(body[0][cerCol], (100 * 10 / 75).toFixed(2));
-    assert.equal(body[0][ppdCol], '0.50');
+    assert.equal(body[0][ppdCol], '0.500');
     // dec_t/aud is the overall pool's summed decode / summed audio: 0.4 s / 6 s.
     assert.equal(body[0][decAudCol], '0.067');
   });

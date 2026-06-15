@@ -103,9 +103,10 @@ function parseArgs(argv) {
     depthScalings: [null],  // swept dimension: trie depth-scaling (null = trie's built-in default)
     boosts: [],             // --phrase-boost specs (repeatable); inline / .txt / .pwc
     noBaseline: false,      // drop the no-boost row from the sweep
-    maesNumSteps: 2,
-    maesExpansionBeta: 2,
-    maesExpansionGamma: 2.3,
+    maesNumSteps: [2],       // swept dimension: MAES max symbols emitted per frame
+    maesExpansionBeta: [2],  // swept dimension: MAES over-generation (top-(beam+beta))
+    maesExpansionGamma: [2.3], // swept dimension: MAES adaptive log-prob prune threshold
+    maesPrefixAlpha: [1],    // swept dimension: MAES prefix-search length gap (0 = off)
     frameStride: 1,
     threads: 0,
     limit: 0,               // 0 => all utterances
@@ -148,9 +149,10 @@ function parseArgs(argv) {
       case '--depth-scaling': a.depthScalings = numList(val(flag)); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '--no-baseline': a.noBaseline = true; break;
-      case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
-      case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
-      case '--maes-expansion-gamma': a.maesExpansionGamma = Number(val(flag)); break;
+      case '--maes-num-steps': a.maesNumSteps = numList(val(flag)); break;
+      case '--maes-expansion-beta': a.maesExpansionBeta = numList(val(flag)); break;
+      case '--maes-expansion-gamma': a.maesExpansionGamma = numList(val(flag)); break;
+      case '--maes-prefix-alpha': a.maesPrefixAlpha = numList(val(flag)); break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
       case '--limit': a.limit = parseInt(val(flag), 10); break;
@@ -206,6 +208,18 @@ function parseArgs(argv) {
   }
   if (!a.depthScalings.length || a.depthScalings.some((d) => d !== null && (!Number.isFinite(d) || d < 0))) {
     throw new Error('--depth-scaling must be a comma-separated list of numbers >= 0 (0 = flat, no per-depth growth)');
+  }
+  if (!a.maesNumSteps.length || a.maesNumSteps.some((n) => !Number.isInteger(n) || n < 1)) {
+    throw new Error('--maes-num-steps must be a comma-separated list of integers >= 1');
+  }
+  if (!a.maesExpansionBeta.length || a.maesExpansionBeta.some((b) => !Number.isInteger(b) || b < 0)) {
+    throw new Error('--maes-expansion-beta must be a comma-separated list of integers >= 0');
+  }
+  if (!a.maesExpansionGamma.length || a.maesExpansionGamma.some((g) => !Number.isFinite(g) || g <= 0)) {
+    throw new Error('--maes-expansion-gamma must be a comma-separated list of positive numbers');
+  }
+  if (!a.maesPrefixAlpha.length || a.maesPrefixAlpha.some((p) => !Number.isInteger(p) || p < 0)) {
+    throw new Error('--maes-prefix-alpha must be a comma-separated list of integers >= 0 (0 = off)');
   }
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) {
     throw new Error('--frame-stride must be an integer in [1, 4]');
@@ -695,10 +709,29 @@ function renderMarkdown(headers, body) {
 // and the raw edit/ref counts are dropped from the table to keep it readable;
 // they remain in the JSONL records.
 const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud'];
+// MAES knob columns, inserted just before the 'dataset' column ONLY for the knobs
+// actually swept (in the `show` set), so a normal run's table is unchanged and a
+// MAES sweep gains just the columns that vary. Each entry: [header, accessor].
+const MAES_COLS = [
+  ['ns', (r) => r.maesNumSteps],
+  ['eb', (r) => r.maesExpansionBeta],
+  ['eg', (r) => r.maesExpansionGamma],
+  ['pa', (r) => r.maesPrefixAlpha],
+];
+const EMPTY_SHOW = new Set();
+const maesCells = (r, show) => MAES_COLS.filter(([h]) => show.has(h)).map(([, f]) => { const v = f(r); return v == null ? '-' : String(v); });
+// The accuracy/top-N header with the swept MAES columns spliced in before 'dataset'.
+function accHead(show) {
+  const h = [...ACC_HEAD];
+  h.splice(h.indexOf('dataset'), 0, ...MAES_COLS.filter(([c]) => show.has(c)).map(([c]) => c));
+  return h;
+}
 // proc_t/dur_t is a per-cell figure (same across a cell's dataset rows); guard the
 // timings lookup so synthetic rows (unit tests) without a timings field render "-".
+// Shown with 3 decimals (like dec_t/aud): the encoder is amortized away here, so
+// this is the decode-only ratio, naturally << 1 and invisible at 2 decimals.
 function cellProcPerDur(r) {
-  return r.timings && r.timings.procPerDur && r.timings.procPerDur.length ? mean(r.timings.procPerDur).toFixed(2) : '-';
+  return r.timings && r.timings.procPerDur && r.timings.procPerDur.length ? mean(r.timings.procPerDur).toFixed(3) : '-';
 }
 // Per-DATASET decode-time-to-audio-length ratio (decode seconds / audio seconds):
 // summed decode_ms divided by summed audio seconds for one dataset row. Renders
@@ -952,7 +985,11 @@ async function main() {
         refChars: u.refChars || 0, charEdits: u.charEdits || 0,
       }, m.decode_ms ?? 0, audioSec);
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
-      timings.procPerDur.push(m.procPerDur ?? 0);
+      // Recompute proc_t/dur_t from the raw total_ms: the stored metrics.procPerDur
+      // is pre-rounded to 2 decimals upstream, which collapses to ~0 here because
+      // the encoder is amortized away (total_ms is decode-only). audioSec is the
+      // same length used for dec_t/aud above.
+      timings.procPerDur.push(audioSec > 0 ? (m.total_ms ?? 0) / 1000 / audioSec : 0);
     }
     // Pre-multi-quant summary records have no "quant" field; they were always
     // int8 cells (whose tag carries no quant), so default to int8 on read-back.
@@ -1143,7 +1180,10 @@ async function main() {
         addScore(ensureDs(e.dataset), sc, metrics.decode_ms ?? 0, audioSec);
         // Accumulate per-phase timings for this run's mean/median.
         for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
-        timings.procPerDur.push(metrics.procPerDur ?? 0);
+        // Recompute proc_t/dur_t from the raw total_ms rather than the pre-rounded
+        // metrics.procPerDur (2 decimals): the encoder is amortized away here, so
+        // the decode-only ratio is tiny and the upstream rounding collapses it to 0.
+        timings.procPerDur.push(audioSec > 0 ? (metrics.total_ms ?? 0) / 1000 / audioSec : 0);
         writeJsonl({
           type: 'utterance', run: tag,
           beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
