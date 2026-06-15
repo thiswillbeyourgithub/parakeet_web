@@ -45,20 +45,27 @@ export function buildExternalData(source, modelFilename) {
  * @param {number} timings.encodeMs Encoder time in ms.
  * @param {number} timings.decodeMs Decoder time in ms.
  * @param {number} timings.tokenizeMs Tokenizer time in ms.
+ * @param {object} [out] Output options.
+ * @param {boolean} [out.log] Print the per-stage table/`[Perf]` line to the
+ *   console. Building the metrics object is cheap (a few `performance.now()`
+ *   reads), so the UI collects metrics on every run for its hover tooltip while
+ *   keeping `log` off; only `verbose`/`debug` opts in to the console output.
  * @returns {object|null} The metrics object, or null when perf is disabled.
  */
-function buildPerfMetrics(perfEnabled, { t0, audioSec, preprocessMs, encodeMs, decodeMs, tokenizeMs }) {
+function buildPerfMetrics(perfEnabled, { t0, audioSec, preprocessMs, encodeMs, decodeMs, tokenizeMs }, { log = false } = {}) {
   if (!perfEnabled) return null;
   const totalMs = performance.now() - t0;
   const procPerDur = (totalMs / 1000) / audioSec;
-  console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioSec.toFixed(2)} s, time ${(totalMs / 1000).toFixed(2)} s)`);
-  console.table({
-    Preprocess: `${preprocessMs.toFixed(1)} ms`,
-    Encode: `${encodeMs.toFixed(1)} ms`,
-    Decode: `${decodeMs.toFixed(1)} ms`,
-    Tokenize: `${tokenizeMs.toFixed(1)} ms`,
-    Total: `${totalMs.toFixed(1)} ms`,
-  });
+  if (log) {
+    console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioSec.toFixed(2)} s, time ${(totalMs / 1000).toFixed(2)} s)`);
+    console.table({
+      Preprocess: `${preprocessMs.toFixed(1)} ms`,
+      Encode: `${encodeMs.toFixed(1)} ms`,
+      Decode: `${decodeMs.toFixed(1)} ms`,
+      Tokenize: `${tokenizeMs.toFixed(1)} ms`,
+      Total: `${totalMs.toFixed(1)} ms`,
+    });
+  }
   return {
     preprocess_ms: +preprocessMs.toFixed(1),
     encode_ms: +encodeMs.toFixed(1),
@@ -1546,7 +1553,7 @@ export class ParakeetModel {
       const metrics = buildPerfMetrics(perfEnabled, {
         t0, audioSec: audio.length / sampleRate,
         preprocessMs: tPreproc, encodeMs: tEncode, decodeMs: tDecode, tokenizeMs: tToken,
-      });
+      }, { log: this.verbose || debug });
       const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
       return earlyOut;
@@ -1601,7 +1608,7 @@ export class ParakeetModel {
     const metrics = buildPerfMetrics(perfEnabled, {
       t0, audioSec: audio.length / sampleRate,
       preprocessMs: tPreproc, encodeMs: tEncode, decodeMs: tDecode, tokenizeMs: tToken,
-    });
+    }, { log: this.verbose || debug });
 
     const fullOut = {
       utterance_text: text,
@@ -1716,9 +1723,17 @@ export class ParakeetModel {
 
     const combinedTextParts = [];
     const combinedWords = [];
-    let firstChunkMetrics = null;
     let firstChunkConfidences = null;
+    // Per-stage timings SUMMED across every chunk (not just the first), so the
+    // reported encode/decode time reflects the whole audio. Each is 0 when
+    // profiling is off; `anyMetrics` tracks whether any chunk reported timings
+    // so we return null (rather than a zero-filled object) in that case.
+    let totalPreprocessMs = 0;
+    let totalEncodeMs = 0;
+    let totalDecodeMs = 0;
+    let totalTokenizeMs = 0;
     let totalProcessingTime = 0;
+    let anyMetrics = false;
     let chunkNum = 0;
     let prevEnd = null; // absolute sample index where the previous chunk ended
 
@@ -1767,10 +1782,17 @@ export class ParakeetModel {
       prevEnd = end;
 
       if (chunkNum === 1) {
-        firstChunkMetrics = chunkRes.metrics;
         firstChunkConfidences = chunkRes.confidence_scores;
       }
-      totalProcessingTime += chunkRes.metrics?.total_ms || 0;
+      const m = chunkRes.metrics;
+      if (m) {
+        anyMetrics = true;
+        totalPreprocessMs += m.preprocess_ms || 0;
+        totalEncodeMs += m.encode_ms || 0;
+        totalDecodeMs += m.decode_ms || 0;
+        totalTokenizeMs += m.tokenize_ms || 0;
+        totalProcessingTime += m.total_ms || 0;
+      }
 
       if (onChunk) {
         await onChunk({
@@ -1791,11 +1813,14 @@ export class ParakeetModel {
       utterance_text: combinedText,
       words: combinedWords,
       confidence_scores: firstChunkConfidences || {},
-      metrics: {
-        ...firstChunkMetrics,
-        total_ms: totalProcessingTime,
-        procPerDur: totalProcessingTime ? (totalProcessingTime / 1000) / totalDuration : null,
-      },
+      metrics: anyMetrics ? {
+        preprocess_ms: +totalPreprocessMs.toFixed(1),
+        encode_ms: +totalEncodeMs.toFixed(1),
+        decode_ms: +totalDecodeMs.toFixed(1),
+        tokenize_ms: +totalTokenizeMs.toFixed(1),
+        total_ms: +totalProcessingTime.toFixed(1),
+        procPerDur: totalProcessingTime ? +((totalProcessingTime / 1000) / totalDuration).toFixed(2) : null,
+      } : null,
       is_final: true,
     };
   }

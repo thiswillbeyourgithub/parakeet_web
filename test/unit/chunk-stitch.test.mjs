@@ -39,10 +39,18 @@ function makeAudio(nSamples) {
 // Scripted transcriber: emits every TRUTH word fully contained in the chunk's
 // [startSec, endSec) span, with chunk-local timestamps. Honours returnTimestamps
 // the way the real transcribe() does (no words => no timestamps).
-function makeModel({ withTimestamps = true } = {}) {
+// `metricsPerCall(i)` (optional) returns the per-stage metrics the stub reports
+// for the i-th transcribe() call (0-based), letting a test feed distinct timings
+// per chunk and assert how transcribeChunked aggregates them. Pass `null` to
+// have the stub report no metrics at all (metrics: null), mirroring profiling
+// being off. Defaults to a constant { total_ms: 1 } for the stitching tests,
+// which don't inspect metrics.
+function makeModel({ withTimestamps = true, metricsPerCall } = {}) {
+  let calls = 0;
   return {
     transcribeChunked: ParakeetModel.prototype.transcribeChunked,
     transcribe: async (chunk, sampleRate, opts) => {
+      const callIndex = calls++;
       const startSec = chunk[0] / sampleRate;
       const endSec = (chunk[0] + chunk.length) / sampleRate;
       const inChunk = TRUTH.filter((w) => w.start >= startSec && w.end <= endSec);
@@ -55,11 +63,14 @@ function makeModel({ withTimestamps = true } = {}) {
             confidence: 1,
           }))
         : [];
+      const metrics = metricsPerCall === undefined
+        ? { total_ms: 1 }
+        : (metricsPerCall ? metricsPerCall(callIndex) : null);
       return {
         utterance_text: inChunk.map((w) => w.text).join(' '),
         words,
         confidence_scores: {},
-        metrics: { total_ms: 1 },
+        metrics,
         is_final: true,
       };
     },
@@ -129,5 +140,40 @@ describe('transcribeChunked without dedup', () => {
     // No words to align on, so the overlap zone ("echo charlie") appears twice.
     assert.equal(res.utterance_text, 'alpha bravo echo charlie echo charlie delta');
     assert.equal(res.words.length, 0);
+  });
+});
+
+describe('transcribeChunked metrics aggregation', () => {
+  // Distinct per-stage timings per chunk so we prove every chunk is summed (not
+  // just the first one doubled). Two-chunk layout (see CHUNK_OPTS/AUDIO above).
+  const PERCALL = (i) => ({
+    preprocess_ms: 1 + i,    // chunk0 1 + chunk1 2  => 3
+    encode_ms: 100 + i,      // 100 + 101            => 201
+    decode_ms: 50 + i,       // 50  + 51             => 101
+    tokenize_ms: 2 + i,      // 2   + 3              => 5
+    total_ms: 1000 + i * 10, // 1000 + 1010          => 2010
+  });
+
+  test('sums every per-stage timing across all chunks, not just the first', async () => {
+    const model = makeModel({ metricsPerCall: PERCALL });
+    const res = await model.transcribeChunked(AUDIO, SR, CHUNK_OPTS);
+    assert.equal(res.metrics.preprocess_ms, 3);
+    assert.equal(res.metrics.encode_ms, 201);
+    assert.equal(res.metrics.decode_ms, 101);
+    assert.equal(res.metrics.tokenize_ms, 5);
+    assert.equal(res.metrics.total_ms, 2010);
+  });
+
+  test('procPerDur is the summed processing time over the whole audio duration', async () => {
+    const model = makeModel({ metricsPerCall: PERCALL });
+    const res = await model.transcribeChunked(AUDIO, SR, CHUNK_OPTS);
+    // total 2010 ms over 200000 samples / 16000 = 12.5 s => 2.01/12.5 = 0.1608 -> 0.16
+    assert.equal(res.metrics.procPerDur, 0.16);
+  });
+
+  test('returns metrics: null when no chunk reports timings (profiling off)', async () => {
+    const model = makeModel({ metricsPerCall: null });
+    const res = await model.transcribeChunked(AUDIO, SR, CHUNK_OPTS);
+    assert.equal(res.metrics, null);
   });
 });
