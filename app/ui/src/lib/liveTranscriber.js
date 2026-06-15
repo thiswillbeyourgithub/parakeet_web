@@ -194,16 +194,16 @@ export function createLiveTranscriber(cfg) {
         pending: pendingWords.length,
       });
 
-      // RTF (realtime factor): how many seconds of audio per second of compute.
-      // <1 means the model is slower than realtime — the window will keep
+      // proc_t/dur_t: processing time per second of audio (lower is faster).
+      // >1 means the model is slower than realtime, so the window will keep
       // shrinking and step will grow. Watch this when troubleshooting perf.
-      const rtf = (windowSec * 1000) / Math.max(processMs, 1);
+      const procPerDur = processMs / Math.max(windowSec * 1000, 1);
       const stepHeadroomMs = currentStep * 1000 - processMs;
       const windowAtClamp = currentWindow === WINDOW_MIN ? ' [WIN@MIN]'
         : currentWindow === WINDOW_MAX ? ' [WIN@MAX]' : '';
       console.log(
         `[Live] window=${currentWindow.toFixed(1)}s step=${currentStep.toFixed(1)}s ` +
-        `process=${processMs.toFixed(0)}ms (rtf=${rtf.toFixed(1)}x, ` +
+        `process=${processMs.toFixed(0)}ms (proc_t/dur_t=${procPerDur.toFixed(2)}, ` +
         `step_headroom=${stepHeadroomMs.toFixed(0)}ms) ` +
         `cost/s=${(emaCostPerS || 0).toFixed(0)}ms/s ` +
         `committed=${committedWords.length} pending=${pendingWords.length}${windowAtClamp}`

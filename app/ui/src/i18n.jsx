@@ -161,7 +161,7 @@ const translations = {
     tooltipAutoCopy: 'Automatically copies text to clipboard after transcription. Copies the dictation-cleaned transcript when display mode is set to Dictation (and rules are loaded), otherwise copies raw text. Default: on.',
     tooltipPersistTranscripts: 'When OFF (default): transcripts stay only in memory and disappear when you close the tab. When ON: transcripts are written to IndexedDB and survive across sessions. Note that even after you turn this OFF and clear history, residue may remain on disk until the browser compacts its storage. To fully erase, use the browser’s "Clear site data" option.',
     tooltipKeyboardShortcuts: 'When ON: single-letter keys (R/S/F/Space/Enter) control recording, settings, file selection and model loading from anywhere outside a text field. When OFF (default): those keys do nothing so plain typing and navigation are never intercepted.',
-    tooltipDebugLogging: 'Off (default): minimal console output, no extra UI metrics. Full logs: shows system memory/heap, per-transcription performance metrics (RTF, timings), detailed audio metadata, and the most verbose level in the browser devtools console.',
+    tooltipDebugLogging: 'Off (default): minimal console output, no extra UI metrics. Full logs: shows system memory/heap, per-transcription performance metrics (proc_t/dur_t, timings), detailed audio metadata, and the most verbose level in the browser devtools console.',
     tooltipNoiseSuppression: 'Reduces background noise for clearer voice. Disable for music or when maximum audio fidelity is needed. Default: on.',
     tooltipEchoCancellation: 'Removes echo and feedback. Disable for music recording or if you experience audio quality issues. Default: off.',
     tooltipAutoGainControl: 'Automatically adjusts volume levels. Disable for music or when you want consistent volume. Default: on.',
@@ -238,7 +238,7 @@ const translations = {
     storage: 'Storage',
 
     // Performance
-    rtf: 'RTF',
+    procPerDur: 'proc_t/dur_t',
     total: 'Total',
     preprocess: 'Preprocess',
     encode: 'Encode',
@@ -571,7 +571,7 @@ const translations = {
     storage: 'Stockage',
 
     // Performance
-    rtf: 'RTF',
+    procPerDur: 'proc_t/dur_t',
     total: 'Total',
     preprocess: 'Pr\u00e9traitement',
     encode: 'Encodage',

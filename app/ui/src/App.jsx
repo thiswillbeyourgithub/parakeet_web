@@ -3575,10 +3575,10 @@ export default function App() {
       // width is visible: only the decode phase scales with beam width, so the
       // estimate keeps the beam-independent wall time and divides decode by it.
       const transcribeElapsedMs = performance.now() - transcribeStartTime;
-      // RTF = Real-Time Factor: processing time / audio duration. RTF < 1 means
-      // faster than real time (e.g. 0.25 = a 60s clip transcribed in 15s).
-      const rtf = audioDuration > 0 ? (transcribeElapsedMs / 1000) / audioDuration : 0;
-      let transcribeTimeLog = `[Transcribe] Total time for entire audio: ${formatDuration(transcribeElapsedMs / 1000)} (RTF ${rtf.toFixed(3)})`;
+      // proc_t/dur_t = processing time / audio duration (lower is faster). < 1
+      // means faster than real time (e.g. 0.25 = a 60s clip transcribed in 15s).
+      const procPerDur = audioDuration > 0 ? (transcribeElapsedMs / 1000) / audioDuration : 0;
+      let transcribeTimeLog = `[Transcribe] Total time for entire audio: ${formatDuration(transcribeElapsedMs / 1000)} (proc_t/dur_t ${procPerDur.toFixed(3)})`;
       if (beamWidth > 1 && totalDecodeMs > 0) {
         const nonDecodeMs = Math.max(0, transcribeElapsedMs - totalDecodeMs);
         const singleBeamMs = nonDecodeMs + totalDecodeMs / beamWidth;
@@ -5199,7 +5199,7 @@ export default function App() {
       {/* Latest transcription performance info (advanced) */}
       {showAdvancedInfo && latestMetrics && (
         <div className="performance">
-          <strong>{t('rtf')}:</strong> {latestMetrics.rtf?.toFixed(2)}x &nbsp;|&nbsp; {t('total')}: {(latestMetrics.total_ms / 1000).toFixed(2)} s<br/>
+          <strong>{t('procPerDur')}:</strong> {latestMetrics.procPerDur?.toFixed(2)} &nbsp;|&nbsp; {t('total')}: {(latestMetrics.total_ms / 1000).toFixed(2)} s<br/>
           {t('preprocess')} {latestMetrics.preprocess_ms} ms · {t('encode')} {(latestMetrics.encode_ms / 1000).toFixed(2)} s · {t('decode')} {(latestMetrics.decode_ms / 1000).toFixed(2)} s · {t('tokenize')} {latestMetrics.tokenize_ms} ms
         </div>
       )}
@@ -5221,7 +5221,7 @@ export default function App() {
                     <strong>{truncateFilename(trans.filename)}</strong>
                     {showAdvancedInfo && (
                       <span style={{ fontSize: '0.85em', color: 'var(--text-subtle)', marginLeft: '0.5rem' }}>
-                        {typeof trans.duration === 'number' && `${formatDuration(trans.duration)} | `}{trans.wordCount} words{trans.metrics && ` | RTF: ${trans.metrics.rtf?.toFixed(2)}x`}
+                        {typeof trans.duration === 'number' && `${formatDuration(trans.duration)} | `}{trans.wordCount} words{trans.metrics && ` | proc_t/dur_t: ${trans.metrics.procPerDur?.toFixed(2)}`}
                       </span>
                     )}
                     <span>{trans.timestamp}</span>

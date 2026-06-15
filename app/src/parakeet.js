@@ -1283,7 +1283,7 @@ export class ParakeetModel {
    *
    * Pass `opts.encoded` (the object returned by encode() for this same audio) to
    * skip preprocessing + the encoder and decode a precomputed encoder output;
-   * `audio` is then used only for its length (RTF reporting). This lets callers
+   * `audio` is then used only for its length (proc_t/dur_t reporting). This lets callers
    * sweep decode knobs over a fixed encoding without re-encoding (see encode()).
    */
   async transcribe(audio, sampleRate = 16000, opts = {}) {
@@ -1502,8 +1502,8 @@ export class ParakeetModel {
       if (perfEnabled) {
         const total = performance.now() - t0;
         const audioDur = audio.length / sampleRate;
-        const rtf = audioDur / (total / 1000);
-        console.log(`[Perf] RTF: ${rtf.toFixed(2)}x (audio ${audioDur.toFixed(2)} s, time ${(total/1000).toFixed(2)} s)`);
+        const procPerDur = (total / 1000) / audioDur;
+        console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioDur.toFixed(2)} s, time ${(total/1000).toFixed(2)} s)`);
         console.table({Preprocess:`${tPreproc.toFixed(1)} ms`, Encode:`${tEncode.toFixed(1)} ms`, Decode:`${tDecode.toFixed(1)} ms`, Tokenize:`${tToken.toFixed(1)} ms`, Total:`${total.toFixed(1)} ms`});
       }
       const metrics = perfEnabled ? {
@@ -1512,7 +1512,7 @@ export class ParakeetModel {
         decode_ms: +tDecode.toFixed(1),
         tokenize_ms: +tToken.toFixed(1),
         total_ms: +( (performance.now() - t0).toFixed(1) ),
-        rtf: +((audio.length / sampleRate) / ((performance.now() - t0) / 1000)).toFixed(2)
+        procPerDur: +(((performance.now() - t0) / 1000) / (audio.length / sampleRate)).toFixed(2)
       } : null;
       const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
@@ -1568,8 +1568,8 @@ export class ParakeetModel {
     if (perfEnabled) {
       const total = performance.now() - t0;
       const audioDur = audio.length / sampleRate;
-      const rtf = audioDur / (total / 1000);
-      console.log(`[Perf] RTF: ${rtf.toFixed(2)}x (audio ${audioDur.toFixed(2)} s, time ${(total/1000).toFixed(2)} s)`);
+      const procPerDur = (total / 1000) / audioDur;
+      console.log(`[Perf] proc_t/dur_t: ${procPerDur.toFixed(2)} (audio ${audioDur.toFixed(2)} s, time ${(total/1000).toFixed(2)} s)`);
       console.table({Preprocess:`${tPreproc.toFixed(1)} ms`, Encode:`${tEncode.toFixed(1)} ms`, Decode:`${tDecode.toFixed(1)} ms`, Tokenize:`${tToken.toFixed(1)} ms`, Total:`${total.toFixed(1)} ms`});
     }
 
@@ -1592,7 +1592,7 @@ export class ParakeetModel {
         decode_ms: +tDecode.toFixed(1),
         tokenize_ms: +tToken.toFixed(1),
         total_ms: +( (performance.now() - t0).toFixed(1) ),
-        rtf: +((audio.length / sampleRate) / ((performance.now() - t0) / 1000)).toFixed(2)
+        procPerDur: +(((performance.now() - t0) / 1000) / (audio.length / sampleRate)).toFixed(2)
       } : null,
       is_final: !returnDecoderState,
     };
@@ -1771,7 +1771,7 @@ export class ParakeetModel {
       metrics: {
         ...firstChunkMetrics,
         total_ms: totalProcessingTime,
-        rtf: totalProcessingTime ? totalDuration / (totalProcessingTime / 1000) : null,
+        procPerDur: totalProcessingTime ? (totalProcessingTime / 1000) / totalDuration : null,
       },
       is_final: true,
     };
