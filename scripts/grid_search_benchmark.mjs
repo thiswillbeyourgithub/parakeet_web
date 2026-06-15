@@ -12,7 +12,8 @@
 // The point is to measure how much the decoding knobs move WER, so it SWEEPS a
 // grid: quant x beam-width x (no-boost baseline + each boost strength x each
 // boost depth-scaling x each boost min-p) and prints one row per combination in
-// the accuracy table (quant/beam/boost knobs + corpus WER %, CER % and RTF),
+// the accuracy table (quant/beam/boost knobs + corpus WER %, CER %, RTF and the
+// per-dataset decode-time-to-audio-length ratio "decode/aud"),
 // followed by a top-5-by-CER and a top-5-by-WER shortlist. --quant takes a
 // comma-separated list (e.g. "int8,fp16,fp32"); each quant is the OUTER sweep
 // dimension, loaded once with its own model + encoder cache (the encoder output
@@ -520,14 +521,19 @@ const OVERALL = 'overall';
 
 // A running tally of word/char edits + per-utterance WER samples for one dataset
 // within one grid cell. mean/median/stdev are computed over werSamples; the
-// corpus WER/CER come from the edit/ref totals.
+// corpus WER/CER come from the edit/ref totals. decodeMs / audioSec accumulate
+// this dataset's total decode time and audio length so the table can show the
+// decode-time-to-audio-length ratio (how the beam width moves decode speed).
 function newAcc() {
-  return { refWords: 0, hypWords: 0, wordEdits: 0, refChars: 0, charEdits: 0, werSamples: [] };
+  return { refWords: 0, hypWords: 0, wordEdits: 0, refChars: 0, charEdits: 0, werSamples: [], decodeMs: 0, audioSec: 0 };
 }
-function addScore(acc, sc) {
+// decodeMs / audioSec default to 0 so the pure scoring tests (which pass only a
+// score object) keep working; live/resume callers pass the real timings.
+function addScore(acc, sc, decodeMs = 0, audioSec = 0) {
   acc.refWords += sc.refWords; acc.hypWords += sc.hypWords; acc.wordEdits += sc.wordEdits;
   acc.refChars += sc.refChars; acc.charEdits += sc.charEdits;
   acc.werSamples.push(pct(sc.wordEdits, sc.refWords));
+  acc.decodeMs += decodeMs; acc.audioSec += audioSec;
 }
 
 // Turn a name->accumulator map into the ordered list of dataset rows the tables
@@ -542,6 +548,7 @@ function buildDatasets(perDs, datasetNames) {
       all.refWords += d.refWords; all.hypWords += d.hypWords; all.wordEdits += d.wordEdits;
       all.refChars += d.refChars; all.charEdits += d.charEdits;
       all.werSamples.push(...d.werSamples);
+      all.decodeMs += d.decodeMs; all.audioSec += d.audioSec;
     }
     datasets.push(all);
   }
@@ -666,14 +673,24 @@ function renderMarkdown(headers, body) {
 // WER (see --sort-by) ascending so the best config is at the top, and a cell's
 // dataset rows stay grouped together. "WER %" / "CER %" are the corpus-level
 // rates (total word/char edits / total refs); "RTF" is the cell's mean
-// real-time factor (decode work only; the encoder is amortized away). The
+// real-time factor (decode work only; the encoder is amortized away). "decode/aud"
+// is the per-DATASET ratio of total decode time to total audio length (decode
+// seconds per second of audio, i.e. the standard-convention RTF for the decode
+// phase only) so the beam width's impact on decode speed is visible. The
 // per-utterance WER spread (mean/median/stdev) and the raw edit/ref counts are
 // dropped from the table to keep it readable; they remain in the JSONL records.
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF'];
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'RTF', 'decode/aud'];
 // RTF is a per-cell figure (same across a cell's dataset rows); guard the timings
 // lookup so synthetic rows (unit tests) without a timings field render "-".
 function cellRtf(r) {
   return r.timings && r.timings.rtf && r.timings.rtf.length ? mean(r.timings.rtf).toFixed(2) : '-';
+}
+// Per-DATASET decode-time-to-audio-length ratio (decode seconds / audio seconds):
+// summed decode_ms divided by summed audio seconds for one dataset row. Renders
+// "-" when the audio length is unknown (synthetic rows / pre-audioSec records),
+// matching how RTF guards its absent timings.
+function datasetDecAud(d) {
+  return d.audioSec > 0 ? ((d.decodeMs / 1000) / d.audioSec).toFixed(3) : '-';
 }
 function accuracyBody(rows) {
   const body = [];
@@ -692,6 +709,7 @@ function accuracyBody(rows) {
         pct(d.wordEdits, d.refWords).toFixed(2),
         pct(d.charEdits, d.refChars).toFixed(2),
         rtf,
+        datasetDecAud(d),
       ]);
     }
   }
@@ -716,6 +734,7 @@ function topBody(rows) {
       pct(d.wordEdits, d.refWords).toFixed(2),
       pct(d.charEdits, d.refChars).toFixed(2),
       cellRtf(r),
+      datasetDecAud(d),
     ];
   });
 }
@@ -905,11 +924,17 @@ async function main() {
     for (const u of utts) {
       const name = u.dataset ?? '(dataset)';
       if (!perDs.has(name)) { perDs.set(name, newAcc()); order.push(name); }
+      const m = u.metrics || {};
+      // Audio length for the decode/audio ratio: prefer the recorded audioSec,
+      // else recover it from rtf*total_ms (rtf = audio/total, so the product is
+      // the audio seconds) for pre-audioSec records, else fall back to duration.
+      const audioSec = Number.isFinite(u.audioSec) ? u.audioSec
+        : (Number.isFinite(m.rtf) && Number.isFinite(m.total_ms)) ? (m.rtf * m.total_ms) / 1000
+        : (Number.isFinite(u.duration) ? u.duration : 0);
       addScore(perDs.get(name), {
         refWords: u.refWords || 0, hypWords: u.hypWords || 0, wordEdits: u.wordEdits || 0,
         refChars: u.refChars || 0, charEdits: u.charEdits || 0,
-      });
-      const m = u.metrics || {};
+      }, m.decode_ms ?? 0, audioSec);
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
       timings.rtf.push(m.rtf ?? 0);
     }
@@ -1093,10 +1118,13 @@ async function main() {
         const result = await transcribeQuiet(pcm, { ...decodeOpts(row), encoded });
         const hyp = result.utterance_text ?? '';
         const metrics = result.metrics ?? {};
+        // Actual decoded audio length (the PCM is the ground truth; the manifest's
+        // "duration" may be missing or rounded). Used for the decode/audio ratio.
+        const audioSec = pcm.length / 16000;
         const refNorm = normalizeText(e.text, args.stripAccents);
         const hypNorm = normalizeText(hyp, args.stripAccents);
         const sc = score(refNorm, hypNorm);
-        addScore(ensureDs(e.dataset), sc);
+        addScore(ensureDs(e.dataset), sc, metrics.decode_ms ?? 0, audioSec);
         // Accumulate per-phase timings for this run's mean/median.
         for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
         timings.rtf.push(metrics.rtf ?? 0);
@@ -1105,7 +1133,7 @@ async function main() {
           beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
           depthScaling: row.depthScaling ?? null,
           dataset: e.dataset,
-          audio: e.audioPath, duration: e.duration,
+          audio: e.audioPath, duration: e.duration, audioSec: +audioSec.toFixed(3),
           ref: e.text, hyp, refNorm, hypNorm,
           wordEdits: sc.wordEdits, refWords: sc.refWords,
           charEdits: sc.charEdits, refChars: sc.refChars,
@@ -1140,6 +1168,8 @@ async function main() {
         wer_stdev_pct: +stdev(d.werSamples).toFixed(4),
         cer_pct: +pct(d.charEdits, d.refChars).toFixed(4),
         wordEdits: d.wordEdits, refWords: d.refWords, charEdits: d.charEdits, refChars: d.refChars,
+        decode_ms: +d.decodeMs.toFixed(1), audio_sec: +d.audioSec.toFixed(3),
+        decode_audio_ratio: d.audioSec > 0 ? +((d.decodeMs / 1000) / d.audioSec).toFixed(4) : null,
       });
       writeJsonl({
         type: 'summary', run: tag,

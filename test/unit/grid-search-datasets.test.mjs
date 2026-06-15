@@ -273,13 +273,41 @@ describe('accuracyBody: one row per dataset per grid cell', () => {
     // Without a timings field (e.g. synthetic rows): renders "-", does not throw.
     assert.equal(accuracyBody([base])[0][rtfCol], '-');
   });
+
+  test('renders the per-dataset decode/aud ratio (summed decode / summed audio), micro-averaged in overall', () => {
+    const decAudCol = ACC_HEAD.indexOf('decode/aud');
+    assert.ok(decAudCol >= 0, 'ACC_HEAD must include a decode/aud column');
+
+    const perDs = new Map([['medical', newAcc()], ['general', newAcc()]]);
+    // medical: 100 ms decode over 4 s audio -> 0.025; general: 300 ms over 2 s -> 0.150.
+    addScore(perDs.get('medical'), sc(10, 1), 100, 4);
+    addScore(perDs.get('general'), sc(5, 1), 300, 2);
+    const row = { beamWidth: 4, boostLabel: 'none', strength: null, minp: null, depthScaling: null,
+      datasets: buildDatasets(perDs, ['medical', 'general']) };
+
+    const body = accuracyBody([row]);
+    assert.deepEqual(body.map((r) => r[decAudCol]), ['0.025', '0.150', '0.067']);
+    // The overall ratio is summed-decode / summed-audio (0.4 s / 6 s = 0.067),
+    // NOT the plain mean of the two per-dataset ratios ((0.025+0.150)/2 = 0.0875).
+    assert.notEqual(body[2][decAudCol], '0.088');
+  });
+
+  test('decode/aud renders "-" when the audio length is unknown', () => {
+    const decAudCol = ACC_HEAD.indexOf('decode/aud');
+    const perDs = new Map([['medical', newAcc()]]);
+    // No decode/audio timing passed (synthetic / pre-audioSec rows): audioSec = 0.
+    addScore(perDs.get('medical'), sc(10, 1));
+    const row = { beamWidth: 1, boostLabel: 'none', strength: null, minp: null, depthScaling: null,
+      datasets: buildDatasets(perDs, ['medical']) };
+    assert.equal(accuracyBody([row])[0][decAudCol], '-');
+  });
 });
 
 describe('topBody: one row per cell using the representative (overall) dataset', () => {
-  test('collapses a multi-dataset cell to its overall row with WER/CER/RTF', () => {
+  test('collapses a multi-dataset cell to its overall row with WER/CER/RTF/decode-aud', () => {
     const perDs = new Map([['medical', newAcc()], ['general', newAcc()]]);
-    addScore(perDs.get('medical'), sc(10, 1)); // 1/10 words, 5/50 chars
-    addScore(perDs.get('general'), sc(5, 1));   // 1/5 words, 5/25 chars
+    addScore(perDs.get('medical'), sc(10, 1), 100, 4); // 1/10 words, 5/50 chars, 100 ms / 4 s
+    addScore(perDs.get('general'), sc(5, 1), 300, 2);   // 1/5 words, 5/25 chars, 300 ms / 2 s
     const row = { beamWidth: 4, quant: 'fp16', decoderQuant: 'int8', boostLabel: 'boost', strength: 2, minp: null, depthScaling: null,
       timings: { rtf: [0.5] }, datasets: buildDatasets(perDs, ['medical', 'general']) };
 
@@ -291,6 +319,7 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     const werCol = ACC_HEAD.indexOf('WER %');
     const cerCol = ACC_HEAD.indexOf('CER %');
     const rtfCol = ACC_HEAD.indexOf('RTF');
+    const decAudCol = ACC_HEAD.indexOf('decode/aud');
     assert.equal(body[0][dsCol], OVERALL, 'uses the overall pool as the representative row');
     assert.equal(body[0][quantCol], 'fp16', 'carries the cell encoder quant into the top table');
     assert.equal(body[0][decCol], 'int8', 'carries the cell decoder quant into the top table');
@@ -298,5 +327,7 @@ describe('topBody: one row per cell using the representative (overall) dataset',
     assert.equal(body[0][werCol], (100 * 2 / 15).toFixed(2));
     assert.equal(body[0][cerCol], (100 * 10 / 75).toFixed(2));
     assert.equal(body[0][rtfCol], '0.50');
+    // decode/aud is the overall pool's summed decode / summed audio: 0.4 s / 6 s.
+    assert.equal(body[0][decAudCol], '0.067');
   });
 });
