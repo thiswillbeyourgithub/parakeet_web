@@ -19,6 +19,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
 - [Mode dictée](#mode-dictée)
+- [Identification des locuteurs](#identification-des-locuteurs)
 - [Appareils de dictée (SpeechMike)](#appareils-de-dictée-speechmike)
 - [Transcription en direct](#transcription-en-direct)
 - [Renforcement de phrases](#renforcement-de-phrases)
@@ -47,6 +48,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | 🎯 **Renforcement de phrases** | Oriente le décodeur vers votre propre liste de phrases (noms, jargon, noms de médicaments, acronymes), avec des poids optionnels par phrase. Fonctionne entièrement côté client |
 | 🔦 **Recherche en faisceau (beam search)** | Décodage multi-hypothèses optionnel (transcription de fichier) qui permet au renforcement de phrases de récupérer des mots que le décodage glouton aurait écartés ; la valeur par défaut s'adapte à votre appareil (glouton sur téléphone, jusqu'à une largeur de 5 sur ordinateur de bureau) |
 | 📝 **Mode dictée** | Post-traite les transcriptions avec des règles regex (vocabulaire médical français, ponctuation, unités) |
+| 🗣️ **Identification des locuteurs** | Vue optionnelle « qui parle quand » : regroupe la transcription en tours `Locuteur N :` colorés, entièrement côté client via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). Le nombre de locuteurs est détecté automatiquement |
 | 🕐 **Horodatage des mots** | Horodatage par mot |
 | 📁 **Fichier ou micro** | Transcrivez des fichiers audio téléversés ou enregistrez directement depuis votre microphone |
 | 🎚️ **Contrôles de capture** | Bascules par enregistrement pour la suppression de bruit, l'annulation d'écho et le contrôle automatique du gain |
@@ -83,6 +85,31 @@ Cette fonctionnalité est très précoce et s'améliorera rapidement.
 - **Docker** : le script d'entrée télécharge l'unique fichier combiné `regex.csv` depuis le [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) à chaque démarrage du conteneur.
 - **Frontend** : l'application charge les règles CSV au démarrage via un fichier manifeste et les applique comme des remplacements JavaScript `RegExp`. Après le traitement regex, chaque ligne est débarrassée des espaces de début/fin et sa première lettre est mise en majuscule. Deux modes d'affichage sont disponibles par transcription : **Brut** et **Dictée** (nettoyé par regex).
 - **Source regex personnalisée** : définissez la variable d'environnement `DICTATION_REGEX_SOURCE` pour remplacer l'URL Murmure par défaut. Il peut s'agir d'une URL de dépôt compatible GitLab (par ex. `https://framagit.org/interhop/murmure-regex`) ou d'un chemin de dossier local contenant des fichiers regex CSV (par ex. `/path/to/my/regex-csvs`). Cela vous permet d'itérer sur les règles regex localement sans attendre les changements en amont.
+
+## Identification des locuteurs
+
+Parakeet Web peut répondre à la question **« qui parle quand »** : il découpe une transcription en tours de parole par locuteur, en regroupant les mots en blocs colorés `Locuteur 1 :`, `Locuteur 2 :` ... Tout s'exécute **localement dans votre navigateur** : aucun audio ne quitte votre appareil, exactement comme la transcription elle-même.
+
+L'identification des locuteurs est entièrement **optionnelle** et ne se lance jamais sans votre action :
+
+- **Par transcription** : un bouton **Locuteurs** se trouve juste après le bouton **Dictée** de chaque transcription. Cliquez dessus pour identifier les locuteurs de cette transcription ; la vue passe alors en tours de parole colorés. Cliquez sur **Brut** / **Dictée** pour revenir en arrière.
+- **Automatiquement pour tout** : dans le panneau de paramètres, réglez le mode d'affichage par défaut sur **Locuteurs** (à côté de **Brut** et **Dictée**). Chaque nouvelle transcription est alors traitée automatiquement, comme le mode dictée par défaut.
+
+Le **nombre de locuteurs est détecté automatiquement** : vous n'avez pas à le préciser.
+
+### Comment ça marche
+
+L'identification des locuteurs s'appuie sur [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), dont le moteur de diarisation WebAssembly précompilé est intégré à l'application (il embarque son propre ONNX Runtime, distinct du moteur de transcription). Il exécute un pipeline hors ligne à deux modèles sur le même audio 16 kHz déjà en mémoire :
+
+1. un modèle de segmentation [pyannote](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0) repère les zones de parole et les changements de locuteur, puis
+2. un modèle d'empreinte vocale [3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models) (~28 Mo) encode chaque zone, et les empreintes sont regroupées par locuteur.
+
+Les segments de locuteurs obtenus sont mis en correspondance avec les horodatages de mots existants (chaque mot reçoit le locuteur dont le segment le chevauche le plus), et les mots consécutifs d'un même locuteur sont regroupés en tours de parole.
+
+- Les deux modèles (~34 Mo au total) sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli local `/models`) et mis en cache dans IndexedDB. Lorsque le mode **Locuteurs** par défaut est activé, ils sont préchargés en arrière-plan ; sinon ils sont téléchargés à la première utilisation.
+- Le moteur WebAssembly et les modèles ne se chargent qu'à la première identification, donc ils ne coûtent rien si vous n'utilisez jamais la fonctionnalité.
+
+Cette fonctionnalité a été mise en place avec [Claude Code](https://www.anthropic.com/claude-code).
 
 ## Appareils de dictée (SpeechMike)
 
@@ -317,6 +344,9 @@ Certaines listes de phrase boosting fournies incluent des noms de bactéries dé
   - Cela a été essentiel pour me permettre de réaliser ma propre quantization améliorée, disponible sur [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Implémentation de référence en Python
 - **ONNX Runtime Web** – Rend l'inférence dans le navigateur possible
+- **[sherpa-onnx (k2-fsa)](https://github.com/k2-fsa/sherpa-onnx)** – Moteur WebAssembly précompilé d'identification des locuteurs (Apache-2.0)
+- **[pyannote segmentation 3.0](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0)** – Modèle de segmentation de la parole utilisé pour la diarisation (MIT)
+- **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Modèle d'empreinte vocale utilisé pour la diarisation (Apache-2.0)
 
 ## Crédits
 

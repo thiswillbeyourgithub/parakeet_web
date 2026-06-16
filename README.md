@@ -19,6 +19,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Dictation Mode](#dictation-mode)
+- [Speaker Diarization](#speaker-diarization)
 - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
 - [Live Transcription](#live-transcription)
 - [Phrase Boosting](#phrase-boosting)
@@ -47,6 +48,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
 | 🔦 **Beam Search** | Optional multi-hypothesis decoding (file transcription) that lets phrase boosting recover words greedy would discard; the default adapts to your device (greedy on phones, up to width 5 on desktops) |
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
+| 🗣️ **Speaker Diarization** | Optional "who spoke when" view: groups the transcript into colour-coded `Speaker N:` turns, fully client-side via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). The speaker count is detected automatically |
 | 🕐 **Word Timestamps** | Per-word timestamps |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
 | 🎚️ **Capture Controls** | Per-recording toggles for noise suppression, echo cancellation, and auto gain control |
@@ -83,6 +85,31 @@ This feature is very early and will improve rapidly.
 - **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on every container start.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Two display modes are available per transcription: **Raw** and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
+
+## Speaker Diarization
+
+Parakeet Web can answer **"who spoke when"**: it splits a transcription into per-speaker turns, grouping the words into colour-coded `Speaker 1:`, `Speaker 2:` ... blocks. Everything runs **locally in your browser** — no audio leaves your device, exactly like the transcription itself.
+
+Diarization is fully **opt-in** and never runs unless you ask for it:
+
+- **Per transcription**: a **Speakers** button sits right after the **Dictation** button on each transcription. Click it to diarize that one entry; the view switches to coloured speaker turns. Click **Raw** / **Dictation** to switch back.
+- **Automatically for everything**: in the settings sidebar, set the default display mode to **Speakers** (next to **Raw** and **Dictation**). Every new transcription is then diarized automatically, just like the dictation default.
+
+The **number of speakers is detected automatically** — you do not have to specify it.
+
+### How it works
+
+Diarization is powered by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), whose prebuilt WebAssembly speaker-diarization engine is vendored into the app (it bundles its own ONNX Runtime, separate from the transcription engine). It runs a two-model offline pipeline on the same 16 kHz audio already in memory:
+
+1. a [pyannote segmentation](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0) model finds speech regions and speaker-change points, then
+2. a [3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models) speaker-embedding model (~28 MB) embeds each region, and the embeddings are clustered into speakers.
+
+The resulting speaker segments are matched to the existing word timestamps (each word gets the speaker whose segment overlaps it most), and consecutive words from the same speaker are grouped into turns.
+
+- The two models (~34 MB total) are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with a local `/models` fallback) and cached in IndexedDB. When the **Speakers** default is on, they are prefetched in the background; otherwise they download on first use.
+- The WebAssembly engine and models load lazily the first time you diarize, so they cost nothing if you never use the feature.
+
+This feature was wired up with [Claude Code](https://www.anthropic.com/claude-code).
 
 ## Dictation Devices (SpeechMike)
 
@@ -311,6 +338,9 @@ Some bundled phrase-boosting lists include bacterial names derived from LPSN (Li
   - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Python reference implementation
 - **ONNX Runtime Web** – Makes browser inference possible
+- **[sherpa-onnx (k2-fsa)](https://github.com/k2-fsa/sherpa-onnx)** – Prebuilt WebAssembly speaker-diarization engine (Apache-2.0)
+- **[pyannote segmentation 3.0](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0)** – Speech segmentation model used for diarization (MIT)
+- **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Speaker-embedding model used for diarization (Apache-2.0)
 
 ## Credits
 
