@@ -121,7 +121,10 @@ points: the main app and the remote-microphone phone page.
 | `format.js` | Pure display formatters (`formatTime`, `formatDuration`, `formatBytes`). |
 | `keepalive.js` | Ref-counted keepalive: screen Wake Lock + a silent looping audio element to dodge background-tab throttling during long inference. |
 | `liveTranscriber.js` | Streaming transcriber: runs the model over a sliding PCM window, emits committed vs. pending words with absolute timestamps, and adapts step/window size to bound latency. |
-| `asset-integrity.js` | Verify-then-load for loose runtime assets that bypass the HTML SRI chain (today: the PCM worklet). Hashes bytes against the build-time pin before `AudioWorklet.addModule`. |
+| `asset-integrity.js` | Verify-then-load for loose runtime assets that bypass the HTML SRI chain (the PCM worklet, the sherpa-onnx diarization glue/wrapper/wasm). Hashes bytes against the build-time pin before `AudioWorklet.addModule` (`verifiedAddModule`) or returns the verified bytes/blob (`fetchVerifiedAsset`). |
+| `diarizer.js` | Lazy singleton loader + runner for the vendored sherpa-onnx WebAssembly speaker-diarization engine. Verifies and injects the emscripten glue (classic blob-URL `<script>`), feeds it the `.wasm` bytes and the two model buffers via `FS_createDataFile`, caches the engine handle keyed by model identity, and exposes `runDiarization(pcm16k, opts)` returning speaker segments. |
+| `diarizationModels.js` | Downloads the two diarization models (pyannote segmentation + CAM++ embedding) through the same hub as the ASR model (HF first, local `/models` fallback, IndexedDB-cached, memoised). Exports `getDiarizationModels()` and `diarizationModelProtectKeys()` (the cache keys the orphan sweep must keep). Repo/file defaults come from the `VITE_DIARIZATION_*` config. |
+| `speakerAssign.js` | Pure helpers mapping diarization output onto the transcript: `assignSpeakersToWords` (each word gets the max-overlap speaker, gaps go to the nearest), `groupWordsIntoTurns` (consecutive same-speaker words -> `Speaker N` turns), `speakerCount`. Unit-tested in `test/unit/speaker-assign.test.mjs`. |
 | `remote-crypto.js` | The E2E crypto for the remote mic: ECDH (P-256) key exchange -> HKDF -> AES-GCM, all via Web Crypto. |
 | `remote-webrtc.js` | `RemoteMicRTC`: WebRTC peer-connection lifecycle, signaling, and the data channel that carries encrypted PCM. Includes the HTTPS-relay fallback for UDP-blocked networks. |
 | `remote-relay-transport.js` | The two HTTPS relay transports (WebSocket + long-poll) used as last resort when WebRTC cannot connect. Same ciphertext frames, same interface as the data channel. Each exposes a `drain()` (buffered-amount / queue-depth) so the saved-file pump can pace itself to the link. |
@@ -142,6 +145,9 @@ points: the main app and the remote-microphone phone page.
 | `tokenizer/bpe-merges.json` | Distilled BPE merges + added-token list for the phrase-boost encoder (loaded lazily only when boosting is on). |
 | `tokenizer/SOURCE.md` | Provenance + refresh recipe for that asset. |
 | `ort/*` | Mirror of the ONNX Runtime Web WASM/MJS runtime files, served same-origin and integrity-verified via the manifest. |
+| `sherpa-onnx/sherpa-onnx-wasm-main-speaker-diarization.wasm` | The sherpa-onnx diarization engine's WebAssembly binary (bundles its own ONNX Runtime). Loaded and integrity-verified by `diarizer.js`. |
+| `sherpa-onnx/sherpa-onnx-wasm-main-speaker-diarization.js` | Emscripten glue for that wasm, with the baked-in `.data` model loader stripped out (the app loads its own models instead). Injected as a classic blob-URL script. |
+| `sherpa-onnx/sherpa-onnx-speaker-diarization.js` | sherpa-onnx's small JS API wrapper (verbatim upstream), defines `OfflineSpeakerDiarization` / `createOfflineSpeakerDiarization` over the emscripten module. |
 
 ### Vendored dependencies (`app/ui/vendor/`)
 
@@ -153,6 +159,7 @@ git-only). Not documented file-by-file here:
 - `preact/` — the UI framework (with the `compat` React shim).
 - `onnxruntime-web/` — the ONNX Runtime Web distribution (the inference runtime).
 - `dictation_support/` — SpeechMike / dictation-device support (GoogleChromeLabs/dictation_support).
+- `sherpa-onnx-diarization/` — provenance only (`SOURCE.md` + `LICENSE`) for the prebuilt sherpa-onnx speaker-diarization WASM artifacts; the runtime files themselves live under `public/sherpa-onnx/` (above) because they are integrity-pinned and served same-origin. Not refreshed by `update-vendored.sh`; refresh procedure is in its `SOURCE.md`.
 
 ---
 
@@ -207,7 +214,7 @@ slow, model-loading tier run separately.
 
 | Path | Role |
 |---|---|
-| `test/unit/*.test.mjs` | **Tier 1**, pure-logic unit tests (no model download). Decode/front-end: `beam-decode`, `bpe-encoder`, `chunk-default`, `chunk-stitch`, `mel`, `phrase-boost`, `tokenizer`, `boost-compile`, `boost-spec-file`. Hub/cache/quant selection: `resolve-quant`, `get-parakeet-model-files`, `list-local-repo-files`, `resolve-local-model-base`, `hub-cache-validate`, `should-retry-locally`, `model-corruption-recovery`, `sweep-orphans` (cache-GC orphan selection), `stream-to-memory` (fp32 shard byte-assembly), `external-data`, `resolve-files` (per-quant encoder/decoder/vocab resolution, incl. the int8 SmoothQuant encoder-name fallback and the independent `decoderQuant` so an int8 encoder can pair with an fp32 decoder). Bench/misc: `grid-search-datasets`, `grid-search-eta`, `ort-runtime-config` (the `--ort` backend -> executionProviders/from-path mapping, incl. the opt-in `cuda` GPU backend), `persist-storage`, `format`, `remote-crypto`, `remote-relay-drain` (transport backpressure drain for the saved-file pump), `caddy-permissions-policy` (asserts the production Caddy `Permissions-Policy` grants `camera=(self)` for the remote-mic QR re-scan and pins the self-allowlist). |
+| `test/unit/*.test.mjs` | **Tier 1**, pure-logic unit tests (no model download). Decode/front-end: `beam-decode`, `bpe-encoder`, `chunk-default`, `chunk-stitch`, `mel`, `phrase-boost`, `tokenizer`, `boost-compile`, `boost-spec-file`. Hub/cache/quant selection: `resolve-quant`, `get-parakeet-model-files`, `list-local-repo-files`, `resolve-local-model-base`, `hub-cache-validate`, `should-retry-locally`, `model-corruption-recovery`, `sweep-orphans` (cache-GC orphan selection, incl. the protected-key carve-out that keeps diarization models across loads), `stream-to-memory` (fp32 shard byte-assembly), `external-data`, `resolve-files` (per-quant encoder/decoder/vocab resolution, incl. the int8 SmoothQuant encoder-name fallback and the independent `decoderQuant` so an int8 encoder can pair with an fp32 decoder). Diarization: `speaker-assign` (word -> speaker max-overlap mapping + turn grouping). Bench/misc: `grid-search-datasets`, `grid-search-eta`, `ort-runtime-config` (the `--ort` backend -> executionProviders/from-path mapping, incl. the opt-in `cuda` GPU backend), `persist-storage`, `format`, `remote-crypto`, `remote-relay-drain` (transport backpressure drain for the saved-file pump), `caddy-permissions-policy` (asserts the production Caddy `Permissions-Policy` grants `camera=(self)` for the remote-mic QR re-scan and pins the self-allowlist). |
 | `test/http/*.test.mjs` | **Tier 2**, integration tests against the **real** signaling server spawned on a random port: `config`, `origin`, `rate-limit`, `rooms`, `validation`. |
 | `test/http/helpers.mjs` | Spawn/teardown helper for the signaling server, shared by the tier-2 tests. |
 | `test/e2e/transcription.spec.js` | **Tier 3** Playwright happy-path: loads the WASM int8 model in real headless Chromium and transcribes each clip in a fixture list (French `sample.aac` + English `jfk.mp3`) end to end against its golden. |
