@@ -97,12 +97,21 @@ async function emitOrtManifest() {
 
 // Generate dist/.well-known/asset-integrity.json with sha384 of any
 // non-/assets/, non-/ort/ files that are loaded at runtime via paths the
-// browser does not check against the HTML's SRI chain. Today the only
-// such file is /pcm-recorder-worklet.js: AudioWorklet.addModule() runs
-// the worklet in the AudioWorkletGlobalScope with full access to raw
-// PCM samples, and a tampered worklet would leak audio undetected.
+// browser does not check against the HTML's SRI chain:
+//   - /pcm-recorder-worklet.js: AudioWorklet.addModule() runs the worklet
+//     in the AudioWorkletGlobalScope with full access to raw PCM samples,
+//     and a tampered worklet would leak audio undetected.
+//   - /sherpa-onnx/*: the lazily-loaded speaker-diarization engine (a full
+//     ML runtime + its emscripten glue), fetch-verified by lib/diarizer.js
+//     before it is evaluated, same posture as the ORT wasm. Keyed by their
+//     `sherpa-onnx/<name>` subpath so they never collide with bare names.
 async function emitAssetIntegrity() {
-  const targets = ['pcm-recorder-worklet.js'];
+  const targets = [
+    'pcm-recorder-worklet.js',
+    'sherpa-onnx/sherpa-onnx-wasm-main-speaker-diarization.js',
+    'sherpa-onnx/sherpa-onnx-speaker-diarization.js',
+    'sherpa-onnx/sherpa-onnx-wasm-main-speaker-diarization.wasm',
+  ];
   const manifest = {};
   for (const name of targets) {
     try {

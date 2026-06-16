@@ -18,19 +18,22 @@ vendored: they are downloaded at runtime through the app's HuggingFace hub +
 local-`/models` fallback path and written into the WASM FS (see
 `app/ui/src/lib/diarizer.js`). See the model licensing note at the bottom.
 
-## Files in this folder
+## Layout
 
-| File | Origin in the tarball | Modified? |
+This `vendor/` folder is **provenance only** (`SOURCE.md` + `LICENSE`). The
+files the browser actually fetches at runtime live in `app/ui/public/sherpa-onnx/`
+so they are served same-origin (no CDN trust) and integrity-pinned, the same
+arrangement as `public/ort/` for ONNX Runtime. `app/ui/postbuild.mjs` hashes
+each of them (sha384) into `dist/.well-known/asset-integrity.json`, and
+`app/ui/src/lib/diarizer.js` fetch-verifies the bytes against that pin before
+evaluating them (the engine is a full ML runtime, so it gets the same
+verify-then-load treatment as the ORT wasm and the PCM worklet).
+
+| Runtime file (`public/sherpa-onnx/`) | Origin in the tarball | Modified? |
 |---|---|---|
-| `sherpa-onnx-speaker-diarization.js` | `sherpa-onnx-speaker-diarization.js` (the high-level JS API: `OfflineSpeakerDiarization`, `createOfflineSpeakerDiarization`) | verbatim |
-| `sherpa-onnx-wasm-main-speaker-diarization.js` | `sherpa-onnx-wasm-main-speaker-diarization.js` (emscripten glue) | **patched** — see "The `.data` strip" below |
-| `LICENSE` | upstream repo `LICENSE` @ `v1.13.3` | verbatim |
-
-The `.wasm` runtime binary is mirrored to `app/ui/public/sherpa-onnx/` so it is
-served same-origin (no CDN trust), the same arrangement as `public/ort/`:
-
-- `sherpa-onnx-wasm-main-speaker-diarization.wasm`
-  - SHA-256: `d3322ee667ed5fd8476cb0fb11419f648300149533e7119470ef07e24cc9b60e`
+| `sherpa-onnx-speaker-diarization.js` | same name (high-level JS API: `OfflineSpeakerDiarization`, `createOfflineSpeakerDiarization`) | verbatim |
+| `sherpa-onnx-wasm-main-speaker-diarization.js` | same name (emscripten glue) | **patched** — see "The `.data` strip" below |
+| `sherpa-onnx-wasm-main-speaker-diarization.wasm` | same name (runtime binary) — SHA-256 `d3322ee667ed5fd8476cb0fb11419f648300149533e7119470ef07e24cc9b60e` | verbatim |
 
 The upstream tarball's `index.html`, `app-speaker-diarization.js` (demo UI), and
 `sherpa-onnx-wasm-main-speaker-diarization.data` (44 MB of baked-in default
