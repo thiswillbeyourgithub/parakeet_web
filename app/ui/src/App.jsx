@@ -24,6 +24,13 @@ import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, e
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
+import { runDiarization } from './lib/diarizer.js';
+import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
+import { assignSpeakersToWords, groupWordsIntoTurns } from './lib/speakerAssign.js';
+
+// Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
+// in App.css); speaker labels cycle through it.
+const DIAR_PALETTE_SIZE = 8;
 import { requestPersistentStorage } from './lib/persistStorage.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
@@ -983,6 +990,11 @@ export default function App() {
   // Id of the entry currently being re-transcribed via "Transcribe again", so
   // its button can show a spinner. Only one runs at a time (isTranscribing).
   const [reTranscribingId, setReTranscribingId] = useState(null);
+  // Speaker diarization (optional "Speakers" view). diarizationCache maps an
+  // entry id -> its [{start,end,speaker}] segments; diarizingId is the entry a
+  // diarization run is currently in flight for (spinner + one-at-a-time guard).
+  const [diarizationCache, setDiarizationCache] = useState({});
+  const [diarizingId, setDiarizingId] = useState(null);
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -2101,6 +2113,10 @@ export default function App() {
         // wrong (downgraded) weights only to throw them away.
         downloadOpts.localUpgradeBaseUrl = '/models';
       }
+      // Shield any cached diarization models from the generational orphan sweep
+      // (they live in a different repo, so the sweep would otherwise delete them
+      // on every model load and force a re-download).
+      downloadOpts.protectCacheKeys = diarizationModelProtectKeys();
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
       // Show compiling sessions stage
@@ -3832,6 +3848,57 @@ export default function App() {
     }
   }
 
+  // --- Speaker diarization ---
+  // Offline diarization needs the whole clip's PCM, which lives only on
+  // in-memory entries (trans.pcm), so this is gated the same way as
+  // "Transcribe again": unavailable on entries restored after a reload.
+  async function diarizeEntry(trans) {
+    if (!trans?.pcm || !trans.words?.length || diarizingId) return;
+    setDiarizingId(trans.id);
+    try {
+      const models = await getDiarizationModels({
+        localBaseUrl: '/models',
+        localOnly: forceLocalFallback,
+      });
+      const segments = await runDiarization(trans.pcm, {
+        segmentationBytes: models.segmentationBytes,
+        embeddingBytes: models.embeddingBytes,
+        // Auto-detect the speaker count (numSpeakers <= 0 -> threshold-based).
+        numSpeakers: -1,
+      });
+      setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
+      setEntryMode(trans.id, 'diarized');
+    } catch (e) {
+      console.error('[Diarize] failed:', e);
+      alert(`${t('diarizeError')}: ${transcribeErrorMessage(e)}`);
+    } finally {
+      setDiarizingId(null);
+    }
+  }
+
+  // Auto-diarize: when an entry's effective display mode is 'diarized' (the
+  // sidebar default or a per-entry override) but it has no cached segments yet,
+  // run one in the background. One at a time (diarizingId guards); the effect
+  // re-fires for the next entry once this one resolves.
+  useEffect(() => {
+    if (diarizingId) return;
+    const next = transcriptions.find(
+      tr => tr.pcm && tr.words?.length && getEntryMode(tr.id) === 'diarized' && !diarizationCache[tr.id],
+    );
+    if (next) diarizeEntry(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcriptions, entryDisplayModes, transcriptDisplayMode, diarizationCache, diarizingId]);
+
+  // Background prefetch: when diarization is the default mode (the user has
+  // opted in to it for every transcription), warm the ~34 MB of models into the
+  // hub cache so the first run is instant. When the default is off, models
+  // download lazily on the first Speakers click instead.
+  useEffect(() => {
+    if (transcriptDisplayMode !== 'diarized') return;
+    getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback })
+      .catch(e => console.warn('[Diarize] background model prefetch failed (non-fatal):', e));
+  }, [transcriptDisplayMode]);
+
   // Revoke any outstanding inline-player URLs when the app unmounts.
   useEffect(() => () => {
     for (const url of entryAudioUrlsRef.current.values()) {
@@ -4024,6 +4091,27 @@ export default function App() {
       return dictationCache[trans.id] || applyDictationRegex(trans.text);
     }
     return trans.text;
+  }
+
+  // Render an entry's transcript as speaker turns (turns + colour). Maps each
+  // word to its diarization speaker, groups consecutive same-speaker words, and
+  // labels/colours each turn. Colours cycle through the .diar-speaker-N palette.
+  function renderDiarizedTranscript(trans) {
+    const segments = diarizationCache[trans.id];
+    const turns = groupWordsIntoTurns(assignSpeakersToWords(trans.words || [], segments));
+    if (turns.length === 0) {
+      return <span style={{ whiteSpace: 'pre-wrap' }}>{trans.text}</span>;
+    }
+    return (
+      <div className="diar-turns">
+        {turns.map((turn, i) => (
+          <div key={i} className={`diar-turn diar-speaker-${turn.speaker % DIAR_PALETTE_SIZE}`}>
+            <span className="diar-speaker-label">{t('speaker')} {turn.speaker + 1}</span>
+            <span className="diar-turn-text">{turn.text}</span>
+          </div>
+        ))}
+      </div>
+    );
   }
 
   // Close kebab menu when clicking outside
@@ -4415,6 +4503,7 @@ export default function App() {
               >
                 <option value="raw">{t('raw')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
+                <option value="diarized">{t('speakers')}</option>
               </select>
             </div>
           </CollapsibleSection>
@@ -5279,6 +5368,22 @@ export default function App() {
                           {t('dictationExp')}
                         </button>
                       )}
+                      {/* Speakers (diarization): needs word timestamps; runs on
+                          the entry's in-memory PCM, so it is disabled once the
+                          audio is gone (post-reload) unless already computed. */}
+                      {trans.words?.length > 0 && (
+                        <button
+                          onClick={() => diarizationCache[trans.id]
+                            ? setEntryMode(trans.id, 'diarized')
+                            : diarizeEntry(trans)}
+                          disabled={diarizingId === trans.id || (!trans.pcm && !diarizationCache[trans.id])}
+                          className={`display-mode-button${entryMode === 'diarized' ? ' active' : ''}`}
+                          title={t('speakersHint')}
+                        >
+                          {diarizingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
+                          {t('speakers')}
+                        </button>
+                      )}
                     </div>
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">
@@ -5336,8 +5441,10 @@ export default function App() {
 
                   <div className="history-text-container">
                     <div className="history-text">
-                      {/* Show raw or dictation-cleaned text */}
-                      <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
+                      {entryMode === 'diarized' && diarizationCache[trans.id]
+                        ? renderDiarizedTranscript(trans)
+                        /* Raw or dictation-cleaned text */
+                        : <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>}
                     </div>
                   </div>
                 </div>
