@@ -356,13 +356,18 @@ export function baseCacheKey(key) {
  * the orphan-selection logic is unit-testable without a browser.
  * @param {Array<string|*>} allKeys Every key currently in the store.
  * @param {Set<string>} liveBaseKeys Base cacheKeys of the current model's files.
+ * @param {Set<string>} [protectBaseKeys] Extra base cacheKeys to never delete,
+ *   even though they are not part of the just-loaded model. Used to shield other
+ *   subsystems' cached weights (e.g. the speaker-diarization models, which live
+ *   in a different repo and so are not in the Parakeet live set) from the
+ *   generational sweep. Pure / no IDB.
  * @returns {string[]} Keys safe to delete.
  */
-export function selectOrphanKeys(allKeys, liveBaseKeys) {
+export function selectOrphanKeys(allKeys, liveBaseKeys, protectBaseKeys = new Set()) {
   return allKeys.filter((k) => {
     if (typeof k !== 'string') return false;
     const base = baseCacheKey(k);
-    return base.startsWith('hf-') && !liveBaseKeys.has(base);
+    return base.startsWith('hf-') && !liveBaseKeys.has(base) && !protectBaseKeys.has(base);
   });
 }
 
@@ -384,9 +389,11 @@ export function selectOrphanKeys(allKeys, liveBaseKeys) {
  * @param {string} [live.revision='main']
  * @param {string} [live.subfolder='']
  * @param {string[]} [live.filenames=[]] Every filename cached for this model.
+ * @param {string[]} [live.protectKeys=[]] Base cacheKeys belonging to other
+ *   subsystems (e.g. the diarization models) that must survive the sweep.
  * @returns {Promise<string[]>} The orphan keys it deleted.
  */
-export async function sweepOrphanedFiles({ repoId, revision = 'main', subfolder = '', filenames = [] } = {}) {
+export async function sweepOrphanedFiles({ repoId, revision = 'main', subfolder = '', filenames = [], protectKeys = [] } = {}) {
   if (typeof indexedDB === 'undefined' || !repoId || filenames.length === 0) return [];
   let db, allKeys;
   try {
@@ -397,7 +404,7 @@ export async function sweepOrphanedFiles({ repoId, revision = 'main', subfolder 
     return [];
   }
   const liveBaseKeys = new Set(filenames.map((f) => makeCacheKey(repoId, revision, subfolder, f)));
-  const orphans = selectOrphanKeys(allKeys, liveBaseKeys);
+  const orphans = selectOrphanKeys(allKeys, liveBaseKeys, new Set(protectKeys));
   for (const k of orphans) {
     try { await idbDelete(db, STORE_NAME, k); } catch (_) {}
   }
@@ -1074,7 +1081,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, allowWasmFp32 = false, shaderF16 = true } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, allowWasmFp32 = false, shaderF16 = true, protectCacheKeys = [] } = options;
   // The base URL all files are actually fetched from. Starts as the explicit
   // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
   // primary (HF) source cannot serve the requested quant and the local mirror
@@ -1303,7 +1310,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Keyed by repoId for both HF and local-mirror loads, matching downloadFile's
   // cacheKey scheme. sweepOrphanedFiles never throws.
   const cachedFilenames = filesToGet.map((f) => f.name);
-  await sweepOrphanedFiles({ repoId, revision: effectiveRevision, subfolder: '', filenames: cachedFilenames });
+  await sweepOrphanedFiles({ repoId, revision: effectiveRevision, subfolder: '', filenames: cachedFilenames, protectKeys: protectCacheKeys });
 
   return results;
 }

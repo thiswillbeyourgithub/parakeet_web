@@ -93,4 +93,22 @@ describe('selectOrphanKeys', () => {
   test('an empty store yields no orphans', () => {
     assert.deepEqual(selectOrphanKeys([], live), []);
   });
+
+  test('protected keys (e.g. diarization models) survive the sweep', () => {
+    // A different repo's weights would normally be swept, but a protect set
+    // shields them: the diarization seg + emb models live outside the Parakeet
+    // live set and must not be deleted on every model load.
+    const seg = key('csukuangfj/sherpa-onnx-pyannote-segmentation-3-0', 'main', '', 'model.onnx');
+    const emb = key('csukuangfj/speaker-embedding-models', 'main', '', 'campplus.onnx');
+    const strayOrphan = key('nvidia/old-model', 'main', '', 'encoder-model.onnx');
+    const all = [...live, seg, `meta-${seg}`, emb, strayOrphan];
+    const protect = new Set([seg, emb]);
+    // Without protection both seg + emb + stray are orphans; with it, only stray.
+    assert.deepEqual(selectOrphanKeys(all, live, protect), [strayOrphan]);
+    // Back-compat: omitting the arg keeps the old behaviour (all three orphaned).
+    assert.deepEqual(
+      selectOrphanKeys(all, live).sort(),
+      [seg, `meta-${seg}`, emb, strayOrphan].sort(),
+    );
+  });
 });
