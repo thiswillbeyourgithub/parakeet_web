@@ -60,6 +60,47 @@ async function sha384Base64(blob) {
 }
 
 /**
+ * Fetch a loose runtime asset and sha384-verify its bytes against the
+ * build-time pin before the caller evaluates them. Shared by
+ * `verifiedAddModule` (the PCM worklet) and `lib/diarizer.js` (the
+ * lazily-loaded sherpa diarization engine, a second ML runtime that must
+ * not be evaluated unverified).
+ *
+ * Same fall-open-in-dev / hard-fail-in-prod policy as the worklet path: a
+ * production build with no pin (or no WebCrypto) throws an IntegrityError;
+ * a dev build warns and returns the unverified bytes so the vite dev
+ * server and integration tests still work.
+ *
+ * @param {string} path absolute same-origin path (e.g. '/sherpa-onnx/x.wasm')
+ * @param {string} [manifestKey] key in asset-integrity.json; defaults to the
+ *   basename, but diarization assets are pinned under 'sherpa-onnx/<name>'.
+ * @returns {Promise<{ bytes: Uint8Array, blob: Blob, verified: boolean }>}
+ */
+export async function fetchVerifiedAsset(path, manifestKey = path.split('/').pop()) {
+  const manifest = await loadManifest();
+  const expected = manifest[manifestKey];
+  const resp = await fetch(path);
+  if (!resp.ok) throw new Error(`fetchVerifiedAsset ${path}: HTTP ${resp.status}`);
+  const blob = await resp.blob();
+  if (!expected || !crypto?.subtle) {
+    if (_HARD_FAIL) {
+      const err = new Error(`[asset-integrity] no production pin for ${manifestKey}; refusing to load ${path}`);
+      err.name = 'IntegrityError';
+      throw err;
+    }
+    console.warn(`[asset-integrity] no pin for ${manifestKey}; ${path} UNCHECKED (dev only)`);
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), blob, verified: false };
+  }
+  const actual = await sha384Base64(blob);
+  if (actual !== expected) {
+    const err = new Error(`Integrity check failed for ${manifestKey}: expected ${expected}, got ${actual}`);
+    err.name = 'IntegrityError';
+    throw err;
+  }
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), blob, verified: true };
+}
+
+/**
  * Drop-in replacement for `audioWorklet.addModule(path)` that fetches +
  * sha384-verifies the bytes against the build-time pin before letting
  * the AudioWorkletGlobalScope evaluate them. Throws on integrity
