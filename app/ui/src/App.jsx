@@ -999,6 +999,9 @@ export default function App() {
   // auto-detect (threshold clustering); a positive integer forces that many
   // speakers. Persisted; the per-entry kebab can override it for one entry.
   const [diarizationNumSpeakers, setDiarizationNumSpeakers] = useState(0);
+  // Per-entry speaker-count override (id -> count) set from the entry's kebab;
+  // re-segments that entry on change. Falls back to diarizationNumSpeakers.
+  const [diarizationNumByEntry, setDiarizationNumByEntry] = useState({});
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -3865,7 +3868,7 @@ export default function App() {
     // Per-entry kebab override wins; else the sidebar default. <= 0 means auto.
     const requested = Number.isInteger(numSpeakersOverride)
       ? numSpeakersOverride
-      : diarizationNumSpeakers;
+      : (diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers);
     setDiarizingId(trans.id);
     try {
       const models = await getDiarizationModels({
@@ -5456,6 +5459,32 @@ export default function App() {
                               {reTranscribingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
                               {reTranscribingId === trans.id ? t('transcribingAgain') : t('transcribeAgain')}
                             </button>
+                          )}
+                          {/* Speaker count for THIS entry: changing it
+                              re-segments. Needs the in-memory PCM, so it is
+                              absent on entries restored after a reload. The
+                              wrapper stops the click from bubbling to the
+                              global handler that closes the kebab, so the
+                              native select stays open long enough to pick. */}
+                          {trans.pcm && trans.words?.length > 0 && (
+                            <div className="kebab-speakers" onClick={e => e.stopPropagation()}>
+                              <span>{t('numSpeakers')}:</span>
+                              <select
+                                value={diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers}
+                                disabled={!!diarizingId}
+                                onChange={e => {
+                                  const n = parseInt(e.target.value, 10) || 0;
+                                  setDiarizationNumByEntry(prev => ({ ...prev, [trans.id]: n }));
+                                  diarizeEntry(trans, n);
+                                  setOpenKebabId(null);
+                                }}
+                              >
+                                <option value="0">{t('auto')}</option>
+                                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                                  <option key={n} value={n}>{n}</option>
+                                ))}
+                              </select>
+                            </div>
                           )}
                           <button className="kebab-delete" onClick={() => deleteTranscription(trans.id)}>
                             {t('delete')}

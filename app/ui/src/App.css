@@ -798,6 +798,24 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   color: var(--danger);
 }
 
+/* Per-entry speaker-count control inside the kebab dropdown. */
+.kebab-speakers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+.kebab-speakers select {
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+}
+
 /* ─── Help tooltip ───────────────────────────────────────────────────────── */
 .info-help {
   position: relative;
