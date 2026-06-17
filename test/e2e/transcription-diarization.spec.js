@@ -2,9 +2,12 @@
 // runs in a real headless Chromium: load the WASM int8 ASR model, transcribe a
 // two-speaker clip, click the per-entry "Speakers" button, and assert the
 // transcript regroups into colour-coded Speaker turns with >= 2 distinct
-// speakers. This is the in-browser proof the vendored WASM engine (its own ONNX
-// Runtime), the two diarization models, and the word->speaker assignment all
-// work end to end; the pure pieces are unit-tested (test/unit/speaker-assign).
+// speakers. It then exercises the two interactive controls: renaming a speaker
+// inline (the label becomes a text input) and forcing a speaker count from the
+// entry kebab (which re-segments, here collapsing to a single turn). This is the
+// in-browser proof the vendored WASM engine (its own ONNX Runtime), the two
+// diarization models, and the word->speaker assignment all work end to end; the
+// pure pieces are unit-tested (test/unit/speaker-assign).
 //
 // The fixture two-speakers.wav is JFK's English excerpt (~11 s) followed by a
 // FLEURS English clip read by a different speaker (~5 s), two acoustically very
@@ -84,8 +87,8 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   const distinct = new Set(labels.map((s) => s.trim()));
   expect(distinct.size, `distinct speaker labels: ${[...distinct].join(', ')}`).toBeGreaterThanOrEqual(2);
 
-  // The clip is speaker A (JFK) then speaker B (French): the first turn and the
-  // last turn must be attributed to different speakers.
+  // The clip is speaker A (JFK) then speaker B (a FLEURS English reader): the
+  // first turn and the last turn must be attributed to different speakers.
   expect(labels[0].trim(), `first turn "${labels[0]}" vs last "${labels[labels.length - 1]}"`)
     .not.toBe(labels[labels.length - 1].trim());
 
@@ -99,6 +102,24 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   await expect(page.locator('.diar-turns')).toHaveCount(0);
   await page.locator('.history-modes button', { hasText: 'Speakers' }).first().click();
   await expect(page.locator('.diar-turns .diar-turn').first()).toBeVisible({ timeout: 10 * 1000 });
+
+  // --- Rename a speaker inline: the label is a button that becomes a text input. ---
+  const firstLabel = page.locator('.diar-turns .diar-speaker-label').first();
+  const originalName = (await firstLabel.innerText()).trim();
+  await firstLabel.click();
+  const nameInput = page.locator('.diar-turns .diar-speaker-input').first();
+  await expect(nameInput).toBeVisible({ timeout: 10 * 1000 });
+  await nameInput.fill('Alice');
+  await nameInput.press('Enter');
+  await expect(page.locator('.diar-turns .diar-speaker-label').first()).toHaveText('Alice', { timeout: 10 * 1000 });
+  expect(originalName, 'rename changed the label').not.toBe('Alice');
+
+  // --- Force a single speaker from the entry kebab: it must re-segment to 1 turn. ---
+  await page.getByRole('button', { name: 'More actions' }).first().click();
+  await page.locator('.kebab-speakers select').selectOption('1');
+  // Re-segmentation runs on the already-loaded engine; the diarized view collapses
+  // to a single speaker turn (numClusters=1 puts every word in one cluster).
+  await expect.poll(() => page.locator('.diar-turns .diar-turn').count(), { timeout: 60 * 1000 }).toBe(1);
 
   expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
 });
