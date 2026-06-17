@@ -995,6 +995,10 @@ export default function App() {
   // diarization run is currently in flight for (spinner + one-at-a-time guard).
   const [diarizationCache, setDiarizationCache] = useState({});
   const [diarizingId, setDiarizingId] = useState(null);
+  // Default speaker count for diarization: 0 (or any value <= 0) means
+  // auto-detect (threshold clustering); a positive integer forces that many
+  // speakers. Persisted; the per-entry kebab can override it for one entry.
+  const [diarizationNumSpeakers, setDiarizationNumSpeakers] = useState(0);
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -1126,6 +1130,7 @@ export default function App() {
           savedEnableChunking,
           savedChunkDuration,
           savedTranscriptDisplayMode,
+          savedDiarizationNumSpeakers,
           savedLiveTranscriptionEnabled,
           savedLiveContextWindow,
           savedBoostPhrases,
@@ -1162,6 +1167,7 @@ export default function App() {
           // DEFAULT_CHUNK_DURATION_SEC initial value.
           loadSetting('chunkDuration', null),
           loadSetting('transcriptDisplayMode', 'raw'),
+          loadSetting('diarizationNumSpeakers', 0),
           loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
@@ -1219,6 +1225,7 @@ export default function App() {
         if (savedChunkDuration != null) setChunkDuration(savedChunkDuration);
         // 'confidence' was a removed display mode; map any persisted value to 'raw'.
         setTranscriptDisplayMode(savedTranscriptDisplayMode === 'confidence' ? 'raw' : savedTranscriptDisplayMode);
+        setDiarizationNumSpeakers(Number.isInteger(savedDiarizationNumSpeakers) && savedDiarizationNumSpeakers > 0 ? savedDiarizationNumSpeakers : 0);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
         // Whether the user has an explicit saved boost choice. When they don't
@@ -1628,6 +1635,7 @@ export default function App() {
   // persisted like any other setting once the user changes it.
   usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
+  usePersistedSetting('diarizationNumSpeakers', diarizationNumSpeakers, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
@@ -3852,8 +3860,12 @@ export default function App() {
   // Offline diarization needs the whole clip's PCM, which lives only on
   // in-memory entries (trans.pcm), so this is gated the same way as
   // "Transcribe again": unavailable on entries restored after a reload.
-  async function diarizeEntry(trans) {
+  async function diarizeEntry(trans, numSpeakersOverride) {
     if (!trans?.pcm || !trans.words?.length || diarizingId) return;
+    // Per-entry kebab override wins; else the sidebar default. <= 0 means auto.
+    const requested = Number.isInteger(numSpeakersOverride)
+      ? numSpeakersOverride
+      : diarizationNumSpeakers;
     setDiarizingId(trans.id);
     try {
       const models = await getDiarizationModels({
@@ -3863,8 +3875,8 @@ export default function App() {
       const segments = await runDiarization(trans.pcm, {
         segmentationBytes: models.segmentationBytes,
         embeddingBytes: models.embeddingBytes,
-        // Auto-detect the speaker count (numSpeakers <= 0 -> threshold-based).
-        numSpeakers: -1,
+        // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
+        numSpeakers: requested > 0 ? requested : -1,
       });
       setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
       setEntryMode(trans.id, 'diarized');
@@ -4510,6 +4522,23 @@ export default function App() {
                 <option value="raw">{t('raw')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
                 <option value="diarized">{t('speakers')}</option>
+              </select>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('numSpeakers')}:
+                <InfoTooltip text={t('tooltipNumSpeakers')} />
+              </span>
+              <select
+                value={diarizationNumSpeakers}
+                onChange={e => setDiarizationNumSpeakers(parseInt(e.target.value, 10) || 0)}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="0">{t('auto')}</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
               </select>
             </div>
           </CollapsibleSection>
