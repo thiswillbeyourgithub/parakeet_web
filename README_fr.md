@@ -95,7 +95,12 @@ L'identification des locuteurs est entièrement **optionnelle** et ne se lance j
 - **Par transcription** : un bouton **Locuteurs** se trouve juste après le bouton **Dictée** de chaque transcription. Cliquez dessus pour identifier les locuteurs de cette transcription ; la vue passe alors en tours de parole colorés. Cliquez sur **Brut** / **Dictée** pour revenir en arrière.
 - **Automatiquement pour tout** : dans le panneau de paramètres, réglez le mode d'affichage par défaut sur **Locuteurs** (à côté de **Brut** et **Dictée**). Chaque nouvelle transcription est alors traitée automatiquement, comme le mode dictée par défaut.
 
-Le **nombre de locuteurs est détecté automatiquement** : vous n'avez pas à le préciser.
+Le **nombre de locuteurs est détecté automatiquement** par défaut, vous n'avez donc pas à le préciser. Si vous le connaissez, vous pouvez fixer un nombre :
+
+- un contrôle **Nombre de locuteurs** dans le panneau de paramètres définit la valeur par défaut (**Auto**, ou 1-10), et
+- le menu **⋮** de chaque transcription possède son propre remplacement **Nombre de locuteurs** qui **re-segmente immédiatement cet enregistrement** lorsque vous le modifiez (pratique quand la détection auto sur-découpe ou sous-découpe un extrait précis).
+
+**Renommer les locuteurs** : cliquez sur une étiquette de locuteur (par ex. **Locuteur 1**) pour la modifier directement. Le nouveau nom remplace ce locuteur partout dans la transcription, et la **copie** d'une transcription identifiée produit des blocs `Nom : texte` propres, prêts à coller.
 
 ### Comment ça marche
 

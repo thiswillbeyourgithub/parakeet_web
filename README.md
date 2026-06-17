@@ -95,7 +95,12 @@ Diarization is fully **opt-in** and never runs unless you ask for it:
 - **Per transcription**: a **Speakers** button sits right after the **Dictation** button on each transcription. Click it to diarize that one entry; the view switches to coloured speaker turns. Click **Raw** / **Dictation** to switch back.
 - **Automatically for everything**: in the settings sidebar, set the default display mode to **Speakers** (next to **Raw** and **Dictation**). Every new transcription is then diarized automatically, just like the dictation default.
 
-The **number of speakers is detected automatically** — you do not have to specify it.
+The **number of speakers is detected automatically** by default, so you do not have to specify it. If you do know it, you can set a fixed count:
+
+- a **Number of speakers** control in the settings sidebar sets the default (**Auto**, or 1-10), and
+- each transcription's **⋮** menu has its own **Number of speakers** override that **re-segments that recording immediately** when you change it (handy when auto over- or under-splits a particular clip).
+
+**Rename speakers**: click a speaker label (e.g. **Speaker 1**) to edit it inline. The new name replaces that speaker everywhere in the transcript, and **copying** a diarized transcription yields clean `Name: text` blocks ready to paste.
 
 ### How it works
 
