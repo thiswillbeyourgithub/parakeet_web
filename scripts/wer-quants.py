@@ -5,6 +5,7 @@
 #     "onnx-asr[cpu]",
 #     "librosa",
 #     "jiwer",
+#     "tqdm",
 # ]
 # ///
 """Mini WER + timing + RAM bench across encoder quantisations (int8/fp16/fp32).
@@ -108,17 +109,21 @@ Usage (deps are declared inline via PEP 723, so uv installs them on first run):
   uv run scripts/wer-quants.py --quants int8,fp16 --reference-quant fp32
   uv run scripts/wer-quants.py --quants int8,fp16,fp32 --decoder-quant fp32
   uv run scripts/wer-quants.py --cuda                 # run on the NVIDIA GPU
-  uv run scripts/wer-quants.py --manifest <lang>/validation.json --quants int8 --cuda
+  uv run scripts/wer-quants.py --manifest fr/validation.json --quants int8 --cuda
+  uv run scripts/wer-quants.py --manifest fr/validation.json --manifest en/validation.json --cuda
 
 FLEURS manifest mode (--manifest): instead of the long-pass/oracle analysis above,
 score a whole FLEURS-style validation split (JSON-lines of {audio_filepath, text,
 duration}, with the wavs in a sibling wavs_validation/) against its HUMAN labels as
-one corpus WER per --quants, with the model loaded ONCE. References/hypotheses are
+one corpus WER per --quants. --manifest is REPEATABLE: pass it once per language and
+every language is scored in a SINGLE model load (each labelled by its parent dir
+name), with a tqdm progress bar per language on stderr. References/hypotheses are
 normalised (case + punctuation folded, accents kept) so a cased/punctuated model
 output is scored fairly against the lowercase labels (--no-normalize for raw WER).
 This is the per-language ground-truth accuracy the oracle mode cannot give. A
-machine-readable __WER_JSON__ line is printed so a wrapper can sweep every language
-and aggregate (a gitignored shell driver does exactly this across a FLEURS root).
+machine-readable __WER_JSON__ line per language (tagged with --run-label) is printed
+so a wrapper can sweep several MODELS and aggregate a model x language matrix (the
+gitignored wer-fleurs-validation.sh driver does exactly this).
 
 Or with an environment that already has the deps: python scripts/wer-quants.py
 (needs onnx-asr, librosa, jiwer; for --cuda, onnxruntime-gpu instead of the CPU
@@ -240,6 +245,7 @@ def ensure_cuda_runtime(argv, args):
         prev = env.get("LD_LIBRARY_PATH", "")
         env["LD_LIBRARY_PATH"] = ":".join(libs + ([prev] if prev else []))
     cmd = [uv, "run", "--with", "onnx-asr[gpu]", "--with", "librosa", "--with", "jiwer",
+           "--with", "tqdm",
            "python", str(Path(__file__).resolve()), *argv, "--_rt-ready"]
     print("[wer-quants] --cuda: re-launching under onnxruntime-gpu via uv "
           f"({len(libs)} CUDA lib dir(s) on LD_LIBRARY_PATH)...", file=sys.stderr, flush=True)
@@ -403,28 +409,54 @@ def child_oracle(args):
     emit({"audio_sec": audio_sec, "section_sec": args.section_sec, "sections": sections})
 
 
-def child_manifest(args):
-    """Transcribe every clip in a FLEURS manifest with the model loaded ONCE, and
-    emit the per-clip references + hypotheses for the parent to score. Each clip is
-    one independent single pass (FLEURS validation clips are short, far under the
-    encoder's ~400 s positional-encoding wall), so this is the same greedy decode
-    child_full/child_oracle use, just looped over the manifest without reloading."""
-    items, missing = load_manifest(args.manifest, args.manifest_audio_dir, args.limit)
-    baseline_mb = peak_rss_mb()  # interpreter + libs, before the model
+def manifest_label_for(mf, args):
+    """Label a manifest: the explicit --manifest-label (only meaningful for a single
+    manifest), else the manifest's parent directory name (the FLEURS lang code)."""
+    if args.manifest_label and len(args.manifest) == 1:
+        return args.manifest_label
+    return Path(mf).resolve().parent.name
 
+
+def child_manifest(args):
+    """Transcribe every clip of EVERY --manifest with the model loaded ONCE, and
+    emit the per-clip references + hypotheses (per manifest) for the parent to score.
+    Loading once and looping all manifests is the whole point: a multi-language sweep
+    pays a single model load, not one per language. Each clip is an independent single
+    pass (FLEURS validation clips are short, far under the encoder's ~400 s
+    positional-encoding wall). A tqdm bar per language reports progress on STDERR (the
+    JSON result goes to STDOUT), so the parent can stream it live to the terminal."""
+    try:
+        from tqdm import tqdm  # optional: progress only, never required to score
+    except Exception:
+        tqdm = None
+
+    # One audio dir override only makes sense for a single manifest; for many, each
+    # manifest uses its own sibling wavs_validation/ (load_manifest's default).
+    audio_dir = args.manifest_audio_dir if len(args.manifest) == 1 else None
+
+    baseline_mb = peak_rss_mb()  # interpreter + libs, before the model
     t0 = time.perf_counter()
     model = load_or_die(args)
     t1 = time.perf_counter()
-    out = []
-    for it in items:
-        wav, _ = load_audio(it["audio_path"], args.max_pass_sec)
-        out.append({"id": it["id"], "ref": it["text"],
-                    "hyp": model.recognize(wav), "duration": it["duration"]})
+
+    manifests = []
+    for n, mf in enumerate(args.manifest, 1):
+        label = manifest_label_for(mf, args)
+        items, missing = load_manifest(mf, audio_dir, args.limit)
+        iterator = items
+        if tqdm is not None:
+            iterator = tqdm(items, desc=f"  {label} ({n}/{len(args.manifest)})",
+                            unit="clip", leave=False, file=sys.stderr, dynamic_ncols=True)
+        out = []
+        for it in iterator:
+            wav, _ = load_audio(it["audio_path"], args.max_pass_sec)
+            out.append({"id": it["id"], "ref": it["text"],
+                        "hyp": model.recognize(wav), "duration": it["duration"]})
+        manifests.append({"label": label, "items": out, "missing": missing})
     t2 = time.perf_counter()
 
     emit({
-        "items": out,
-        "missing": missing,
+        "manifests": manifests,
         "load_s": t1 - t0,
         "infer_s": t2 - t1,
         "peak_mb": peak_rss_mb(),
@@ -460,33 +492,45 @@ def spawn(args, audio, mode, quant, decoder_quant):
 def _parse_child_output(out):
     """Extract the __RESULT__ JSON from a finished child process, turning a
     __LOAD_ERROR__ line into a fatal ModelLoadError and a missing result into a
-    RuntimeError carrying the child's stderr tail. Shared by spawn (full/oracle)
-    and spawn_manifest so the result/error protocol lives in one place."""
+    RuntimeError carrying whatever output we have. Shared by spawn (full/oracle) and
+    spawn_manifest so the result/error protocol lives in one place. out.stderr may be
+    None when the caller let the child's stderr stream to the terminal (manifest mode,
+    for live progress bars), so the error tail falls back to stdout."""
     for line in out.stdout.splitlines():
         if line.startswith(LOAD_ERROR_SENTINEL):  # the model failed to LOAD -> fatal
             raise ModelLoadError(json.loads(line[len(LOAD_ERROR_SENTINEL):]))
         if line.startswith("__RESULT__"):
             return json.loads(line[len("__RESULT__"):])
-    raise RuntimeError((out.stderr or out.stdout).strip()[-500:] or "no result from child")
+    raise RuntimeError(((out.stderr or out.stdout) or "").strip()[-500:] or "no result from child")
 
 
 def spawn_manifest(args, quant):
-    """Run this script as a --_child manifest pass: transcribe every clip in
-    args.manifest with the model (encoder=quant, decoder=--decoder-quant) loaded
-    ONCE, and return the per-clip {id, ref, hyp, duration} list. Mirrors spawn's
-    process-isolation + result protocol, but for the FLEURS manifest mode."""
+    """Run this script as a --_child manifest pass: transcribe every clip of every
+    --manifest with the model (encoder=quant, decoder=--decoder-quant) loaded ONCE,
+    and return the per-manifest {label, items, missing} list. Mirrors spawn's
+    process-isolation + result protocol. Unlike spawn it does NOT capture the child's
+    stderr: it lets it inherit the terminal so the per-language tqdm progress bars
+    stream live (the __RESULT__/__LOAD_ERROR__ protocol rides stdout, which we do
+    capture). The child still reports a load failure on stdout, so it stays fatal."""
     cmd = [sys.executable, __file__, "--_child", "manifest", "--quant", quant,
-           "--decoder-quant", args.decoder_quant, "--manifest", args.manifest,
+           "--decoder-quant", args.decoder_quant,
            "--model", args.model, "--model-dir", args.model_dir,
            "--max-pass-sec", str(args.max_pass_sec)]
-    if args.manifest_audio_dir:
+    for mf in args.manifest:
+        cmd += ["--manifest", mf]
+    if args.manifest_label and len(args.manifest) == 1:
+        cmd += ["--manifest-label", args.manifest_label]
+    if args.manifest_audio_dir and len(args.manifest) == 1:
         cmd += ["--manifest-audio-dir", args.manifest_audio_dir]
     if args.limit:
         cmd += ["--limit", str(args.limit)]
     if args.cuda:  # children run in the bootstrapped gpu env; skip the re-exec
         cmd += ["--cuda", "--_rt-ready"]
-    print(f"  [manifest/{quant}] running...", file=sys.stderr, flush=True)
-    return _parse_child_output(subprocess.run(cmd, capture_output=True, text=True))
+    print(f"  [manifest/{quant}] loading model once for {len(args.manifest)} language(s)...",
+          file=sys.stderr, flush=True)
+    # stderr=None -> inherit the terminal so tqdm shows live; stdout=PIPE for the result.
+    return _parse_child_output(
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=None, text=True))
 
 
 # --- parent helpers ---------------------------------------------------------
@@ -616,10 +660,17 @@ def parse_args(argv):
     # given the script scores a whole validation split against its human labels and
     # the audio/oracle/section machinery above is bypassed (no --audio, no oracle).
     p.add_argument(
-        "--manifest", default=None,
+        "--manifest", action="append", default=None,
         help="score a FLEURS-style validation manifest (JSON-lines of "
              "{audio_filepath, text, duration}) as one corpus WER per requested "
-             "--quants, model loaded once. Bypasses --audio/--reference/oracle.",
+             "--quants, model loaded once. Bypasses --audio/--reference/oracle. "
+             "Repeatable: pass --manifest once per language to score every language "
+             "in a SINGLE model load (each labelled by its parent dir name).",
+    )
+    p.add_argument(
+        "--run-label", default=None,
+        help="tag every __WER_JSON__ line with this model label (used by the shell "
+             "driver to build a model x language matrix across several models).",
     )
     p.add_argument(
         "--manifest-audio-dir", default=None,
@@ -807,20 +858,40 @@ def print_cross_file_summary(summaries, quants):
           "per-file per-section breakdown is in that file's table above.")
 
 
-def analyze_manifest(args, quants):
-    """FLEURS manifest mode: corpus WER of a whole validation split (one language)
-    against the human labels, for each requested encoder quant, with the model
-    loaded ONCE per quant. Prints a human table AND a machine-readable __WER_JSON__
-    line so a shell wrapper can sweep every language and aggregate. Unlike the audio
-    mode there is NO oracle and NO per-section table: the reference is the FLEURS
-    label, the hypothesis is the model's single-pass transcription, scored as one
-    corpus WER (total edits / total ref words)."""
-    label = args.manifest_label or Path(args.manifest).resolve().parent.name
-    print(f"\n== FLEURS manifest WER: {label} ==")
-    print(f"manifest: {args.manifest}")
-    print(f"normalisation: {'case+punctuation folded, accents kept' if args.normalize else 'raw (whitespace only)'}")
+def score_manifest_result(res, normalize):
+    """Turn one spawn_manifest result (its per-manifest items) into a per-language
+    map {lang: {wer, clips, scored, dropped, missing, ref_words}} via corpus_wer."""
+    langs = {}
+    for m in res["manifests"]:
+        refs = [i["ref"] for i in m["items"]]
+        hyps = [i["hyp"] for i in m["items"]]
+        wer_val, scored, dropped = corpus_wer(refs, hyps, normalize)
+        ref_words = sum(len(normalize_for_wer(r, normalize).split()) for r in refs)
+        langs[m["label"]] = {
+            "wer": wer_val, "clips": len(m["items"]), "scored": scored,
+            "dropped": dropped, "missing": m["missing"], "ref_words": ref_words,
+        }
+    return langs
 
-    rows = {}
+
+def analyze_manifest(args, quants):
+    """FLEURS manifest mode: corpus WER of a whole validation split against the human
+    labels, for EVERY --manifest (language), for each requested encoder quant, with
+    the model loaded ONCE per quant (all languages share that single load). Prints a
+    per-language table (rows = language, columns = quant) plus, for each language, a
+    machine-readable __WER_JSON__ line tagged with --run-label, so a shell driver can
+    sweep several MODELS and aggregate a model x language matrix. No oracle / no
+    per-section table: reference = FLEURS label, hypothesis = single-pass transcript,
+    scored as one corpus WER (total edits / total ref words)."""
+    print(f"\n== FLEURS manifest WER"
+          + (f" [{args.run_label}]" if args.run_label else "") + " ==")
+    print(f"languages: {len(args.manifest)}   "
+          f"normalisation: {'case+punctuation folded, accents kept' if args.normalize else 'raw (whitespace only)'}")
+
+    # quant -> {lang -> rowdict}; lang order taken from the manifests as scored.
+    scored = {}
+    lang_order = []
+    timing = {}
     for q in quants:
         try:
             res = spawn_manifest(args, q)
@@ -828,45 +899,51 @@ def analyze_manifest(args, quants):
             raise  # an unloadable encoder is fatal (see load_or_die), as in audio mode
         except Exception as e:  # an inference failure stays soft: report and move on
             print(f"{q:<6}  FAILED: {e}")
-            rows[q] = None
+            scored[q] = None
             continue
-        refs = [i["ref"] for i in res["items"]]
-        hyps = [i["hyp"] for i in res["items"]]
-        w, scored, dropped = corpus_wer(refs, hyps, args.normalize)
-        ref_words = sum(len(normalize_for_wer(r, args.normalize).split()) for r in refs)
-        rows[q] = {
-            "wer": w, "clips": len(res["items"]), "scored": scored, "dropped": dropped,
-            "missing": res["missing"], "ref_words": ref_words,
-            "load_s": res["load_s"], "infer_s": res["infer_s"],
-        }
+        scored[q] = score_manifest_result(res, args.normalize)
+        timing[q] = (res["load_s"], res["infer_s"])
+        if not lang_order:
+            lang_order = [m["label"] for m in res["manifests"]]
 
-    print("\nquant   WER       clips   scored   dropped   miss   ref words   load     infer")
-    print("-----   -------   ------   ------   -------   ----   ---------   ------   -------")
+    # ---- per-language table (rows = language, one WER column per quant) ----
+    name_w = max([len("language")] + [len(l) for l in lang_order])
+    header = f"{'language':<{name_w}}  {'clips':>6}  {'words':>7}   " + "   ".join(f"{q:>7}" for q in quants)
+    print()
+    print(header)
+    print("-" * len(header))
+    for lang in lang_order:
+        first = next((scored[q][lang] for q in quants if scored.get(q)), {})
+        clips, words = first.get("clips", "?"), first.get("ref_words", "?")
+        cells = "   ".join(
+            f"{fmt_pct((scored[q] or {}).get(lang, {}).get('wer')):>7}" for q in quants)
+        print(f"{lang:<{name_w}}  {clips:>6}  {words:>7}   {cells}")
+    print("-" * len(header))
+    # MICRO (corpus) average per quant: total edits / total ref words across languages.
+    micro = []
     for q in quants:
-        r = rows.get(q)
-        if r is None:
-            print(f"{q:<6}  FAILED")
-            continue
-        print(
-            f"{q:<6}  {fmt_pct(r['wer']):>7}   {r['clips']:5d}   {r['scored']:6d}   "
-            f"{r['dropped']:7d}   {r['missing']:4d}   {r['ref_words']:9d}   "
-            f"{r['load_s']:5.1f}s   {r['infer_s']:6.1f}s"
-        )
+        if not scored.get(q):
+            micro.append(None); continue
+        num = sum((r["wer"] or 0) * r["ref_words"] for r in scored[q].values() if r["wer"] is not None)
+        den = sum(r["ref_words"] for r in scored[q].values() if r["wer"] is not None)
+        micro.append(num / den if den else None)
+    print(f"{'MICRO':<{name_w}}  {'':>6}  {'':>7}   " + "   ".join(f"{fmt_pct(m):>7}" for m in micro))
+    for q in quants:
+        if q in timing:
+            print(f"  [{q}] model load {timing[q][0]:.1f}s, inference {timing[q][1]:.1f}s")
 
-    # Machine-readable line for the shell wrapper to sweep+aggregate languages.
-    emit_obj = {
-        "lang": label,
-        "normalize": bool(args.normalize),
-        "quants": {q: ({"wer": rows[q]["wer"], "ref_words": rows[q]["ref_words"],
-                        "scored": rows[q]["scored"], "dropped": rows[q]["dropped"],
-                        "missing": rows[q]["missing"], "clips": rows[q]["clips"]}
-                       if rows.get(q) else None)
-                   for q in quants},
-    }
-    print("__WER_JSON__" + json.dumps(emit_obj))
-    print("\nLower WER is better. Corpus WER = total word edits / total reference words over the "
-          "whole split (not a mean of per-clip WERs). scored = clips with a non-empty reference; "
-          "dropped = empty-reference clips skipped; miss = manifest entries whose wav was absent.")
+    # ---- machine-readable per-language lines for the shell driver ----
+    for lang in lang_order:
+        emit_obj = {
+            "lang": lang,
+            "normalize": bool(args.normalize),
+            "quants": {q: ((scored[q] or {}).get(lang) if scored.get(q) else None) for q in quants},
+        }
+        if args.run_label:
+            emit_obj["model"] = args.run_label
+        print("__WER_JSON__" + json.dumps(emit_obj))
+    print("\nLower WER is better. Corpus WER = total word edits / total reference words per language "
+          "(not a mean of per-clip WERs); MICRO is the same aggregate across all languages.")
 
 
 class _Tee:
@@ -951,9 +1028,11 @@ def main(argv):
     if args.manifest:
         print(f"FLEURS manifest mode; backend = {'cuda (GPU)' if args.cuda else 'cpu'}; "
               f"encoder quants = {', '.join(quants)}; decoder = {args.decoder_quant}; "
-              f"normalise = {args.normalize}"
+              f"normalise = {args.normalize}; languages = {len(args.manifest)}"
+              + (f"; run-label = {args.run_label}" if args.run_label else "")
               + (f"; limit = {args.limit}" if args.limit else ""))
-        print("\ntranscribing the manifest (model loaded once per quant):", file=sys.stderr)
+        print(f"\ntranscribing {len(args.manifest)} language(s) "
+              "(model loaded once per quant, all languages share it):", file=sys.stderr)
         analyze_manifest(args, quants)
         return
 
