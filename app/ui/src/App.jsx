@@ -26,7 +26,7 @@ import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
 import { runDiarization } from './lib/diarizer.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
-import { assignSpeakersToWords, groupWordsIntoTurns } from './lib/speakerAssign.js';
+import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText } from './lib/speakerAssign.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -1002,6 +1002,12 @@ export default function App() {
   // Per-entry speaker-count override (id -> count) set from the entry's kebab;
   // re-segments that entry on change. Falls back to diarizationNumSpeakers.
   const [diarizationNumByEntry, setDiarizationNumByEntry] = useState({});
+  // User-renamed speaker labels, per entry: id -> { speakerIndex -> name }.
+  // Renaming updates every turn for that speaker (and the copied text). In
+  // memory only, like diarizationCache. `editingSpeaker` is the `${id}:${turnIndex}`
+  // of the label currently shown as an input, or null.
+  const [speakerNames, setSpeakerNames] = useState({});
+  const [editingSpeaker, setEditingSpeaker] = useState(null);
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -4101,30 +4107,84 @@ export default function App() {
 
   // Get the display text for a transcription based on its per-entry display mode
   function getDisplayText(trans) {
-    if (getEntryMode(trans.id) === 'dictation' && dictationRegexRules.length > 0) {
+    const mode = getEntryMode(trans.id);
+    if (mode === 'diarized' && diarizationCache[trans.id]) {
+      // Diarized mode copies/exports as "Speaker: text" blocks (renamed labels
+      // included), which is what makes the speaker view useful to paste.
+      return diarizedPlainText(trans);
+    }
+    if (mode === 'dictation' && dictationRegexRules.length > 0) {
       // Return cached result, or compute synchronously without setting state
       return dictationCache[trans.id] || applyDictationRegex(trans.text);
     }
     return trans.text;
   }
 
+  // The (possibly user-renamed) label for a speaker in an entry.
+  function speakerDisplayName(entryId, speaker) {
+    return speakerNames[entryId]?.[speaker] || `${t('speaker')} ${speaker + 1}`;
+  }
+  // Rename a speaker for one entry; applies to every turn for that speaker.
+  function setSpeakerName(entryId, speaker, name) {
+    setSpeakerNames(prev => ({
+      ...prev,
+      [entryId]: { ...(prev[entryId] || {}), [speaker]: name },
+    }));
+  }
+
+  // Speaker turns for an entry (or null when not diarized yet).
+  function getDiarizedTurns(trans) {
+    const segments = diarizationCache[trans.id];
+    if (!segments) return null;
+    return groupWordsIntoTurns(assignSpeakersToWords(trans.words || [], segments));
+  }
+
+  // Diarized transcript as plain "Name: text" blocks, for copy/export.
+  function diarizedPlainText(trans) {
+    const turns = getDiarizedTurns(trans);
+    if (!turns || turns.length === 0) return trans.text;
+    return turnsToLabeledText(turns, (spk) => speakerDisplayName(trans.id, spk));
+  }
+
   // Render an entry's transcript as speaker turns (turns + colour). Maps each
   // word to its diarization speaker, groups consecutive same-speaker words, and
   // labels/colours each turn. Colours cycle through the .diar-speaker-N palette.
+  // The speaker label is a button that becomes a text input on click so the user
+  // can rename the speaker (the rename applies to every turn for that speaker).
   function renderDiarizedTranscript(trans) {
-    const segments = diarizationCache[trans.id];
-    const turns = groupWordsIntoTurns(assignSpeakersToWords(trans.words || [], segments));
-    if (turns.length === 0) {
+    const turns = getDiarizedTurns(trans);
+    if (!turns || turns.length === 0) {
       return <span style={{ whiteSpace: 'pre-wrap' }}>{trans.text}</span>;
     }
     return (
       <div className="diar-turns">
-        {turns.map((turn, i) => (
-          <div key={i} className={`diar-turn diar-speaker-${turn.speaker % DIAR_PALETTE_SIZE}`}>
-            <span className="diar-speaker-label">{t('speaker')} {turn.speaker + 1}</span>
-            <span className="diar-turn-text">{turn.text}</span>
-          </div>
-        ))}
+        {turns.map((turn, i) => {
+          const editKey = `${trans.id}:${i}`;
+          return (
+            <div key={i} className={`diar-turn diar-speaker-${turn.speaker % DIAR_PALETTE_SIZE}`}>
+              {editingSpeaker === editKey ? (
+                <input
+                  className="diar-speaker-input"
+                  autoFocus
+                  value={speakerNames[trans.id]?.[turn.speaker] ?? `${t('speaker')} ${turn.speaker + 1}`}
+                  onChange={e => setSpeakerName(trans.id, turn.speaker, e.target.value)}
+                  onBlur={() => setEditingSpeaker(null)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); setEditingSpeaker(null); } }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="diar-speaker-label"
+                  title={t('renameSpeakerHint')}
+                  onClick={() => setEditingSpeaker(editKey)}
+                >
+                  {speakerDisplayName(trans.id, turn.speaker)}
+                </button>
+              )}
+              <span className="diar-turn-text">{turn.text}</span>
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -5475,6 +5535,13 @@ export default function App() {
                                 onChange={e => {
                                   const n = parseInt(e.target.value, 10) || 0;
                                   setDiarizationNumByEntry(prev => ({ ...prev, [trans.id]: n }));
+                                  // Re-segmenting redefines the speakers, so drop
+                                  // this entry's custom names (their indices no
+                                  // longer mean the same person).
+                                  setSpeakerNames(prev => {
+                                    if (!prev[trans.id]) return prev;
+                                    const next = { ...prev }; delete next[trans.id]; return next;
+                                  });
                                   diarizeEntry(trans, n);
                                   setOpenKebabId(null);
                                 }}

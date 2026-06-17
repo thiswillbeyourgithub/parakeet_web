@@ -1305,6 +1305,29 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   font-weight: 700;
   font-size: 0.8rem;
   color: var(--diar-color, var(--accent));
+  /* It is a <button> so it can be clicked to rename, but should read as the
+     plain coloured label until hovered. */
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: text;
+  font-family: inherit;
+}
+.diar-speaker-label:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.diar-speaker-input {
+  margin-right: 0.5rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--diar-color, var(--accent));
+  background: var(--bg-card);
+  border: 1px solid var(--diar-color, var(--accent));
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  width: 9rem;
+  max-width: 60%;
 }
 .diar-turn-text { white-space: pre-wrap; }
 

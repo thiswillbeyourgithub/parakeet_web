@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { assignSpeakersToWords, groupWordsIntoTurns, speakerCount } from '../../app/ui/src/lib/speakerAssign.js';
+import { assignSpeakersToWords, groupWordsIntoTurns, speakerCount, turnsToLabeledText } from '../../app/ui/src/lib/speakerAssign.js';
 
 const W = (text, s, e) => ({ text, start_time: s, end_time: e });
 
@@ -104,5 +104,48 @@ describe('speakerCount', () => {
   });
   test('empty -> 0', () => {
     assert.equal(speakerCount([]), 0);
+  });
+});
+
+describe('turnsToLabeledText', () => {
+  const defName = (s) => `Speaker ${s + 1}`;
+
+  test('joins turns as "Name: text" blocks separated by a blank line', () => {
+    const turns = [
+      { speaker: 0, text: 'hello there' },
+      { speaker: 1, text: 'general kenobi' },
+      { speaker: 0, text: 'so uncivilized' },
+    ];
+    assert.equal(
+      turnsToLabeledText(turns, defName),
+      'Speaker 1: hello there\n\nSpeaker 2: general kenobi\n\nSpeaker 1: so uncivilized',
+    );
+  });
+
+  test('uses the resolver so renamed speakers appear (and repeat) by name', () => {
+    const turns = [
+      { speaker: 0, text: 'one' },
+      { speaker: 1, text: 'two' },
+      { speaker: 0, text: 'three' },
+    ];
+    const names = { 0: 'Alice', 1: 'Bob' };
+    assert.equal(
+      turnsToLabeledText(turns, (s) => names[s] ?? defName(s)),
+      'Alice: one\n\nBob: two\n\nAlice: three',
+    );
+  });
+
+  test('drops turns whose text is empty/whitespace, trims the rest', () => {
+    const turns = [
+      { speaker: 0, text: '  hi  ' },
+      { speaker: 1, text: '   ' },
+      { speaker: 0, text: '' },
+    ];
+    assert.equal(turnsToLabeledText(turns, defName), 'Speaker 1: hi');
+  });
+
+  test('empty/invalid -> empty string', () => {
+    assert.equal(turnsToLabeledText([], defName), '');
+    assert.equal(turnsToLabeledText(null, defName), '');
   });
 });
