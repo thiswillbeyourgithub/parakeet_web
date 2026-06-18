@@ -3749,7 +3749,7 @@ export default function App() {
       // Auto-copy transcription to clipboard if enabled
       if (autoCopyToClipboard && res.utterance_text) {
         try {
-          const textToCopy = transcriptDisplayMode === 'dictation' && dictationRegexRules.length > 0
+          const textToCopy = defaultDictation && dictationRegexRules.length > 0
             ? applyDictationRegex(res.utterance_text)
             : res.utterance_text;
           await navigator.clipboard.writeText(sanitizeClipboardText(textToCopy));
@@ -3895,26 +3895,32 @@ export default function App() {
 
   // --- Per-entry display mode + inline audio player helpers ---
 
+  // Decompose the global default display setting into the two per-entry axes.
+  // Values: 'raw', 'dictation', 'diarized', 'diarized+dictation' -> a value
+  // containing 'diarized' means a diarized base, one containing 'dictation'
+  // means the dictation layer is on. One source of truth for every default.
+  const defaultBase = transcriptDisplayMode.includes('diarized') ? 'diarized' : 'raw';
+  const defaultDictation = transcriptDisplayMode.includes('dictation');
+
   // The structural base view for one entry ('raw'|'diarized'): its own override,
-  // else the global default decomposed (the legacy 'dictation' default is a raw
-  // base carrying the dictation layer, so it maps to 'raw' here).
+  // else the global default decomposed.
   function getEntryBase(id) {
     const m = entryDisplayModes[id];
     if (m === 'diarized' || m === 'raw') return m;
-    return transcriptDisplayMode === 'diarized' ? 'diarized' : 'raw';
+    return defaultBase;
   }
   function setEntryBase(id, base) {
     setEntryDisplayModes(prev => ({ ...prev, [id]: base }));
   }
   // Whether the dictation regex-cleanup layer is on for an entry (independent of
-  // the base view). Defaults from the global default ('dictation'). Callers gate
-  // the actual transform on dictationRegexRules.length so an empty rule set is a
-  // no-op even when the flag is on.
+  // the base view). Defaults from the global default. Callers gate the actual
+  // transform on dictationRegexRules.length so an empty rule set is a no-op even
+  // when the flag is on.
   function entryDictationOn(id) {
-    return entryDictation[id] ?? (transcriptDisplayMode === 'dictation');
+    return entryDictation[id] ?? defaultDictation;
   }
   function toggleEntryDictation(id) {
-    setEntryDictation(prev => ({ ...prev, [id]: !(prev[id] ?? (transcriptDisplayMode === 'dictation')) }));
+    setEntryDictation(prev => ({ ...prev, [id]: !(prev[id] ?? defaultDictation) }));
   }
 
   // Lazily mint (and cache) the object URL backing an entry's inline player.
@@ -4029,12 +4035,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcriptions, entryDisplayModes, transcriptDisplayMode, diarizationCache, diarizingId]);
 
-  // Background prefetch: when diarization is the default mode (the user has
-  // opted in to it for every transcription), warm the ~34 MB of models into the
-  // hub cache so the first run is instant. When the default is off, models
-  // download lazily on the first Speakers click instead.
+  // Background prefetch: when the default base view is diarized (the user has
+  // opted in to it for every transcription, with or without the dictation
+  // layer), warm the ~34 MB of models into the hub cache so the first run is
+  // instant. When the default is off, models download lazily on the first
+  // Speakers click instead.
   useEffect(() => {
-    if (transcriptDisplayMode !== 'diarized') return;
+    if (defaultBase !== 'diarized') return;
     getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback })
       .catch(e => console.warn('[Diarize] background model prefetch failed (non-fatal):', e));
   }, [transcriptDisplayMode]);
@@ -4742,6 +4749,7 @@ export default function App() {
                 <option value="raw">{t('raw')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
                 <option value="diarized">{t('speakers')}</option>
+                {dictationRegexRules.length > 0 && <option value="diarized+dictation">{t('speakers')} + {t('dictationExp')}</option>}
               </select>
             </div>
 
