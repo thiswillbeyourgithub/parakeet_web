@@ -78,20 +78,22 @@ Quantisation -> files in the model dir:
   fp32 -> encoder-model.onnx (+ .data)  + decoder_joint-model.onnx
 
 Encoder vs decoder quant: --quants sweeps the ENCODER quant (that is what this
-bench measures), while --decoder-quant (default fp32) holds the fused
+bench measures), while --decoder-quant (default int8) holds the fused
 decoder_joint at a fixed precision for every swept encoder. onnx-asr exposes a
 single `quantization` that selects BOTH files, so to mix them we override the
 model's file map for just that one load to resolve the encoder at the swept quant
 and the decoder_joint at --decoder-quant in a single pass (see load_mixed). Only
-the files actually used are required: e.g. an int8 encoder with an fp32 decoder
-needs encoder-model.int8.onnx + decoder_joint-model.onnx and does NOT require a
-decoder_joint-model.int8.onnx to exist (previously the load crashed on that
-missing file even though --decoder-quant fp32 never uses it). No second encoder is
-ever loaded, so the RAM figure stays honest. The decoder is small (~70 MB fp32 vs
-~18 MB int8), so fp32 there is cheap and avoids the int8 joiner's quality loss.
-This model exports the decoder and joint network as one fused file, so this knob
-covers both. The per-section oracle reference stays fully matched at
---reference-quant (encoder == decoder, no override), so it remains a clean reference.
+the files actually used are required: e.g. an fp32 encoder with an int8 decoder
+needs encoder-model.onnx (+ .data) + decoder_joint-model.int8.onnx and does NOT
+require a decoder_joint-model.onnx to exist (the mixed load resolves each piece
+independently). No second encoder is ever loaded, so the RAM figure stays honest.
+int8 matches fp32 quality on the fused decoder here, so the default int8 mirrors
+the web app's production pipeline (which ships the int8 decoder); pass
+--decoder-quant fp32 to ISOLATE the encoder instead (a full-precision joiner
+removes the int8 decoder as a variable when comparing encoder quants). This model
+exports the decoder and joint network as one fused file, so this knob covers both.
+The per-section oracle reference stays fully matched at --reference-quant
+(encoder == decoder, no override), so it remains a clean reference.
 
 --audio accepts a single file OR a FOLDER. A folder is expanded to every audio
 file inside it and each is analysed in turn (its own two tables), then a final
@@ -107,7 +109,7 @@ Usage (deps are declared inline via PEP 723, so uv installs them on first run):
   uv run scripts/wer-quants.py --audio clip.mp3 --reference @ref.txt
   uv run scripts/wer-quants.py --audio fallback_models/.../calibration_audio   # sweep a folder
   uv run scripts/wer-quants.py --quants int8,fp16 --reference-quant fp32
-  uv run scripts/wer-quants.py --quants int8,fp16,fp32 --decoder-quant fp32
+  uv run scripts/wer-quants.py --quants int8,fp16,fp32 --decoder-quant fp32  # isolate the encoder
   uv run scripts/wer-quants.py --cuda                 # run on the NVIDIA GPU
   uv run scripts/wer-quants.py --manifest fr/validation.json --quants int8 --cuda
   uv run scripts/wer-quants.py --manifest fr/validation.json --manifest en/validation.json --cuda
@@ -650,11 +652,13 @@ def parse_args(argv):
              "fully matched encoder+decoder, no swap).",
     )
     p.add_argument(
-        "--decoder-quant", default="fp32", choices=list(QUANT_ARG),
+        "--decoder-quant", default="int8", choices=list(QUANT_ARG),
         help="decoder_joint quant held fixed across the swept encoder --quants "
-             "(default fp32). The fused decoder is small, so full precision is "
-             "cheap and avoids the int8 joiner's quality loss. Only affects the "
-             "measured passes; the oracle reference stays matched at --reference-quant.",
+             "(default int8, matching the web app's production pipeline; int8 "
+             "matches fp32 quality on the fused decoder here). Pass fp32 to isolate "
+             "the encoder (full-precision joiner removes the int8 decoder as a "
+             "variable). Only affects the measured passes; the oracle reference "
+             "stays matched at --reference-quant.",
     )
     # FLEURS manifest (per-language ground-truth WER) mode. When --manifest is
     # given the script scores a whole validation split against its human labels and
