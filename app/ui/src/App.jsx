@@ -24,6 +24,16 @@ import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, e
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
+import { runDiarization } from './lib/diarizer.js';
+import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
+import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText } from './lib/speakerAssign.js';
+import { createSerialQueue } from './lib/writeQueue.js';
+import { embedSpeakers } from './lib/speakerEmbedding.js';
+import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
+
+// Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
+// in App.css); speaker labels cycle through it.
+const DIAR_PALETTE_SIZE = 8;
 import { requestPersistentStorage } from './lib/persistStorage.js';
 
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
@@ -242,47 +252,75 @@ async function loadPersistedTranscripts() {
 // identifier) beyond the text content the user explicitly opted into saving.
 function slimTranscriptForPersist(t) {
   if (!t || typeof t !== 'object') return t;
-  return {
+  const slim = {
     id: t.id,
     text: t.text,
     timestamp: t.timestamp,
     wordCount: t.wordCount,
   };
+  // Opt-in diarization payload (attached by enrichTranscriptForPersist): the
+  // grouped turns (speaker index + turn text) and the user's speaker names.
+  // Still F-130-safe: no per-word timings, no raw float segments, no filename.
+  if (Array.isArray(t.diarTurns) && t.diarTurns.length > 0) {
+    slim.diarTurns = t.diarTurns.map(tn => ({ speaker: tn.speaker, text: tn.text }));
+  }
+  if (t.speakerNames && typeof t.speakerNames === 'object' && Object.keys(t.speakerNames).length > 0) {
+    slim.speakerNames = t.speakerNames;
+  }
+  return slim;
 }
 
-async function saveTranscripts(arr) {
-  try {
-    const slim = Array.isArray(arr) ? arr.map(slimTranscriptForPersist) : arr;
-    await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, slim);
-  } catch (e) {
-    console.warn('Failed to save transcripts:', e);
-  }
+// All mutations of the transcripts DB go through one serial queue so a burst of
+// writes (e.g. diarize then rename in quick succession, or a delete's
+// wipe-and-rewrite) cannot race as independent IndexedDB transactions and let an
+// earlier put resolve AFTER a later one, leaving stale data on disk. The
+// last-issued write is therefore the last-applied one. Ordering logic is the
+// pure createSerialQueue (unit-tested in test/unit/write-queue.test.mjs).
+const transcriptsWriteQueue = createSerialQueue();
+
+async function putTranscripts(arr) {
+  const slim = Array.isArray(arr) ? arr.map(slimTranscriptForPersist) : arr;
+  await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, slim);
+}
+
+function saveTranscripts(arr) {
+  return transcriptsWriteQueue(async () => {
+    try {
+      await putTranscripts(arr);
+    } catch (e) {
+      console.warn('Failed to save transcripts:', e);
+    }
+  });
 }
 
 // F-128: wipe the transcripts DB entirely so LevelDB drops the SST/log files
 // holding the previous (longer) array, then re-persist the new shorter array
 // into a fresh DB. Called on per-entry delete so a deleted transcript leaves
 // no recoverable residue. The settings DB is untouched.
-async function wipeAndRewriteTranscripts(arr) {
-  try {
-    await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
-    if (Array.isArray(arr) && arr.length > 0) {
-      await saveTranscripts(arr);
+function wipeAndRewriteTranscripts(arr) {
+  return transcriptsWriteQueue(async () => {
+    try {
+      await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
+      if (Array.isArray(arr) && arr.length > 0) {
+        await putTranscripts(arr);
+      }
+    } catch (e) {
+      console.warn('Failed to wipe transcripts DB:', e);
     }
-  } catch (e) {
-    console.warn('Failed to wipe transcripts DB:', e);
-  }
+  });
 }
 
 // Forget the on-disk transcripts container entirely. Used when the user
 // toggles persistTranscripts OFF or hits "Clear all transcripts". Uses
 // idbDeleteDatabase to evict LevelDB residue rather than a logical delete.
-async function forgetPersistedTranscripts() {
-  try {
-    await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
-  } catch (e) {
-    console.warn('Failed to forget transcripts:', e);
-  }
+function forgetPersistedTranscripts() {
+  return transcriptsWriteQueue(async () => {
+    try {
+      await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
+    } catch (e) {
+      console.warn('Failed to forget transcripts:', e);
+    }
+  });
 }
 
 async function clearAllSettings() {
@@ -983,6 +1021,40 @@ export default function App() {
   // Id of the entry currently being re-transcribed via "Transcribe again", so
   // its button can show a spinner. Only one runs at a time (isTranscribing).
   const [reTranscribingId, setReTranscribingId] = useState(null);
+  // Speaker diarization (optional "Speakers" view). diarizationCache maps an
+  // entry id -> its [{start,end,speaker}] segments; diarizingId is the entry a
+  // diarization run is currently in flight for (spinner + one-at-a-time guard).
+  const [diarizationCache, setDiarizationCache] = useState({});
+  const [diarizingId, setDiarizingId] = useState(null);
+  // Default speaker count for diarization: 0 (or any value <= 0) means
+  // auto-detect (threshold clustering); a positive integer forces that many
+  // speakers. Persisted; the per-entry kebab can override it for one entry.
+  const [diarizationNumSpeakers, setDiarizationNumSpeakers] = useState(0);
+  // Per-entry speaker-count override (id -> count) set from the entry's kebab;
+  // re-segments that entry on change. Falls back to diarizationNumSpeakers.
+  const [diarizationNumByEntry, setDiarizationNumByEntry] = useState({});
+  // User-renamed speaker labels, per entry: id -> { speakerIndex -> name }.
+  // Renaming updates every turn for that speaker (and the copied text). In
+  // memory only, like diarizationCache. `editingSpeaker` is the `${id}:${turnIndex}`
+  // of the label currently shown as an input, or null.
+  const [speakerNames, setSpeakerNames] = useState({});
+  const [editingSpeaker, setEditingSpeaker] = useState(null);
+  // F-130: diarization persists ONLY the grouped turns (speaker index + turn
+  // text), never per-word timings or raw float segments. After a reload an
+  // entry's pcm/words are gone, so its restored turns live here (id -> [{speaker,
+  // text}]) and back the diarized view + copy when no live segments exist.
+  const [persistedTurns, setPersistedTurns] = useState({});
+  // Cross-recording speaker matching (session-only). One CAM++ voice embedding
+  // per (entry, speaker), kept in memory ONLY (voiceprints are biometric, never
+  // persisted): id -> { speakerIndex -> Float32Array }. When a new recording is
+  // diarized, its speakers are matched against the names the user gave speakers
+  // in OTHER recordings, so the same voice auto-reuses the same label.
+  const [speakerEmbeddings, setSpeakerEmbeddings] = useState({});
+  // Refs mirror the latest embeddings/names so a diarization run that started
+  // earlier still matches against entries diarized/renamed since (avoids stale
+  // closures in the async diarizeEntry).
+  const speakerEmbeddingsRef = useRef({});
+  const speakerNamesRef = useRef({});
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -1114,6 +1186,7 @@ export default function App() {
           savedEnableChunking,
           savedChunkDuration,
           savedTranscriptDisplayMode,
+          savedDiarizationNumSpeakers,
           savedLiveTranscriptionEnabled,
           savedLiveContextWindow,
           savedBoostPhrases,
@@ -1150,6 +1223,7 @@ export default function App() {
           // DEFAULT_CHUNK_DURATION_SEC initial value.
           loadSetting('chunkDuration', null),
           loadSetting('transcriptDisplayMode', 'raw'),
+          loadSetting('diarizationNumSpeakers', 0),
           loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
@@ -1207,6 +1281,7 @@ export default function App() {
         if (savedChunkDuration != null) setChunkDuration(savedChunkDuration);
         // 'confidence' was a removed display mode; map any persisted value to 'raw'.
         setTranscriptDisplayMode(savedTranscriptDisplayMode === 'confidence' ? 'raw' : savedTranscriptDisplayMode);
+        setDiarizationNumSpeakers(Number.isInteger(savedDiarizationNumSpeakers) && savedDiarizationNumSpeakers > 0 ? savedDiarizationNumSpeakers : 0);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
         // Whether the user has an explicit saved boost choice. When they don't
@@ -1253,7 +1328,30 @@ export default function App() {
         // gates the persist effect until this lands, so the setSettingsLoaded
         // above cannot write the empty in-memory array over the on-disk history.
         const savedTranscriptions = await loadPersistedTranscripts();
-        setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
+        // Split the opt-in diarization payload back out of each record into its
+        // own state maps: the transcripts array stays the slim text shape the
+        // rest of the UI expects, while restored turns/names drive the diarized
+        // view. Entries that had turns reopen in the Speakers view.
+        const restoredTurns = {};
+        const restoredNames = {};
+        const restoredModes = {};
+        const cleaned = [];
+        for (const tr of savedTranscriptions) {
+          if (!tr.text || tr.text.trim() === '') continue;
+          const { diarTurns, speakerNames: names, ...rest } = tr;
+          if (Array.isArray(diarTurns) && diarTurns.length > 0) {
+            restoredTurns[rest.id] = diarTurns;
+            restoredModes[rest.id] = 'diarized';
+          }
+          if (names && typeof names === 'object' && Object.keys(names).length > 0) {
+            restoredNames[rest.id] = names;
+          }
+          cleaned.push(rest);
+        }
+        setTranscriptions(cleaned);
+        if (Object.keys(restoredTurns).length > 0) setPersistedTurns(restoredTurns);
+        if (Object.keys(restoredNames).length > 0) setSpeakerNames(prev => ({ ...prev, ...restoredNames }));
+        if (Object.keys(restoredModes).length > 0) setEntryDisplayModes(prev => ({ ...prev, ...restoredModes }));
         transcriptsRestoredRef.current = true;
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -1616,6 +1714,7 @@ export default function App() {
   // persisted like any other setting once the user changes it.
   usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
+  usePersistedSetting('diarizationNumSpeakers', diarizationNumSpeakers, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
@@ -1638,13 +1737,20 @@ export default function App() {
     }
     const prev = prevTranscriptsLenRef.current;
     prevTranscriptsLenRef.current = transcriptions.length;
+    // Attach each entry's diarized turns + speaker names (when any) so they
+    // persist alongside the text. Diarizing or renaming a speaker mutates
+    // diarizationCache/speakerNames/persistedTurns (in the deps below), so this
+    // effect re-fires and re-saves without the transcriptions array changing.
+    const records = transcriptions.map(enrichTranscriptForPersist);
     if (transcriptions.length < prev) {
-      wipeAndRewriteTranscripts(transcriptions);
+      wipeAndRewriteTranscripts(records);
     } else {
-      saveTranscripts(transcriptions);
+      saveTranscripts(records);
     }
-  }, [transcriptions, settingsLoaded, persistTranscripts]);
+  }, [transcriptions, settingsLoaded, persistTranscripts, diarizationCache, speakerNames, persistedTurns]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
+  useEffect(() => { speakerEmbeddingsRef.current = speakerEmbeddings; }, [speakerEmbeddings]);
+  useEffect(() => { speakerNamesRef.current = speakerNames; }, [speakerNames]);
   useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
 
   // Keep a ref of the user's custom boost text so async callbacks (switching
@@ -2101,6 +2207,10 @@ export default function App() {
         // wrong (downgraded) weights only to throw them away.
         downloadOpts.localUpgradeBaseUrl = '/models';
       }
+      // Shield any cached diarization models from the generational orphan sweep
+      // (they live in a different repo, so the sweep would otherwise delete them
+      // on every model load and force a re-download).
+      downloadOpts.protectCacheKeys = diarizationModelProtectKeys();
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
       // Show compiling sessions stage
@@ -3832,6 +3942,82 @@ export default function App() {
     }
   }
 
+  // --- Speaker diarization ---
+  // Offline diarization needs the whole clip's PCM, which lives only on
+  // in-memory entries (trans.pcm), so this is gated the same way as
+  // "Transcribe again": unavailable on entries restored after a reload.
+  async function diarizeEntry(trans, numSpeakersOverride) {
+    if (!trans?.pcm || !trans.words?.length || diarizingId) return;
+    // Per-entry kebab override wins; else the sidebar default. <= 0 means auto.
+    const requested = Number.isInteger(numSpeakersOverride)
+      ? numSpeakersOverride
+      : (diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers);
+    setDiarizingId(trans.id);
+    try {
+      const models = await getDiarizationModels({
+        localBaseUrl: '/models',
+        localOnly: forceLocalFallback,
+      });
+      const segments = await runDiarization(trans.pcm, {
+        segmentationBytes: models.segmentationBytes,
+        embeddingBytes: models.embeddingBytes,
+        // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
+        numSpeakers: requested > 0 ? requested : -1,
+      });
+      setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
+      setEntryMode(trans.id, 'diarized');
+
+      // Cross-recording speaker matching (session-only): embed each speaker's
+      // voice, then auto-label any that match a name the user gave in another
+      // recording. The diarized view already showed above, so an embedding
+      // failure (or no prior names) is non-fatal: it just means no auto-naming.
+      try {
+        const embs = await embedSpeakers(trans.pcm, segments, models.embeddingBytes);
+        if (Object.keys(embs).length > 0) {
+          // Read the freshest embeddings/names via refs (other entries may have
+          // diarized or been renamed since this run started).
+          const allEmbeddings = { ...speakerEmbeddingsRef.current, [trans.id]: embs };
+          setSpeakerEmbeddings(allEmbeddings);
+          const auto = autoNameSpeakers(trans.id, allEmbeddings, speakerNamesRef.current, DEFAULT_MATCH_THRESHOLD);
+          if (Object.keys(auto).length > 0) {
+            // Existing names on this entry win; only fill unnamed speakers.
+            setSpeakerNames(prev => ({ ...prev, [trans.id]: { ...auto, ...(prev[trans.id] || {}) } }));
+          }
+        }
+      } catch (e) {
+        console.warn('[Diarize] speaker embedding/matching failed (non-fatal):', e);
+      }
+    } catch (e) {
+      console.error('[Diarize] failed:', e);
+      alert(`${t('diarizeError')}: ${transcribeErrorMessage(e)}`);
+    } finally {
+      setDiarizingId(null);
+    }
+  }
+
+  // Auto-diarize: when an entry's effective display mode is 'diarized' (the
+  // sidebar default or a per-entry override) but it has no cached segments yet,
+  // run one in the background. One at a time (diarizingId guards); the effect
+  // re-fires for the next entry once this one resolves.
+  useEffect(() => {
+    if (diarizingId) return;
+    const next = transcriptions.find(
+      tr => tr.pcm && tr.words?.length && getEntryMode(tr.id) === 'diarized' && !diarizationCache[tr.id],
+    );
+    if (next) diarizeEntry(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcriptions, entryDisplayModes, transcriptDisplayMode, diarizationCache, diarizingId]);
+
+  // Background prefetch: when diarization is the default mode (the user has
+  // opted in to it for every transcription), warm the ~34 MB of models into the
+  // hub cache so the first run is instant. When the default is off, models
+  // download lazily on the first Speakers click instead.
+  useEffect(() => {
+    if (transcriptDisplayMode !== 'diarized') return;
+    getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback })
+      .catch(e => console.warn('[Diarize] background model prefetch failed (non-fatal):', e));
+  }, [transcriptDisplayMode]);
+
   // Revoke any outstanding inline-player URLs when the app unmounts.
   useEffect(() => () => {
     for (const url of entryAudioUrlsRef.current.values()) {
@@ -4019,11 +4205,115 @@ export default function App() {
 
   // Get the display text for a transcription based on its per-entry display mode
   function getDisplayText(trans) {
-    if (getEntryMode(trans.id) === 'dictation' && dictationRegexRules.length > 0) {
+    const mode = getEntryMode(trans.id);
+    if (mode === 'diarized' && hasDiarization(trans)) {
+      // Diarized mode copies/exports as "Speaker: text" blocks (renamed labels
+      // included), which is what makes the speaker view useful to paste.
+      return diarizedPlainText(trans);
+    }
+    if (mode === 'dictation' && dictationRegexRules.length > 0) {
       // Return cached result, or compute synchronously without setting state
       return dictationCache[trans.id] || applyDictationRegex(trans.text);
     }
     return trans.text;
+  }
+
+  // The (possibly user-renamed) label for a speaker in an entry.
+  function speakerDisplayName(entryId, speaker) {
+    return speakerNames[entryId]?.[speaker] || `${t('speaker')} ${speaker + 1}`;
+  }
+  // Rename a speaker for one entry; applies to every turn for that speaker.
+  function setSpeakerName(entryId, speaker, name) {
+    setSpeakerNames(prev => ({
+      ...prev,
+      [entryId]: { ...(prev[entryId] || {}), [speaker]: name },
+    }));
+  }
+
+  // Speaker turns for an entry (or null when not diarized yet). Live entries
+  // group their in-memory words against the cached segments; a reloaded entry
+  // has no words/segments in memory (F-130) so it falls back to the grouped
+  // turns restored from disk.
+  function getDiarizedTurns(trans) {
+    const segments = diarizationCache[trans.id];
+    if (segments && trans.words?.length) {
+      return groupWordsIntoTurns(assignSpeakersToWords(trans.words, segments));
+    }
+    return persistedTurns[trans.id] ?? null;
+  }
+
+  // True when an entry has a diarized view to show (live segments or restored
+  // turns). Gates the Speakers button + diarized render on reloaded entries.
+  function hasDiarization(trans) {
+    return !!(diarizationCache[trans.id] || persistedTurns[trans.id]);
+  }
+
+  // Attach the opt-in diarization payload (grouped turns + speaker names) to a
+  // transcript before it is persisted, so the diarized view + names come back
+  // after reload. Returns the transcript unchanged when it has neither, so the
+  // common (un-diarized) entry is not cloned. Reads the SAME grouped turns the
+  // UI shows (live or restored), so deleting an entry re-persists the others'
+  // diarization intact.
+  function enrichTranscriptForPersist(trans) {
+    const turns = getDiarizedTurns(trans);
+    const names = speakerNames[trans.id];
+    const hasTurns = Array.isArray(turns) && turns.length > 0;
+    const hasNames = names && Object.keys(names).length > 0;
+    if (!hasTurns && !hasNames) return trans;
+    const out = { ...trans };
+    if (hasTurns) out.diarTurns = turns.map(tn => ({ speaker: tn.speaker, text: tn.text }));
+    if (hasNames) out.speakerNames = names;
+    return out;
+  }
+
+  // Diarized transcript as plain "Name: text" blocks, for copy/export.
+  function diarizedPlainText(trans) {
+    const turns = getDiarizedTurns(trans);
+    if (!turns || turns.length === 0) return trans.text;
+    return turnsToLabeledText(turns, (spk) => speakerDisplayName(trans.id, spk));
+  }
+
+  // Render an entry's transcript as speaker turns (turns + colour). Maps each
+  // word to its diarization speaker, groups consecutive same-speaker words, and
+  // labels/colours each turn. Colours cycle through the .diar-speaker-N palette.
+  // The speaker label is a button that becomes a text input on click so the user
+  // can rename the speaker (the rename applies to every turn for that speaker).
+  function renderDiarizedTranscript(trans) {
+    const turns = getDiarizedTurns(trans);
+    if (!turns || turns.length === 0) {
+      return <span style={{ whiteSpace: 'pre-wrap' }}>{trans.text}</span>;
+    }
+    return (
+      <div className="diar-turns">
+        {turns.map((turn, i) => {
+          const editKey = `${trans.id}:${i}`;
+          return (
+            <div key={i} className={`diar-turn diar-speaker-${turn.speaker % DIAR_PALETTE_SIZE}`}>
+              {editingSpeaker === editKey ? (
+                <input
+                  className="diar-speaker-input"
+                  autoFocus
+                  value={speakerNames[trans.id]?.[turn.speaker] ?? `${t('speaker')} ${turn.speaker + 1}`}
+                  onChange={e => setSpeakerName(trans.id, turn.speaker, e.target.value)}
+                  onBlur={() => setEditingSpeaker(null)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); setEditingSpeaker(null); } }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="diar-speaker-label"
+                  title={t('renameSpeakerHint')}
+                  onClick={() => setEditingSpeaker(editKey)}
+                >
+                  {speakerDisplayName(trans.id, turn.speaker)}
+                </button>
+              )}
+              <span className="diar-turn-text">{turn.text}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   // Close kebab menu when clicking outside
@@ -4198,6 +4488,12 @@ export default function App() {
             <strong>{t('privacy')}:</strong> {t('privacyText')}{' '}
             <a href="https://umami.is" target="_blank" rel="noopener noreferrer">umami.is</a>{' '}
             {t('privacyText2')}
+          </p>
+          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
+            <strong>{t('diarizationCredit')}:</strong>{' '}
+            <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noopener noreferrer">sherpa-onnx</a> (Apache-2.0),{' '}
+            <a href="https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0" target="_blank" rel="noopener noreferrer">pyannote</a> (MIT),{' '}
+            <a href="https://huggingface.co/csukuangfj/speaker-embedding-models" target="_blank" rel="noopener noreferrer">3D-Speaker CAM++</a> (Apache-2.0).
           </p>
         </Modal>
       )}
@@ -4415,6 +4711,24 @@ export default function App() {
               >
                 <option value="raw">{t('raw')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
+                <option value="diarized">{t('speakers')}</option>
+              </select>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('numSpeakers')}:
+                <InfoTooltip text={t('tooltipNumSpeakers')} />
+              </span>
+              <select
+                value={diarizationNumSpeakers}
+                onChange={e => setDiarizationNumSpeakers(parseInt(e.target.value, 10) || 0)}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="0">{t('auto')}</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
               </select>
             </div>
           </CollapsibleSection>
@@ -5279,6 +5593,24 @@ export default function App() {
                           {t('dictationExp')}
                         </button>
                       )}
+                      {/* Speakers (diarization): needs word timestamps to run,
+                          but a reloaded entry keeps its restored turns, so the
+                          button also shows there to reopen the cached view. It
+                          is disabled only while diarizing or when there is
+                          nothing to show and no PCM to compute from. */}
+                      {(trans.words?.length > 0 || hasDiarization(trans)) && (
+                        <button
+                          onClick={() => hasDiarization(trans)
+                            ? setEntryMode(trans.id, 'diarized')
+                            : diarizeEntry(trans)}
+                          disabled={diarizingId === trans.id || (!trans.pcm && !hasDiarization(trans))}
+                          className={`display-mode-button${entryMode === 'diarized' ? ' active' : ''}`}
+                          title={t('speakersHint')}
+                        >
+                          {diarizingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
+                          {t('speakers')}
+                        </button>
+                      )}
                     </div>
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">
@@ -5317,6 +5649,39 @@ export default function App() {
                               {reTranscribingId === trans.id ? t('transcribingAgain') : t('transcribeAgain')}
                             </button>
                           )}
+                          {/* Speaker count for THIS entry: changing it
+                              re-segments. Needs the in-memory PCM, so it is
+                              absent on entries restored after a reload. The
+                              wrapper stops the click from bubbling to the
+                              global handler that closes the kebab, so the
+                              native select stays open long enough to pick. */}
+                          {trans.pcm && trans.words?.length > 0 && (
+                            <div className="kebab-speakers" onClick={e => e.stopPropagation()}>
+                              <span>{t('numSpeakers')}:</span>
+                              <select
+                                value={diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers}
+                                disabled={!!diarizingId}
+                                onChange={e => {
+                                  const n = parseInt(e.target.value, 10) || 0;
+                                  setDiarizationNumByEntry(prev => ({ ...prev, [trans.id]: n }));
+                                  // Re-segmenting redefines the speakers, so drop
+                                  // this entry's custom names (their indices no
+                                  // longer mean the same person).
+                                  setSpeakerNames(prev => {
+                                    if (!prev[trans.id]) return prev;
+                                    const next = { ...prev }; delete next[trans.id]; return next;
+                                  });
+                                  diarizeEntry(trans, n);
+                                  setOpenKebabId(null);
+                                }}
+                              >
+                                <option value="0">{t('auto')}</option>
+                                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                                  <option key={n} value={n}>{n}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                           <button className="kebab-delete" onClick={() => deleteTranscription(trans.id)}>
                             {t('delete')}
                           </button>
@@ -5336,8 +5701,10 @@ export default function App() {
 
                   <div className="history-text-container">
                     <div className="history-text">
-                      {/* Show raw or dictation-cleaned text */}
-                      <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>
+                      {entryMode === 'diarized' && hasDiarization(trans)
+                        ? renderDiarizedTranscript(trans)
+                        /* Raw or dictation-cleaned text */
+                        : <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>}
                     </div>
                   </div>
                 </div>

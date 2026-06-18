@@ -798,6 +798,24 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   color: var(--danger);
 }
 
+/* Per-entry speaker-count control inside the kebab dropdown. */
+.kebab-speakers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+.kebab-speakers select {
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+}
+
 /* ─── Help tooltip ───────────────────────────────────────────────────────── */
 .info-help {
   position: relative;
@@ -1268,3 +1286,58 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   .spinner { animation-duration: 1.6s; }
   .live-dots > span { animation: none; opacity: 0.7; }
 }
+
+/* --- Speaker diarization (Speakers view): turns + colour ----------------- */
+.diar-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.diar-turn {
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--diar-color, var(--accent));
+  border-radius: var(--radius-sm);
+  background: var(--diar-bg, var(--bg-subtle));
+}
+.diar-speaker-label {
+  display: inline-block;
+  margin-right: 0.5rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--diar-color, var(--accent));
+  /* It is a <button> so it can be clicked to rename, but should read as the
+     plain coloured label until hovered. */
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: text;
+  font-family: inherit;
+}
+.diar-speaker-label:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.diar-speaker-input {
+  margin-right: 0.5rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--diar-color, var(--accent));
+  background: var(--bg-card);
+  border: 1px solid var(--diar-color, var(--accent));
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  width: 9rem;
+  max-width: 60%;
+}
+.diar-turn-text { white-space: pre-wrap; }
+
+/* 8-colour palette. Hue per speaker; translucent tint reads on both the light
+   and dark card backgrounds, with a solid border/label colour for contrast. */
+.diar-speaker-0 { --diar-color: hsl(348 78% 52%); --diar-bg: hsl(348 78% 52% / 0.10); }
+.diar-speaker-1 { --diar-color: hsl(210 78% 52%); --diar-bg: hsl(210 78% 52% / 0.10); }
+.diar-speaker-2 { --diar-color: hsl(150 60% 40%); --diar-bg: hsl(150 60% 40% / 0.12); }
+.diar-speaker-3 { --diar-color: hsl(38 92% 48%);  --diar-bg: hsl(38 92% 48% / 0.12); }
+.diar-speaker-4 { --diar-color: hsl(270 65% 60%); --diar-bg: hsl(270 65% 60% / 0.12); }
+.diar-speaker-5 { --diar-color: hsl(190 70% 42%); --diar-bg: hsl(190 70% 42% / 0.12); }
+.diar-speaker-6 { --diar-color: hsl(320 60% 55%); --diar-bg: hsl(320 60% 55% / 0.12); }
+.diar-speaker-7 { --diar-color: hsl(95 50% 42%);  --diar-bg: hsl(95 50% 42% / 0.14); }
