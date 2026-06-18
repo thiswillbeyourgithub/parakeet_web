@@ -123,9 +123,11 @@ name), with a tqdm progress bar per language on stderr. References/hypotheses ar
 normalised (case + punctuation folded, accents kept) so a cased/punctuated model
 output is scored fairly against the lowercase labels (--no-normalize for raw WER).
 This is the per-language ground-truth accuracy the oracle mode cannot give. A
-machine-readable __WER_JSON__ line per language (tagged with --run-label) is printed
-so a wrapper can sweep several MODELS and aggregate a model x language matrix (the
-gitignored wer-fleurs-validation.sh driver does exactly this).
+machine-readable __WER_JSON__ line is printed AND FLUSHED the moment EACH language
+finishes (one per language per encoder quant, tagged with --run-label), so a wrapper
+can persist per-language results AS PRODUCED and aggregate a model x language matrix
+(the gitignored wer-fleurs-validation.sh driver does exactly this); an interrupted
+sweep keeps every language already scored.
 
 Or with an environment that already has the deps: python scripts/wer-quants.py
 (needs onnx-asr, librosa, jiwer; for --cuda, onnxruntime-gpu instead of the CPU
@@ -173,6 +175,12 @@ CPU_PROVIDERS = ["CPUExecutionProvider"]
 # quant that cannot even load must crash the whole bench rather than become a
 # silent FAILED table row while the run still exits 0. Inference failures stay soft.
 LOAD_ERROR_SENTINEL = "__LOAD_ERROR__"
+
+# A --_child manifest pass STREAMS one of these per language (the json-encoded
+# {label, items, missing}), flushed the moment that language finishes, so the parent
+# can score and emit it as produced instead of after the whole model run. The final
+# timing/memory record still rides the __RESULT__ sentinel.
+MANIFEST_SENTINEL = "__MANIFEST__"
 
 
 class ModelLoadError(RuntimeError):
@@ -421,12 +429,16 @@ def manifest_label_for(mf, args):
 
 def child_manifest(args):
     """Transcribe every clip of EVERY --manifest with the model loaded ONCE, and
-    emit the per-clip references + hypotheses (per manifest) for the parent to score.
-    Loading once and looping all manifests is the whole point: a multi-language sweep
-    pays a single model load, not one per language. Each clip is an independent single
-    pass (FLEURS validation clips are short, far under the encoder's ~400 s
+    STREAM each language's per-clip references + hypotheses to the parent the instant
+    that language finishes (one __MANIFEST__ line per language, flushed), followed by
+    a final __RESULT__ timing/memory summary. Streaming per language (vs one big
+    result at the end) is what lets the parent score and persist each language as it
+    is produced, so an interrupted sweep keeps every language already done. Loading
+    once and looping all manifests is still the point: a multi-language sweep pays a
+    single model load, not one per language. Each clip is an independent single pass
+    (FLEURS validation clips are short, far under the encoder's ~400 s
     positional-encoding wall). A tqdm bar per language reports progress on STDERR (the
-    JSON result goes to STDOUT), so the parent can stream it live to the terminal."""
+    JSON rides STDOUT), so the parent can stream it live to the terminal."""
     try:
         from tqdm import tqdm  # optional: progress only, never required to score
     except Exception:
@@ -441,7 +453,6 @@ def child_manifest(args):
     model = load_or_die(args)
     t1 = time.perf_counter()
 
-    manifests = []
     for n, mf in enumerate(args.manifest, 1):
         label = manifest_label_for(mf, args)
         items, missing = load_manifest(mf, audio_dir, args.limit)
@@ -454,11 +465,13 @@ def child_manifest(args):
             wav, _ = load_audio(it["audio_path"], args.max_pass_sec)
             out.append({"id": it["id"], "ref": it["text"],
                         "hyp": model.recognize(wav), "duration": it["duration"]})
-        manifests.append({"label": label, "items": out, "missing": missing})
+        # Flush this language the moment it is done so the parent scores + emits it
+        # immediately, rather than buffering every language until the run ends.
+        print(MANIFEST_SENTINEL + json.dumps({"label": label, "items": out, "missing": missing}),
+              flush=True)
     t2 = time.perf_counter()
 
     emit({
-        "manifests": manifests,
         "load_s": t1 - t0,
         "infer_s": t2 - t1,
         "peak_mb": peak_rss_mb(),
@@ -494,10 +507,10 @@ def spawn(args, audio, mode, quant, decoder_quant):
 def _parse_child_output(out):
     """Extract the __RESULT__ JSON from a finished child process, turning a
     __LOAD_ERROR__ line into a fatal ModelLoadError and a missing result into a
-    RuntimeError carrying whatever output we have. Shared by spawn (full/oracle) and
-    spawn_manifest so the result/error protocol lives in one place. out.stderr may be
-    None when the caller let the child's stderr stream to the terminal (manifest mode,
-    for live progress bars), so the error tail falls back to stdout."""
+    RuntimeError carrying whatever output we have. Used by spawn (full/oracle), which
+    blocking-captures the whole child; the manifest path uses stream_manifest instead
+    (it consumes the child's stdout live). out.stderr may be None when the caller let
+    the child's stderr stream to the terminal, so the error tail falls back to stdout."""
     for line in out.stdout.splitlines():
         if line.startswith(LOAD_ERROR_SENTINEL):  # the model failed to LOAD -> fatal
             raise ModelLoadError(json.loads(line[len(LOAD_ERROR_SENTINEL):]))
@@ -506,14 +519,34 @@ def _parse_child_output(out):
     raise RuntimeError(((out.stderr or out.stdout) or "").strip()[-500:] or "no result from child")
 
 
-def spawn_manifest(args, quant):
-    """Run this script as a --_child manifest pass: transcribe every clip of every
-    --manifest with the model (encoder=quant, decoder=--decoder-quant) loaded ONCE,
-    and return the per-manifest {label, items, missing} list. Mirrors spawn's
-    process-isolation + result protocol. Unlike spawn it does NOT capture the child's
-    stderr: it lets it inherit the terminal so the per-language tqdm progress bars
-    stream live (the __RESULT__/__LOAD_ERROR__ protocol rides stdout, which we do
-    capture). The child still reports a load failure on stdout, so it stays fatal."""
+def _consume_manifest_stream(lines, on_manifest):
+    """Dispatch a manifest child's stdout LINES (any iterable of strings) AS THEY
+    ARRIVE: call on_manifest(dict) for every __MANIFEST__ line the instant it is read,
+    raise a fatal ModelLoadError on __LOAD_ERROR__, and return the final __RESULT__
+    timing/memory summary (None if the child died before emitting it). Pure (no
+    subprocess), so the streaming dispatch is unit-testable without a model; the I/O
+    of actually reading the live child lives in stream_manifest."""
+    summary = None
+    for line in lines:
+        line = line.rstrip("\n")
+        if line.startswith(LOAD_ERROR_SENTINEL):  # the model failed to LOAD -> fatal
+            raise ModelLoadError(json.loads(line[len(LOAD_ERROR_SENTINEL):]))
+        if line.startswith(MANIFEST_SENTINEL):
+            on_manifest(json.loads(line[len(MANIFEST_SENTINEL):]))
+        elif line.startswith("__RESULT__"):
+            summary = json.loads(line[len("__RESULT__"):])
+    return summary
+
+
+def stream_manifest(args, quant, on_manifest):
+    """Run this script as a --_child manifest pass (encoder=quant, decoder=
+    --decoder-quant, model loaded ONCE) and invoke on_manifest({label, items,
+    missing}) for EACH language the moment the child finishes it, returning the final
+    timing/memory summary. Reading the child's stdout line by line (vs spawn's
+    blocking capture) is what lets analyze_manifest score and emit each language as
+    produced. Like spawn it does NOT capture the child's stderr: it inherits the
+    terminal so the per-language tqdm bars stream live; a model LOAD failure on stdout
+    stays fatal (ModelLoadError)."""
     cmd = [sys.executable, __file__, "--_child", "manifest", "--quant", quant,
            "--decoder-quant", args.decoder_quant,
            "--model", args.model, "--model-dir", args.model_dir,
@@ -530,9 +563,18 @@ def spawn_manifest(args, quant):
         cmd += ["--cuda", "--_rt-ready"]
     print(f"  [manifest/{quant}] loading model once for {len(args.manifest)} language(s)...",
           file=sys.stderr, flush=True)
-    # stderr=None -> inherit the terminal so tqdm shows live; stdout=PIPE for the result.
-    return _parse_child_output(
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=None, text=True))
+    # stderr=None -> inherit the terminal so tqdm shows live; stdout=PIPE consumed via
+    # readline (NOT `for line in proc.stdout`, whose read-ahead buffering would defeat
+    # the per-language streaming) so each __MANIFEST__ is handled as the child flushes it.
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=None, text=True)
+    try:
+        summary = _consume_manifest_stream(iter(proc.stdout.readline, ""), on_manifest)
+    finally:
+        proc.stdout.close()
+        rc = proc.wait()
+    if summary is None:
+        raise RuntimeError(f"manifest child produced no result (exit {rc})")
+    return summary
 
 
 # --- parent helpers ---------------------------------------------------------
@@ -862,53 +904,72 @@ def print_cross_file_summary(summaries, quants):
           "per-file per-section breakdown is in that file's table above.")
 
 
-def score_manifest_result(res, normalize):
-    """Turn one spawn_manifest result (its per-manifest items) into a per-language
-    map {lang: {wer, clips, scored, dropped, missing, ref_words}} via corpus_wer."""
-    langs = {}
-    for m in res["manifests"]:
-        refs = [i["ref"] for i in m["items"]]
-        hyps = [i["hyp"] for i in m["items"]]
-        wer_val, scored, dropped = corpus_wer(refs, hyps, normalize)
-        ref_words = sum(len(normalize_for_wer(r, normalize).split()) for r in refs)
-        langs[m["label"]] = {
-            "wer": wer_val, "clips": len(m["items"]), "scored": scored,
-            "dropped": dropped, "missing": m["missing"], "ref_words": ref_words,
-        }
-    return langs
+def score_one_manifest(m, normalize):
+    """Turn ONE streamed manifest (one language's {label, items, missing}) into its
+    rowdict {wer, clips, scored, dropped, missing, ref_words} via corpus_wer. Called
+    per language as analyze_manifest receives each __MANIFEST__, so every language is
+    scored (and emitted) the moment its transcription finishes."""
+    refs = [i["ref"] for i in m["items"]]
+    hyps = [i["hyp"] for i in m["items"]]
+    wer_val, scored, dropped = corpus_wer(refs, hyps, normalize)
+    ref_words = sum(len(normalize_for_wer(r, normalize).split()) for r in refs)
+    return {
+        "wer": wer_val, "clips": len(m["items"]), "scored": scored,
+        "dropped": dropped, "missing": m["missing"], "ref_words": ref_words,
+    }
 
 
 def analyze_manifest(args, quants):
     """FLEURS manifest mode: corpus WER of a whole validation split against the human
     labels, for EVERY --manifest (language), for each requested encoder quant, with
-    the model loaded ONCE per quant (all languages share that single load). Prints a
-    per-language table (rows = language, columns = quant) plus, for each language, a
-    machine-readable __WER_JSON__ line tagged with --run-label, so a shell driver can
-    sweep several MODELS and aggregate a model x language matrix. No oracle / no
-    per-section table: reference = FLEURS label, hypothesis = single-pass transcript,
-    scored as one corpus WER (total edits / total ref words)."""
+    the model loaded ONCE per quant (all languages share that single load). As each
+    language streams back from the child it is scored and its machine-readable
+    __WER_JSON__ line is printed AND FLUSHED immediately (one line per language per
+    quant, tagged with --run-label), so a shell driver persists per-language results
+    AS PRODUCED instead of only at the end of the run; an interrupted sweep keeps
+    every language already scored. The per-language table (rows = language, columns =
+    quant) plus a MICRO average is printed at the end, since it needs every language.
+    No oracle / no per-section table: reference = FLEURS label, hypothesis =
+    single-pass transcript, scored as one corpus WER (total edits / total ref words)."""
     print(f"\n== FLEURS manifest WER"
           + (f" [{args.run_label}]" if args.run_label else "") + " ==")
     print(f"languages: {len(args.manifest)}   "
           f"normalisation: {'case+punctuation folded, accents kept' if args.normalize else 'raw (whitespace only)'}")
 
-    # quant -> {lang -> rowdict}; lang order taken from the manifests as scored.
-    scored = {}
-    lang_order = []
+    # quant -> {lang -> rowdict}, filled incrementally as each language streams in.
+    scored = {q: {} for q in quants}
+    lang_order = []           # first-seen order, shared across quants (manifests stream in order)
+    seen = set()
     timing = {}
+
     for q in quants:
+        def on_manifest(m, q=q):
+            label = m["label"]
+            row = score_one_manifest(m, args.normalize)
+            scored[q][label] = row
+            if label not in seen:
+                seen.add(label)
+                lang_order.append(label)
+            # Emit + FLUSH the line for THIS language+quant now, so a driver can append
+            # it the instant it is produced rather than after the whole run.
+            emit_obj = {"lang": label, "normalize": bool(args.normalize),
+                        "quants": {q: row}}
+            if args.run_label:
+                emit_obj["model"] = args.run_label
+            print("__WER_JSON__" + json.dumps(emit_obj), flush=True)
+
         try:
-            res = spawn_manifest(args, q)
+            summary = stream_manifest(args, q, on_manifest)
         except ModelLoadError:
             raise  # an unloadable encoder is fatal (see load_or_die), as in audio mode
         except Exception as e:  # an inference failure stays soft: report and move on
-            print(f"{q:<6}  FAILED: {e}")
-            scored[q] = None
+            print(f"{q:<6}  FAILED: {e}")  # languages streamed before it are already emitted
             continue
-        scored[q] = score_manifest_result(res, args.normalize)
-        timing[q] = (res["load_s"], res["infer_s"])
-        if not lang_order:
-            lang_order = [m["label"] for m in res["manifests"]]
+        timing[q] = (summary["load_s"], summary["infer_s"])
+
+    if not lang_order:
+        print("\n(no language produced a result; see the FAILED line(s) above)")
+        return
 
     # ---- per-language table (rows = language, one WER column per quant) ----
     name_w = max([len("language")] + [len(l) for l in lang_order])
@@ -917,37 +978,27 @@ def analyze_manifest(args, quants):
     print(header)
     print("-" * len(header))
     for lang in lang_order:
-        first = next((scored[q][lang] for q in quants if scored.get(q)), {})
+        first = next((scored[q][lang] for q in quants if scored[q].get(lang)), {})
         clips, words = first.get("clips", "?"), first.get("ref_words", "?")
         cells = "   ".join(
-            f"{fmt_pct((scored[q] or {}).get(lang, {}).get('wer')):>7}" for q in quants)
+            f"{fmt_pct(scored[q].get(lang, {}).get('wer')):>7}" for q in quants)
         print(f"{lang:<{name_w}}  {clips:>6}  {words:>7}   {cells}")
     print("-" * len(header))
     # MICRO (corpus) average per quant: total edits / total ref words across languages.
     micro = []
     for q in quants:
-        if not scored.get(q):
-            micro.append(None); continue
-        num = sum((r["wer"] or 0) * r["ref_words"] for r in scored[q].values() if r["wer"] is not None)
-        den = sum(r["ref_words"] for r in scored[q].values() if r["wer"] is not None)
+        rows = scored[q]
+        num = sum((r["wer"] or 0) * r["ref_words"] for r in rows.values() if r["wer"] is not None)
+        den = sum(r["ref_words"] for r in rows.values() if r["wer"] is not None)
         micro.append(num / den if den else None)
     print(f"{'MICRO':<{name_w}}  {'':>6}  {'':>7}   " + "   ".join(f"{fmt_pct(m):>7}" for m in micro))
     for q in quants:
         if q in timing:
             print(f"  [{q}] model load {timing[q][0]:.1f}s, inference {timing[q][1]:.1f}s")
 
-    # ---- machine-readable per-language lines for the shell driver ----
-    for lang in lang_order:
-        emit_obj = {
-            "lang": lang,
-            "normalize": bool(args.normalize),
-            "quants": {q: ((scored[q] or {}).get(lang) if scored.get(q) else None) for q in quants},
-        }
-        if args.run_label:
-            emit_obj["model"] = args.run_label
-        print("__WER_JSON__" + json.dumps(emit_obj))
     print("\nLower WER is better. Corpus WER = total word edits / total reference words per language "
-          "(not a mean of per-clip WERs); MICRO is the same aggregate across all languages.")
+          "(not a mean of per-clip WERs); MICRO is the same aggregate across all languages. "
+          "The per-language __WER_JSON__ lines were emitted as each language finished.")
 
 
 class _Tee:

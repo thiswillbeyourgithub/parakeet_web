@@ -9,10 +9,11 @@
 the FLEURS --manifest mode: normalize_for_wer, load_manifest, corpus_wer.
 
 These are the bug-prone bits of the per-language ground-truth WER feature
-(normalisation, manifest parsing + wav-path resolution, corpus-WER aggregation);
-the model-dependent transcription (child_manifest) is exercised by a real run, not
-here. main() runs every T-test sequentially (no pytest harness, matching the model
-repo's test_quantize-int8-smoothquant.py convention).
+(normalisation, manifest parsing + wav-path resolution, corpus-WER aggregation,
+per-language scoring, and the streaming dispatch that emits each language's result AS
+PRODUCED); the model-dependent transcription (child_manifest) is exercised by a real
+run, not here. main() runs every T-test sequentially (no pytest harness, matching the
+model repo's test_quantize-int8-smoothquant.py convention).
 
   uv run scripts/test_wer-quants.py
 
@@ -146,6 +147,70 @@ def T8_corpus_wer_normalize_toggle_changes_score():
     # Raw: "Hello," vs "hello" and "world" vs "world" -> 1 sub of 2 -> 0.5.
     w_raw, _, _ = wq.corpus_wer(refs, hyps, normalize=False)
     assert abs(w_raw - 0.5) < 1e-9, w_raw
+
+
+def T9_score_one_manifest_rowdict():
+    # One streamed manifest (one language) -> its corpus-WER rowdict. Clip 1 has 1
+    # substitution of 2 ref words, clip 2 is perfect (0/3): corpus WER = 1/5 = 0.2,
+    # ref_words = 5, and missing rides through from the manifest.
+    m = {
+        "label": "fr",
+        "items": [
+            {"ref": "the cat", "hyp": "the dog"},
+            {"ref": "one two three", "hyp": "one two three"},
+        ],
+        "missing": 2,
+    }
+    row = wq.score_one_manifest(m, normalize=True)
+    assert row["clips"] == 2 and row["scored"] == 2 and row["dropped"] == 0
+    assert row["missing"] == 2
+    assert row["ref_words"] == 5, row
+    assert abs(row["wer"] - 0.2) < 1e-9, row
+
+
+def T10_consume_stream_dispatches_each_manifest_then_returns_summary():
+    # The streaming dispatch must call on_manifest for every __MANIFEST__ line and
+    # return the final __RESULT__ summary; an __WER_JSON__-style mid-stream line (the
+    # parent's own echo) and blanks must be ignored, not crash.
+    seen = []
+    lines = [
+        wq.MANIFEST_SENTINEL + json.dumps({"label": "fr", "items": [], "missing": 0}),
+        wq.MANIFEST_SENTINEL + json.dumps({"label": "en", "items": [], "missing": 1}),
+        "__RESULT__" + json.dumps({"load_s": 1.0, "infer_s": 2.0}),
+    ]
+    summary = wq._consume_manifest_stream(lines, lambda m: seen.append((m["label"], m["missing"])))
+    assert seen == [("fr", 0), ("en", 1)], seen
+    assert summary == {"load_s": 1.0, "infer_s": 2.0}, summary
+
+
+def T11_consume_stream_load_error_is_fatal():
+    # A __LOAD_ERROR__ line must raise ModelLoadError (the parent treats an unloadable
+    # encoder as fatal), carrying the child's message.
+    lines = [wq.LOAD_ERROR_SENTINEL + json.dumps("encoder-model.fp16.onnx: no such file")]
+    raised = False
+    try:
+        wq._consume_manifest_stream(lines, lambda m: (_ for _ in ()).throw(AssertionError("on_manifest must not run")))
+    except wq.ModelLoadError as e:
+        raised = True
+        assert "fp16" in str(e.args[0]), e.args
+    assert raised, "expected ModelLoadError"
+
+
+def T12_consume_stream_is_incremental_not_buffered():
+    # The whole point of the feature: a manifest is dispatched the MOMENT its line is
+    # read, before later lines exist. Drive it from a generator that records when it is
+    # advanced; the fr callback must fire BEFORE the generator produces the next line.
+    order = []
+
+    def gen():
+        yield wq.MANIFEST_SENTINEL + json.dumps({"label": "fr", "items": [], "missing": 0})
+        order.append("produced-result-line")  # only runs after fr's line was consumed
+        yield "__RESULT__" + json.dumps({"load_s": 0.0, "infer_s": 0.0})
+
+    wq._consume_manifest_stream(gen(), lambda m: order.append("scored-" + m["label"]))
+    # fr scored strictly before the generator moved on to the result line: streaming,
+    # not buffer-then-process.
+    assert order == ["scored-fr", "produced-result-line"], order
 
 
 def main():
