@@ -27,6 +27,7 @@ import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateD
 import { runDiarization } from './lib/diarizer.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText } from './lib/speakerAssign.js';
+import { createSerialQueue } from './lib/writeQueue.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -249,47 +250,75 @@ async function loadPersistedTranscripts() {
 // identifier) beyond the text content the user explicitly opted into saving.
 function slimTranscriptForPersist(t) {
   if (!t || typeof t !== 'object') return t;
-  return {
+  const slim = {
     id: t.id,
     text: t.text,
     timestamp: t.timestamp,
     wordCount: t.wordCount,
   };
+  // Opt-in diarization payload (attached by enrichTranscriptForPersist): the
+  // grouped turns (speaker index + turn text) and the user's speaker names.
+  // Still F-130-safe: no per-word timings, no raw float segments, no filename.
+  if (Array.isArray(t.diarTurns) && t.diarTurns.length > 0) {
+    slim.diarTurns = t.diarTurns.map(tn => ({ speaker: tn.speaker, text: tn.text }));
+  }
+  if (t.speakerNames && typeof t.speakerNames === 'object' && Object.keys(t.speakerNames).length > 0) {
+    slim.speakerNames = t.speakerNames;
+  }
+  return slim;
 }
 
-async function saveTranscripts(arr) {
-  try {
-    const slim = Array.isArray(arr) ? arr.map(slimTranscriptForPersist) : arr;
-    await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, slim);
-  } catch (e) {
-    console.warn('Failed to save transcripts:', e);
-  }
+// All mutations of the transcripts DB go through one serial queue so a burst of
+// writes (e.g. diarize then rename in quick succession, or a delete's
+// wipe-and-rewrite) cannot race as independent IndexedDB transactions and let an
+// earlier put resolve AFTER a later one, leaving stale data on disk. The
+// last-issued write is therefore the last-applied one. Ordering logic is the
+// pure createSerialQueue (unit-tested in test/unit/write-queue.test.mjs).
+const transcriptsWriteQueue = createSerialQueue();
+
+async function putTranscripts(arr) {
+  const slim = Array.isArray(arr) ? arr.map(slimTranscriptForPersist) : arr;
+  await idbPut(await getTranscriptsDb(), TRANSCRIPTS_STORE_NAME, TRANSCRIPTS_KEY, slim);
+}
+
+function saveTranscripts(arr) {
+  return transcriptsWriteQueue(async () => {
+    try {
+      await putTranscripts(arr);
+    } catch (e) {
+      console.warn('Failed to save transcripts:', e);
+    }
+  });
 }
 
 // F-128: wipe the transcripts DB entirely so LevelDB drops the SST/log files
 // holding the previous (longer) array, then re-persist the new shorter array
 // into a fresh DB. Called on per-entry delete so a deleted transcript leaves
 // no recoverable residue. The settings DB is untouched.
-async function wipeAndRewriteTranscripts(arr) {
-  try {
-    await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
-    if (Array.isArray(arr) && arr.length > 0) {
-      await saveTranscripts(arr);
+function wipeAndRewriteTranscripts(arr) {
+  return transcriptsWriteQueue(async () => {
+    try {
+      await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
+      if (Array.isArray(arr) && arr.length > 0) {
+        await putTranscripts(arr);
+      }
+    } catch (e) {
+      console.warn('Failed to wipe transcripts DB:', e);
     }
-  } catch (e) {
-    console.warn('Failed to wipe transcripts DB:', e);
-  }
+  });
 }
 
 // Forget the on-disk transcripts container entirely. Used when the user
 // toggles persistTranscripts OFF or hits "Clear all transcripts". Uses
 // idbDeleteDatabase to evict LevelDB residue rather than a logical delete.
-async function forgetPersistedTranscripts() {
-  try {
-    await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
-  } catch (e) {
-    console.warn('Failed to forget transcripts:', e);
-  }
+function forgetPersistedTranscripts() {
+  return transcriptsWriteQueue(async () => {
+    try {
+      await idbDeleteDatabase(TRANSCRIPTS_DB_NAME);
+    } catch (e) {
+      console.warn('Failed to forget transcripts:', e);
+    }
+  });
 }
 
 async function clearAllSettings() {
@@ -1008,6 +1037,11 @@ export default function App() {
   // of the label currently shown as an input, or null.
   const [speakerNames, setSpeakerNames] = useState({});
   const [editingSpeaker, setEditingSpeaker] = useState(null);
+  // F-130: diarization persists ONLY the grouped turns (speaker index + turn
+  // text), never per-word timings or raw float segments. After a reload an
+  // entry's pcm/words are gone, so its restored turns live here (id -> [{speaker,
+  // text}]) and back the diarized view + copy when no live segments exist.
+  const [persistedTurns, setPersistedTurns] = useState({});
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -1281,7 +1315,30 @@ export default function App() {
         // gates the persist effect until this lands, so the setSettingsLoaded
         // above cannot write the empty in-memory array over the on-disk history.
         const savedTranscriptions = await loadPersistedTranscripts();
-        setTranscriptions(savedTranscriptions.filter(t => t.text && t.text.trim() !== ''));
+        // Split the opt-in diarization payload back out of each record into its
+        // own state maps: the transcripts array stays the slim text shape the
+        // rest of the UI expects, while restored turns/names drive the diarized
+        // view. Entries that had turns reopen in the Speakers view.
+        const restoredTurns = {};
+        const restoredNames = {};
+        const restoredModes = {};
+        const cleaned = [];
+        for (const tr of savedTranscriptions) {
+          if (!tr.text || tr.text.trim() === '') continue;
+          const { diarTurns, speakerNames: names, ...rest } = tr;
+          if (Array.isArray(diarTurns) && diarTurns.length > 0) {
+            restoredTurns[rest.id] = diarTurns;
+            restoredModes[rest.id] = 'diarized';
+          }
+          if (names && typeof names === 'object' && Object.keys(names).length > 0) {
+            restoredNames[rest.id] = names;
+          }
+          cleaned.push(rest);
+        }
+        setTranscriptions(cleaned);
+        if (Object.keys(restoredTurns).length > 0) setPersistedTurns(restoredTurns);
+        if (Object.keys(restoredNames).length > 0) setSpeakerNames(prev => ({ ...prev, ...restoredNames }));
+        if (Object.keys(restoredModes).length > 0) setEntryDisplayModes(prev => ({ ...prev, ...restoredModes }));
         transcriptsRestoredRef.current = true;
       } catch (e) {
         console.error('Failed to load settings from IndexedDB:', e);
@@ -1667,12 +1724,17 @@ export default function App() {
     }
     const prev = prevTranscriptsLenRef.current;
     prevTranscriptsLenRef.current = transcriptions.length;
+    // Attach each entry's diarized turns + speaker names (when any) so they
+    // persist alongside the text. Diarizing or renaming a speaker mutates
+    // diarizationCache/speakerNames/persistedTurns (in the deps below), so this
+    // effect re-fires and re-saves without the transcriptions array changing.
+    const records = transcriptions.map(enrichTranscriptForPersist);
     if (transcriptions.length < prev) {
-      wipeAndRewriteTranscripts(transcriptions);
+      wipeAndRewriteTranscripts(records);
     } else {
-      saveTranscripts(transcriptions);
+      saveTranscripts(records);
     }
-  }, [transcriptions, settingsLoaded, persistTranscripts]);
+  }, [transcriptions, settingsLoaded, persistTranscripts, diarizationCache, speakerNames, persistedTurns]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
   useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
 
@@ -4108,7 +4170,7 @@ export default function App() {
   // Get the display text for a transcription based on its per-entry display mode
   function getDisplayText(trans) {
     const mode = getEntryMode(trans.id);
-    if (mode === 'diarized' && diarizationCache[trans.id]) {
+    if (mode === 'diarized' && hasDiarization(trans)) {
       // Diarized mode copies/exports as "Speaker: text" blocks (renamed labels
       // included), which is what makes the speaker view useful to paste.
       return diarizedPlainText(trans);
@@ -4132,11 +4194,40 @@ export default function App() {
     }));
   }
 
-  // Speaker turns for an entry (or null when not diarized yet).
+  // Speaker turns for an entry (or null when not diarized yet). Live entries
+  // group their in-memory words against the cached segments; a reloaded entry
+  // has no words/segments in memory (F-130) so it falls back to the grouped
+  // turns restored from disk.
   function getDiarizedTurns(trans) {
     const segments = diarizationCache[trans.id];
-    if (!segments) return null;
-    return groupWordsIntoTurns(assignSpeakersToWords(trans.words || [], segments));
+    if (segments && trans.words?.length) {
+      return groupWordsIntoTurns(assignSpeakersToWords(trans.words, segments));
+    }
+    return persistedTurns[trans.id] ?? null;
+  }
+
+  // True when an entry has a diarized view to show (live segments or restored
+  // turns). Gates the Speakers button + diarized render on reloaded entries.
+  function hasDiarization(trans) {
+    return !!(diarizationCache[trans.id] || persistedTurns[trans.id]);
+  }
+
+  // Attach the opt-in diarization payload (grouped turns + speaker names) to a
+  // transcript before it is persisted, so the diarized view + names come back
+  // after reload. Returns the transcript unchanged when it has neither, so the
+  // common (un-diarized) entry is not cloned. Reads the SAME grouped turns the
+  // UI shows (live or restored), so deleting an entry re-persists the others'
+  // diarization intact.
+  function enrichTranscriptForPersist(trans) {
+    const turns = getDiarizedTurns(trans);
+    const names = speakerNames[trans.id];
+    const hasTurns = Array.isArray(turns) && turns.length > 0;
+    const hasNames = names && Object.keys(names).length > 0;
+    if (!hasTurns && !hasNames) return trans;
+    const out = { ...trans };
+    if (hasTurns) out.diarTurns = turns.map(tn => ({ speaker: tn.speaker, text: tn.text }));
+    if (hasNames) out.speakerNames = names;
+    return out;
   }
 
   // Diarized transcript as plain "Name: text" blocks, for copy/export.
@@ -5466,15 +5557,17 @@ export default function App() {
                           {t('dictationExp')}
                         </button>
                       )}
-                      {/* Speakers (diarization): needs word timestamps; runs on
-                          the entry's in-memory PCM, so it is disabled once the
-                          audio is gone (post-reload) unless already computed. */}
-                      {trans.words?.length > 0 && (
+                      {/* Speakers (diarization): needs word timestamps to run,
+                          but a reloaded entry keeps its restored turns, so the
+                          button also shows there to reopen the cached view. It
+                          is disabled only while diarizing or when there is
+                          nothing to show and no PCM to compute from. */}
+                      {(trans.words?.length > 0 || hasDiarization(trans)) && (
                         <button
-                          onClick={() => diarizationCache[trans.id]
+                          onClick={() => hasDiarization(trans)
                             ? setEntryMode(trans.id, 'diarized')
                             : diarizeEntry(trans)}
-                          disabled={diarizingId === trans.id || (!trans.pcm && !diarizationCache[trans.id])}
+                          disabled={diarizingId === trans.id || (!trans.pcm && !hasDiarization(trans))}
                           className={`display-mode-button${entryMode === 'diarized' ? ' active' : ''}`}
                           title={t('speakersHint')}
                         >
@@ -5572,7 +5665,7 @@ export default function App() {
 
                   <div className="history-text-container">
                     <div className="history-text">
-                      {entryMode === 'diarized' && diarizationCache[trans.id]
+                      {entryMode === 'diarized' && hasDiarization(trans)
                         ? renderDiarizedTranscript(trans)
                         /* Raw or dictation-cleaned text */
                         : <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>}

@@ -2,12 +2,16 @@
 // runs in a real headless Chromium: load the WASM int8 ASR model, transcribe a
 // two-speaker clip, click the per-entry "Speakers" button, and assert the
 // transcript regroups into colour-coded Speaker turns with >= 2 distinct
-// speakers. It then exercises the two interactive controls: renaming a speaker
-// inline (the label becomes a text input) and forcing a speaker count from the
-// entry kebab (which re-segments, here collapsing to a single turn). This is the
-// in-browser proof the vendored WASM engine (its own ONNX Runtime), the two
-// diarization models, and the word->speaker assignment all work end to end; the
-// pure pieces are unit-tested (test/unit/speaker-assign).
+// speakers. It then exercises the interactive controls: forcing a speaker count
+// from the entry kebab (which re-segments: down to one turn, then back to Auto)
+// and renaming a speaker inline (the label becomes a text input). Finally it
+// proves persistence: with persistTranscripts on, the grouped turns + the custom
+// name are written to the transcripts DB (and ONLY those, no per-word timings or
+// raw segments, per F-130) and survive a full page reload, where the Speakers
+// view + "Alice" reappear from disk even though the in-memory audio is gone.
+// This is the in-browser proof the vendored WASM engine (its own ONNX Runtime),
+// the two diarization models, and the word->speaker assignment all work end to
+// end; the pure pieces are unit-tested (test/unit/speaker-assign).
 //
 // The fixture two-speakers.wav is JFK's English excerpt (~11 s) followed by a
 // FLEURS English clip read by a different speaker (~5 s), two acoustically very
@@ -54,7 +58,10 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   // then reload so the app picks them up (and forceLocalFallback => diarization
   // models are read from /models too, never HuggingFace).
   await page.goto('/');
-  await seedSettings(page);
+  // persistTranscripts on so the diarized turns + speaker names persist to the
+  // transcripts DB and can be asserted to survive a reload (the tail of this
+  // spec).
+  await seedSettings(page, { persistTranscripts: true });
   await page.reload();
 
   // Load the ASR model and wait for the ready check mark.
@@ -103,7 +110,23 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   await page.locator('.history-modes button', { hasText: 'Speakers' }).first().click();
   await expect(page.locator('.diar-turns .diar-turn').first()).toBeVisible({ timeout: 10 * 1000 });
 
-  // --- Rename a speaker inline: the label is a button that becomes a text input. ---
+  // --- Force a single speaker from the entry kebab: it must re-segment to 1 turn. ---
+  await page.getByRole('button', { name: 'More actions' }).first().click();
+  await page.locator('.kebab-speakers select').selectOption('1');
+  // Re-segmentation runs on the already-loaded engine; the diarized view collapses
+  // to a single speaker turn (numClusters=1 puts every word in one cluster).
+  await expect.poll(() => page.locator('.diar-turns .diar-turn').count(), { timeout: 60 * 1000 }).toBe(1);
+
+  // --- Back to Auto from the kebab: it must re-segment to >= 2 turns again. ---
+  // (Diarizing disables the kebab select, so wait for the 1-turn run above to
+  // settle first; the count poll already proves diarizingId cleared.)
+  await page.getByRole('button', { name: 'More actions' }).first().click();
+  await page.locator('.kebab-speakers select').selectOption('0');
+  await expect.poll(() => page.locator('.diar-turns .diar-turn').count(), { timeout: 60 * 1000 })
+    .toBeGreaterThanOrEqual(2);
+
+  // --- Rename a speaker inline: the label is a button that becomes a text input,
+  // and the rename applies to that speaker everywhere in the transcript. ---
   const firstLabel = page.locator('.diar-turns .diar-speaker-label').first();
   const originalName = (await firstLabel.innerText()).trim();
   await firstLabel.click();
@@ -114,12 +137,56 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   await expect(page.locator('.diar-turns .diar-speaker-label').first()).toHaveText('Alice', { timeout: 10 * 1000 });
   expect(originalName, 'rename changed the label').not.toBe('Alice');
 
-  // --- Force a single speaker from the entry kebab: it must re-segment to 1 turn. ---
-  await page.getByRole('button', { name: 'More actions' }).first().click();
-  await page.locator('.kebab-speakers select').selectOption('1');
-  // Re-segmentation runs on the already-loaded engine; the diarized view collapses
-  // to a single speaker turn (numClusters=1 puts every word in one cluster).
-  await expect.poll(() => page.locator('.diar-turns .diar-turn').count(), { timeout: 60 * 1000 }).toBe(1);
+  // --- Persistence across reload (persistTranscripts is seeded on). The grouped
+  // turns + the custom name must hit disk and come back identically after a
+  // reload, WITHOUT any per-word timings or raw float segments being persisted
+  // (F-130). The in-memory pcm/audio is gone after reload, so the only way the
+  // Speakers view + "Alice" can reappear is from the persisted turns. ---
+  const TURNS_DB = 'parakeetweb-transcripts-db';
+  const TURNS_STORE = 'transcripts-store';
+  const readPersisted = () => page.evaluate(({ DB, STORE }) => new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(null); return; }
+      const get = db.transaction([STORE], 'readonly').objectStore(STORE).get('transcripts');
+      get.onsuccess = () => { db.close(); resolve(get.result || null); };
+      get.onerror = () => { db.close(); reject(get.error); };
+    };
+    req.onerror = () => reject(req.error);
+  }), { DB: TURNS_DB, STORE: TURNS_STORE });
+
+  // Wait for the diarized turns + the rename to land on disk before reloading.
+  await expect.poll(async () => {
+    const recs = await readPersisted();
+    const r = Array.isArray(recs) ? recs[0] : null;
+    return !!(r && Array.isArray(r.diarTurns) && r.diarTurns.length >= 2 && r.speakerNames);
+  }, { timeout: 30 * 1000 }).toBe(true);
+
+  // F-130 regression guard: the persisted record carries ONLY the slim text
+  // fields plus the opt-in diarization payload, never per-word timings, raw
+  // segments, pcm, or the filename.
+  const persistedRec = (await readPersisted())[0];
+  expect(Object.keys(persistedRec).sort(), 'persisted record keys')
+    .toEqual(['diarTurns', 'id', 'speakerNames', 'text', 'timestamp', 'wordCount']);
+  for (const turn of persistedRec.diarTurns) {
+    expect(Object.keys(turn).sort(), 'persisted turn keys').toEqual(['speaker', 'text']);
+  }
+
+  await page.reload();
+  // The history (and with it the restored diarized view) only renders once the
+  // app leaves the idle landing screen, i.e. after the model is loaded again,
+  // the same gate the persisted transcript TEXT lives behind. Load the model,
+  // then assert the Speakers view auto-reopened from disk (the entry's mode was
+  // 'diarized' when persisted) with no in-memory audio/words available.
+  await page.locator('[data-umami-event="load_model_button"]').click();
+  await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+  await expect(page.locator('.diar-turns .diar-turn').first()).toBeVisible({ timeout: 60 * 1000 });
+  await expect.poll(() => page.locator('.diar-turns .diar-turn').count(), { timeout: 10 * 1000 })
+    .toBeGreaterThanOrEqual(2);
+  await expect(page.locator('.diar-turns .diar-speaker-label').first()).toHaveText('Alice', { timeout: 10 * 1000 });
+  const restoredFirstText = (await page.locator('.diar-turns .diar-turn-text').first().innerText()).trim();
+  expect(restoredFirstText.length, 'restored first turn text non-empty').toBeGreaterThan(0);
 
   expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
 });
