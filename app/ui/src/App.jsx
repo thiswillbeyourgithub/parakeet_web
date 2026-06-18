@@ -1040,6 +1040,12 @@ export default function App() {
   // the next successful model load. Viewing an entry's already-cached diarized
   // turns needs no models, so that path stays enabled regardless.
   const [diarizationModelError, setDiarizationModelError] = useState(null);
+  // One-shot guard so the background prefetch fires exactly once per model load
+  // (the status-keyed effect below would otherwise re-fire on every return to
+  // 'modelReady', e.g. after each transcription; harmless on a memoised success
+  // but a wasteful retry storm on a persistent download failure). Re-armed at
+  // the start of loadModel.
+  const diarPrefetchDoneRef = useRef(false);
   // Default speaker count for diarization: 0 (or any value <= 0) means
   // auto-detect (threshold clustering); a positive integer forces that many
   // speakers. Persisted; the per-entry kebab can override it for one entry.
@@ -2131,6 +2137,9 @@ export default function App() {
     }
 
     setStatus('loadingModel');
+    // Re-arm the one-shot diarization-model prefetch for this (re)load, so a
+    // freshly loaded model warms the diarization weights once.
+    diarPrefetchDoneRef.current = false;
     setProgress('');
     setProgressText('');
     setProgressPct(0);
@@ -4061,7 +4070,8 @@ export default function App() {
   // (and any earlier prefetch) and only fetches once. A failed prefetch is
   // non-fatal: the models then download lazily on the first Speakers click.
   useEffect(() => {
-    if (status !== 'modelReady') return;
+    if (status !== 'modelReady' || diarPrefetchDoneRef.current) return;
+    diarPrefetchDoneRef.current = true;
     getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback })
       .then(() => setDiarizationModelError(null))
       .catch((e) => {

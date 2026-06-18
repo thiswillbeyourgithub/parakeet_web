@@ -22,8 +22,9 @@ const fixture = (name) => resolve(here, '../fixtures', name);
 test('diarization model-load failure greys out the Speakers controls with a tooltip (no alert)', async ({ page }) => {
   // Force the embedding model to 404 so getDiarizationModels always rejects,
   // regardless of whether the real weights are present locally. The ASR weights
-  // live under a different path and are untouched.
-  await page.route('**/3dspeaker_speech_campplus*', (route) =>
+  // live under a different path and are untouched. A RegExp (not a glob) so the
+  // match against the full model URL is unambiguous.
+  await page.route(/3dspeaker_speech_campplus/, (route) =>
     route.fulfill({ status: 404, contentType: 'text/plain', body: 'forced 404 for test' }));
 
   // The whole point of the feature: a model-load failure must never raise a
@@ -46,10 +47,13 @@ test('diarization model-load failure greys out the Speakers controls with a tool
   await page.locator('.settings-toggle').click();
   await expandSettingsSection(page, 'Transcript output');
   const diarizedOption = page.locator('option[value="diarized"]');
-  // Auto-retries until the prefetch failure propagates and disables the option.
-  await expect(diarizedOption).toBeDisabled({ timeout: 60 * 1000 });
-  // The reason rides along as the option's hover tooltip.
-  await expect(diarizedOption).toHaveAttribute('title', /Speaker diarization unavailable/);
+  // Auto-retries until the prefetch failure propagates: the reason-tooltip title
+  // is only set once diarizationModelError lands, so this waits on the state.
+  // Generous timeout: the hub retries a failed download 6x with exponential
+  // backoff (~61 s total) before the prefetch finally rejects.
+  await expect(diarizedOption).toHaveAttribute('title', /Speaker diarization unavailable/, { timeout: 90 * 1000 });
+  // ...and by then the option must be disabled (read the canonical property).
+  expect(await diarizedOption.evaluate((el) => el.disabled)).toBe(true);
   // Close the drawer so it doesn't overlap the history entry below.
   await page.locator('.settings-sidebar-close').click();
 
