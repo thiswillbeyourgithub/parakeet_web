@@ -72,7 +72,12 @@ test('diarization model-load failure greys out the Speakers controls with a tool
   await expect(speakersBtn).toHaveAttribute('title', /Speaker diarization unavailable/);
 
   // Clicking the greyed button must do nothing: no diarized view, no alert.
-  await speakersBtn.click();
+  // The button is aria-disabled (not natively `disabled`) so pointer events stay
+  // on and the click event still reaches the handler, which early-returns on the
+  // model-error guard. Playwright treats aria-disabled as "not enabled" and would
+  // block on actionability forever, so force the click to genuinely exercise the
+  // guard (a normal .click() never dispatches and times out).
+  await speakersBtn.click({ force: true });
   await expect(page.locator('.diar-turns')).toHaveCount(0);
 
   expect(dialogs, `unexpected browser dialog(s): ${dialogs.join(' | ')}`).toHaveLength(0);
