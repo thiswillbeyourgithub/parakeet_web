@@ -600,8 +600,8 @@ export default function App() {
   // adapter resolves it is true/false. Only an explicit false blocks fp16.
   const [webgpuShaderF16, setWebgpuShaderF16] = useState(null);
   // Tracks whether the backend reflects an explicit choice (restored from a
-  // saved setting or picked in the UI) vs. our automatic default. The RAM-based
-  // default heuristic only applies when this is false.
+  // saved setting or picked in the UI) vs. our automatic default. The automatic
+  // default (always WASM int8) only applies when this is false.
   const backendChosenByUserRef = useRef(false);
   const chooseBackend = (value) => {
     backendChosenByUserRef.current = true;
@@ -4402,9 +4402,11 @@ export default function App() {
   // have completed.
   //   - WebGPU unavailable: force WASM, overriding any persisted choice (a
   //     saved 'webgpu-hybrid' would otherwise fail at load).
-  //   - No explicit user choice yet: default by RAM. WebGPU runs the fp32
-  //     encoder (~2.4 GB), so default to it only on devices that don't look
-  //     low on memory; otherwise WASM (int8 encoder, ~800 MB).
+  //   - No explicit user choice yet: always default to WASM (int8 encoder,
+  //     ~800 MB) on every device. It downloads small and runs everywhere;
+  //     WebGPU stays opt-in via the backend radios. An explicit prior choice
+  //     (persisted setting or a UI pick, both of which set
+  //     backendChosenByUserRef) is honoured and never overridden here.
   useEffect(() => {
     if (!settingsLoaded || webgpuAvailable === null) return;
     if (webgpuAvailable === false) {
@@ -4412,9 +4414,9 @@ export default function App() {
       return;
     }
     if (!backendChosenByUserRef.current) {
-      setBackend(isLowRam ? 'wasm' : 'webgpu-hybrid');
+      setBackend('wasm');
     }
-  }, [settingsLoaded, webgpuAvailable, isLowRam]);
+  }, [settingsLoaded, webgpuAvailable]);
 
   const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
   const handleLoadModelClick = (opts) => {
