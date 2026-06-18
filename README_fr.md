@@ -102,6 +102,8 @@ Le **nombre de locuteurs est détecté automatiquement** par défaut, vous n'ave
 
 **Renommer les locuteurs** : cliquez sur une étiquette de locuteur (par ex. **Locuteur 1**) pour la modifier directement. Le nouveau nom remplace ce locuteur partout dans la transcription, et la **copie** d'une transcription identifiée produit des blocs `Nom : texte` propres, prêts à coller.
 
+**Réutiliser les noms entre enregistrements** : une fois que vous avez nommé un locuteur, l'identification d'un autre enregistrement dans la même session réutilise automatiquement ce nom pour la même voix. L'application compare une empreinte vocale de chaque locuteur à celles que vous avez déjà nommées et vous propose l'étiquette correspondante (vous pouvez toujours la modifier). Cette mise en correspondance se fait entièrement en mémoire, pour la session en cours uniquement : les empreintes vocales sont des données biométriques, elles ne sont donc jamais écrites sur le disque et disparaissent au rechargement de la page.
+
 **Conservation** : lorsque l'option **Sauvegarder l'historique des transcriptions localement** est activée, les tours de parole et vos noms personnalisés sont enregistrés avec le texte, de sorte qu'une transcription identifiée revient dans la vue **Locuteurs** (mêmes couleurs et étiquettes renommées) après un rechargement. Pour préserver la confidentialité, seuls les tours regroupés (`Locuteur : texte`) et les noms sont stockés, jamais les horodatages par mot ni les segments audio bruts.
 
 ### Comment ça marche

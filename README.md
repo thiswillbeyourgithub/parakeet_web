@@ -102,6 +102,8 @@ The **number of speakers is detected automatically** by default, so you do not h
 
 **Rename speakers**: click a speaker label (e.g. **Speaker 1**) to edit it inline. The new name replaces that speaker everywhere in the transcript, and **copying** a diarized transcription yields clean `Name: text` blocks ready to paste.
 
+**Reuse names across recordings**: once you have named a speaker, diarizing another recording in the same session automatically reuses that name for the same voice. The app compares a voice embedding of each speaker against the ones you have already named and labels a match for you (you can still rename it). This matching happens entirely in memory for the current session only: the voice embeddings are biometric data, so they are never written to disk and are gone when you reload the page.
+
 **Persistence**: when **Save transcript history locally** is enabled, the speaker turns and your custom names are saved alongside the text, so a diarized transcription comes back in the **Speakers** view (same colours and renamed labels) after a reload. To protect privacy only the grouped turns (`Speaker: text`) and names are stored, never the per-word timings or the raw audio segments.
 
 ### How it works
