@@ -42,7 +42,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | Feature | Details |
 |---|---|
 | 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
-| ⚡ **WebGPU Accelerated** | Fast GPU inference with automatic WASM fallback for compatibility |
+| ⚡ **WebGPU Accelerated** | Runs on the WASM backend (int8) by default so it works everywhere; opt into WebGPU for faster GPU inference |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
 | ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
 | 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
@@ -115,8 +115,8 @@ Diarization is powered by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), 
 
 The resulting speaker segments are matched to the existing word timestamps (each word gets the speaker whose segment overlaps it most), and consecutive words from the same speaker are grouped into turns.
 
-- The two models (~34 MB total) are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with a local `/models` fallback) and cached in IndexedDB. When the **Speakers** default is on, they are prefetched in the background; otherwise they download on first use.
-- The WebAssembly engine and models load lazily the first time you diarize, so they cost nothing if you never use the feature.
+- The two models (~34 MB total) are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with a local `/models` fallback) and cached in IndexedDB. They are prefetched in the background as soon as the ASR model finishes loading, so the first diarization is instant. If that download fails, the **Speakers** button and the **Speakers** default-display option are greyed out and show the reason on hover (instead of an error popup).
+- The WebAssembly engine loads lazily the first time you actually diarize, so it costs nothing if you never use the feature.
 
 This feature was wired up with [Claude Code](https://www.anthropic.com/claude-code).
 

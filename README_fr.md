@@ -42,7 +42,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | Fonctionnalité | Détails |
 |---|---|
 | 🔒 **100% privé** | Fonctionne entièrement dans votre navigateur — aucun audio ne quitte jamais votre appareil |
-| ⚡ **Accéléré par WebGPU** | Inférence GPU rapide avec repli automatique sur WASM pour la compatibilité |
+| ⚡ **Accéléré par WebGPU** | Fonctionne par défaut sur le backend WASM (int8) pour marcher partout ; activez WebGPU pour une inférence GPU plus rapide |
 | 🎙️ **Téléphone comme micro** | Utilisez votre téléphone comme microphone sans fil via WebRTC chiffré de bout en bout |
 | ⏱️ **Transcription en direct** | Mode streaming optionnel : le texte apparaît au fur et à mesure que vous parlez, les regex de dictée étant appliquées en temps réel |
 | 🎯 **Renforcement de phrases** | Oriente le décodeur vers votre propre liste de phrases (noms, jargon, noms de médicaments, acronymes), avec des poids optionnels par phrase. Fonctionne entièrement côté client |
@@ -115,8 +115,8 @@ L'identification des locuteurs s'appuie sur [sherpa-onnx](https://github.com/k2-
 
 Les segments de locuteurs obtenus sont mis en correspondance avec les horodatages de mots existants (chaque mot reçoit le locuteur dont le segment le chevauche le plus), et les mots consécutifs d'un même locuteur sont regroupés en tours de parole.
 
-- Les deux modèles (~34 Mo au total) sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli local `/models`) et mis en cache dans IndexedDB. Lorsque le mode **Locuteurs** par défaut est activé, ils sont préchargés en arrière-plan ; sinon ils sont téléchargés à la première utilisation.
-- Le moteur WebAssembly et les modèles ne se chargent qu'à la première identification, donc ils ne coûtent rien si vous n'utilisez jamais la fonctionnalité.
+- Les deux modèles (~34 Mo au total) sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli local `/models`) et mis en cache dans IndexedDB. Ils sont préchargés en arrière-plan dès que le modèle ASR a fini de se charger, pour que la première identification soit instantanée. Si ce téléchargement échoue, le bouton **Locuteurs** et l'option d'affichage par défaut **Locuteurs** sont grisés et affichent la raison au survol (au lieu d'une fenêtre d'erreur).
+- Le moteur WebAssembly ne se charge qu'à la première identification effective, donc il ne coûte rien si vous n'utilisez jamais la fonctionnalité.
 
 Cette fonctionnalité a été mise en place avec [Claude Code](https://www.anthropic.com/claude-code).
 
