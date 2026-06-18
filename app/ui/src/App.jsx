@@ -28,6 +28,8 @@ import { runDiarization } from './lib/diarizer.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText } from './lib/speakerAssign.js';
 import { createSerialQueue } from './lib/writeQueue.js';
+import { embedSpeakers } from './lib/speakerEmbedding.js';
+import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -1042,6 +1044,17 @@ export default function App() {
   // entry's pcm/words are gone, so its restored turns live here (id -> [{speaker,
   // text}]) and back the diarized view + copy when no live segments exist.
   const [persistedTurns, setPersistedTurns] = useState({});
+  // Cross-recording speaker matching (session-only). One CAM++ voice embedding
+  // per (entry, speaker), kept in memory ONLY (voiceprints are biometric, never
+  // persisted): id -> { speakerIndex -> Float32Array }. When a new recording is
+  // diarized, its speakers are matched against the names the user gave speakers
+  // in OTHER recordings, so the same voice auto-reuses the same label.
+  const [speakerEmbeddings, setSpeakerEmbeddings] = useState({});
+  // Refs mirror the latest embeddings/names so a diarization run that started
+  // earlier still matches against entries diarized/renamed since (avoids stale
+  // closures in the async diarizeEntry).
+  const speakerEmbeddingsRef = useRef({});
+  const speakerNamesRef = useRef({});
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -1736,6 +1749,8 @@ export default function App() {
     }
   }, [transcriptions, settingsLoaded, persistTranscripts, diarizationCache, speakerNames, persistedTurns]);
   useEffect(() => { liveTranscriptionEnabledRef.current = liveTranscriptionEnabled; }, [liveTranscriptionEnabled]);
+  useEffect(() => { speakerEmbeddingsRef.current = speakerEmbeddings; }, [speakerEmbeddings]);
+  useEffect(() => { speakerNamesRef.current = speakerNames; }, [speakerNames]);
   useEffect(() => { liveContextWindowRef.current = liveContextWindow; }, [liveContextWindow]);
 
   // Keep a ref of the user's custom boost text so async callbacks (switching
@@ -3951,6 +3966,27 @@ export default function App() {
       });
       setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
       setEntryMode(trans.id, 'diarized');
+
+      // Cross-recording speaker matching (session-only): embed each speaker's
+      // voice, then auto-label any that match a name the user gave in another
+      // recording. The diarized view already showed above, so an embedding
+      // failure (or no prior names) is non-fatal: it just means no auto-naming.
+      try {
+        const embs = await embedSpeakers(trans.pcm, segments, models.embeddingBytes);
+        if (Object.keys(embs).length > 0) {
+          // Read the freshest embeddings/names via refs (other entries may have
+          // diarized or been renamed since this run started).
+          const allEmbeddings = { ...speakerEmbeddingsRef.current, [trans.id]: embs };
+          setSpeakerEmbeddings(allEmbeddings);
+          const auto = autoNameSpeakers(trans.id, allEmbeddings, speakerNamesRef.current, DEFAULT_MATCH_THRESHOLD);
+          if (Object.keys(auto).length > 0) {
+            // Existing names on this entry win; only fill unnamed speakers.
+            setSpeakerNames(prev => ({ ...prev, [trans.id]: { ...auto, ...(prev[trans.id] || {}) } }));
+          }
+        }
+      } catch (e) {
+        console.warn('[Diarize] speaker embedding/matching failed (non-fatal):', e);
+      }
     } catch (e) {
       console.error('[Diarize] failed:', e);
       alert(`${t('diarizeError')}: ${transcribeErrorMessage(e)}`);
