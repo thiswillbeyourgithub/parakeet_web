@@ -102,6 +102,8 @@ Le **nombre de locuteurs est détecté automatiquement** par défaut, vous n'ave
 
 **Renommer les locuteurs** : cliquez sur une étiquette de locuteur (par ex. **Locuteur 1**) pour la modifier directement. Le nouveau nom remplace ce locuteur partout dans la transcription, et la **copie** d'une transcription identifiée produit des blocs `Nom : texte` propres, prêts à coller.
 
+**Conservation** : lorsque l'option **Sauvegarder l'historique des transcriptions localement** est activée, les tours de parole et vos noms personnalisés sont enregistrés avec le texte, de sorte qu'une transcription identifiée revient dans la vue **Locuteurs** (mêmes couleurs et étiquettes renommées) après un rechargement. Pour préserver la confidentialité, seuls les tours regroupés (`Locuteur : texte`) et les noms sont stockés, jamais les horodatages par mot ni les segments audio bruts.
+
 ### Comment ça marche
 
 L'identification des locuteurs s'appuie sur [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), dont le moteur de diarisation WebAssembly précompilé est intégré à l'application (il embarque son propre ONNX Runtime, distinct du moteur de transcription). Il exécute un pipeline hors ligne à deux modèles sur le même audio 16 kHz déjà en mémoire :

@@ -102,6 +102,8 @@ The **number of speakers is detected automatically** by default, so you do not h
 
 **Rename speakers**: click a speaker label (e.g. **Speaker 1**) to edit it inline. The new name replaces that speaker everywhere in the transcript, and **copying** a diarized transcription yields clean `Name: text` blocks ready to paste.
 
+**Persistence**: when **Save transcript history locally** is enabled, the speaker turns and your custom names are saved alongside the text, so a diarized transcription comes back in the **Speakers** view (same colours and renamed labels) after a reload. To protect privacy only the grouped turns (`Speaker: text`) and names are stored, never the per-word timings or the raw audio segments.
+
 ### How it works
 
 Diarization is powered by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), whose prebuilt WebAssembly speaker-diarization engine is vendored into the app (it bundles its own ONNX Runtime, separate from the transcription engine). It runs a two-model offline pipeline on the same 16 kHz audio already in memory:
