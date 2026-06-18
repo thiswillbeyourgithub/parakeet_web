@@ -46,7 +46,8 @@ test('diarization model-load failure greys out the Speakers controls with a tool
   await page.locator('.settings-toggle').click();
   await expandSettingsSection(page, 'Transcript output');
   const diarizedOption = page.locator('option[value="diarized"]');
-  await expect.poll(() => diarizedOption.isDisabled(), { timeout: 60 * 1000 }).toBe(true);
+  // Auto-retries until the prefetch failure propagates and disables the option.
+  await expect(diarizedOption).toBeDisabled({ timeout: 60 * 1000 });
   // The reason rides along as the option's hover tooltip.
   await expect(diarizedOption).toHaveAttribute('title', /Speaker diarization unavailable/);
   // Close the drawer so it doesn't overlap the history entry below.
