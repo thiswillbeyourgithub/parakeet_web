@@ -148,4 +148,35 @@ describe('turnsToLabeledText', () => {
     assert.equal(turnsToLabeledText([], defName), '');
     assert.equal(turnsToLabeledText(null, defName), '');
   });
+
+  // The dictation layer composes with the speaker view: getDisplayText passes a
+  // textFor that runs the dictation regex on each turn, so a diarized + dictation
+  // copy/export reads as "Name: cleaned text". Independent toggles -> both apply.
+  test('textFor transforms each turn (diarized + dictation compose)', () => {
+    const turns = [
+      { speaker: 0, text: 'open paren foo close paren' },
+      { speaker: 1, text: 'bar' },
+    ];
+    const upper = (t) => t.toUpperCase();
+    assert.equal(
+      turnsToLabeledText(turns, defName, upper),
+      'Speaker 1: OPEN PAREN FOO CLOSE PAREN\n\nSpeaker 2: BAR',
+    );
+  });
+
+  test('textFor that empties a turn drops it (post-transform filtering)', () => {
+    const turns = [
+      { speaker: 0, text: 'keep' },
+      { speaker: 1, text: 'remove me' },
+    ];
+    // A rule that deletes "remove me" leaves only whitespace -> that turn drops.
+    const strip = (t) => t.replace(/remove me/g, '');
+    assert.equal(turnsToLabeledText(turns, defName, strip), 'Speaker 1: keep');
+  });
+
+  test('no textFor behaves exactly as before (null default)', () => {
+    const turns = [{ speaker: 0, text: 'hi' }];
+    assert.equal(turnsToLabeledText(turns, defName, null), 'Speaker 1: hi');
+    assert.equal(turnsToLabeledText(turns, defName), 'Speaker 1: hi');
+  });
 });

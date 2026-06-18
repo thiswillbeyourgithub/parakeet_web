@@ -85,17 +85,23 @@ export function speakerCount(segments) {
 /**
  * Render turns as plain "Name: text" blocks for copying/exporting a diarized
  * transcript. `nameFor(speaker)` resolves a speaker index to its (possibly
- * user-renamed) label. Turns with no text are dropped; blocks are separated by
- * a blank line.
+ * user-renamed) label. `textFor(text)`, when given, transforms each turn's text
+ * (e.g. the dictation regex cleanup) so the speaker view composes with it.
+ * Turns with no text are dropped; blocks are separated by a blank line.
  *
  * @param {Array<{speaker:number,text:string}>} turns from {@link groupWordsIntoTurns}
  * @param {(speaker:number)=>string} nameFor
+ * @param {((text:string)=>string)|null} [textFor] optional per-turn text transform
  * @returns {string}
  */
-export function turnsToLabeledText(turns, nameFor) {
+export function turnsToLabeledText(turns, nameFor, textFor = null) {
   if (!Array.isArray(turns) || turns.length === 0) return '';
   return turns
-    .map((turn) => [nameFor(turn.speaker), (turn.text ?? '').trim()])
+    .map((turn) => {
+      const raw = turn.text ?? '';
+      const text = textFor ? textFor(raw) : raw;
+      return [nameFor(turn.speaker), text.trim()];
+    })
     .filter(([, text]) => text)
     .map(([name, text]) => `${name}: ${text}`)
     .join('\n\n');

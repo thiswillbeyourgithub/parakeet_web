@@ -1012,10 +1012,17 @@ export default function App() {
   // buttons are not reachable by Tab+Enter from inside the modal.
   useEffect(() => { if (anyModalOpen) setOpenKebabId(null); }, [anyModalOpen]);
 
-  // Per-entry display mode override (id -> 'raw'|'dictation').
-  // Entries default to the global `transcriptDisplayMode` (the "default
-  // transcript display" setting) until the user toggles them individually.
+  // Per-entry display is two ORTHOGONAL axes, not one mode:
+  //  - base view (id -> 'raw'|'diarized'): the structural view, mutually
+  //    exclusive, lives in entryDisplayModes.
+  //  - dictation (id -> bool): an independent regex-cleanup layer that applies
+  //    on top of EITHER base (cleaned flat text, or cleaned per speaker turn),
+  //    lives in entryDictation.
+  // Both default to the global `transcriptDisplayMode` ("default transcript
+  // display"), decomposed: 'diarized' -> diarized base, 'dictation' -> dictation
+  // layer on a raw base, 'raw' -> neither. Either axis can be toggled per entry.
   const [entryDisplayModes, setEntryDisplayModes] = useState({});
+  const [entryDictation, setEntryDictation] = useState({});
   // Set of transcription ids whose inline audio player is expanded.
   const [openAudioIds, setOpenAudioIds] = useState(() => new Set());
   // Id of the entry currently being re-transcribed via "Transcribe again", so
@@ -3888,12 +3895,26 @@ export default function App() {
 
   // --- Per-entry display mode + inline audio player helpers ---
 
-  // The display mode for one entry: its own override, else the global default.
-  function getEntryMode(id) {
-    return entryDisplayModes[id] ?? transcriptDisplayMode;
+  // The structural base view for one entry ('raw'|'diarized'): its own override,
+  // else the global default decomposed (the legacy 'dictation' default is a raw
+  // base carrying the dictation layer, so it maps to 'raw' here).
+  function getEntryBase(id) {
+    const m = entryDisplayModes[id];
+    if (m === 'diarized' || m === 'raw') return m;
+    return transcriptDisplayMode === 'diarized' ? 'diarized' : 'raw';
   }
-  function setEntryMode(id, mode) {
-    setEntryDisplayModes(prev => ({ ...prev, [id]: mode }));
+  function setEntryBase(id, base) {
+    setEntryDisplayModes(prev => ({ ...prev, [id]: base }));
+  }
+  // Whether the dictation regex-cleanup layer is on for an entry (independent of
+  // the base view). Defaults from the global default ('dictation'). Callers gate
+  // the actual transform on dictationRegexRules.length so an empty rule set is a
+  // no-op even when the flag is on.
+  function entryDictationOn(id) {
+    return entryDictation[id] ?? (transcriptDisplayMode === 'dictation');
+  }
+  function toggleEntryDictation(id) {
+    setEntryDictation(prev => ({ ...prev, [id]: !(prev[id] ?? (transcriptDisplayMode === 'dictation')) }));
   }
 
   // Lazily mint (and cache) the object URL backing an entry's inline player.
@@ -3965,7 +3986,7 @@ export default function App() {
         numSpeakers: requested > 0 ? requested : -1,
       });
       setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
-      setEntryMode(trans.id, 'diarized');
+      setEntryBase(trans.id, 'diarized');
 
       // Cross-recording speaker matching (session-only): embed each speaker's
       // voice, then auto-label any that match a name the user gave in another
@@ -4002,7 +4023,7 @@ export default function App() {
   useEffect(() => {
     if (diarizingId) return;
     const next = transcriptions.find(
-      tr => tr.pcm && tr.words?.length && getEntryMode(tr.id) === 'diarized' && !diarizationCache[tr.id],
+      tr => tr.pcm && tr.words?.length && getEntryBase(tr.id) === 'diarized' && !diarizationCache[tr.id],
     );
     if (next) diarizeEntry(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4186,11 +4207,13 @@ export default function App() {
   }
 
   // Build dictation cache lazily via useEffect to avoid setState during render.
-  // Display mode is per-entry now, so cache any entry whose effective mode is
-  // 'dictation' (its override, or the global default).
+  // The dictation layer is per-entry and independent of the base view, so cache
+  // any entry whose dictation flag is on (its override, or the global default).
+  // Only the flat (raw-base) view reads this cache; the diarized view applies
+  // the regex per turn at render time.
   useEffect(() => {
     if (!dictationRegexRules.length) return;
-    const missing = transcriptions.filter(t => t.text && getEntryMode(t.id) === 'dictation' && !dictationCache[t.id]);
+    const missing = transcriptions.filter(t => t.text && entryDictationOn(t.id) && !dictationCache[t.id]);
     if (missing.length === 0) return;
     const newEntries = {};
     for (const t of missing) {
@@ -4201,17 +4224,19 @@ export default function App() {
     // is read but intentionally excluded: the effect mutates it via the
     // functional updater above, and including it would re-trigger the
     // effect on every cache write (a no-op since `missing` is then empty).
-  }, [transcriptDisplayMode, entryDisplayModes, dictationRegexRules, transcriptions]);
+  }, [transcriptDisplayMode, entryDisplayModes, entryDictation, dictationRegexRules, transcriptions]);
 
-  // Get the display text for a transcription based on its per-entry display mode
+  // Get the display text for a transcription from its two display axes. The
+  // dictation layer composes with the base view: diarized + dictation copies as
+  // "Speaker: cleaned text" blocks (the regex applied to each turn).
   function getDisplayText(trans) {
-    const mode = getEntryMode(trans.id);
-    if (mode === 'diarized' && hasDiarization(trans)) {
-      // Diarized mode copies/exports as "Speaker: text" blocks (renamed labels
+    const dictate = entryDictationOn(trans.id) && dictationRegexRules.length > 0;
+    if (getEntryBase(trans.id) === 'diarized' && hasDiarization(trans)) {
+      // Diarized copies/exports as "Speaker: text" blocks (renamed labels
       // included), which is what makes the speaker view useful to paste.
-      return diarizedPlainText(trans);
+      return diarizedPlainText(trans, dictate);
     }
-    if (mode === 'dictation' && dictationRegexRules.length > 0) {
+    if (dictate) {
       // Return cached result, or compute synchronously without setting state
       return dictationCache[trans.id] || applyDictationRegex(trans.text);
     }
@@ -4266,11 +4291,14 @@ export default function App() {
     return out;
   }
 
-  // Diarized transcript as plain "Name: text" blocks, for copy/export.
-  function diarizedPlainText(trans) {
+  // Diarized transcript as plain "Name: text" blocks, for copy/export. When
+  // `dictate` is set, the dictation regex is applied to each turn's text so the
+  // speaker view and the dictation cleanup compose.
+  function diarizedPlainText(trans, dictate = false) {
     const turns = getDiarizedTurns(trans);
-    if (!turns || turns.length === 0) return trans.text;
-    return turnsToLabeledText(turns, (spk) => speakerDisplayName(trans.id, spk));
+    if (!turns || turns.length === 0) return dictate ? applyDictationRegex(trans.text) : trans.text;
+    const textFor = dictate ? (txt) => applyDictationRegex(txt) : null;
+    return turnsToLabeledText(turns, (spk) => speakerDisplayName(trans.id, spk), textFor);
   }
 
   // Render an entry's transcript as speaker turns (turns + colour). Maps each
@@ -4283,6 +4311,8 @@ export default function App() {
     if (!turns || turns.length === 0) {
       return <span style={{ whiteSpace: 'pre-wrap' }}>{trans.text}</span>;
     }
+    // Dictation layer composes with the speaker view: clean each turn's text.
+    const dictate = entryDictationOn(trans.id) && dictationRegexRules.length > 0;
     return (
       <div className="diar-turns">
         {turns.map((turn, i) => {
@@ -4308,7 +4338,7 @@ export default function App() {
                   {speakerDisplayName(trans.id, turn.speaker)}
                 </button>
               )}
-              <span className="diar-turn-text">{turn.text}</span>
+              <span className="diar-turn-text">{dictate ? applyDictationRegex(turn.text) : turn.text}</span>
             </div>
           );
         })}
@@ -5535,7 +5565,8 @@ export default function App() {
           </div>
           <div>
             {transcriptions.map((trans) => {
-              const entryMode = getEntryMode(trans.id);
+              const entryBase = getEntryBase(trans.id);
+              const dictateOn = entryDictationOn(trans.id);
               const audioOpen = openAudioIds.has(trans.id);
 
               return (
@@ -5563,8 +5594,11 @@ export default function App() {
                     })()}
                   </div>
 
-                  {/* Per-entry control row: [Audio][Raw][Dictation?]
-                      on the left, always-visible kebab on the right. */}
+                  {/* Per-entry control row: [Audio][Raw][Dictation?][Speakers?]
+                      on the left, always-visible kebab on the right. Raw and
+                      Speakers are the structural base view (mutually exclusive);
+                      Dictation is an INDEPENDENT toggle that layers on either, so
+                      Speakers + Dictation can both be active (cleaned per turn). */}
                   <div className="history-controls">
                     <div className="history-modes">
                       {trans.audioBlob && (
@@ -5578,16 +5612,17 @@ export default function App() {
                         </button>
                       )}
                       <button
-                        onClick={() => setEntryMode(trans.id, 'raw')}
-                        className={`display-mode-button${entryMode === 'raw' ? ' active' : ''}`}
+                        onClick={() => setEntryBase(trans.id, 'raw')}
+                        className={`display-mode-button${entryBase === 'raw' ? ' active' : ''}`}
                         title="Raw transcription"
                       >
                         {t('raw')}
                       </button>
                       {dictationRegexRules.length > 0 && (
                         <button
-                          onClick={() => setEntryMode(trans.id, 'dictation')}
-                          className={`display-mode-button${entryMode === 'dictation' ? ' active' : ''}`}
+                          onClick={() => toggleEntryDictation(trans.id)}
+                          className={`display-mode-button${dictateOn ? ' active' : ''}`}
+                          aria-pressed={dictateOn}
                           title={`${t('dictationRules')} (${dictationRegexRules.length} ${t('dictationRulesExperimental')})`}
                         >
                           {t('dictationExp')}
@@ -5601,10 +5636,10 @@ export default function App() {
                       {(trans.words?.length > 0 || hasDiarization(trans)) && (
                         <button
                           onClick={() => hasDiarization(trans)
-                            ? setEntryMode(trans.id, 'diarized')
+                            ? setEntryBase(trans.id, 'diarized')
                             : diarizeEntry(trans)}
                           disabled={diarizingId === trans.id || (!trans.pcm && !hasDiarization(trans))}
-                          className={`display-mode-button${entryMode === 'diarized' ? ' active' : ''}`}
+                          className={`display-mode-button${entryBase === 'diarized' ? ' active' : ''}`}
                           title={t('speakersHint')}
                         >
                           {diarizingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
@@ -5701,7 +5736,7 @@ export default function App() {
 
                   <div className="history-text-container">
                     <div className="history-text">
-                      {entryMode === 'diarized' && hasDiarization(trans)
+                      {entryBase === 'diarized' && hasDiarization(trans)
                         ? renderDiarizedTranscript(trans)
                         /* Raw or dictation-cleaned text */
                         : <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>}
