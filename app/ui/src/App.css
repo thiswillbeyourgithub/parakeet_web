@@ -928,6 +928,18 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   border-color: var(--accent);
 }
 
+/* Greyed-out "Speakers" button when the diarization models failed to load.
+   Looks disabled but keeps pointer events ON (no native `disabled`) so the
+   title tooltip explaining the reason still shows on hover. */
+.display-mode-button--unavailable,
+.display-mode-button--unavailable:hover {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg-card);
+  color: var(--text-subtle);
+  border-color: var(--border-strong);
+}
+
 /* ─── History fade-in animation ──────────────────────────────────────────── */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(-8px); }

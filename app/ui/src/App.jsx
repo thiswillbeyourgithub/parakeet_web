@@ -1033,6 +1033,13 @@ export default function App() {
   // diarization run is currently in flight for (spinner + one-at-a-time guard).
   const [diarizationCache, setDiarizationCache] = useState({});
   const [diarizingId, setDiarizingId] = useState(null);
+  // Set to a human-readable reason when the diarization MODELS fail to download
+  // (background prefetch or an on-demand run). Non-null greys out the Speakers
+  // button + the sidebar's "Speakers" default-display option, with the reason
+  // shown as a hover tooltip instead of a disruptive browser alert. Cleared on
+  // the next successful model load. Viewing an entry's already-cached diarized
+  // turns needs no models, so that path stays enabled regardless.
+  const [diarizationModelError, setDiarizationModelError] = useState(null);
   // Default speaker count for diarization: 0 (or any value <= 0) means
   // auto-detect (threshold clustering); a positive integer forces that many
   // speakers. Persisted; the per-entry kebab can override it for one entry.
@@ -3980,11 +3987,23 @@ export default function App() {
       ? numSpeakersOverride
       : (diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers);
     setDiarizingId(trans.id);
+    // Load the models first, in their own guard: a download failure here is not
+    // a transcript-level error, so instead of a browser alert we record the
+    // reason (greys out the Speakers controls with a hover tooltip) and bail.
+    let models;
     try {
-      const models = await getDiarizationModels({
+      models = await getDiarizationModels({
         localBaseUrl: '/models',
         localOnly: forceLocalFallback,
       });
+      setDiarizationModelError(null);
+    } catch (e) {
+      console.error('[Diarize] model load failed:', e);
+      setDiarizationModelError(transcribeErrorMessage(e));
+      setDiarizingId(null);
+      return;
+    }
+    try {
       const segments = await runDiarization(trans.pcm, {
         segmentationBytes: models.segmentationBytes,
         embeddingBytes: models.embeddingBytes,
@@ -4035,16 +4054,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcriptions, entryDisplayModes, transcriptDisplayMode, diarizationCache, diarizingId]);
 
-  // Background prefetch: when the default base view is diarized (the user has
-  // opted in to it for every transcription, with or without the dictation
-  // layer), warm the ~34 MB of models into the hub cache so the first run is
-  // instant. When the default is off, models download lazily on the first
-  // Speakers click instead.
+  // Background prefetch: once the ASR model has finished loading, warm the
+  // ~34 MB of diarization models into the hub cache so the first Speakers run
+  // is instant. Fire-and-forget so it never blocks recording or transcription;
+  // getDiarizationModels is memoised, so this dedups with the on-click download
+  // (and any earlier prefetch) and only fetches once. A failed prefetch is
+  // non-fatal: the models then download lazily on the first Speakers click.
   useEffect(() => {
-    if (defaultBase !== 'diarized') return;
+    if (status !== 'modelReady') return;
     getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback })
-      .catch(e => console.warn('[Diarize] background model prefetch failed (non-fatal):', e));
-  }, [transcriptDisplayMode]);
+      .then(() => setDiarizationModelError(null))
+      .catch((e) => {
+        console.warn('[Diarize] background model prefetch failed (non-fatal):', e);
+        setDiarizationModelError(transcribeErrorMessage(e));
+      });
+  }, [status]);
 
   // Revoke any outstanding inline-player URLs when the app unmounts.
   useEffect(() => () => {
@@ -4750,8 +4774,11 @@ export default function App() {
               >
                 <option value="raw">{t('raw')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
-                <option value="diarized">{t('speakers')}</option>
-                {dictationRegexRules.length > 0 && <option value="diarized+dictation">{t('speakers')} + {t('dictationExp')}</option>}
+                {/* Grey out the Speakers default options when the diarization
+                    models could not be loaded; the title surfaces the reason on
+                    hover in the open dropdown. */}
+                <option value="diarized" disabled={!!diarizationModelError} title={diarizationModelError ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})` : undefined}>{t('speakers')}</option>
+                {dictationRegexRules.length > 0 && <option value="diarized+dictation" disabled={!!diarizationModelError} title={diarizationModelError ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})` : undefined}>{t('speakers')} + {t('dictationExp')}</option>}
               </select>
             </div>
 
@@ -5643,19 +5670,35 @@ export default function App() {
                           button also shows there to reopen the cached view. It
                           is disabled only while diarizing or when there is
                           nothing to show and no PCM to compute from. */}
-                      {(trans.words?.length > 0 || hasDiarization(trans)) && (
+                      {(trans.words?.length > 0 || hasDiarization(trans)) && (() => {
+                        // A fresh run needs the diarization models; reopening an
+                        // entry's already-cached turns does not. So a model-load
+                        // failure only greys out entries with nothing cached yet.
+                        const blockedByModelError = !hasDiarization(trans) && !!diarizationModelError;
+                        return (
                         <button
-                          onClick={() => hasDiarization(trans)
-                            ? setEntryBase(trans.id, 'diarized')
-                            : diarizeEntry(trans)}
+                          onClick={() => {
+                            if (blockedByModelError) return;
+                            hasDiarization(trans)
+                              ? setEntryBase(trans.id, 'diarized')
+                              : diarizeEntry(trans);
+                          }}
+                          // Native `disabled` for the spinner/no-PCM cases. For the
+                          // model-load failure use aria-disabled + a greyed class
+                          // instead, so pointer events stay on and the title
+                          // tooltip (the reason) shows on hover.
                           disabled={diarizingId === trans.id || (!trans.pcm && !hasDiarization(trans))}
-                          className={`display-mode-button${entryBase === 'diarized' ? ' active' : ''}`}
-                          title={t('speakersHint')}
+                          aria-disabled={blockedByModelError || undefined}
+                          className={`display-mode-button${entryBase === 'diarized' ? ' active' : ''}${blockedByModelError ? ' display-mode-button--unavailable' : ''}`}
+                          title={blockedByModelError
+                            ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})`
+                            : t('speakersHint')}
                         >
                           {diarizingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
                           {t('speakers')}
                         </button>
-                      )}
+                        );
+                      })()}
                     </div>
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">

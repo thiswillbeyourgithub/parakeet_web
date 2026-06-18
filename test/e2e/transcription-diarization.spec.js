@@ -54,6 +54,13 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
     if (m.type() === 'error') errors.push(m.text());
   });
 
+  // Track requests for the CAM++ embedding model so we can prove the background
+  // prefetch fires as soon as the ASR model is ready, BEFORE any Speakers click.
+  const embModelRequests = [];
+  page.on('request', (req) => {
+    if (req.url().includes('3dspeaker_speech_campplus')) embModelRequests.push(req.url());
+  });
+
   // First boot creates the settings DB; seed local model source + wasm backend,
   // then reload so the app picks them up (and forceLocalFallback => diarization
   // models are read from /models too, never HuggingFace).
@@ -67,6 +74,12 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   // Load the ASR model and wait for the ready check mark.
   await page.locator('[data-umami-event="load_model_button"]').click();
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+
+  // The diarization models prefetch in the background the moment the ASR model
+  // is ready, so the user can record and the first Speakers run is instant. The
+  // embedding model must therefore already have been requested HERE, before we
+  // upload anything or ever open the Speakers view.
+  await expect.poll(() => embModelRequests.length, { timeout: 60 * 1000 }).toBeGreaterThan(0);
 
   // Upload the clip; uploads transcribe immediately.
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
