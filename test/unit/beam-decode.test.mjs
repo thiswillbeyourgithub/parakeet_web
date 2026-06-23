@@ -17,7 +17,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ParakeetModel } from '../../app/src/parakeet.js';
+import { ParakeetModel, lengthNormalizedScore } from '../../app/src/parakeet.js';
 import { BoostingTrie } from '../../app/src/phraseBoost.js';
 
 const eqArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -201,6 +201,23 @@ describe('pure helpers', () => {
     const d4 = m._advanceDecision.call(m, 4, 9, 2, 0, 1);
     assert.ok(d4.nextT === 5 && d4.nextEmitted === 0);
   });
+
+  // NeMo score_norm=True: final selection ranks by score / emitted-token count.
+  // These are the real scores observed on a clip that went empty at beam 10
+  // (11.wav): the empty/all-blank hyp had a HIGHER raw score (-5.237) than the
+  // 7-token hyp (-6.690), but loses once normalized.
+  test('lengthNormalizedScore divides by emitted-token count', () => {
+    assert.ok(close(lengthNormalizedScore({ score: -6.690, numEmitted: 7 }), -6.690 / 7));
+  });
+  test('lengthNormalizedScore guards numEmitted 0 (empty hyp) against div-by-zero', () => {
+    assert.equal(lengthNormalizedScore({ score: -5.237, numEmitted: 0 }), -5.237);
+  });
+  test('lengthNormalizedScore ranks a multi-token hyp above a higher-raw empty hyp', () => {
+    const token = lengthNormalizedScore({ score: -6.690, numEmitted: 7 });
+    const empty = lengthNormalizedScore({ score: -5.237, numEmitted: 0 });
+    assert.ok(-5.237 > -6.690, 'empty hyp has the higher RAW score (the bug)');
+    assert.ok(token > empty, 'but the token hyp wins once length-normalized (the fix)');
+  });
 });
 
 // A scripted, context-free utterance. Each frame's argmax is a distinct token;
@@ -319,6 +336,40 @@ describe('duplicate-hypothesis merging (#3)', () => {
     assert.ok(eqArr(out.ids, [0, 1, 1]), 'merged X,Z path wins (would be [0,2,1] without merging)');
     assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak across the merge');
   });
+});
+
+describe('empty-hypothesis length normalization (NeMo score_norm)', () => {
+  // Regression for the beam-10 empty-transcript bug: on hard/ambiguous audio the
+  // all-blank (empty) path has the highest UNNORMALIZED score (a sum of fewer,
+  // near-zero blank log-probs), so a raw-score final selection returned it and the
+  // transcript collapsed to empty at wide beam widths. Here every frame slightly
+  // favours blank (logit 0.2) over its one real token (logit 0), so the 3-blank
+  // empty path outscores the 3-token path on RAW score (-1.794 > -2.394) yet LOSES
+  // once normalized by emitted-token count (-1.794 vs -0.798). With the fix the
+  // decoder returns the token path [0, 1, 2]; before it, out.ids would be [].
+  const NEG = -20;
+  const emptyBiasScript = [
+    { logits: [0, NEG, NEG, NEG, NEG, 0.2], step: 1, durLogits: [-Infinity, 0, -Infinity] },
+    { logits: [NEG, 0, NEG, NEG, NEG, 0.2], step: 1, durLogits: [-Infinity, 0, -Infinity] },
+    { logits: [NEG, NEG, 0, NEG, NEG, 0.2], step: 1, durLogits: [-Infinity, 0, -Infinity] },
+  ];
+
+  // Width 6 and 10: wide enough that the (lower-raw) token path survives pruning
+  // to finish, so the final selection is what decides token-vs-empty.
+  for (const width of [6, 10]) {
+    test(`width ${width} returns the token path, not the higher-raw empty hyp`, async () => {
+      statesCreated = statesDisposed = joinerCalls = 0;
+      const model = makeModel(emptyBiasScript);
+      const out = await model._decodeBeam(makeTransposed(3), D, 3, {
+        beamWidth: width, temperature: 1.0, frameStride: 1, phraseBoost: null,
+        returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+        ...MAES, maesExpansionGamma: 2.3,
+      });
+      assert.ok(out.ids.length > 0, 'transcript is non-empty (the bug returned [])');
+      assert.ok(eqArr(out.ids, [0, 1, 2]), 'length-normalized selection picks the 3-token path');
+      assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak');
+    });
+  }
 });
 
 describe('prefix-search recombination (#2)', () => {

@@ -77,6 +77,24 @@ function buildPerfMetrics(perfEnabled, { t0, audioSec, preprocessMs, encodeMs, d
 }
 
 /**
+ * NeMo's `score_norm=True` (rnnt_beam_decoding.py: the final n-best is sorted by
+ * `score / len(y_sequence)`): the beam's final best-hypothesis selection ranks by
+ * score-per-emitted-token, NOT raw score. Raw beam scores are an unnormalized sum
+ * of per-step log-probs, so the all-blank/empty path (fewest, near-zero blank
+ * log-probs) has a structurally HIGHER raw score and wins at wide beam widths,
+ * collapsing the transcript to empty on hard/ambiguous audio. Dividing by the
+ * emitted-token count cancels that length bias; `max(numEmitted, 1)` guards the
+ * empty hypothesis against divide-by-zero (and keeps a genuinely silent decode
+ * representable rather than auto-losing). Intermediate per-frame beam pruning
+ * stays on raw score, matching NeMo (only the final selection is normalized).
+ * @param {{score:number, numEmitted:number}} hyp
+ * @returns {number}
+ */
+export function lengthNormalizedScore({ score, numEmitted }) {
+  return score / Math.max(numEmitted, 1);
+}
+
+/**
  * Lightweight Parakeet model wrapper designed for browser usage.
  * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
  * transformerjs style) exported by parakeet TDT.
@@ -1070,6 +1088,9 @@ export class ParakeetModel {
         emittedAtFrame: dec.nextEmitted,
         overallLogProb: hyp.overallLogProb + Math.log(c.confVal),
         score: hyp.score + c.rankDelta,
+        // Emitted-token count, for NeMo length-normalized final selection
+        // (see lengthNormalizedScore). Blank leaves it unchanged.
+        numEmitted: hyp.numEmitted + (c.emit ? 1 : 0),
         active: c.active,
         lastTok: c.emit ? c.id : hyp.lastTok,
         // Incremental emitted-token sequence identity (blank leaves it
@@ -1082,7 +1103,7 @@ export class ParakeetModel {
     let keptHyps = [{
       parent: null, emit: false, id: null, confVal: null, tokenTime: null,
       state: null, t: 0, emittedAtFrame: 0, overallLogProb: 0, score: 0,
-      active: rootActive, lastTok: this.blankId, seqKey: '',
+      numEmitted: 0, active: rootActive, lastTok: this.blankId, seqKey: '',
     }];
     let best = null;     // highest-scoring finished hypothesis (t >= Tenc)
     let workFrames = 0;  // frames that actually carried hypotheses (for yield cadence)
@@ -1145,8 +1166,10 @@ export class ParakeetModel {
           }
           for (const child of children) {
             if (child.t >= Tenc) {
-              // Finished: keep only the running best (finished scores are final).
-              if (best === null || child.score > best.score) {
+              // Finished: keep the best by NeMo length-normalized score
+              // (score_norm=True), so the empty/all-blank path's higher *raw*
+              // score cannot win at wide beam (see lengthNormalizedScore).
+              if (best === null || lengthNormalizedScore(child) > lengthNormalizedScore(best)) {
                 if (best) disposable.add(best.state); // old best may now be free
                 best = child;
               }
