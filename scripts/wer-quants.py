@@ -658,6 +658,23 @@ def load_manifest(manifest_path, audio_dir=None, limit=None):
     return items, missing
 
 
+def _normalized_pairs(refs, hyps, normalize):
+    """Normalise parallel ref/hyp lists for scoring: run both sides through
+    normalize_for_wer and drop any pair whose reference is empty AFTER normalisation
+    (jiwer rejects empty references and they carry no scorable units). Shared by
+    corpus_wer and corpus_cer so word- and character-rate use the identical pairs.
+    Returns (norm_refs, norm_hyps, dropped)."""
+    norm_refs, norm_hyps, dropped = [], [], 0
+    for ref, hyp in zip(refs, hyps):
+        ref_n = normalize_for_wer(ref, normalize)
+        if not ref_n:
+            dropped += 1
+            continue
+        norm_refs.append(ref_n)
+        norm_hyps.append(normalize_for_wer(hyp, normalize))
+    return norm_refs, norm_hyps, dropped
+
+
 def corpus_wer(refs, hyps, normalize=True):
     """Aggregate (corpus) WER over parallel reference/hypothesis lists: total word
     edits / total reference words, computed by jiwer over the whole list (NOT a mean
@@ -667,17 +684,25 @@ def corpus_wer(refs, hyps, normalize=True):
     dropped); wer is None when nothing is scorable."""
     from jiwer import wer
 
-    norm_refs, norm_hyps, dropped = [], [], 0
-    for ref, hyp in zip(refs, hyps):
-        ref_n = normalize_for_wer(ref, normalize)
-        if not ref_n:
-            dropped += 1
-            continue
-        norm_refs.append(ref_n)
-        norm_hyps.append(normalize_for_wer(hyp, normalize))
+    norm_refs, norm_hyps, dropped = _normalized_pairs(refs, hyps, normalize)
     if not norm_refs:
         return None, 0, dropped
     return wer(norm_refs, norm_hyps), len(norm_refs), dropped
+
+
+def corpus_cer(refs, hyps, normalize=True):
+    """Aggregate (corpus) CER over parallel reference/hypothesis lists: total character
+    edits / total reference characters, computed by jiwer.cer over the whole list. Same
+    normalisation and empty-reference dropping as corpus_wer (it shares the exact same
+    scorable pairs), so CER and WER are measured on identical text. CER does NOT need
+    beam search: it is character edit distance over the same hypotheses WER uses.
+    Returns (cer_or_None, scored_pairs, dropped); cer is None when nothing is scorable."""
+    from jiwer import cer
+
+    norm_refs, norm_hyps, dropped = _normalized_pairs(refs, hyps, normalize)
+    if not norm_refs:
+        return None, 0, dropped
+    return cer(norm_refs, norm_hyps), len(norm_refs), dropped
 
 
 def parse_args(argv):
@@ -906,16 +931,20 @@ def print_cross_file_summary(summaries, quants):
 
 def score_one_manifest(m, normalize):
     """Turn ONE streamed manifest (one language's {label, items, missing}) into its
-    rowdict {wer, clips, scored, dropped, missing, ref_words} via corpus_wer. Called
+    rowdict {wer, cer, clips, scored, dropped, missing, ref_words, ref_chars} via
+    corpus_wer + corpus_cer (WER and CER over the identical scorable pairs). Called
     per language as analyze_manifest receives each __MANIFEST__, so every language is
     scored (and emitted) the moment its transcription finishes."""
     refs = [i["ref"] for i in m["items"]]
     hyps = [i["hyp"] for i in m["items"]]
     wer_val, scored, dropped = corpus_wer(refs, hyps, normalize)
+    cer_val, _, _ = corpus_cer(refs, hyps, normalize)
     ref_words = sum(len(normalize_for_wer(r, normalize).split()) for r in refs)
+    ref_chars = sum(len(normalize_for_wer(r, normalize)) for r in refs)
     return {
-        "wer": wer_val, "clips": len(m["items"]), "scored": scored,
-        "dropped": dropped, "missing": m["missing"], "ref_words": ref_words,
+        "wer": wer_val, "cer": cer_val, "clips": len(m["items"]), "scored": scored,
+        "dropped": dropped, "missing": m["missing"],
+        "ref_words": ref_words, "ref_chars": ref_chars,
     }
 
 
