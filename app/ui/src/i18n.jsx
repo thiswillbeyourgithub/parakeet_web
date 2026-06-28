@@ -62,6 +62,10 @@ const translations = {
     dictationExp: 'Dictation (exp.)',
     speakers: 'Speakers',
     speaker: 'Speaker',
+    // Gap-free default speaker labels: positions 0..11 use these ordinals; a
+    // 13th+ speaker falls back to "Speaker N" (the `speaker` key + number).
+    // Comma-joined, split in App.jsx; must not contain a comma themselves.
+    speakerOrdinals: 'First,Second,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh,Twelfth',
     speakersHint: 'Identify who spoke when (speaker diarization) and group the transcript by speaker. Runs on this recording’s audio; downloads a small model the first time.',
     diarizeError: 'Speaker diarization failed',
     diarizeModelsUnavailable: 'Speaker diarization unavailable: the models could not be loaded',
@@ -409,6 +413,7 @@ const translations = {
     dictationExp: 'Dict\u00e9e (exp.)',
     speakers: 'Locuteurs',
     speaker: 'Locuteur',
+    speakerOrdinals: 'Premier,Deuxième,Troisième,Quatrième,Cinquième,Sixième,Septième,Huitième,Neuvième,Dixième,Onzième,Douzième',
     speakersHint: 'Identifier qui a parl\u00e9 et quand (diarisation) et regrouper la transcription par locuteur. S\u2019ex\u00e9cute sur l\u2019audio de cet enregistrement ; t\u00e9l\u00e9charge un petit mod\u00e8le la premi\u00e8re fois.',
     diarizeError: 'La diarisation des locuteurs a \u00e9chou\u00e9',
     diarizeModelsUnavailable: 'Diarisation indisponible : les mod\u00e8les n\u2019ont pas pu \u00eatre charg\u00e9s',

@@ -76,6 +76,71 @@ export function groupWordsIntoTurns(words) {
   return turns;
 }
 
+/**
+ * Resolve a raw speaker index to its merge ROOT, following the union-find parent
+ * pointers in `merges` (a per-entry map `{ rawSpeaker -> mergedIntoRawSpeaker }`).
+ * Cycle- and self-loop-safe. With no merges (or an unmerged speaker) returns the
+ * speaker unchanged.
+ *
+ * @param {number} speaker
+ * @param {Object<number|string, number>|null|undefined} merges
+ * @returns {number}
+ */
+export function resolveSpeakerRoot(speaker, merges) {
+  if (!merges) return speaker;
+  let s = speaker;
+  const seen = new Set();
+  while (Object.prototype.hasOwnProperty.call(merges, s) && merges[s] !== s && !seen.has(s)) {
+    seen.add(s);
+    s = merges[s];
+  }
+  return s;
+}
+
+/**
+ * Apply user speaker-merges and gap-free renumbering to a list of turns, so the
+ * colours/labels the UI shows are merged and never skip an index.
+ *
+ * Two transforms, both pure (returns NEW turn objects, input untouched):
+ *  1. Each turn's `speaker` is resolved to its merge ROOT (via {@link
+ *     resolveSpeakerRoot}); adjacent turns that resolve to the same root are
+ *     concatenated into one turn (so renaming speaker 3 -> speaker 2 collapses
+ *     their now-adjacent turns and they share one colour).
+ *  2. Each distinct root is assigned a contiguous, gap-free `position`
+ *     (0,1,2,...) in order of first appearance, so raw speakers like 0,1,4 (the
+ *     diarizer can skip a cluster index) render as positions 0,1,2 -- the
+ *     palette and the default ordinal name never leave a gap.
+ *
+ * Output turns keep `speaker` = the stable root raw index (used for name lookup,
+ * merge targeting and persistence) and gain `position` = the display slot (used
+ * for the colour class and the default ordinal name).
+ *
+ * @param {Array<{speaker:number,text?:string,words?:object[],end_time?:number}>} turns
+ * @param {Object<number|string, number>|null|undefined} merges
+ * @returns {Array<object>} canonicalised turns with `speaker` (root) + `position`
+ */
+export function canonicalizeTurns(turns, merges) {
+  if (!Array.isArray(turns) || turns.length === 0) return [];
+  const merged = [];
+  for (const turn of turns) {
+    const root = resolveSpeakerRoot(turn.speaker, merges);
+    const last = merged[merged.length - 1];
+    if (last && last.speaker === root) {
+      last.words = [...(last.words || []), ...(turn.words || [])];
+      last.end_time = turn.end_time ?? last.end_time;
+      last.text = [last.text, turn.text].map((s) => (s ?? '').trim()).filter(Boolean).join(' ');
+    } else {
+      merged.push({ ...turn, speaker: root });
+    }
+  }
+  const positionOf = new Map();
+  for (const turn of merged) {
+    if (!positionOf.has(turn.speaker)) positionOf.set(turn.speaker, positionOf.size);
+    turn.position = positionOf.get(turn.speaker);
+  }
+  return merged;
+}
+
 /** Number of distinct speakers in a diarization result. */
 export function speakerCount(segments) {
   if (!Array.isArray(segments) || segments.length === 0) return 0;
@@ -84,8 +149,10 @@ export function speakerCount(segments) {
 
 /**
  * Render turns as plain "Name: text" blocks for copying/exporting a diarized
- * transcript. `nameFor(speaker)` resolves a speaker index to its (possibly
- * user-renamed) label. `textFor(text)`, when given, transforms each turn's text
+ * transcript. `nameFor(speaker, position)` resolves a speaker (root index) and
+ * its display position to its (possibly user-renamed) label -- the position lets
+ * the resolver fall back to the gap-free default ordinal name from
+ * {@link canonicalizeTurns}. `textFor(text)`, when given, transforms each turn's text
  * (e.g. the dictation regex cleanup) so the speaker view composes with it.
  * Turns with no text are dropped; blocks are separated by a blank line.
  *
@@ -100,7 +167,7 @@ export function turnsToLabeledText(turns, nameFor, textFor = null) {
     .map((turn) => {
       const raw = turn.text ?? '';
       const text = textFor ? textFor(raw) : raw;
-      return [nameFor(turn.speaker), text.trim()];
+      return [nameFor(turn.speaker, turn.position), text.trim()];
     })
     .filter(([, text]) => text)
     .map(([name, text]) => `${name}: ${text}`)

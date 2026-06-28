@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { assignSpeakersToWords, groupWordsIntoTurns, speakerCount, turnsToLabeledText } from '../../app/ui/src/lib/speakerAssign.js';
+import { assignSpeakersToWords, groupWordsIntoTurns, speakerCount, turnsToLabeledText, resolveSpeakerRoot, canonicalizeTurns } from '../../app/ui/src/lib/speakerAssign.js';
 
 const W = (text, s, e) => ({ text, start_time: s, end_time: e });
 
@@ -107,6 +107,82 @@ describe('speakerCount', () => {
   });
 });
 
+describe('resolveSpeakerRoot', () => {
+  test('no merges -> identity', () => {
+    assert.equal(resolveSpeakerRoot(2, null), 2);
+    assert.equal(resolveSpeakerRoot(2, undefined), 2);
+    assert.equal(resolveSpeakerRoot(2, {}), 2);
+  });
+  test('follows a single hop', () => {
+    assert.equal(resolveSpeakerRoot(2, { 2: 1 }), 1);
+  });
+  test('follows a chain transitively (2->1->0)', () => {
+    assert.equal(resolveSpeakerRoot(2, { 2: 1, 1: 0 }), 0);
+  });
+  test('is cycle-safe (terminates, never loops forever)', () => {
+    // A pathological 2-cycle has no real root; we only require termination with
+    // a deterministic member of the cycle (this can't arise in practice).
+    assert.ok([0, 1].includes(resolveSpeakerRoot(1, { 0: 1, 1: 0 })));
+  });
+  test('a self-loop resolves to itself', () => {
+    assert.equal(resolveSpeakerRoot(3, { 3: 3 }), 3);
+  });
+});
+
+describe('canonicalizeTurns', () => {
+  const T = (speaker, text) => ({ speaker, text });
+
+  test('empty/invalid -> empty', () => {
+    assert.deepEqual(canonicalizeTurns([], null), []);
+    assert.deepEqual(canonicalizeTurns(null, null), []);
+  });
+
+  test('no merges, contiguous speakers -> positions track speakers', () => {
+    const turns = canonicalizeTurns([T(0, 'a'), T(1, 'b'), T(0, 'c')], null);
+    assert.deepEqual(turns.map((t) => t.speaker), [0, 1, 0]);
+    assert.deepEqual(turns.map((t) => t.position), [0, 1, 0]);
+  });
+
+  test('non-contiguous raw speakers get gap-free positions (0,1,4 -> 0,1,2)', () => {
+    // The diarizer can skip a cluster index; positions must not leave a gap so
+    // the palette/default ordinal name stays contiguous.
+    const turns = canonicalizeTurns([T(0, 'a'), T(1, 'b'), T(4, 'c')], null);
+    assert.deepEqual(turns.map((t) => t.speaker), [0, 1, 4]);
+    assert.deepEqual(turns.map((t) => t.position), [0, 1, 2]);
+  });
+
+  test('merging speaker 2 into 1 collapses to two positions and merges adjacency', () => {
+    // speakers 0,1,2 with 2 renamed into 1: the now-adjacent 1 and 2 turns merge
+    // into one block and share a single position/colour -> only two speakers.
+    const turns = canonicalizeTurns([T(0, 'a'), T(1, 'b'), T(2, 'c'), T(0, 'd')], { 2: 1 });
+    assert.deepEqual(turns.map((t) => t.speaker), [0, 1, 0]);
+    assert.deepEqual(turns.map((t) => t.position), [0, 1, 0]);
+    assert.equal(turns[1].text, 'b c'); // adjacent 1 + (merged) 2 concatenated
+  });
+
+  test('merge keeps the root speaker index stable (for name lookup/persistence)', () => {
+    // Renaming the second speaker (raw 1) into the third (raw 2): turns carry the
+    // surviving root index 2, but positions stay gap-free.
+    const turns = canonicalizeTurns([T(2, 'a'), T(1, 'b')], { 1: 2 });
+    assert.deepEqual(turns.map((t) => t.speaker), [2]);
+    assert.deepEqual(turns.map((t) => t.position), [0]);
+    assert.equal(turns[0].text, 'a b');
+  });
+
+  test('does not mutate the input turns', () => {
+    const input = [T(0, 'a'), T(1, 'b')];
+    canonicalizeTurns(input, { 1: 0 });
+    assert.equal('position' in input[0], false);
+    assert.equal(input[1].speaker, 1);
+  });
+
+  test('a 13th speaker still gets a contiguous position (App maps it to "Speaker 13")', () => {
+    const many = Array.from({ length: 13 }, (_, i) => T(i, `t${i}`));
+    const turns = canonicalizeTurns(many, null);
+    assert.equal(turns[12].position, 12);
+  });
+});
+
 describe('turnsToLabeledText', () => {
   const defName = (s) => `Speaker ${s + 1}`;
 
@@ -178,5 +254,14 @@ describe('turnsToLabeledText', () => {
     const turns = [{ speaker: 0, text: 'hi' }];
     assert.equal(turnsToLabeledText(turns, defName, null), 'Speaker 1: hi');
     assert.equal(turnsToLabeledText(turns, defName), 'Speaker 1: hi');
+  });
+
+  test('passes the display position to the resolver (gap-free default name)', () => {
+    // After canonicalizeTurns a merged set can carry non-contiguous root speaker
+    // indices but contiguous positions; the resolver labels by POSITION so the
+    // default ordinal name never skips. Here root 4 sits at position 1.
+    const turns = canonicalizeTurns([{ speaker: 0, text: 'a' }, { speaker: 4, text: 'b' }], null);
+    const ordinal = (_spk, pos) => ['First', 'Second'][pos];
+    assert.equal(turnsToLabeledText(turns, ordinal), 'First: a\n\nSecond: b');
   });
 });

@@ -26,7 +26,7 @@ import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
 import { runDiarization } from './lib/diarizer.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
-import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText } from './lib/speakerAssign.js';
+import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText, canonicalizeTurns } from './lib/speakerAssign.js';
 import { createSerialQueue } from './lib/writeQueue.js';
 import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
@@ -1061,6 +1061,17 @@ export default function App() {
   // of the label currently shown as an input, or null.
   const [speakerNames, setSpeakerNames] = useState({});
   const [editingSpeaker, setEditingSpeaker] = useState(null);
+  // Draft text shown in the speaker-rename input; applied on commit (Enter/blur)
+  // so the merge-on-matching-name check fires once, not on every keystroke.
+  const [editingSpeakerDraft, setEditingSpeakerDraft] = useState('');
+  // Set true when Escape aborts a rename, so the trailing blur skips the commit.
+  const renameCancelRef = useRef(false);
+  // User speaker-merges, per entry: id -> { rawSpeakerIndex -> mergedIntoIndex }.
+  // Renaming a speaker to another speaker's current label merges the two (same
+  // colour + label), via union-find over the raw indices. In memory only; the
+  // merge is baked into the persisted grouped turns (their `speaker` is the
+  // root), so it survives a reload without persisting this map.
+  const [speakerMerges, setSpeakerMerges] = useState({});
   // F-130: diarization persists ONLY the grouped turns (speaker index + turn
   // text), never per-word timings or raw float segments. After a reload an
   // entry's pcm/words are gone, so its restored turns live here (id -> [{speaker,
@@ -4292,9 +4303,18 @@ export default function App() {
     return trans.text;
   }
 
-  // The (possibly user-renamed) label for a speaker in an entry.
-  function speakerDisplayName(entryId, speaker) {
-    return speakerNames[entryId]?.[speaker] || `${t('speaker')} ${speaker + 1}`;
+  // Gap-free default speaker label for a display position: ordinal words for the
+  // first twelve speakers ("First".."Twelfth"), then "Speaker N" beyond that.
+  function defaultSpeakerName(position) {
+    const ordinals = t('speakerOrdinals').split(',');
+    if (position < ordinals.length) return ordinals[position];
+    return `${t('speaker')} ${position + 1}`;
+  }
+  // The (possibly user-renamed) label for a speaker in an entry. `speaker` is the
+  // stable root raw index (custom names are keyed by it); `position` is the
+  // gap-free display slot used for the default ordinal name.
+  function speakerDisplayName(entryId, speaker, position) {
+    return speakerNames[entryId]?.[speaker] || defaultSpeakerName(position);
   }
   // Rename a speaker for one entry; applies to every turn for that speaker.
   function setSpeakerName(entryId, speaker, name) {
@@ -4303,6 +4323,48 @@ export default function App() {
       [entryId]: { ...(prev[entryId] || {}), [speaker]: name },
     }));
   }
+  // Drop a speaker's custom name (revert to the default ordinal label). Prunes
+  // the entry key when no custom names remain.
+  function clearSpeakerName(entryId, speaker) {
+    setSpeakerNames(prev => {
+      if (!prev[entryId] || !(speaker in prev[entryId])) return prev;
+      const names = { ...prev[entryId] };
+      delete names[speaker];
+      const next = { ...prev };
+      if (Object.keys(names).length) next[entryId] = names; else delete next[entryId];
+      return next;
+    });
+  }
+  // Merge one speaker into another for an entry (renaming a speaker to another's
+  // label). The merged-away speaker inherits the target's colour + label, so its
+  // own custom name is dropped.
+  function mergeSpeakers(entryId, fromRoot, intoRoot) {
+    setSpeakerMerges(prev => ({
+      ...prev,
+      [entryId]: { ...(prev[entryId] || {}), [fromRoot]: intoRoot },
+    }));
+    clearSpeakerName(entryId, fromRoot);
+  }
+  // Apply the rename draft to a speaker turn. Empty or back-to-default clears the
+  // custom name; a draft matching ANOTHER speaker's current label merges the two;
+  // otherwise it sets a custom name. `turns` is the canonicalised turn list (so
+  // the match is against the labels actually on screen).
+  function commitSpeakerRename(entryId, turn, turns) {
+    setEditingSpeaker(null);
+    const root = turn.speaker;
+    const name = editingSpeakerDraft.trim();
+    if (!name || name === defaultSpeakerName(turn.position)) {
+      clearSpeakerName(entryId, root);
+      return;
+    }
+    const target = turns.find(tn => tn.speaker !== root &&
+      speakerDisplayName(entryId, tn.speaker, tn.position).toLowerCase() === name.toLowerCase());
+    if (target) {
+      mergeSpeakers(entryId, root, target.speaker);
+      return;
+    }
+    setSpeakerName(entryId, root, name);
+  }
 
   // Speaker turns for an entry (or null when not diarized yet). Live entries
   // group their in-memory words against the cached segments; a reloaded entry
@@ -4310,10 +4372,13 @@ export default function App() {
   // turns restored from disk.
   function getDiarizedTurns(trans) {
     const segments = diarizationCache[trans.id];
-    if (segments && trans.words?.length) {
-      return groupWordsIntoTurns(assignSpeakersToWords(trans.words, segments));
-    }
-    return persistedTurns[trans.id] ?? null;
+    const turns = (segments && trans.words?.length)
+      ? groupWordsIntoTurns(assignSpeakersToWords(trans.words, segments))
+      : persistedTurns[trans.id];
+    if (!turns) return null;
+    // Apply user merges + gap-free renumbering so colours/labels are merged and
+    // never skip an index (the diarizer can emit non-contiguous speaker indices).
+    return canonicalizeTurns(turns, speakerMerges[trans.id]);
   }
 
   // True when an entry has a diarized view to show (live segments or restored
@@ -4347,7 +4412,7 @@ export default function App() {
     const turns = getDiarizedTurns(trans);
     if (!turns || turns.length === 0) return dictate ? applyDictationRegex(trans.text) : trans.text;
     const textFor = dictate ? (txt) => applyDictationRegex(txt) : null;
-    return turnsToLabeledText(turns, (spk) => speakerDisplayName(trans.id, spk), textFor);
+    return turnsToLabeledText(turns, (spk, pos) => speakerDisplayName(trans.id, spk, pos), textFor);
   }
 
   // Render an entry's transcript as speaker turns (turns + colour). Maps each
@@ -4367,24 +4432,30 @@ export default function App() {
         {turns.map((turn, i) => {
           const editKey = `${trans.id}:${i}`;
           return (
-            <div key={i} className={`diar-turn diar-speaker-${turn.speaker % DIAR_PALETTE_SIZE}`}>
+            <div key={i} className={`diar-turn diar-speaker-${turn.position % DIAR_PALETTE_SIZE}`}>
               {editingSpeaker === editKey ? (
                 <input
                   className="diar-speaker-input"
                   autoFocus
-                  value={speakerNames[trans.id]?.[turn.speaker] ?? `${t('speaker')} ${turn.speaker + 1}`}
-                  onChange={e => setSpeakerName(trans.id, turn.speaker, e.target.value)}
-                  onBlur={() => setEditingSpeaker(null)}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); setEditingSpeaker(null); } }}
+                  value={editingSpeakerDraft}
+                  onChange={e => setEditingSpeakerDraft(e.target.value)}
+                  onBlur={() => {
+                    if (renameCancelRef.current) { renameCancelRef.current = false; setEditingSpeaker(null); return; }
+                    commitSpeakerRename(trans.id, turn, turns);
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                    else if (e.key === 'Escape') { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
+                  }}
                 />
               ) : (
                 <button
                   type="button"
                   className="diar-speaker-label"
                   title={t('renameSpeakerHint')}
-                  onClick={() => setEditingSpeaker(editKey)}
+                  onClick={() => { setEditingSpeakerDraft(speakerDisplayName(trans.id, turn.speaker, turn.position)); setEditingSpeaker(editKey); }}
                 >
-                  {speakerDisplayName(trans.id, turn.speaker)}
+                  {speakerDisplayName(trans.id, turn.speaker, turn.position)}
                 </button>
               )}
               <span className="diar-turn-text">{dictate ? applyDictationRegex(turn.text) : turn.text}</span>
@@ -5775,9 +5846,13 @@ export default function App() {
                                   const n = parseInt(e.target.value, 10) || 0;
                                   setDiarizationNumByEntry(prev => ({ ...prev, [trans.id]: n }));
                                   // Re-segmenting redefines the speakers, so drop
-                                  // this entry's custom names (their indices no
-                                  // longer mean the same person).
+                                  // this entry's custom names AND merges (their
+                                  // indices no longer mean the same person).
                                   setSpeakerNames(prev => {
+                                    if (!prev[trans.id]) return prev;
+                                    const next = { ...prev }; delete next[trans.id]; return next;
+                                  });
+                                  setSpeakerMerges(prev => {
                                     if (!prev[trans.id]) return prev;
                                     const next = { ...prev }; delete next[trans.id]; return next;
                                   });
