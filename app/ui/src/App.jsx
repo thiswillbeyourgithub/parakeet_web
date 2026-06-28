@@ -825,7 +825,6 @@ export default function App() {
   // and the model is running its canonical pass.
   const [awaitingFinal, setAwaitingFinal] = useState(false);
   const [noiseSuppression, setNoiseSuppression] = useState(true);
-  const [echoCancellation, setEchoCancellation] = useState(false);
   const [autoGainControl, setAutoGainControl] = useState(true);
   // Linear gain multiplier applied on the phone before audio leaves the
   // device. Only affects the remote mic path; the local mic doesn't use
@@ -1209,7 +1208,6 @@ export default function App() {
           savedMaesPrefixAlpha,
           savedCpuThreads,
           savedNoiseSuppression,
-          savedEchoCancellation,
           savedAutoGainControl,
           savedRemoteMicGain,
           savedAutoCopyToClipboard,
@@ -1241,7 +1239,6 @@ export default function App() {
           loadSetting('maesPrefixAlpha', 0), // off by default (see useState above)
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
-          loadSetting('echoCancellation', false),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
           loadSetting('autoCopyToClipboard', false),
@@ -1291,7 +1288,6 @@ export default function App() {
         setMaesPrefixAlpha(Number.isInteger(savedMaesPrefixAlpha) && savedMaesPrefixAlpha >= 0 ? savedMaesPrefixAlpha : 1);
         setCpuThreads(savedCpuThreads);
         setNoiseSuppression(savedNoiseSuppression);
-        setEchoCancellation(savedEchoCancellation);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
@@ -1715,7 +1711,6 @@ export default function App() {
   usePersistedSetting('maesPrefixAlpha', maesPrefixAlpha, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
-  usePersistedSetting('echoCancellation', echoCancellation, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
   usePersistedSetting('remoteMicGain', remoteMicGain, settingsLoaded);
 
@@ -1733,12 +1728,11 @@ export default function App() {
       rtc.sendMessage({
         type: 'audio-settings',
         noiseSuppression,
-        echoCancellation,
         autoGainControl,
         gain: remoteMicGain,
       });
     } catch (_) { /* channel may be closing */ }
-  }, [isRemoteMic, noiseSuppression, echoCancellation, autoGainControl, remoteMicGain]);
+  }, [isRemoteMic, noiseSuppression, autoGainControl, remoteMicGain]);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
   usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
   usePersistedSetting('keyboardShortcutsEnabled', keyboardShortcutsEnabled, settingsLoaded);
@@ -2383,7 +2377,6 @@ export default function App() {
       audio: {
         channelCount: 1,
         sampleRate: { ideal: 48000 },
-        echoCancellation,
         noiseSuppression,
         autoGainControl,
       }
@@ -4753,16 +4746,6 @@ export default function App() {
                   />
                   {t('noiseSuppression')}
                   <InfoTooltip text={t('tooltipNoiseSuppression')} />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={echoCancellation}
-                    onChange={e => setEchoCancellation(e.target.checked)}
-                    disabled={isRecording}
-                  />
-                  {t('echoCancellation')}
-                  <InfoTooltip text={t('tooltipEchoCancellation')} />
                 </label>
                 <label>
                   <input

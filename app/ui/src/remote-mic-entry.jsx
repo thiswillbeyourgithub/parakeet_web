@@ -190,7 +190,6 @@ function RemoteMicSender() {
     // immediate feedback mid-recording.
     const audioSettingsRef = useRef({
         noiseSuppression: true,
-        echoCancellation: false,
         autoGainControl: true,
         gain: 2.0,
     });
@@ -833,9 +832,6 @@ function RemoteMicSender() {
                             if (typeof msg.noiseSuppression === 'boolean') {
                                 audioSettingsRef.current.noiseSuppression = msg.noiseSuppression;
                             }
-                            if (typeof msg.echoCancellation === 'boolean') {
-                                audioSettingsRef.current.echoCancellation = msg.echoCancellation;
-                            }
                             if (typeof msg.autoGainControl === 'boolean') {
                                 audioSettingsRef.current.autoGainControl = msg.autoGainControl;
                             }
@@ -885,13 +881,12 @@ function RemoteMicSender() {
             // Request microphone access. Toggles come from the desktop
             // (audio-settings message) so the phone honours the same user
             // preferences as the local mic path.
-            const { noiseSuppression, echoCancellation, autoGainControl } = audioSettingsRef.current;
+            const { noiseSuppression, autoGainControl } = audioSettingsRef.current;
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
                     sampleRate: { ideal: 16000 },
                     noiseSuppression,
-                    echoCancellation,
                     autoGainControl,
                 }
             });
