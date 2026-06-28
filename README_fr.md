@@ -48,7 +48,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | 🎯 **Renforcement de phrases** | Oriente le décodeur vers votre propre liste de phrases (noms, jargon, noms de médicaments, acronymes), avec des poids optionnels par phrase. Fonctionne entièrement côté client |
 | 🔦 **Recherche en faisceau (beam search)** | Décodage multi-hypothèses optionnel (transcription de fichier) qui permet au renforcement de phrases de récupérer des mots que le décodage glouton aurait écartés ; la valeur par défaut s'adapte à votre appareil (glouton sur téléphone, jusqu'à une largeur de 5 sur ordinateur de bureau) |
 | 📝 **Mode dictée** | Post-traite les transcriptions avec des règles regex (vocabulaire médical français, ponctuation, unités) |
-| 🗣️ **Identification des locuteurs** | Vue optionnelle « qui parle quand » : regroupe la transcription en tours `Locuteur N :` colorés, entièrement côté client via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). Le nombre de locuteurs est détecté automatiquement |
+| 🗣️ **Identification des locuteurs** | Vue optionnelle « qui parle quand » : regroupe la transcription en tours `Premier :`/`Deuxième :`/... colorés, entièrement côté client via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (dans un worker en arrière-plan, donc sans jamais figer l'interface). Le nombre de locuteurs est détecté automatiquement ; renommez un locuteur avec l'étiquette d'un autre pour les fusionner |
 | 🕐 **Horodatage des mots** | Horodatage par mot |
 | 📁 **Fichier ou micro** | Transcrivez des fichiers audio téléversés ou enregistrez directement depuis votre microphone |
 | 🎚️ **Contrôles de capture** | Bascules par enregistrement pour la suppression de bruit, l'annulation d'écho et le contrôle automatique du gain |
@@ -88,7 +88,7 @@ Cette fonctionnalité est très précoce et s'améliorera rapidement.
 
 ## Identification des locuteurs
 
-Parakeet Web peut répondre à la question **« qui parle quand »** : il découpe une transcription en tours de parole par locuteur, en regroupant les mots en blocs colorés `Locuteur 1 :`, `Locuteur 2 :` ... Tout s'exécute **localement dans votre navigateur** : aucun audio ne quitte votre appareil, exactement comme la transcription elle-même.
+Parakeet Web peut répondre à la question **« qui parle quand »** : il découpe une transcription en tours de parole par locuteur, en regroupant les mots en blocs colorés `Premier :`, `Deuxième :`, `Troisième :` ... (au-delà du douzième, repli sur `Locuteur 13 :` et au-delà). Tout s'exécute **localement dans votre navigateur** : aucun audio ne quitte votre appareil, exactement comme la transcription elle-même.
 
 L'identification des locuteurs est entièrement **optionnelle** et ne se lance jamais sans votre action :
 
@@ -98,9 +98,9 @@ L'identification des locuteurs est entièrement **optionnelle** et ne se lance j
 Le **nombre de locuteurs est détecté automatiquement** par défaut, vous n'avez donc pas à le préciser. Si vous le connaissez, vous pouvez fixer un nombre :
 
 - un contrôle **Nombre de locuteurs** dans le panneau de paramètres définit la valeur par défaut (**Auto**, ou 1-10), et
-- le menu **⋮** de chaque transcription possède son propre remplacement **Nombre de locuteurs** qui **re-segmente immédiatement cet enregistrement** lorsque vous le modifiez (pratique quand la détection auto sur-découpe ou sous-découpe un extrait précis).
+- le menu **⋮** de chaque transcription possède son propre remplacement **Nombre de locuteurs** qui **re-segmente cet enregistrement** lorsque vous le modifiez (pratique quand la détection auto sur-découpe ou sous-découpe un extrait précis). La re-segmentation s'exécute dans un worker en arrière-plan, donc la page ne se fige jamais ; un bouton **Annuler** à côté de **Locuteurs** interrompt un traitement en cours.
 
-**Renommer les locuteurs** : cliquez sur une étiquette de locuteur (par ex. **Locuteur 1**) pour la modifier directement. Le nouveau nom remplace ce locuteur partout dans la transcription, et la **copie** d'une transcription identifiée produit des blocs `Nom : texte` propres, prêts à coller.
+**Renommer les locuteurs** : cliquez sur une étiquette de locuteur (par ex. **Premier**) pour la modifier directement. Le nouveau nom remplace ce locuteur partout dans la transcription. **Fusionnez deux locuteurs** en renommant l'un avec l'étiquette actuelle de l'autre (par ex. renommez **Troisième** en **Deuxième**) : ils fusionnent en un seul locuteur d'une seule couleur, et les couleurs/numéros se re-compactent sans laisser de trous. La **copie** d'une transcription identifiée produit des blocs `Nom : texte` propres, prêts à coller.
 
 **Réutiliser les noms entre enregistrements** : une fois que vous avez nommé un locuteur, l'identification d'un autre enregistrement dans la même session réutilise automatiquement ce nom pour la même voix. L'application compare une empreinte vocale de chaque locuteur à celles que vous avez déjà nommées et vous propose l'étiquette correspondante (vous pouvez toujours la modifier). Cette mise en correspondance se fait entièrement en mémoire, pour la session en cours uniquement : les empreintes vocales sont des données biométriques, elles ne sont donc jamais écrites sur le disque et disparaissent au rechargement de la page.
 

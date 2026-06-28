@@ -48,7 +48,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
 | 🔦 **Beam Search** | Optional multi-hypothesis decoding (file transcription) that lets phrase boosting recover words greedy would discard; the default adapts to your device (greedy on phones, up to width 5 on desktops) |
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
-| 🗣️ **Speaker Diarization** | Optional "who spoke when" view: groups the transcript into colour-coded `Speaker N:` turns, fully client-side via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). The speaker count is detected automatically |
+| 🗣️ **Speaker Diarization** | Optional "who spoke when" view: groups the transcript into colour-coded `First:`/`Second:`/... turns, fully client-side via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (in a background worker, so it never freezes the UI). The speaker count is detected automatically; rename a speaker to another's label to merge them |
 | 🕐 **Word Timestamps** | Per-word timestamps |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone |
 | 🎚️ **Capture Controls** | Per-recording toggles for noise suppression, echo cancellation, and auto gain control |
@@ -88,7 +88,7 @@ This feature is very early and will improve rapidly.
 
 ## Speaker Diarization
 
-Parakeet Web can answer **"who spoke when"**: it splits a transcription into per-speaker turns, grouping the words into colour-coded `Speaker 1:`, `Speaker 2:` ... blocks. Everything runs **locally in your browser** — no audio leaves your device, exactly like the transcription itself.
+Parakeet Web can answer **"who spoke when"**: it splits a transcription into per-speaker turns, grouping the words into colour-coded `First:`, `Second:`, `Third:` ... blocks (speakers beyond the twelfth fall back to `Speaker 13:` and up). Everything runs **locally in your browser** — no audio leaves your device, exactly like the transcription itself.
 
 Diarization is fully **opt-in** and never runs unless you ask for it:
 
@@ -98,9 +98,9 @@ Diarization is fully **opt-in** and never runs unless you ask for it:
 The **number of speakers is detected automatically** by default, so you do not have to specify it. If you do know it, you can set a fixed count:
 
 - a **Number of speakers** control in the settings sidebar sets the default (**Auto**, or 1-10), and
-- each transcription's **⋮** menu has its own **Number of speakers** override that **re-segments that recording immediately** when you change it (handy when auto over- or under-splits a particular clip).
+- each transcription's **⋮** menu has its own **Number of speakers** override that **re-segments that recording** when you change it (handy when auto over- or under-splits a particular clip). Re-segmentation runs in a background worker, so the page never freezes; a **Cancel** button next to **Speakers** aborts a run in progress.
 
-**Rename speakers**: click a speaker label (e.g. **Speaker 1**) to edit it inline. The new name replaces that speaker everywhere in the transcript, and **copying** a diarized transcription yields clean `Name: text` blocks ready to paste.
+**Rename speakers**: click a speaker label (e.g. **First**) to edit it inline. The new name replaces that speaker everywhere in the transcript. **Merge two speakers** by renaming one to another's current label (e.g. rename **Third** to **Second**): they fuse into a single speaker with one colour, and the colours/numbers re-pack so there are no gaps. **Copying** a diarized transcription yields clean `Name: text` blocks ready to paste.
 
 **Reuse names across recordings**: once you have named a speaker, diarizing another recording in the same session automatically reuses that name for the same voice. The app compares a voice embedding of each speaker against the ones you have already named and labels a match for you (you can still rename it). This matching happens entirely in memory for the current session only: the voice embeddings are biometric data, so they are never written to disk and are gone when you reload the page.
 
