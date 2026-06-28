@@ -82,6 +82,11 @@ const REPO_FP32_SHARDS = [
   'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001',
   'vocab.txt', 'nemo128.onnx',
 ];
+// Ships the lighter int8 encoder (encoder-model.int8.lite.onnx) alongside the default int8.
+const REPO_LITE = [
+  'encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'decoder_joint-model.int8.onnx',
+  'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
+];
 
 describe('getParakeetModel file selection: WASM', () => {
   test('int8 request -> int8 encoder/decoder, no external sidecar, no preprocessor (JS default)', async () => {
@@ -98,6 +103,31 @@ describe('getParakeetModel file selection: WASM', () => {
     assert.ok(downloaded.includes('encoder-model.int8.onnx'));
     assert.ok(downloaded.includes('vocab.txt'));
     assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must not fetch the fp32 sidecar on the int8 pin');
+  });
+
+  test('int8-lite request + lite shipped -> lite encoder, plain int8 decoder, no sidecar', async () => {
+    const downloaded = mockHf(REPO_LITE);
+    const r = await getParakeetModel('test/wasm-int8-lite', {
+      backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8',
+    });
+    assert.deepEqual(r.filenames, { encoder: 'encoder-model.int8.lite.onnx', decoder: 'decoder_joint-model.int8.onnx' });
+    assert.deepEqual(r.quantisation, { encoder: 'int8-lite', decoder: 'int8' });
+    assert.equal(r.urls.encoderDataUrl ?? null, null, 'lite encoder is self-contained');
+    assert.ok(downloaded.includes('encoder-model.int8.lite.onnx'), 'must fetch the lite encoder');
+    assert.ok(!downloaded.includes('encoder-model.int8.onnx'), 'must NOT fetch the default int8 encoder when lite was requested');
+  });
+
+  test('int8-lite request but NO lite file in repo throws rather than silently using default int8', async () => {
+    // No silent downgrade: an absent lite build surfaces as QuantUnavailableError
+    // (like a missing fp32 shard set) so it is obvious which build loaded.
+    const downloaded = mockHf(REPO_NO_FP16);
+    await assert.rejects(
+      getParakeetModel('test/wasm-int8-lite-missing', {
+        backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8',
+      }),
+      (err) => err instanceof QuantUnavailableError && err.requested.encoder === 'int8-lite',
+    );
+    assert.ok(!downloaded.includes('encoder-model.int8.lite.onnx'), 'no lite file should be fetched when the request is rejected');
   });
 
   test('fp32 request honoured only with allowWasmFp32 + shards: shards mounted as array, single sidecar NOT added', async () => {

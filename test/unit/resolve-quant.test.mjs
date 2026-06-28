@@ -14,6 +14,8 @@ const WITH_FP16 = ['encoder-model.fp16.onnx', 'decoder_joint-model.fp16.onnx', '
 const NO_FP16 = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.int8.onnx'];
 // A repo that ships the fp32 encoder as <2GB shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py).
 const WITH_FP32_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'decoder_joint-model.int8.onnx'];
+// A repo that ALSO ships the lighter int8 encoder (encoder-model.int8.lite.onnx).
+const WITH_LITE = ['encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'encoder-model.onnx', 'decoder_joint-model.int8.onnx'];
 
 describe('resolveModelQuant: WASM is pinned to int8', () => {
   for (const backend of ['wasm']) {
@@ -60,6 +62,37 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true });
     assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
     assert.equal(r.pinnedToInt8, false);
+  });
+});
+
+describe('resolveModelQuant: WASM int8-lite opt-in', () => {
+  test('int8-lite request + lite shipped -> int8-lite encoder, int8 decoder, not pinned', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8', repoFiles: WITH_LITE });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8-lite', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+  });
+
+  test('int8-lite request but NO lite file shipped -> int8 pin (no silent downgrade)', () => {
+    // Like a missing fp32 shard set, an absent lite build pins so getParakeetModel
+    // throws QuantUnavailableError rather than quietly loading the default int8.
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+  });
+
+  test('quantSatisfiable: int8-lite is satisfiable iff the source ships the lite file', () => {
+    const args = { backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8' };
+    assert.equal(quantSatisfiable({ ...args, repoFiles: WITH_LITE }), true);
+    assert.equal(quantSatisfiable({ ...args, repoFiles: WITH_FP32_SHARDS }), false, 'no lite file -> not satisfiable');
+  });
+
+  test('int8-lite on WebGPU is treated like int8 (no GPU lite kernel) -> fp16 when shipped', () => {
+    // The per-backend picker never sends int8-lite to WebGPU, but defend in depth:
+    // it must NOT pass through as a (non-existent) lite GPU file.
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8-lite', decoderQuant: 'int8', repoFiles: WITH_FP16 });
+    assert.equal(r.encoderQ, 'fp16');
+    const noFp16 = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8-lite', decoderQuant: 'int8', repoFiles: NO_FP16 });
+    assert.equal(noFp16.encoderQ, 'fp32');
   });
 });
 
