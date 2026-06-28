@@ -44,3 +44,4 @@ playwright-report
 test/e2e/.cache
 
 audio_testfiles
+.serena
