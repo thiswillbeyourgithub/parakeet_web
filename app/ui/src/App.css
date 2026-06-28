@@ -940,6 +940,18 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   border-color: var(--border-strong);
 }
 
+/* Cancel button shown next to "Speakers" while a diarization is running in its
+   worker (the main thread stays free, so this stays clickable). */
+.display-mode-button--cancel {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.display-mode-button--cancel:hover {
+  background: var(--danger-soft-bg);
+  border-color: var(--danger-hover);
+  color: var(--danger-hover);
+}
+
 /* ─── History fade-in animation ──────────────────────────────────────────── */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(-8px); }

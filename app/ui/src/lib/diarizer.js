@@ -1,26 +1,27 @@
-// Offline speaker diarization via the vendored sherpa-onnx WebAssembly engine.
+// Main-thread client for offline speaker diarization. The heavy, synchronous
+// sherpa-onnx WASM `process()` runs in a dedicated Web Worker (diarizer.worker.js)
+// so it never freezes the UI; this module fetches + integrity-verifies the engine
+// and model bytes, spins up that worker, and brokers the request/response.
 //
-// sherpa-onnx ships a self-contained WASM build that bundles its OWN ONNX
-// Runtime (compiled C++), separate from the app's onnxruntime-web. We load it
-// LAZILY here: the ~11 MB engine and the ~34 MB of models are fetched only when
-// the user actually diarizes, so they never touch the transcription path.
+// sherpa-onnx ships a self-contained WASM build that bundles its OWN ONNX Runtime
+// (compiled C++), separate from the app's onnxruntime-web. We load it LAZILY: the
+// ~11 MB engine and the ~34 MB of models are fetched only when the user actually
+// diarizes, so they never touch the transcription path.
 //
 // Loading is integrity-preserving, the same posture as the ORT wasm and the PCM
 // worklet: every byte the browser evaluates (emscripten glue, JS API wrapper,
 // wasm binary) is sha384-verified against the build-time pin in
 // /.well-known/asset-integrity.json before it runs (see asset-integrity.js +
-// postbuild.mjs). The verified glue/wrapper are injected as classic <script>s
-// from blob: URLs (CSP allows script-src/worker-src blob:), and the wasm bytes
-// are handed to emscripten via Module.wasmBinary so there is no second,
-// unverified fetch. pthread workers spawn from the glue's blob: URL, exactly
-// how the app already runs ORT's threaded wasm from a verified blob.
+// postbuild.mjs). We verify HERE, on the main thread, then hand the verified
+// bytes to the worker, which evaluates only those bytes (importScripts of the
+// glue/wrapper from blob: URLs, wasm via Module.wasmBinary) -- never a second,
+// unverified fetch. pthread workers spawn from the verified glue blob.
 //
 // The models are NOT vendored: the caller passes the segmentation + embedding
-// ONNX bytes (downloaded through the hub, see App.jsx wiring) and we write them
-// into the WASM in-memory FS with Module.FS_createDataFile, then point the
-// diarizer config at those FS paths. The upstream build's 44 MB baked-in models
-// (.data) were stripped from the glue for exactly this reason (see the vendor
-// SOURCE.md).
+// ONNX bytes (downloaded through the hub, see App.jsx wiring) and the worker
+// writes them into the WASM in-memory FS. To avoid re-cloning ~34 MB every run we
+// send the model bytes only when they CHANGE; a count-change re-run reuses the
+// worker's cached diarizer and only re-applies the clustering knobs.
 
 import { fetchVerifiedAsset } from './asset-integrity.js';
 
@@ -29,113 +30,75 @@ const GLUE = 'sherpa-onnx-wasm-main-speaker-diarization.js';
 const WRAPPER = 'sherpa-onnx-speaker-diarization.js';
 const WASM = 'sherpa-onnx-wasm-main-speaker-diarization.wasm';
 
-// FS paths we inject the models to. Arbitrary; the diarizer reads whatever
-// path the config names.
-const SEG_PATH = '/segmentation.onnx';
-const EMB_PATH = '/embedding.onnx';
+/** The sample rate the engine expects (16 kHz). For callers that resample. */
+export const DIARIZATION_SAMPLE_RATE = 16000;
 
-// Singleton: the engine (Module + the wrapper's factory) is loaded at most once
-// per page. Concurrent callers share the same in-flight promise.
-let _enginePromise = null;
+// One worker per page, created lazily and kept warm between runs. A cancel
+// terminates it (the only way to stop a synchronous in-flight process); the next
+// run lazily rebuilds it.
+let _worker = null;
+let _workerReady = null;      // Promise<Worker>, resolves when the worker is initialised
+let _lastModelIdentity = null; // identity of the models the live worker currently holds
+let _runId = 0;
+let _pending = null;          // { id, resolve, reject } for the single in-flight run
 
-// Reused diarizer handle + the identity of the models it was built from, so a
-// second run on the same models skips the (re-)parse and only re-applies the
-// clustering knobs via setConfig.
-let _sd = null;
-let _sdModelKey = null;
-
-function injectClassicScript(blobUrl) {
-  return new Promise((resolve, reject) => {
-    const el = document.createElement('script');
-    el.src = blobUrl;
-    el.onload = () => resolve(el);
-    el.onerror = () => reject(new Error(`failed to load injected script ${blobUrl}`));
-    document.head.appendChild(el);
-  });
+function resetWorker() {
+  if (_worker) { try { _worker.terminate(); } catch (_) { /* ignore */ } }
+  _worker = null;
+  _workerReady = null;
+  _lastModelIdentity = null;
 }
 
-// fnv-1a over the first/last KB + length: a cheap, collision-safe-enough identity
-// for "are these the same model bytes as last time" (avoids a full re-hash of
-// ~28 MB on every run). Not security-sensitive; integrity is already enforced
-// upstream by the hub cache.
-function bytesIdentity(bytes) {
-  let h = 0x811c9dc5;
-  const step = Math.max(1, Math.floor(bytes.length / 4096));
-  for (let i = 0; i < bytes.length; i += step) {
-    h ^= bytes[i];
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return `${bytes.length}:${h.toString(16)}`;
-}
-
-/**
- * Load (once) the sherpa-onnx diarization WASM engine. Returns the initialised
- * emscripten Module plus the wrapper's `createOfflineSpeakerDiarization`
- * factory. Idempotent.
- */
-export function loadDiarizationEngine() {
-  if (_enginePromise) return _enginePromise;
-  _enginePromise = (async () => {
-    // Verify all three assets up front so we bail before evaluating anything if
-    // a byte is off.
+// Fetch + verify the engine bytes (main thread), then spawn and initialise the
+// worker. Idempotent: concurrent callers share the same in-flight promise.
+function ensureWorker() {
+  if (_workerReady) return _workerReady;
+  _workerReady = (async () => {
+    // Verify all three assets up front so we bail before evaluating anything if a
+    // byte is off.
     const [glue, wrapper, wasm] = await Promise.all([
       fetchVerifiedAsset(BASE + GLUE, `sherpa-onnx/${GLUE}`),
       fetchVerifiedAsset(BASE + WRAPPER, `sherpa-onnx/${WRAPPER}`),
       fetchVerifiedAsset(BASE + WASM, `sherpa-onnx/${WASM}`),
     ]);
 
-    const glueUrl = URL.createObjectURL(glue.blob); // kept alive: pthread workers spawn from it
+    const worker = new Worker(new URL('./diarizer.worker.js', import.meta.url), { type: 'classic' });
+    _worker = worker;
 
-    const ready = new Promise((resolve, reject) => {
-      const Module = {
-        // Hand emscripten the already-verified wasm bytes so it never issues a
-        // second, unverified fetch.
-        wasmBinary: wasm.bytes.buffer,
-        // Fallback locator (should be unused given wasmBinary), kept same-origin.
-        locateFile: (p) => (p.endsWith('.wasm') ? BASE + WASM : BASE + p),
-        onRuntimeInitialized: () => resolve(Module),
-        onAbort: (reason) => reject(new Error(`sherpa-onnx wasm aborted: ${reason}`)),
-        print: (m) => console.log('[Diarize/wasm]', m),
-        printErr: (m) => console.warn('[Diarize/wasm]', m),
+    // Route every message: 'ready'/init-error settle this promise; run results
+    // settle the matching _pending run.
+    await new Promise((resolve, reject) => {
+      worker.onmessage = (ev) => {
+        const m = ev.data || {};
+        if (m.type === 'ready') { resolve(); return; }
+        if (m.type === 'error' && m.id === undefined) { reject(new Error(m.message)); return; }
+        if ((m.type === 'result' || m.type === 'error') && _pending && m.id === _pending.id) {
+          const p = _pending; _pending = null;
+          if (m.type === 'result') p.resolve(m.segments);
+          else p.reject(new Error(m.message));
+        }
       };
-      // The classic-script glue reads the global `Module`.
-      globalThis.Module = Module;
-      injectClassicScript(glueUrl).catch(reject);
+      worker.onerror = (e) => reject(new Error((e && e.message) || 'diarizer worker error'));
+      // Send the verified bytes; the worker copies them (no transfer) so a later
+      // rebuild can re-fetch cleanly.
+      worker.postMessage({
+        type: 'init',
+        glueBytes: glue.bytes,
+        wrapperBytes: wrapper.bytes,
+        wasmBytes: wasm.bytes,
+      });
     });
-
-    const Module = await ready;
-
-    // The wrapper is a classic script: its top-level `function
-    // createOfflineSpeakerDiarization` becomes a global. Inject it after the
-    // runtime is up so it can reference Module immediately.
-    const wrapperUrl = URL.createObjectURL(wrapper.blob);
-    try {
-      await injectClassicScript(wrapperUrl);
-    } finally {
-      URL.revokeObjectURL(wrapperUrl);
-    }
-    const createOfflineSpeakerDiarization = globalThis.createOfflineSpeakerDiarization;
-    if (typeof createOfflineSpeakerDiarization !== 'function') {
-      throw new Error('sherpa-onnx wrapper did not expose createOfflineSpeakerDiarization');
-    }
-
-    return { Module, createOfflineSpeakerDiarization, _glueUrl: glueUrl };
+    return worker;
   })().catch((err) => {
-    // Let a failed load be retried (transient network / integrity blip).
-    _enginePromise = null;
+    // Failed init: tear down so a retry rebuilds from scratch.
+    resetWorker();
     throw err;
   });
-  return _enginePromise;
-}
-
-function writeModel(Module, path, bytes) {
-  const name = path.replace(/^\//, '');
-  try { Module.FS_unlink(path); } catch (_) { /* not present yet */ }
-  Module.FS_createDataFile('/', name, bytes, true, false, false);
+  return _workerReady;
 }
 
 /**
- * Run offline speaker diarization on 16 kHz mono Float32 PCM.
+ * Run offline speaker diarization on 16 kHz mono Float32 PCM, in the worker.
  *
  * @param {Float32Array} pcm16k mono samples at 16 kHz
  * @param {object} opts
@@ -147,7 +110,8 @@ function writeModel(Module, path, bytes) {
  * @param {number} [opts.minDurationOff=0.5] bridge silences shorter than this (s)
  * @param {number} [opts.numThreads] worker threads (default: ~half the cores)
  * @returns {Promise<Array<{start:number,end:number,speaker:number}>>} segments
- *   sorted by start time; `speaker` is a 0-based integer label.
+ *   sorted by start time; `speaker` is a 0-based integer label. Rejects with an
+ *   error carrying `cancelled === true` when {@link cancelDiarization} aborts it.
  */
 export async function runDiarization(pcm16k, {
   segmentationBytes,
@@ -165,36 +129,47 @@ export async function runDiarization(pcm16k, {
     throw new Error('runDiarization: segmentationBytes and embeddingBytes are required');
   }
 
-  const { Module, createOfflineSpeakerDiarization } = await loadDiarizationEngine();
+  const worker = await ensureWorker();
 
-  const threads = numThreads ?? Math.max(1, Math.min((navigator.hardwareConcurrency || 2) - 1, 4));
-  const clustering = numSpeakers && numSpeakers > 0
-    ? { numClusters: numSpeakers, threshold: 0.5 }
-    : { numClusters: -1, threshold };
+  // Send the (large) model bytes only when they differ from what the worker
+  // already holds; a count-change re-run then ships just the pcm + new knobs.
+  const identity = `${segmentationBytes.byteLength}:${embeddingBytes.byteLength}`;
+  const sendModels = identity !== _lastModelIdentity;
 
-  const modelKey = `${bytesIdentity(segmentationBytes)}|${bytesIdentity(embeddingBytes)}|${threads}|${minDurationOn}|${minDurationOff}`;
+  const id = ++_runId;
+  const opts = { numSpeakers, threshold, minDurationOn, minDurationOff, numThreads };
+  const settled = new Promise((resolve, reject) => { _pending = { id, resolve, reject }; });
 
-  if (_sd && _sdModelKey === modelKey) {
-    // Same models/front-end params: just re-apply clustering knobs.
-    _sd.setConfig({ clustering });
-  } else {
-    if (_sd) { try { _sd.free(); } catch (_) { /* ignore */ } _sd = null; }
-    writeModel(Module, SEG_PATH, segmentationBytes);
-    writeModel(Module, EMB_PATH, embeddingBytes);
-    _sd = createOfflineSpeakerDiarization(Module, {
-      segmentation: { pyannote: { model: SEG_PATH }, numThreads: threads, debug: 0, provider: 'cpu' },
-      embedding: { model: EMB_PATH, numThreads: threads, debug: 0, provider: 'cpu' },
-      clustering,
-      minDurationOn,
-      minDurationOff,
-    });
-    _sdModelKey = modelKey;
+  // Copy the pcm so the caller keeps its buffer (App.jsx reuses trans.pcm across
+  // re-segmentations); transfer the throwaway copy to skip the structured clone.
+  const pcmCopy = pcm16k.slice();
+  const payload = { type: 'run', id, pcm: pcmCopy, opts };
+  if (sendModels) {
+    payload.segBytes = segmentationBytes;
+    payload.embBytes = embeddingBytes;
   }
+  worker.postMessage(payload, [pcmCopy.buffer]);
 
-  const segments = _sd.process(pcm16k);
-  // Normalise to plain numbers (the wrapper already returns {start,end,speaker}).
-  return (segments || []).map((s) => ({ start: s.start, end: s.end, speaker: s.speaker }));
+  const segments = await settled;
+  // Mark models as held only AFTER success: a cancel/terminate before completion
+  // discards the worker, so the next run must re-send them.
+  _lastModelIdentity = identity;
+  return segments;
 }
 
-/** The sample rate the engine expects (16 kHz). For callers that resample. */
-export const DIARIZATION_SAMPLE_RATE = 16000;
+/**
+ * Abort an in-flight diarization. A synchronous `process()` cannot observe a
+ * message mid-run, so this hard-terminates the worker (killing the WASM compute)
+ * and rejects the pending run with an error flagged `cancelled`. The next
+ * {@link runDiarization} lazily rebuilds the worker.
+ */
+export function cancelDiarization() {
+  const pending = _pending;
+  _pending = null;
+  resetWorker();
+  if (pending) {
+    const err = new Error('diarization cancelled');
+    err.cancelled = true;
+    pending.reject(err);
+  }
+}

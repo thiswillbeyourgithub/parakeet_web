@@ -24,7 +24,7 @@ import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, e
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
-import { runDiarization } from './lib/diarizer.js';
+import { runDiarization, cancelDiarization } from './lib/diarizer.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText, canonicalizeTurns } from './lib/speakerAssign.js';
 import { createSerialQueue } from './lib/writeQueue.js';
@@ -4062,11 +4062,27 @@ export default function App() {
         console.warn('[Diarize] speaker embedding/matching failed (non-fatal):', e);
       }
     } catch (e) {
-      console.error('[Diarize] failed:', e);
-      alert(`${t('diarizeError')}: ${transcribeErrorMessage(e)}`);
+      // A user cancel (worker.terminate) rejects with `cancelled`: not an error.
+      if (e?.cancelled) {
+        console.log('[Diarize] cancelled by user');
+      } else {
+        console.error('[Diarize] failed:', e);
+        alert(`${t('diarizeError')}: ${transcribeErrorMessage(e)}`);
+      }
     } finally {
       setDiarizingId(null);
     }
+  }
+
+  // Abort the in-flight diarization (hard-terminates its worker). The pending
+  // runDiarization rejects with `cancelled`, unwinding diarizeEntry quietly. When
+  // nothing is cached to show, also drop the entry out of 'diarized' mode so the
+  // auto-diarize effect doesn't immediately restart it (e.g. when "Speakers" is
+  // the default display); a re-segmentation keeps its previous cached view.
+  function cancelDiarizeEntry(trans) {
+    cancelDiarization();
+    setDiarizingId(null);
+    if (!hasDiarization(trans)) setEntryBase(trans.id, 'raw');
   }
 
   // Auto-diarize: when an entry's effective display mode is 'diarized' (the
@@ -5792,6 +5808,17 @@ export default function App() {
                         </button>
                         );
                       })()}
+                      {/* Cancel the in-flight diarization (it runs in a worker, so
+                          this button stays clickable and the spinner animates). */}
+                      {diarizingId === trans.id && (
+                        <button
+                          onClick={() => cancelDiarizeEntry(trans)}
+                          className="display-mode-button display-mode-button--cancel"
+                          title={t('cancelDiarization')}
+                        >
+                          {t('cancel')}
+                        </button>
+                      )}
                     </div>
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">
