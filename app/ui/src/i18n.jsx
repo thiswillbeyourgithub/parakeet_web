@@ -72,6 +72,7 @@ const translations = {
     renameSpeakerHint: 'Click to rename this speaker (renames it everywhere in this transcript)',
     dismiss: 'Dismiss',
     quantUnavailable: '⚠️ The fp32 encoder was requested for the CPU (WASM) backend, but the required <2 GB shards are not hosted on HuggingFace or this instance. To avoid silently loading a different precision (int8) instead, the load was stopped. Ask the operator to host the fp32 shards, or pick the int8 encoder.',
+    quantUnavailableLite: '⚠️ The lite int8 encoder was requested, but it is not hosted on HuggingFace or this instance. To avoid silently loading the default int8 encoder instead, the load was stopped. Ask the operator to host the lite encoder, or pick the default int8 encoder.',
     modelCorruptionRepeated: '⚠️ The speech recognition model failed to load and had to be re-downloaded more than once this session. Your browser storage may be unreliable (a failing disk, antivirus interference, or a low or corrupted storage quota). If it keeps happening, clear the app data and reload, or try another browser.',
     clearTranscriptionHistory: 'Clear Transcription History',
     resetAllSettingsAndData: '\u26a0\ufe0f Reset All Settings and Data',
@@ -95,6 +96,7 @@ const translations = {
     wasmCpu: 'WASM (CPU)',
     encoderPrecision: 'Encoder precision',
     precisionInt8: 'int8 (good quality, ~800MB, fast)',
+    precisionInt8Lite: 'int8 lite (good quality, ~757MB, fast)',
     precisionFp16: 'fp16 (good quality, ~1.2GB, fast)',
     precisionFp32: 'fp32 (good quality, ~2.4GB, 2x slower)',
     precisionUnavailableWasm: '(unavailable on WASM)',
@@ -158,7 +160,7 @@ const translations = {
 
     // Tooltips
     tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
-    tooltipEncoderPrecision: 'This sets the ENCODER precision only, not the whole model: the fused decoder/joiner always runs int8 (as accurate as fp32 here, but smaller and faster). int8 (WASM only): small, fast, and (with the SmoothQuant encoder) good quality on long audio. fp16 (WebGPU only): near-lossless, ~1.2 GB, fast. fp32: good quality on either backend, but ~2.4 GB (shipped as <2GB shards) and ~2x slower. Each applies only if the model repo provides it, otherwise it falls back.',
+    tooltipEncoderPrecision: 'This sets the ENCODER precision only, not the whole model: the fused decoder/joiner always runs int8 (as accurate as fp32 here, but smaller and faster). int8 (WASM only): small, fast, and (with the SmoothQuant encoder) good quality on long audio. int8 lite (WASM only): a slightly smaller int8 build (~757 MB) that keeps more layers in fp32; a lighter download for a small accuracy trade-off. fp16 (WebGPU only): near-lossless, ~1.2 GB, fast. fp32: good quality on either backend, but ~2.4 GB (shipped as <2GB shards) and ~2x slower. Each applies only if the model repo provides it, otherwise it falls back (or, for the opt-in fp32/lite builds, the load stops with a clear message rather than silently downgrading).',
     tooltipFrameStride: 'Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed. Default: 1.',
     tooltipBeamWidth: 'Beam search width. 1 = greedy (fastest). Above 1 runs MAES (Modified Adaptive Expansion Search): this is the global beam cap, but the effective width adapts per token (see the gamma setting), so confident tokens stay near-greedy speed and only ambiguous ones widen the search. Higher values let phrase boosting recover words greedy would discard. Applies to file transcription only (live transcription always uses width 1). Default: depends on your device (1 on phones, 2 on low-memory computers, 5 otherwise).',
     tooltipMaesNumSteps: 'MAES: maximum number of tokens emitted per audio frame before the decoder is forced to advance in time. Only used when Beam Width is above 1. Default: 3.',
@@ -417,6 +419,7 @@ const translations = {
     renameSpeakerHint: 'Cliquer pour renommer ce locuteur (renomm\u00e9 partout dans cette transcription)',
     dismiss: 'Fermer',
     quantUnavailable: '⚠️ L\'encodeur fp32 a été demandé pour le backend CPU (WASM), mais les fragments requis (<2 Go) ne sont hébergés ni sur HuggingFace ni sur cette instance. Pour éviter de charger silencieusement une autre précision (int8) à la place, le chargement a été interrompu. Demandez à l\'opérateur d\'héberger les fragments fp32, ou choisissez l\'encodeur int8.',
+    quantUnavailableLite: '⚠️ L\'encodeur int8 lite a été demandé, mais il n\'est hébergé ni sur HuggingFace ni sur cette instance. Pour éviter de charger silencieusement l\'encodeur int8 par défaut à la place, le chargement a été interrompu. Demandez à l\'opérateur d\'héberger l\'encodeur lite, ou choisissez l\'encodeur int8 par défaut.',
     modelCorruptionRepeated: '⚠️ Le modèle de reconnaissance vocale n\'a pas pu se charger et a dû être retéléchargé plus d\'une fois durant cette session. Le stockage de votre navigateur est peut-être peu fiable (disque défaillant, interférence d\'un antivirus, ou quota de stockage faible ou corrompu). Si cela persiste, effacez les données de l\'application et rechargez la page, ou essayez un autre navigateur.',
     clearTranscriptionHistory: "Effacer l'historique des transcriptions",
     resetAllSettingsAndData: '\u26a0\ufe0f R\u00e9initialiser tous les param\u00e8tres et donn\u00e9es',
@@ -440,6 +443,7 @@ const translations = {
     wasmCpu: 'WASM (CPU)',
     encoderPrecision: "Précision de l'encodeur",
     precisionInt8: 'int8 (bonne qualité, ~800 Mo, rapide)',
+    precisionInt8Lite: 'int8 lite (bonne qualité, ~757 Mo, rapide)',
     precisionFp16: 'fp16 (bonne qualité, ~1,2 Go, rapide)',
     precisionFp32: 'fp32 (bonne qualité, ~2,4 Go, 2x plus lent)',
     precisionUnavailableWasm: '(indisponible sur WASM)',
@@ -503,7 +507,7 @@ const translations = {
 
     // Tooltips
     tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
-    tooltipEncoderPrecision: "Ceci d\u00e9finit uniquement la pr\u00e9cision de l'ENCODEUR, pas le mod\u00e8le entier\u00a0: le d\u00e9codeur/joiner fusionn\u00e9 tourne toujours en int8 (aussi pr\u00e9cis que fp32 ici, mais plus l\u00e9ger et plus rapide). int8 (WASM uniquement)\u00a0: petit, rapide, et (avec l'encodeur SmoothQuant) de bonne qualit\u00e9 sur les longs audios. fp16 (WebGPU uniquement)\u00a0: quasi sans perte, ~1,2\u00a0Go, rapide. fp32\u00a0: bonne qualit\u00e9 sur les deux backends, mais ~2,4\u00a0Go (livr\u00e9 en fragments de moins de 2\u00a0Go) et ~2x plus lent. Chaque option ne s'applique que si le d\u00e9p\u00f4t du mod\u00e8le la fournit\u00a0; sinon elle bascule sur une autre.",
+    tooltipEncoderPrecision: "Ceci d\u00e9finit uniquement la pr\u00e9cision de l'ENCODEUR, pas le mod\u00e8le entier\u00a0: le d\u00e9codeur/joiner fusionn\u00e9 tourne toujours en int8 (aussi pr\u00e9cis que fp32 ici, mais plus l\u00e9ger et plus rapide). int8 (WASM uniquement)\u00a0: petit, rapide, et (avec l'encodeur SmoothQuant) de bonne qualit\u00e9 sur les longs audios. int8 lite (WASM uniquement)\u00a0: une variante int8 un peu plus petite (~757\u00a0Mo) qui garde davantage de couches en fp32\u00a0; t\u00e9l\u00e9chargement plus l\u00e9ger pour un l\u00e9ger compromis de pr\u00e9cision. fp16 (WebGPU uniquement)\u00a0: quasi sans perte, ~1,2\u00a0Go, rapide. fp32\u00a0: bonne qualit\u00e9 sur les deux backends, mais ~2,4\u00a0Go (livr\u00e9 en fragments de moins de 2\u00a0Go) et ~2x plus lent. Chaque option ne s'applique que si le d\u00e9p\u00f4t du mod\u00e8le la fournit\u00a0; sinon elle bascule sur une autre (ou, pour les options fp32/lite, le chargement s'arr\u00eate avec un message clair plut\u00f4t qu'une r\u00e9trogradation silencieuse).",
     tooltipFrameStride: "Nombre de trames \u00e0 sauter pendant le d\u00e9codage. Des valeurs plus \u00e9lev\u00e9es sont plus rapides mais peuvent r\u00e9duire la pr\u00e9cision. Recommand\u00e9\u00a0: 1-2 pour la qualit\u00e9, 3-4 pour la vitesse. Défaut : 1.",
     tooltipBeamWidth: "Largeur de la recherche en faisceau. 1 = glouton (le plus rapide). Au-dessus de 1, utilise MAES (recherche par expansion adaptative modifiée) : c'est le plafond global du faisceau, mais la largeur effective s'adapte à chaque jeton (voir le réglage gamma), de sorte que les jetons sûrs restent proches de la vitesse gloutonne et que seuls les jetons ambigus élargissent la recherche. Des valeurs plus élevées permettent au renforcement de phrases de récupérer des mots que le mode glouton écarterait. S'applique uniquement à la transcription de fichiers (la transcription en direct utilise toujours une largeur de 1). Défaut : selon votre appareil (1 sur téléphone, 2 sur ordinateur à faible mémoire, 5 sinon).",
     tooltipMaesNumSteps: "MAES : nombre maximal de jetons \u00e9mis par trame audio avant que le d\u00e9codeur ne soit forc\u00e9 d'avancer dans le temps. Utilis\u00e9 uniquement lorsque la largeur de faisceau est sup\u00e9rieure \u00e0 1. D\u00e9faut : 3.",
