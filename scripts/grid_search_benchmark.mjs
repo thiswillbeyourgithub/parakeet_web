@@ -74,6 +74,7 @@ import { readFileSync, existsSync, statSync, writeFileSync, appendFileSync } fro
 import { resolve, isAbsolute, join, dirname, basename } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import os from 'node:os';
 
 // --- locate parakeet_web --------------------------------------------------
 // This script lives in <parakeet_web>/scripts/, so parakeet_web is its parent
@@ -554,6 +555,29 @@ function stdev(a) {
   return Math.sqrt(a.reduce((s, x) => s + (x - m) * (x - m), 0) / a.length);
 }
 
+// Cell-level summary of the opt-in per-utterance beamStats (collectBeamStats).
+// Each sample is one utterance's beamStats (see parakeet.js summarizeBeamStats):
+// `expansion` carries that utterance's own max/median expansion width (the
+// per-step joint-network batch size B = how many hypotheses were expanded that
+// step, the CPU cost driver), `steps` its decode-step count. We roll those up
+// across the cell's utterances:
+//   - hyp_med: the MEDIAN across utterances of each utterance's expansion median
+//   - hyp_max: the MAX across utterances of each utterance's expansion max
+//   - steps:   the MEAN across utterances of each utterance's step count
+// Returns null when no sample ran the beam decoder (e.g. a greedy beam=1 cell),
+// so those table columns render "-" and auto-hide on a pure-greedy run.
+function summarizeCellBeam(samples) {
+  if (!samples.length) return null;
+  const meds = samples.map((s) => s.expansion.median);
+  const maxes = samples.map((s) => s.expansion.max);
+  const steps = samples.map((s) => s.steps);
+  return {
+    hyp_med: +median(meds).toFixed(2),
+    hyp_max: maxes.reduce((a, b) => Math.max(a, b), 0),
+    steps: +mean(steps).toFixed(1),
+  };
+}
+
 // --- per-dataset accuracy accumulation ------------------------------------
 // The name of the synthetic row that pools every dataset's utterances. Only
 // emitted when more than one dataset is benchmarked.
@@ -733,7 +757,13 @@ const pickColumns = (cols) => (row) => cols.map((c) => row[c]);
 // on decode speed is visible. The per-utterance WER spread (mean/median/stdev)
 // and the raw edit/ref counts are dropped from the table to keep it readable;
 // they remain in the JSONL records.
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud'];
+// The trailing hyp_med/hyp_max/steps columns are the opt-in beam-search
+// expansion stats (collectBeamStats), appended after the timing columns so the
+// existing layout is unchanged; they render "-" (and auto-hide, like any unswept
+// knob) on a cell with no beam run. The final load5 column is the OS 5-minute
+// load average captured when the cell finished, a trust flag for the timing
+// columns (see cellLoad5).
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'hyp_med', 'hyp_max', 'steps', 'load5'];
 // MAES knob columns, inserted just before the 'dataset' column ONLY for the knobs
 // actually swept (in the `show` set), so a normal run's table is unchanged and a
 // MAES sweep gains just the columns that vary. Each entry: [header, accessor].
@@ -765,6 +795,21 @@ function cellProcPerDur(r) {
 function datasetDecAud(d) {
   return d.audioSec > 0 ? ((d.decodeMs / 1000) / d.audioSec).toFixed(3) : '-';
 }
+// Cell-level beam-expansion stats (collectBeamStats), shared across a cell's
+// dataset rows like proc_t/dur_t. Render "-" when the cell has no beam run (a
+// greedy beam=1 cell never invokes the beam decoder), so those columns auto-hide
+// on a pure-greedy run via nonEmptyColumnIndices.
+function cellHypMed(r) { return r.beamCell ? String(r.beamCell.hyp_med) : '-'; }
+function cellHypMax(r) { return r.beamCell ? String(r.beamCell.hyp_max) : '-'; }
+function cellSteps(r) { return r.beamCell ? String(r.beamCell.steps) : '-'; }
+// Cell-level OS 5-minute load average (os.loadavg()[1]) captured when the cell
+// finished, shared across the cell's dataset rows like proc_t/dur_t. A load above
+// the machine's core count while a cell ran means other processes were competing
+// for the CPU, so that cell's decode timing (proc_t/dur_t, dec_t/aud) may be
+// inflated and is not comparable. Rendered to one decimal; "-" when unrecorded
+// (e.g. an older resumed record predating this field), so the column auto-hides
+// via nonEmptyColumnIndices when no cell carries a value.
+function cellLoad5(r) { return r.load5 == null ? '-' : r.load5.toFixed(1); }
 function accuracyBody(rows, show = EMPTY_SHOW) {
   const body = [];
   for (const r of rows) {
@@ -785,6 +830,10 @@ function accuracyBody(rows, show = EMPTY_SHOW) {
         pct(d.charEdits, d.refChars).toFixed(2),
         procPerDur,
         datasetDecAud(d),
+        cellHypMed(r),
+        cellHypMax(r),
+        cellSteps(r),
+        cellLoad5(r),
       ]);
     }
   }
@@ -811,6 +860,10 @@ function topBody(rows, show = EMPTY_SHOW) {
       pct(d.charEdits, d.refChars).toFixed(2),
       cellProcPerDur(r),
       datasetDecAud(d),
+      cellHypMed(r),
+      cellHypMax(r),
+      cellSteps(r),
+      cellLoad5(r),
     ];
   });
 }
@@ -964,6 +1017,7 @@ async function main() {
     returnTimestamps: false,
     returnConfidences: false,
     enableProfiling: true,     // populate result.metrics with per-phase timings
+    collectBeamStats: true,    // populate result.beamStats with per-step expansion widths (beam runs only)
   });
 
   // transcribe() logs a "[Perf]" line + console.table per call when profiling
@@ -1024,7 +1078,13 @@ async function main() {
     for (const [key] of PHASES) timings[key] = [];
     const perDs = new Map();
     const order = [];
+    // Recover the cell-level beam stats from each utterance's raw beamStats
+    // (collectBeamStats), so a resumed cell renders the hyp_med/hyp_max/steps
+    // columns identically to a freshly-run one. Pre-feature records have no
+    // beamStats and contribute nothing (the cell then shows "-").
+    const beamStatsSamples = [];
     for (const u of utts) {
+      if (u.beamStats) beamStatsSamples.push(u.beamStats);
       const name = u.dataset ?? '(dataset)';
       if (!perDs.has(name)) { perDs.set(name, newAcc()); order.push(name); }
       const m = u.metrics || {};
@@ -1058,6 +1118,11 @@ async function main() {
       depthScaling: s.depthScaling ?? null,
       maesNumSteps: s.maesNumSteps ?? 2, maesExpansionBeta: s.maesExpansionBeta ?? 2,
       maesExpansionGamma: s.maesExpansionGamma ?? 2.3, maesPrefixAlpha: s.maesPrefixAlpha ?? 1,
+      beamCell: summarizeCellBeam(beamStatsSamples),
+      // The cell's captured 5-min load average lives on its summary record; carry
+      // it through so a resumed cell renders the load5 column identically. Older
+      // records predating this field have no load5, so default to null (renders "-").
+      load5: s.load5 ?? null,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
 
@@ -1223,6 +1288,9 @@ async function main() {
       // Per-phase timing samples (one entry per utterance) for this run.
       const timings = { procPerDur: [] };
       for (const [key] of PHASES) timings[key] = [];
+      // Per-utterance beamStats samples (collectBeamStats); empty for a greedy
+      // beam=1 cell, which never runs the beam decoder. Rolled up per cell below.
+      const beamStatsSamples = [];
       const t0 = Date.now();
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
@@ -1231,6 +1299,10 @@ async function main() {
         const result = await transcribeQuiet(pcm, { ...decodeOpts(row), encoded });
         const hyp = result.utterance_text ?? '';
         const metrics = result.metrics ?? {};
+        // Opt-in beam-search expansion stats for this utterance (present only on
+        // a beam run); collected for the cell-level roll-up and written raw to JSONL.
+        const beamStats = result.beamStats ?? null;
+        if (beamStats) beamStatsSamples.push(beamStats);
         // Actual decoded audio length (the PCM is the ground truth; the manifest's
         // "duration" may be missing or rounded). Used for the decode/audio ratio.
         const audioSec = pcm.length / 16000;
@@ -1253,7 +1325,7 @@ async function main() {
           ref: e.text, hyp, refNorm, hypNorm,
           wordEdits: sc.wordEdits, refWords: sc.refWords,
           charEdits: sc.charEdits, refChars: sc.refChars,
-          metrics,
+          metrics, beamStats,
         });
         // Two stacked progress bars: this run, then the whole grid (one line
         // each on a TTY; folded onto one \r line when piped).
@@ -1268,11 +1340,17 @@ async function main() {
       }
       const timeMs = Date.now() - t0;
       commitProgress();
+      // OS 5-minute load average at the moment this cell finished: a trust flag
+      // for the cell's decode timing. Rounded to 2 decimals so the JSONL value and
+      // the (1-decimal) table render match between a live and a resumed cell.
+      const load5 = +os.loadavg()[1].toFixed(2);
       const datasets = buildDatasets(perDs, datasetNames);
       const r = { beamWidth: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
+        beamCell: summarizeCellBeam(beamStatsSamples),
+        load5,
         timeMs, timings, datasets };
       summaryByTag.set(tag, r);
       // The "overall" pool (or the single dataset) supplies the top-level corpus
@@ -1306,6 +1384,8 @@ async function main() {
         datasets: datasets.map(dsSummary),
         wall_ms: timeMs,
         timing_ms: phaseStats(timings),
+        beam_stats: r.beamCell,
+        load5: r.load5,
       });
       const perDsLog = datasets.length > 1
         ? '  [' + datasets.filter((d) => d.name !== OVERALL).map((d) => `${d.name} ${pct(d.wordEdits, d.refWords).toFixed(2)}%`).join(', ') + ']'
@@ -1364,6 +1444,27 @@ async function main() {
   console.log('\nTop 5 by CER (overall):\n' + renderAligned(HEAD, topCerRows));
   console.log('\nTop 5 by WER (overall):\n' + renderAligned(HEAD, topWerRows) + '\n');
 
+  // Run-level load summary: the mean (and min/max) of every cell's captured 5-min
+  // load average. A load above the machine's core count while a cell ran means
+  // other processes were competing for the CPU, so that cell's decode timing may
+  // be inflated and not comparable; this line tells the reader whether the whole
+  // sweep ran on a quiet box. Cells whose load5 is unavailable (older resumed
+  // records) are skipped, and the line is omitted entirely when none carry one.
+  const load5s = summary.map((r) => r.load5).filter((v) => v != null);
+  const load5Line = load5s.length
+    ? `Average 5-min load over ${load5s.length} cells: ${mean(load5s).toFixed(2)} (cell range ${Math.min(...load5s).toFixed(1)}-${Math.max(...load5s).toFixed(1)})`
+    : null;
+  if (load5Line) console.log(load5Line + '\n');
+
+  // One run-level record for the whole invocation (no "run" tag, so --resume's
+  // per-cell grouping ignores it and it is re-emitted fresh each run).
+  if (load5s.length) writeJsonl({
+    type: 'run', cells: load5s.length,
+    load5_mean: +mean(load5s).toFixed(2),
+    load5_min: +Math.min(...load5s).toFixed(2),
+    load5_max: +Math.max(...load5s).toFixed(2),
+  });
+
   if (args.jsonl) console.error(`[bench] wrote ${args.jsonl}`);
   if (args.md) {
     // Append (don't overwrite) so successive runs accumulate in one file; a
@@ -1389,6 +1490,9 @@ async function main() {
       '',
       renderMarkdown(HEAD, topWerRows),
       '',
+      // Footer flagging whether the box was quiet during the sweep (a cell's
+      // load above the core count means its decode timing may be inflated).
+      ...(load5Line ? [load5Line, ''] : []),
       '_Built with Claude Code._',
       '',
     ].join('\n');
