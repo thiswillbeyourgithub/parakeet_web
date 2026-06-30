@@ -816,6 +816,59 @@ describe('batched joiner expansion (#batch)', () => {
   });
 });
 
+describe('beam-stats instrumentation (collectBeamStats, opt-in)', () => {
+  // The opt-in flag must: (a) attach a per-utterance `beamStats` whose
+  // expansionSizes (the per-step joint-net batch size B = working.length) line
+  // up one-to-one with `steps`, each an integer in [1, beamWidth]; (b) leave the
+  // result byte-for-byte unchanged when OFF (no beamStats field at all), so
+  // production / e2e / the existing tests are unaffected.
+  for (const width of [1, 2, 4]) {
+    test(`width ${width}: beamStats present, expansionSizes line up and stay in [1, ${width}]`, async () => {
+      const model = makeModel(script);
+      const out = await model._decodeBeam(makeTransposed(Tenc), D, Tenc, {
+        beamWidth: width, temperature: 1.0, frameStride: 1, phraseBoost: null,
+        returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+        ...MAES, collectBeamStats: true,
+      });
+      assert.ok(out.beamStats, 'beamStats is present when collectBeamStats is on');
+      const bs = out.beamStats;
+      assert.ok(Array.isArray(bs.expansionSizes), 'expansionSizes is an array');
+      assert.ok(Array.isArray(bs.keptSizes), 'keptSizes is an array');
+      assert.equal(bs.expansionSizes.length, bs.steps, 'steps == expansionSizes.length');
+      assert.ok(bs.steps > 0, 'at least one expansion step happened');
+      for (const b of bs.expansionSizes) {
+        assert.ok(Number.isInteger(b) && b >= 1 && b <= width, `expansion size ${b} is an int in [1, ${width}]`);
+      }
+      for (const k of bs.keptSizes) {
+        assert.ok(Number.isInteger(k) && k >= 0 && k <= width, `kept size ${k} is an int in [0, ${width}]`);
+      }
+      // Aggregates equal a straight reduction over the raw expansion series.
+      const maxB = bs.expansionSizes.reduce((a, b) => Math.max(a, b), 0);
+      const meanB = bs.expansionSizes.reduce((a, b) => a + b, 0) / bs.expansionSizes.length;
+      assert.equal(bs.expansion.max, maxB, 'expansion.max == max(expansionSizes)');
+      assert.ok(close(bs.expansion.mean, meanB), 'expansion.mean == mean(expansionSizes)');
+      assert.ok(bs.expansion.median >= 1 && bs.expansion.median <= maxB, 'expansion.median within [1, max]');
+    });
+  }
+
+  test('flag OFF: the result carries no beamStats field (opt-in guard)', async () => {
+    const out = await runBeam(makeModel(script), 4);
+    assert.equal(out.beamStats, undefined, 'no beamStats when the flag is off');
+    assert.ok(!('beamStats' in out), 'the beamStats key is absent, not merely undefined');
+  });
+
+  test('Tenc=0 with the flag on returns an empty beamStats (zero steps)', async () => {
+    const out = await makeModel(script)._decodeBeam(new Float32Array(0), D, 0, {
+      beamWidth: 4, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+      ...MAES, collectBeamStats: true,
+    });
+    assert.ok(out.beamStats, 'beamStats is present even for an empty decode');
+    assert.equal(out.beamStats.steps, 0, 'no decode steps');
+    assert.ok(eqArr(out.beamStats.expansionSizes, []), 'no expansion sizes');
+  });
+});
+
 describe('degenerate input', () => {
   test('Tenc=0 returns empty result', async () => {
     const model = makeModel(script);

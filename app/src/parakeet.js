@@ -95,6 +95,48 @@ export function lengthNormalizedScore({ score, numEmitted }) {
 }
 
 /**
+ * Max / median / mean of a numeric array (median over a sorted copy), with a
+ * zeros fallback for an empty array. Dependency-free and pure so the opt-in
+ * beam-stats path, the benchmark harness and the unit tests share one
+ * reduction. The reduce avoids a `Math.max(...arr)` spread (which blows the call
+ * stack on long utterances).
+ * @param {number[]} arr
+ * @returns {{max:number, median:number, mean:number}}
+ */
+export function summarizeCounts(arr) {
+  const n = arr.length;
+  if (!n) return { max: 0, median: 0, mean: 0 };
+  let max = -Infinity, sum = 0;
+  for (const v of arr) { if (v > max) max = v; sum += v; }
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = n >> 1;
+  const median = n % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  return { max, median, mean: sum / n };
+}
+
+/**
+ * Build the per-utterance beam-search stats object surfaced (opt-in) on the
+ * decode/transcribe result as `beamStats`. `expansionSizes` is the headline
+ * series: one entry per joint-network expansion call, each the batch size B
+ * (number of hypotheses expanded that step) fed to `_runCombinedStepBatch` — the
+ * per-step CPU cost driver this instrumentation exists to measure.
+ * `keptSizes` is the surviving beam size after each frame's prune. `steps`
+ * equals `expansionSizes.length`. The raw arrays are kept (the benchmark writes
+ * them per-utterance) alongside the max/median/mean aggregates.
+ * @param {{expansionSizes:number[], keptSizes:number[]}} stats
+ * @returns {object}
+ */
+export function summarizeBeamStats({ expansionSizes, keptSizes }) {
+  return {
+    expansionSizes,
+    keptSizes,
+    steps: expansionSizes.length,
+    expansion: summarizeCounts(expansionSizes),
+    kept: summarizeCounts(keptSizes),
+  };
+}
+
+/**
  * Lightweight Parakeet model wrapper designed for browser usage.
  * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
  * transformerjs style) exported by parakeet TDT.
@@ -1062,9 +1104,19 @@ export class ParakeetModel {
    */
   async _decodeBeam(transposed, D, Tenc, opts) {
     const { beamWidth, frameStride, phraseBoost, returnTimestamps, returnConfidences, timeStride,
-            maesNumSteps, maesExpansionBeta, maesExpansionGamma, maesPrefixAlpha } = opts;
+            maesNumSteps, maesExpansionBeta, maesExpansionGamma, maesPrefixAlpha, collectBeamStats } = opts;
 
-    if (Tenc <= 0) return { ids: [], tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0 };
+    // Opt-in instrumentation (default OFF): when on, record the per-step
+    // joint-network batch size (expansionSizes) and the surviving beam size after
+    // each frame's prune (keptSizes). Guarded by this cheap boolean so the common
+    // path allocates nothing and stays byte-for-byte unchanged.
+    const stats = collectBeamStats ? { expansionSizes: [], keptSizes: [] } : null;
+
+    if (Tenc <= 0) {
+      const out = { ids: [], tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0 };
+      if (stats) out.beamStats = summarizeBeamStats(stats);
+      return out;
+    }
 
     // Per-hypothesis expansion budget: top-(beamWidth+beta) tokens. Threaded into
     // _expandHyp alongside the gamma threshold via the shared opts object below.
@@ -1136,7 +1188,10 @@ export class ParakeetModel {
           // One batched joiner call covers every hypothesis still on this frame
           // (results index-aligned with `working`); scoring and child-building
           // stay per-hypothesis below, in the same order as the old serial
-          // loop, so the decode is unchanged.
+          // loop, so the decode is unchanged. `working.length` is the batch size
+          // B fed to the joint network this step: the per-step CPU cost driver
+          // the opt-in stats track (the headline expansion-width metric).
+          if (stats) stats.expansionSizes.push(working.length);
           const stepOuts = await this._runCombinedStepBatch(working, transposed, D);
           const children = [];       // this step's children, in expansion order
           const pendingClosure = []; // children owed the last-mAES-step blank closure
@@ -1206,6 +1261,7 @@ export class ParakeetModel {
         }
 
         keptHyps = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, beamWidth);
+        if (stats) stats.keptSizes.push(keptHyps.length); // surviving beam this frame
 
         // Sweep: free every in-play state no surviving hypothesis (or best) points at.
         const keep = new Set();
@@ -1240,7 +1296,9 @@ export class ParakeetModel {
       }
       idsR.reverse(); framesR.reverse(); timesR.reverse(); confsR.reverse();
     }
-    return { ids: idsR, tokenTimes: timesR, tokenConfs: confsR, frameConfs: framesR, overallLogProb: overall };
+    const result = { ids: idsR, tokenTimes: timesR, tokenConfs: confsR, frameConfs: framesR, overallLogProb: overall };
+    if (stats) result.beamStats = summarizeBeamStats(stats);
+    return result;
   }
 
   async computeFeatures(audio, sampleRate = 16000) {
@@ -1379,6 +1437,11 @@ export class ParakeetModel {
       maesExpansionBeta = 2,
       maesExpansionGamma = 2.3,
       maesPrefixAlpha = 0,
+      // Opt-in beam-search instrumentation (default OFF): when true and a beam
+      // (width > 1) runs, the result carries a `beamStats` object with the
+      // per-step joint-network batch sizes. Off by default so production, e2e
+      // and existing callers are byte-for-byte unaffected.
+      collectBeamStats = false,
     } = opts;
 
     // Beam search is full-file only: a beam of N hypotheses cannot be serialized
@@ -1429,6 +1492,9 @@ export class ParakeetModel {
 
     // Winning hypothesis' accumulators, populated by whichever decode path runs.
     let ids, tokenTimes, tokenConfs, frameConfs, overallLogProb;
+    // Opt-in per-utterance beam stats: only the beam path fills this (greedy
+    // width-1 never runs the beam decoder), and only when collectBeamStats is on.
+    let beamStats = null;
 
     if (effBeamWidth === 1) {
       // --- Greedy (= beam width 1) ------------------------------------
@@ -1549,12 +1615,14 @@ export class ParakeetModel {
         maesExpansionBeta: Math.max(0, Math.floor(maesExpansionBeta) || 0),
         maesExpansionGamma: Number.isFinite(maesExpansionGamma) ? maesExpansionGamma : 2.3,
         maesPrefixAlpha: Math.max(0, Math.floor(maesPrefixAlpha) || 0),
+        collectBeamStats,
       });
       ids = out.ids;
       tokenTimes = out.tokenTimes;
       tokenConfs = out.tokenConfs;
       frameConfs = out.frameConfs;
       overallLogProb = out.overallLogProb;
+      beamStats = out.beamStats ?? null;
       finalDecoderState = null;
       decoderState = null;
     }
@@ -1579,6 +1647,7 @@ export class ParakeetModel {
       }, { log: this.verbose || debug });
       const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
+      if (beamStats) earlyOut.beamStats = beamStats;
       return earlyOut;
     }
 
@@ -1650,6 +1719,7 @@ export class ParakeetModel {
       is_final: !returnDecoderState,
     };
     if (returnDecoderState) fullOut.decoderState = finalDecoderState;
+    if (beamStats) fullOut.beamStats = beamStats;
     return fullOut;
 
     } finally {
