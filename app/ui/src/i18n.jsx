@@ -279,6 +279,7 @@ const translations = {
     resetFailed: 'Failed to reset data. Please check the console for details.',
     loadModelFirst: 'Load model first',
     modelStillLoading: 'The model is still loading. Please wait until it finishes, then add the file again. It was not accepted.',
+    capturesQueued: '{n} recording(s) waiting for the model to finish loading, then they transcribe automatically.',
     failedCopyClipboard: 'Failed to copy to clipboard',
 
     // Dictation device
@@ -626,6 +627,7 @@ const translations = {
     resetFailed: 'La r\u00e9initialisation a \u00e9chou\u00e9. Veuillez v\u00e9rifier la console pour plus de d\u00e9tails.',
     loadModelFirst: "Chargez d'abord le mod\u00e8le",
     modelStillLoading: "Le mod\u00e8le est encore en cours de chargement. Patientez jusqu'\u00e0 la fin, puis ajoutez de nouveau le fichier\u00a0: il n'a pas \u00e9t\u00e9 accept\u00e9.",
+    capturesQueued: "{n} enregistrement(s) en attente de la fin du chargement du mod\u00e8le, puis ils seront transcrits automatiquement.",
     failedCopyClipboard: '\u00c9chec de la copie dans le presse-papiers',
 
     // Dictation device

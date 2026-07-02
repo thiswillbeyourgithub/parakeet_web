@@ -8,6 +8,7 @@ import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
+import { createCaptureQueue } from './lib/captureQueue.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
@@ -631,6 +632,15 @@ export default function App() {
   // Track the most recently added transcription ID for fade-in animation
   const newestTranscriptionIdRef = useRef(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // Synchronous mirror of isTranscribing so the capture queue's canRun() sees
+  // "a transcription is running" the instant it flips, not a render later.
+  // setTranscribing keeps the ref and the state in lockstep; use it everywhere
+  // instead of the raw setIsTranscribing.
+  const isTranscribingRef = useRef(false);
+  const setTranscribing = (v) => { isTranscribingRef.current = v; setIsTranscribing(v); };
+  // Number of captures buffered by the queue (audio finished before the model
+  // was ready). Surfaces a small "waiting for the model" note.
+  const [pendingCaptureCount, setPendingCaptureCount] = useState(0);
   const [verboseLog, setVerboseLog] = useState(false);
   const [frameStride, setFrameStride] = useState(1);
   // Beam search width. 1 = greedy (default, fastest, behavior unchanged). Higher
@@ -1526,25 +1536,28 @@ export default function App() {
         case 'r':
         case ' ':
         case 'enter':
-          // Before model is loaded: Space/Enter trigger model loading
-          if (status !== 'modelReady' && (key === ' ' || key === 'enter')) {
-            if ((status === 'failed' || status === 'transcriptionFailed') || status === 'idle') {
-              e.preventDefault();
-              loadModel();
-            }
+          // Before a load has started: Space/Enter kick off model loading.
+          if ((status === 'idle' || status === 'failed' || status === 'transcriptionFailed') && (key === ' ' || key === 'enter')) {
+            e.preventDefault();
+            loadModel();
             break;
           }
-          // After model is loaded: R/Space start recording
+          // Once loading has begun (or the model is ready): R/Space start
+          // recording. Audio captured mid-load is queued and transcribed once
+          // the model is ready (Q2).
           e.preventDefault();
-          if (status === 'modelReady' && !isTranscribing) {
+          if ((status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions')
+              && !isTranscribing && !isRecording && !isRemoteMic) {
             startRecordingCountdown();
           }
           break;
 
         case 'f':
-          // Send a file
+          // Send a file (also allowed mid-load: it is decoded and queued).
           e.preventDefault();
-          if (fileInputRef.current && status === 'modelReady' && !isTranscribing && !isRecording) {
+          if (fileInputRef.current
+              && (status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions')
+              && !isTranscribing && !isRecording) {
             fileInputRef.current.click();
           }
           break;
@@ -1556,7 +1569,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [keyboardShortcutsEnabled, status, isRecording, isPaused, isTranscribing, recordingCountdown]);
+  }, [keyboardShortcutsEnabled, status, isRecording, isPaused, isTranscribing, recordingCountdown, isRemoteMic]);
 
   // Monitor memory usage and system strain.
   //
@@ -2315,9 +2328,15 @@ export default function App() {
       // but NOT on the unrelated status churn of recording/transcribing.
       const tk = modelRef.current?.tokenizer;
       setTokenizerVocabSig(tk?.id2token ? vocabSignature(tk.id2token) : 'ready');
-      setStatus('modelReady');
+      // Don't clobber a live recording's status: if the user started recording
+      // while the model was still loading (Q2), leave the recording UI in place
+      // (the captured audio drains through the queue when recording stops).
+      // Otherwise mark ready.
+      if (!isRecordingRef.current) setStatus('modelReady');
       setProgressText('');
       setProgressPct(null);
+      // Transcribe anything captured while the model was loading.
+      captureQueue.drain();
     } catch (e) {
       console.error(e);
       // Recover from an HF download failure (HF blocked/unreachable, or the repo
@@ -2528,6 +2547,10 @@ export default function App() {
       setAudioContext(audioCtx);
       setMediaRecorder(stream); // reuse state slot to hold the stream for cleanup
       setIsRecording(true);
+      // Keep the ref in lockstep synchronously (the mirroring effect lags a
+      // render) so the capture queue treats a recording started mid-load as
+      // "live" and holds its drain until we stop.
+      isRecordingRef.current = true;
       // Drop any leftover awaiting state from a previous session that the
       // user may have abandoned without transcribing.
       setAwaitingFinal(false);
@@ -2547,7 +2570,10 @@ export default function App() {
     // Clear countdown if active
     if (recordingCountdown !== null) {
       setRecordingCountdown(null);
-      setStatus('modelReady');
+      // Only claim 'modelReady' if the model actually is: the countdown can now
+      // run while the model is still loading (Q2), and clobbering the loading
+      // status there would hide the download progress.
+      if (modelRef.current) setStatus('modelReady');
       return;
     }
 
@@ -2559,6 +2585,10 @@ export default function App() {
     // final ASR result hitting the transcriptions list.
     setAwaitingFinal(true);
     setIsRecording(false);
+    // Update the ref synchronously (the effect that mirrors isRecording lags a
+    // render) so the capture queue we submit to below sees recording as over
+    // and can drain immediately.
+    isRecordingRef.current = false;
     setIsPaused(false);
     setAudioLevel(0);
 
@@ -2609,17 +2639,17 @@ export default function App() {
     // its in-memory audio (inline player + "Transcribe again").
     const wavBlob = createWavBlob(pcm16k, targetSampleRate);
     const file = new File([wavBlob], `recording-${Date.now()}.wav`, { type: 'audio/wav' });
-    setStatus('modelReady');
+    const safeName = sanitizeDeviceName(file.name, 'file');
 
     // Feed the recorded 16kHz PCM straight to the transcription core (not
     // processAudioFile, which would decode+resample the WAV again at the device
     // rate and back, degrading the signal). The entry carries this exact PCM +
-    // WAV so "Transcribe again" stays lossless.
-    if (modelRef.current) {
-      console.log('[Record] Transcribing...');
-      const safeName = sanitizeDeviceName(file.name, 'file');
-      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob });
-    }
+    // WAV so "Transcribe again" stays lossless. Go through the shared queue: it
+    // transcribes now if the model is ready, or waits until the in-progress
+    // load finishes (Q2) instead of dropping the recording.
+    if (modelRef.current) setStatus('modelReady');
+    console.log('[Record] Queuing for transcription...');
+    captureQueue.submit({ pcm: pcm16k, opts: { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob } });
   }
 
   // Pause recording by suspending the AudioContext. The worklet stops receiving
@@ -3205,15 +3235,15 @@ export default function App() {
     // Build WAV and feed to the transcription core. It travels with the entry.
     const wavBlob = createWavBlob(pcm16k, targetSampleRate);
     const file = new File([wavBlob], `remote-mic-${Date.now()}.wav`, { type: 'audio/wav' });
-    setStatus('modelReady');
+    const safeName = sanitizeDeviceName(file.name, 'file');
 
     // Feed the already-16kHz PCM directly so we don't decode+resample the WAV a
-    // second time (see stopRecording).
-    if (modelRef.current) {
-      console.log('[RemoteMic] Transcribing...');
-      const safeName = sanitizeDeviceName(file.name, 'file');
-      runTranscription(pcm16k, { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob });
-    }
+    // second time (see stopRecording). Through the shared queue so a phone
+    // batch captured while the model is still loading is transcribed once it is
+    // ready (Q2) rather than dropped.
+    if (modelRef.current) setStatus('modelReady');
+    console.log('[RemoteMic] Queuing for transcription...');
+    captureQueue.submit({ pcm: pcm16k, opts: { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob } });
   }
 
   async function stopRemoteMic() {
@@ -3307,6 +3337,25 @@ export default function App() {
   const isPausedRef = useRef(isPaused);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
   useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+
+  // --- Capture queue (Q2: capture while the model is still loading) ---
+  // Mirror runTranscription into a ref so the (stable) queue always calls the
+  // latest closure (fresh state) rather than a stale first-render one.
+  const runTranscriptionRef = useRef(null);
+  runTranscriptionRef.current = runTranscription;
+  // Created once; canRun/runJob read live values through refs, so a single
+  // stable instance stays correct across renders. A job may start only when a
+  // model is loaded, no local recording is live, and no transcription is
+  // already in flight (the single ONNX session can't run two at once).
+  const captureQueueRef = useRef(null);
+  if (!captureQueueRef.current) {
+    captureQueueRef.current = createCaptureQueue({
+      canRun: () => !!modelRef.current && !isRecordingRef.current && !isTranscribingRef.current,
+      runJob: (job) => runTranscriptionRef.current(job.pcm, job.opts),
+      onCountChange: (n) => setPendingCaptureCount(n),
+    });
+  }
+  const captureQueue = captureQueueRef.current;
 
   // Initialise a DictationDeviceManager, register button listener, and
   // optionally trigger the WebHID device-picker (requestDevice = true).
@@ -3511,7 +3560,11 @@ export default function App() {
   }
 
   async function processAudioFile(file) {
-    if (!modelRef.current) return alert(t('loadModelFirst'));
+    // Accept the file even while the model is still loading (Q2): decode +
+    // resample need no model, and the queue transcribes it once ready. Only
+    // refuse when nothing is loaded AND nothing is loading (idle/failed).
+    const modelLoadingNow = status === 'loadingModel' || status === 'creatingSessions';
+    if (!modelRef.current && !modelLoadingNow) return alert(t('loadModelFirst'));
     if (!file) return;
 
     // F-124: OS-controlled file.name can contain bidi-override / control
@@ -3520,7 +3573,7 @@ export default function App() {
     // console.time below since those are devtools-only.
     const safeName = sanitizeDeviceName(file.name, 'file');
 
-    setIsTranscribing(true);
+    setTranscribing(true);
     setStatus(`${t('transcribingFile')} "${safeName}"…`);
 
     // Hoisted so the outer finally can close the AudioContext even if the
@@ -3622,17 +3675,20 @@ export default function App() {
       // in memory only (never persisted; see slimTranscriptForPersist).
       const audioBlob = createWavBlob(pcm, targetSampleRate);
 
-      // Hand the already-resampled PCM to the shared transcription core. It
-      // owns the model call, the history entry and auto-copy; this path owns
-      // audio decode + resample. "Transcribe again" calls runTranscription
+      // Hand the already-resampled PCM to the shared queue. It transcribes now
+      // if the model is ready, or waits until the in-progress load finishes
+      // (Q2). Clear the decode-phase busy flag first so the queue's own
+      // runTranscription owns isTranscribing cleanly (and canRun() is not
+      // blocked by our own flag). "Transcribe again" calls runTranscription
       // directly with the stored PCM, skipping a second (lossy) resample.
-      await runTranscription(pcm, { safeName, audioDuration, audioBlob });
+      setTranscribing(false);
+      captureQueue.submit({ pcm, opts: { safeName, audioDuration, audioBlob } });
     } catch (error) {
       // Only the decode/resample stage can throw here: runTranscription owns
       // (and swallows) model-side errors. Surface decode failures the same way.
       console.error('[Transcribe] Audio decode/resample failed:', error);
       setStatus('transcriptionFailed');
-      setIsTranscribing(false);
+      setTranscribing(false);
       setAwaitingFinal(false);
       // F-124: file.name is OS-controlled and can contain bidi-override or
       // control codepoints. safeName is already sanitized above.
@@ -3672,7 +3728,7 @@ export default function App() {
   // again" (which feeds stored PCM, skipping a second resample) both reuse it.
   // audioBlob/pcm are attached to NEW entries only and live in memory.
   async function runTranscription(pcm, { safeName, audioDuration, audioBlob = null, replaceId = null }) {
-    setIsTranscribing(true);
+    setTranscribing(true);
     setStatus(`${t('transcribingFile')} "${safeName}"…`);
     try {
       // Chunk large audio files to avoid "too many function arguments" error
@@ -3836,10 +3892,14 @@ export default function App() {
       setStatus('transcriptionFailed');
       alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
     } finally {
-      setIsTranscribing(false);
+      setTranscribing(false);
       // The final transcription has now been pushed (or the run failed and
       // the user has been alerted). Either way, drop the awaiting indicator.
       setAwaitingFinal(false);
+      // Pick up anything queued while this transcription ran (a capture that
+      // arrived mid-run, or the next buffered clip). No-op if this call was
+      // itself the queue draining (its guard bails on re-entry).
+      captureQueue.drain();
     }
   }
 
@@ -3853,12 +3913,11 @@ export default function App() {
       fileInputRef.current.value = '';
     }
 
-    // The model must be fully ready before we accept a file. If it is still
-    // loading (or was never loaded), refuse the file outright with a clear
-    // message instead of silently dropping it when processAudioFile later
-    // bails on the same guard.
-    if (!modelRef.current) {
-      alert(status === 'loadingModel' ? t('modelStillLoading') : t('loadModelFirst'));
+    // Accept the file even while the model is still loading (Q2): processAudioFile
+    // decodes it (no model needed) and the queue transcribes it once the model
+    // is ready. Only refuse when nothing is loaded AND nothing is loading.
+    if (!modelRef.current && status !== 'loadingModel' && status !== 'creatingSessions') {
+      alert(t('loadModelFirst'));
       return;
     }
 
@@ -4608,6 +4667,19 @@ export default function App() {
     || status === 'creatingSessions'
     || isRecording
     || remoteMicRecording;
+
+  // Show the record / upload / phone controls as soon as a load has STARTED,
+  // not only once it finishes (Q2): the user can capture during the download
+  // and the audio is queued (captureQueue) until the model is ready. In idle /
+  // failed they stay hidden, leaving just the Load Model button. isRecording /
+  // isRemoteMic keep them mounted through a capture that began mid-load (when
+  // the status is a recording one and the model is not yet loaded), so the
+  // Stop/Pause buttons never vanish under the user.
+  const showCaptureControls = modelLoaded
+    || status === 'loadingModel'
+    || status === 'creatingSessions'
+    || isRecording
+    || isRemoteMic;
 
   return (
     <div className="app">
@@ -5494,7 +5566,7 @@ export default function App() {
         <Banner tone="warning">{t('sharedArrayBufferWarning')}</Banner>
       )}
 
-      {modelLoaded && (
+      {showCaptureControls && (
       <div className="controls">
         <input
           ref={fileInputRef}
@@ -5560,7 +5632,7 @@ export default function App() {
             {!remoteMicRecording && (
               <button
                 onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-                disabled={(status !== 'modelReady' && recordingCountdown === null) || isTranscribing}
+                disabled={isTranscribing}
                 className="primary record-button"
                 style={{
                   background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
@@ -5583,7 +5655,7 @@ export default function App() {
           <>
             <button
               onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-              disabled={(status !== 'modelReady' && recordingCountdown === null) || isTranscribing || isRemoteMic}
+              disabled={isTranscribing || isRemoteMic}
               className="primary record-button"
               style={{
                 background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
@@ -5718,6 +5790,14 @@ export default function App() {
           <div className="progress-bar"><div style={{ width: `${progressPct}%` }} /></div>
           <p className="progress-text">{progressText}</p>
         </div>
+      )}
+
+      {/* Captures made before the model finished loading are buffered; tell the
+          user they will transcribe automatically once it is ready (Q2). */}
+      {pendingCaptureCount > 0 && !modelLoaded && (
+        <Banner tone="info" style={{ marginTop: '0.5rem', justifyContent: 'center' }}>
+          ⏳ {t('capturesQueued').replace('{n}', String(pendingCaptureCount))}
+        </Banner>
       )}
 
       {/* Warning banner: local fallback is enabled but model files are missing */}
