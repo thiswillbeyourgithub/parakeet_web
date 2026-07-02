@@ -17,7 +17,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ParakeetModel, lengthNormalizedScore } from '../../app/src/parakeet.js';
+import { ParakeetModel, lengthNormalizedScore, mergeHypotheses, pruneBeam, reconstructBeamPath } from '../../app/src/parakeet.js';
 import { BoostingTrie } from '../../app/src/phraseBoost.js';
 
 const eqArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -877,5 +877,198 @@ describe('degenerate input', () => {
       returnTimestamps: false, returnConfidences: false, timeStride: 0.08, ...MAES,
     });
     assert.ok(eqArr(out.ids, []) && out.overallLogProb === 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostic decoder knobs (mergeDuplicates / lengthNormPrune / nBest). These
+// exist to A/B the beam's scoring against greedy in the murmure #338 study.
+// The tests pin each knob so a future refactor cannot silently change its
+// meaning: the whole point of the study is that the *default* behaviour is
+// exactly what it always was, and each knob flips one specific mechanism.
+// ---------------------------------------------------------------------------
+
+// Reference log(exp(a)+exp(b)) for the pure merge tests (mirrors _logAddExp).
+const refLogAddExp = (a, b) => {
+  if (a === -Infinity) return b;
+  if (b === -Infinity) return a;
+  const m = Math.max(a, b);
+  return m + Math.log(Math.exp(a - m) + Math.exp(b - m));
+};
+
+describe('mergeHypotheses (pure): merge on/off', () => {
+  // Two hyps share sequence "0," at frame 3 (a duplicate reached two ways); a
+  // third distinct "1," is a separate hypothesis that must never merge.
+  const mk = (seqKey, t, score) => ({ seqKey, t, score });
+
+  test('merge ON recombines duplicate scores via log-sum-exp', () => {
+    const hyps = [mk('0,', 3, -1.0), mk('0,', 3, -1.5), mk('1,', 3, -2.0)];
+    const out = mergeHypotheses(hyps, { mergeDuplicates: true, logAddExp: refLogAddExp });
+    assert.equal(out.length, 2, 'the two "0," routes collapse to one; "1," stays');
+    assert.equal(out[0].seqKey, '0,', 'representative keeps first-seen order');
+    assert.ok(close(out[0].score, refLogAddExp(-1.0, -1.5)), 'duplicate score is recombined');
+    assert.equal(out[1].seqKey, '1,', 'distinct hypothesis is untouched');
+    assert.ok(close(out[1].score, -2.0), 'distinct score unchanged');
+  });
+
+  test('merge OFF keeps the single best route (Viterbi), no recombination', () => {
+    const hyps = [mk('0,', 3, -1.0), mk('0,', 3, -1.5), mk('1,', 3, -2.0)];
+    const out = mergeHypotheses(hyps, { mergeDuplicates: false, logAddExp: refLogAddExp });
+    assert.equal(out.length, 2, 'still one survivor per distinct sequence');
+    assert.equal(out[0].seqKey, '0,');
+    assert.ok(close(out[0].score, -1.0), 'survivor is the max-score route, score NOT recombined');
+  });
+
+  test('representative is the highest-raw member regardless of arrival order', () => {
+    // Lower-scoring route arrives first, higher second.
+    for (const merge of [true, false]) {
+      const out = mergeHypotheses([{ seqKey: 'x,', t: 1, score: -3.0 }, { seqKey: 'x,', t: 1, score: -1.0 }],
+        { mergeDuplicates: merge, logAddExp: refLogAddExp });
+      assert.equal(out.length, 1);
+      const expected = merge ? refLogAddExp(-1.0, -3.0) : -1.0;
+      assert.ok(close(out[0].score, expected), `merge=${merge} keeps the max route as representative`);
+    }
+  });
+});
+
+describe('pruneBeam (pure): raw vs length-normalized survival key', () => {
+  // Same numbers as the empty-transcript regression: a 0-token "empty" hyp with
+  // the higher RAW score vs a 7-token hyp with the lower raw score.
+  const empty = { seqKey: '', t: 3, score: -5.237, numEmitted: 0 };
+  const token = { seqKey: 'a,b,', t: 3, score: -6.690, numEmitted: 7 };
+
+  test('lengthNormPrune=false ranks by raw score (empty hyp survives)', () => {
+    const kept = pruneBeam([token, empty], 1, { lengthNormPrune: false });
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0], empty, 'raw-score prune keeps the higher-raw empty hyp');
+  });
+
+  test('lengthNormPrune=true ranks by length-normalized score (token hyp survives)', () => {
+    const kept = pruneBeam([token, empty], 1, { lengthNormPrune: true });
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0], token, 'length-normalized prune keeps the longer correct hyp');
+  });
+
+  test('does not mutate its input array', () => {
+    const input = [token, empty];
+    pruneBeam(input, 1, { lengthNormPrune: true });
+    assert.ok(input.length === 2 && input[0] === token && input[1] === empty, 'input order preserved');
+  });
+});
+
+describe('reconstructBeamPath (pure)', () => {
+  test('walks the backpointer chain, keeps emit tokens in order, skips the seed', () => {
+    const seed = { parent: null, emit: false, id: null, confVal: null };
+    const n1 = { parent: seed, emit: true, id: 7, confVal: 0.9, tokenTime: [0, 1] };
+    const n2 = { parent: n1, emit: false, id: null, confVal: 0.5 };
+    const n3 = { parent: n2, emit: true, id: 8, confVal: 0.8, tokenTime: [1, 2], overallLogProb: -1.23 };
+    const r = reconstructBeamPath(n3, { returnTimestamps: true, returnConfidences: true });
+    assert.ok(eqArr(r.idsR, [7, 8]), 'emitted ids in forward order');
+    assert.ok(eqFloatArr(r.framesR, [0.9, 0.5, 0.8]), 'per-frame confs include the blank frame');
+    assert.ok(close(r.overall, -1.23), 'overall log-prob is the leaf value');
+    assert.equal(r.timesR.length, 2, 'one timestamp per emitted token');
+    assert.equal(r.confsR.length, 2, 'one confidence per emitted token');
+  });
+
+  test('null hypothesis yields empty arrays and zero overall', () => {
+    const r = reconstructBeamPath(null);
+    assert.ok(eqArr(r.idsR, []) && r.overall === 0);
+  });
+});
+
+describe('mergeDuplicates flag end-to-end (_decodeBeam)', () => {
+  // Reuses the merging construction: with recombination ON the merged X,Z path
+  // ([0,1,1]) wins; with it OFF the single-route competitor X,W,Z ([0,2,1])
+  // wins. So the emitted ids alone prove which mode ran.
+  const NEG = -20;
+  const mergeScript = [
+    { logits: [0, NEG, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, 0] },
+    { logits: [NEG, -1.0, -0.5, NEG, NEG, NEG], step: 2, durLogits: [-Infinity, NEG, 0] },
+    { logits: [NEG, -1.0, NEG, -0.5, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },
+    { logits: [NEG, 0, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },
+  ];
+  const runMerge = (mergeDuplicates) => makeModel(mergeScript)._decodeBeam(makeTransposed(4), D, 4, {
+    beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+    returnTimestamps: false, returnConfidences: false, timeStride: 0.08, ...MAES, mergeDuplicates,
+  });
+
+  test('merge ON (default) picks the recombined path [0,1,1]', async () => {
+    statesCreated = statesDisposed = 0;
+    const out = await runMerge(true);
+    assert.ok(eqArr(out.ids, [0, 1, 1]), 'recombined X,Z wins');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no state leak');
+  });
+
+  test('merge OFF picks the single-route competitor [0,2,1]', async () => {
+    statesCreated = statesDisposed = 0;
+    const out = await runMerge(false);
+    assert.ok(eqArr(out.ids, [0, 2, 1]), 'Viterbi: no recombination, competitor wins');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no state leak with merge off');
+  });
+});
+
+describe('lengthNormPrune flag end-to-end (_decodeBeam)', () => {
+  // The plumbing must reach the prune and still produce a valid decode. On the
+  // empty-bias script both the default (final-selection norm) and prune-time
+  // norm return the token path; this pins that turning the knob on doesn't
+  // break or empty the decode.
+  const NEG = -20;
+  const emptyBiasScript = [
+    { logits: [0, NEG, NEG, NEG, NEG, 0.2], step: 1, durLogits: [-Infinity, 0, -Infinity] },
+    { logits: [NEG, 0, NEG, NEG, NEG, 0.2], step: 1, durLogits: [-Infinity, 0, -Infinity] },
+    { logits: [NEG, NEG, 0, NEG, NEG, 0.2], step: 1, durLogits: [-Infinity, 0, -Infinity] },
+  ];
+  test('length-normalized pruning keeps the token path non-empty', async () => {
+    statesCreated = statesDisposed = 0;
+    const out = await makeModel(emptyBiasScript)._decodeBeam(makeTransposed(3), D, 3, {
+      beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+      ...MAES, maesExpansionGamma: 2.3, lengthNormPrune: true,
+    });
+    assert.ok(eqArr(out.ids, [0, 1, 2]), 'token path returned under prune-time normalization');
+    assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no state leak');
+  });
+});
+
+describe('nBest (oracle) list (_decodeBeam)', () => {
+  const NEG = -20;
+  // Same merge construction: it finishes with (at least) two distinct
+  // sequences, [0,1,1] (merged winner) and [0,2,1] (competitor), so the n-best
+  // list must surface both.
+  const mergeScript = [
+    { logits: [0, NEG, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, 0] },
+    { logits: [NEG, -1.0, -0.5, NEG, NEG, NEG], step: 2, durLogits: [-Infinity, NEG, 0] },
+    { logits: [NEG, -1.0, NEG, -0.5, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },
+    { logits: [NEG, 0, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },
+  ];
+  const run = (nBest) => makeModel(mergeScript)._decodeBeam(makeTransposed(4), D, 4, {
+    beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+    returnTimestamps: false, returnConfidences: false, timeStride: 0.08, ...MAES, nBest,
+  });
+
+  test('default (nBest=1) carries no nbest field', async () => {
+    const out = await run(1);
+    assert.equal(out.nbest, undefined, 'nbest absent on the default path');
+  });
+
+  test('nBest>1 returns distinct sequences, best first, 1-best on top', async () => {
+    const out = await run(3);
+    assert.ok(Array.isArray(out.nbest), 'nbest is an array');
+    assert.ok(out.nbest.length >= 2 && out.nbest.length <= 3, 'between 2 and nBest entries');
+    assert.ok(eqArr(out.nbest[0].ids, out.ids), '1-best equals the top of the n-best list');
+    // strictly descending length-normalized scores
+    for (let i = 1; i < out.nbest.length; i++) {
+      assert.ok(out.nbest[i - 1].score >= out.nbest[i].score, 'scores are non-increasing');
+    }
+    // distinct id-sequences
+    const keys = out.nbest.map((h) => h.ids.join(','));
+    assert.equal(new Set(keys).size, keys.length, 'all n-best sequences are distinct');
+    assert.ok(keys.includes('0,1,1') && keys.includes('0,2,1'), 'both finishing routes are present');
+  });
+
+  test('collecting the n-best does not perturb the 1-best decode', async () => {
+    const base = await run(1);
+    const withN = await run(5);
+    assert.ok(eqArr(base.ids, withN.ids), 'the winning path is identical with or without n-best');
   });
 });

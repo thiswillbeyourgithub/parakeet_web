@@ -137,6 +137,94 @@ export function summarizeBeamStats({ expansionSizes, keptSizes }) {
 }
 
 /**
+ * Collapse duplicate beam hypotheses (same emitted-token sequence AND frame,
+ * `seqKey@t`) reached by different routes into one representative. Pure so the
+ * beam decoder and the unit tests share exactly one implementation.
+ *
+ * `mergeDuplicates=true` is NeMo's `merge_duplicate_hypotheses`: the survivor's
+ * score becomes the log-sum-exp of the whole group, recombining their
+ * probability mass (a max-marginal, sum-over-alignments score). This is the
+ * production default. `mergeDuplicates=false` is Viterbi: keep only the single
+ * highest-scoring member of each group and DROP the rest with no score
+ * recombination. The two differ because log-sum-exp inflates a sequence reached
+ * by many TDT alignments (e.g. blank/deletion-heavy paths), which can let it
+ * out-rank a longer correct path during pruning — the exact behaviour the
+ * merge on/off diagnostic exists to measure. The representative is always the
+ * highest-raw-score member either way, so map insertion order (hence the
+ * post-merge prune input) is identical between the modes for a given input.
+ * @param {Array<{seqKey:string, t:number, score:number}>} hyps
+ * @param {{mergeDuplicates:boolean, logAddExp:(a:number,b:number)=>number}} opts
+ * @returns {Array} the surviving representatives, in first-seen order
+ */
+export function mergeHypotheses(hyps, { mergeDuplicates, logAddExp }) {
+  const merged = new Map();
+  for (const child of hyps) {
+    const key = `${child.seqKey}@${child.t}`;
+    const rep = merged.get(key);
+    if (rep === undefined) {
+      merged.set(key, child);
+    } else if (child.score > rep.score) {
+      if (mergeDuplicates) child.score = logAddExp(child.score, rep.score);
+      merged.set(key, child);
+    } else if (mergeDuplicates) {
+      rep.score = logAddExp(rep.score, child.score);
+    }
+    // mergeDuplicates=false and child not better: drop child, keep rep untouched.
+  }
+  return [...merged.values()];
+}
+
+/**
+ * Sort hypotheses best-first and keep the top `beamWidth`. `lengthNormPrune`
+ * selects the ranking key for the intermediate per-frame survival prune:
+ *   - false (default, matches NeMo): rank by RAW score. Only the FINAL best
+ *     selection is length-normalized (see lengthNormalizedScore), so during
+ *     search a blank/deletion-heavy path with a structurally higher raw score
+ *     can survive and crowd out a longer correct path.
+ *   - true: rank by length-normalized score DURING pruning too, so the
+ *     deletion bias cannot decide which hypotheses survive each frame. This is
+ *     the candidate fix for "wide beam underperforms greedy"; the diagnostic
+ *     sweep toggles it to test whether raw-score pruning is the culprit.
+ * Does not mutate its input.
+ * @param {Array<{score:number, numEmitted:number}>} hyps
+ * @param {number} beamWidth
+ * @param {{lengthNormPrune:boolean}} opts
+ * @returns {Array}
+ */
+export function pruneBeam(hyps, beamWidth, { lengthNormPrune }) {
+  const key = lengthNormPrune ? lengthNormalizedScore : (h) => h.score;
+  return hyps.slice().sort((a, b) => key(b) - key(a)).slice(0, beamWidth);
+}
+
+/**
+ * Walk a finished beam hypothesis' backpointer chain into ordered output
+ * arrays (the seed node has no parent and is skipped). Reads only scalars/ids,
+ * so it is safe after the decoder states have been disposed. Shared by the
+ * 1-best reconstruction and the n-best (oracle) reconstruction so there is one
+ * copy of the walk.
+ * @param {object|null} best leaf hypothesis, or null for an empty decode
+ * @param {{returnTimestamps?:boolean, returnConfidences?:boolean}} [opts]
+ * @returns {{idsR:number[], framesR:number[], timesR:Array, confsR:number[], overall:number}}
+ */
+export function reconstructBeamPath(best, { returnTimestamps = false, returnConfidences = false } = {}) {
+  const idsR = [], framesR = [], timesR = [], confsR = [];
+  let overall = 0;
+  if (best) {
+    overall = best.overallLogProb;
+    for (let node = best; node && node.parent; node = node.parent) {
+      framesR.push(node.confVal);
+      if (node.emit) {
+        idsR.push(node.id);
+        if (returnTimestamps) timesR.push(node.tokenTime);
+        if (returnConfidences) confsR.push(node.confVal);
+      }
+    }
+    idsR.reverse(); framesR.reverse(); timesR.reverse(); confsR.reverse();
+  }
+  return { idsR, framesR, timesR, confsR, overall };
+}
+
+/**
  * Lightweight Parakeet model wrapper designed for browser usage.
  * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
  * transformerjs style) exported by parakeet TDT.
@@ -1104,7 +1192,12 @@ export class ParakeetModel {
    */
   async _decodeBeam(transposed, D, Tenc, opts) {
     const { beamWidth, frameStride, phraseBoost, returnTimestamps, returnConfidences, timeStride,
-            maesNumSteps, maesExpansionBeta, maesExpansionGamma, maesPrefixAlpha, collectBeamStats } = opts;
+            maesNumSteps, maesExpansionBeta, maesExpansionGamma, maesPrefixAlpha, collectBeamStats,
+            // Diagnostic knobs (production defaults keep the decode byte-for-byte
+            // unchanged): mergeDuplicates=true is NeMo merge_duplicate_hypotheses,
+            // lengthNormPrune=false ranks the per-frame survival prune by raw
+            // score (NeMo), nBest=1 emits only the single best path.
+            mergeDuplicates = true, lengthNormPrune = false, nBest = 1 } = opts;
 
     // Opt-in instrumentation (default OFF): when on, record the per-step
     // joint-network batch size (expansionSizes) and the surviving beam size after
@@ -1158,6 +1251,11 @@ export class ParakeetModel {
       numEmitted: 0, active: rootActive, lastTok: this.blankId, seqKey: '',
     }];
     let best = null;     // highest-scoring finished hypothesis (t >= Tenc)
+    // Opt-in n-best (oracle) collection: keyed by emitted-token sequence so each
+    // DISTINCT final transcript is kept once, at its best length-normalized
+    // score. Null (and zero overhead) unless nBest > 1. Used to ask whether the
+    // correct transcript is present in the beam but ranked below the 1-best.
+    const finishedNBest = nBest > 1 ? new Map() : null;
     let workFrames = 0;  // frames that actually carried hypotheses (for yield cadence)
 
     try {
@@ -1228,6 +1326,14 @@ export class ParakeetModel {
                 if (best) disposable.add(best.state); // old best may now be free
                 best = child;
               }
+              // n-best (oracle) bookkeeping: keep the best-scoring instance of
+              // each distinct emitted sequence. Cheap and null on the default path.
+              if (finishedNBest) {
+                const prev = finishedNBest.get(child.seqKey);
+                if (!prev || lengthNormalizedScore(child) > lengthNormalizedScore(prev)) {
+                  finishedNBest.set(child.seqKey, child);
+                }
+              }
             } else if (child.t > timeIdx) {
               produced.push(child);
             } else {
@@ -1242,25 +1348,13 @@ export class ParakeetModel {
         // Merge duplicate hypotheses (NeMo's merge_duplicate_hypotheses) over the
         // surviving futures + this frame's new children: any two with the same
         // emitted-token sequence AND frame are the same hypothesis reached by
-        // different routes, so collapse them into one whose score is the
-        // log-sum-exp of the group (recombining their probability mass). The
-        // highest-scoring member is the representative; the others never enter
-        // keptHyps, so the sweep below frees any state they alone held.
-        const merged = new Map();
-        for (const child of futures.concat(produced)) {
-          const key = `${child.seqKey}@${child.t}`;
-          const rep = merged.get(key);
-          if (rep === undefined) {
-            merged.set(key, child);
-          } else if (child.score > rep.score) {
-            child.score = this._logAddExp(child.score, rep.score);
-            merged.set(key, child);
-          } else {
-            rep.score = this._logAddExp(rep.score, child.score);
-          }
-        }
-
-        keptHyps = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, beamWidth);
+        // different routes, so collapse them into one representative (see
+        // mergeHypotheses). The others never enter keptHyps, so the sweep below
+        // frees any state they alone held. Then prune to the beam width by the
+        // configured survival key (see pruneBeam).
+        const merged = mergeHypotheses(futures.concat(produced),
+          { mergeDuplicates, logAddExp: this._logAddExp.bind(this) });
+        keptHyps = pruneBeam(merged, beamWidth, { lengthNormPrune });
         if (stats) stats.keptSizes.push(keptHyps.length); // surviving beam this frame
 
         // Sweep: free every in-play state no surviving hypothesis (or best) points at.
@@ -1282,22 +1376,19 @@ export class ParakeetModel {
 
     // Reconstruct the winning path from the backpointer chain (seed has no
     // frame). Only scalars/ids are read here, so the disposed states don't matter.
-    const idsR = [], framesR = [], timesR = [], confsR = [];
-    let overall = 0;
-    if (best) {
-      overall = best.overallLogProb;
-      for (let node = best; node && node.parent; node = node.parent) {
-        framesR.push(node.confVal);
-        if (node.emit) {
-          idsR.push(node.id);
-          if (returnTimestamps) timesR.push(node.tokenTime);
-          if (returnConfidences) confsR.push(node.confVal);
-        }
-      }
-      idsR.reverse(); framesR.reverse(); timesR.reverse(); confsR.reverse();
-    }
+    const { idsR, framesR, timesR, confsR, overall } =
+      reconstructBeamPath(best, { returnTimestamps, returnConfidences });
     const result = { ids: idsR, tokenTimes: timesR, tokenConfs: confsR, frameConfs: framesR, overallLogProb: overall };
     if (stats) result.beamStats = summarizeBeamStats(stats);
+    // n-best (oracle) list: the top distinct emitted sequences by
+    // length-normalized score, best first. Only its ids are reconstructed (the
+    // oracle scores text, not timing/confidence). Absent on the default path.
+    if (finishedNBest) {
+      result.nbest = [...finishedNBest.values()]
+        .sort((a, b) => lengthNormalizedScore(b) - lengthNormalizedScore(a))
+        .slice(0, nBest)
+        .map((h) => ({ ids: reconstructBeamPath(h).idsR, score: lengthNormalizedScore(h) }));
+    }
     return result;
   }
 
@@ -1442,6 +1533,16 @@ export class ParakeetModel {
       // per-step joint-network batch sizes. Off by default so production, e2e
       // and existing callers are byte-for-byte unaffected.
       collectBeamStats = false,
+      // Diagnostic decoder knobs (all default to the production behaviour, so
+      // the common path is unchanged). mergeDuplicates/lengthNormPrune/nBest are
+      // forwarded into the beam decoder (see _decodeBeam). forceBeam runs the
+      // beam decoder even at width 1, so a width-1 beam can be compared against
+      // the dedicated greedy loop (they should agree; if they don't, that gap is
+      // itself a finding). Ignored when state continuity forces greedy.
+      mergeDuplicates = true,
+      lengthNormPrune = false,
+      nBest = 1,
+      forceBeam = false,
     } = opts;
 
     // Beam search is full-file only: a beam of N hypotheses cannot be serialized
@@ -1452,6 +1553,10 @@ export class ParakeetModel {
       console.warn('[Parakeet] beamWidth>1 is unsupported with decoder-state continuity (streaming); forcing width 1.');
       effBeamWidth = 1;
     }
+    // forceBeam runs the beam decoder even at width 1 (diagnostic: a width-1
+    // beam vs the greedy loop). Not available with state continuity, which the
+    // beam path cannot serialize. nBest > 1 likewise needs the beam decoder.
+    const useBeam = (effBeamWidth > 1 || forceBeam || nBest > 1) && !returnDecoderState;
 
     // Collect per-stage timings only when the caller opts in. Default off so a
     // production transcribe() doesn't spam the console; `verbose: true` at model
@@ -1496,7 +1601,8 @@ export class ParakeetModel {
     // width-1 never runs the beam decoder), and only when collectBeamStats is on.
     let beamStats = null;
 
-    if (effBeamWidth === 1) {
+    let nbest = null; // beam n-best list (oracle), only when nBest > 1
+    if (!useBeam) {
       // --- Greedy (= beam width 1) ------------------------------------
       // A single hypothesis carrying its own frame pointer, decoder state,
       // emitted ids and per-frame accumulators. Bit-for-bit identical to the
@@ -1616,6 +1722,9 @@ export class ParakeetModel {
         maesExpansionGamma: Number.isFinite(maesExpansionGamma) ? maesExpansionGamma : 2.3,
         maesPrefixAlpha: Math.max(0, Math.floor(maesPrefixAlpha) || 0),
         collectBeamStats,
+        mergeDuplicates,
+        lengthNormPrune,
+        nBest: Math.max(1, Math.floor(nBest) || 1),
       });
       ids = out.ids;
       tokenTimes = out.tokenTimes;
@@ -1623,6 +1732,7 @@ export class ParakeetModel {
       frameConfs = out.frameConfs;
       overallLogProb = out.overallLogProb;
       beamStats = out.beamStats ?? null;
+      nbest = out.nbest ?? null;
       finalDecoderState = null;
       decoderState = null;
     }
@@ -1639,6 +1749,12 @@ export class ParakeetModel {
     if (this.verbose) console.log('[Parakeet.js] Normalized text (final):', text);
     if (perfEnabled) tToken = performance.now() - tokenStart;
 
+    // Decode the beam n-best ids to normalized text (oracle diagnostics only;
+    // null on the default path). Each entry keeps its length-normalized score.
+    const nbestTexts = nbest
+      ? nbest.map((h) => ({ text: this._normalizer(this.tokenizer.decode(h.ids)), score: h.score }))
+      : null;
+
     // Early exit if no extras requested
     if (!returnTimestamps && !returnConfidences) {
       const metrics = buildPerfMetrics(perfEnabled, {
@@ -1648,6 +1764,7 @@ export class ParakeetModel {
       const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
       if (beamStats) earlyOut.beamStats = beamStats;
+      if (nbestTexts) earlyOut.nbest = nbestTexts;
       return earlyOut;
     }
 
@@ -1720,6 +1837,7 @@ export class ParakeetModel {
     };
     if (returnDecoderState) fullOut.decoderState = finalDecoderState;
     if (beamStats) fullOut.beamStats = beamStats;
+    if (nbestTexts) fullOut.nbest = nbestTexts;
     return fullOut;
 
     } finally {
