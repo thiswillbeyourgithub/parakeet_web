@@ -649,14 +649,19 @@ export default function App() {
   // path forces width 1 in the decoder.
   const [beamWidth, setBeamWidth] = useState(DEFAULT_BEAM_WIDTH);
   // MAES (Modified Adaptive Expansion Search) knobs, used only when beamWidth>1.
-  // num-steps/beta/gamma match NeMo's `maes` strategy. prefixAlpha defaults to 0
-  // (NeMo uses 1): a grid search over French-medical + FLEURS-fr (494 utts, int8,
-  // beam 5) on both the CPU and GPU backends found prefix-search recombination
-  // gave WER/CER identical to off within noise while costing ~15-20% more decode
-  // time, so it ships off. Users can still re-enable it from the sidebar.
-  const [maesNumSteps, setMaesNumSteps] = useState(3);
-  const [maesExpansionBeta, setMaesExpansionBeta] = useState(4);
-  const [maesExpansionGamma, setMaesExpansionGamma] = useState(4.0);
+  // num-steps/beta/gamma are NeMo's `maes` defaults (2 / 2 / 2.3), matching
+  // parakeet.js and transcribe.mjs. An earlier build shipped wider values
+  // (3 / 4 / 4.0); a grid sweep over these knobs plus a pink-noise SNR A/B (clean
+  // down to 0 dB) found the wider preset gave no accuracy gain at any audio
+  // quality while costing a little more decode, so they were aligned back to the
+  // NeMo defaults. prefixAlpha defaults to 0 (NeMo uses 1): a grid search over
+  // French-medical + FLEURS-fr (494 utts, int8, beam 5) on both the CPU and GPU
+  // backends found prefix-search recombination gave WER/CER identical to off
+  // within noise while costing ~15-20% more decode time, so it ships off. Users
+  // can still re-enable any of these from the sidebar.
+  const [maesNumSteps, setMaesNumSteps] = useState(2);
+  const [maesExpansionBeta, setMaesExpansionBeta] = useState(2);
+  const [maesExpansionGamma, setMaesExpansionGamma] = useState(2.3);
   const [maesPrefixAlpha, setMaesPrefixAlpha] = useState(0);
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
@@ -1258,9 +1263,9 @@ export default function App() {
           loadSetting('verboseLog', false),
           loadSetting('frameStride', 1),
           loadSetting('beamWidth', DEFAULT_BEAM_WIDTH),
-          loadSetting('maesNumSteps', 3),
-          loadSetting('maesExpansionBeta', 4),
-          loadSetting('maesExpansionGamma', 4.0),
+          loadSetting('maesNumSteps', 2),
+          loadSetting('maesExpansionBeta', 2),
+          loadSetting('maesExpansionGamma', 2.3),
           loadSetting('maesPrefixAlpha', 0), // off by default (see useState above)
           loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
           loadSetting('noiseSuppression', true),
