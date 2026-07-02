@@ -729,6 +729,21 @@ export default function App() {
   const modelRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // --- Live model swap (Q1: change a model param while loaded -> reload) ---
+  // Armed by a user edit of a model-defining control (backend / encoder
+  // precision) while a model is already loaded, so the sig-watching effect
+  // (near loadModel) disposes the current model and reloads with the new value
+  // once it has been committed to state. Programmatic changes and the initial
+  // load leave it unarmed, so they never trigger a reload.
+  const reloadModelOnParamChangeRef = useRef(false);
+  const armModelReloadIfLoaded = () => {
+    if (modelRef.current) reloadModelOnParamChangeRef.current = true;
+  };
+  // CPU-threads reloads on blur (a number field can't sanely reload per
+  // keystroke), so remember the thread count the live model was built with and
+  // only reload when the committed value actually differs.
+  const loadedCpuThreadsRef = useRef(maxCores);
+
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false); // pause/resume support for long recordings
@@ -2144,6 +2159,9 @@ export default function App() {
     }
 
     setStatus('loadingModel');
+    // Remember the thread count this (re)load is built with, so the CPU-threads
+    // field's onBlur only triggers another reload when the value truly changed.
+    loadedCpuThreadsRef.current = cpuThreads;
     // Re-arm the one-shot diarization-model prefetch for this (re)load, so a
     // freshly loaded model warms the diarization weights once.
     diarPrefetchDoneRef.current = false;
@@ -2338,6 +2356,24 @@ export default function App() {
     }
   }
 
+  // Immediate model reload when a model-defining control changes while a model
+  // is already loaded (Q1). armModelReloadIfLoaded() is called from the
+  // control's onChange; this effect runs after the new value lands in state,
+  // so loadModel() reads the fresh backend/precision. Only a change that armed
+  // the flag reloads: the initial load and any programmatic change do not.
+  const modelParamSig = `${backend}|${wasmEncoderQuant}|${webgpuEncoderQuant}`;
+  const modelParamSigRef = useRef(modelParamSig);
+  useEffect(() => {
+    if (modelParamSigRef.current === modelParamSig) return;
+    modelParamSigRef.current = modelParamSig;
+    if (reloadModelOnParamChangeRef.current) {
+      reloadModelOnParamChangeRef.current = false;
+      loadModel();
+    }
+    // loadModel intentionally omitted from deps: it is recreated every render
+    // and this effect must fire only on a param-signature change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelParamSig]);
 
   // Spin up the live transcriber if the user enabled it. Reads PCM out of
   // the same pcmChunksRef both record paths feed; safe to call once per
@@ -4561,6 +4597,18 @@ export default function App() {
   // which a user could click them before the worker is ready.
   const modelLoaded = tokenizerVocabSig !== null;
 
+  // Model-defining controls (backend / encoder precision / CPU threads) stay
+  // editable once a model is loaded; changing one disposes the current model
+  // and reloads with the new setting (freeing memory before the new weights
+  // download). They lock only while a swap can't safely happen: during an
+  // active transcription (Q3 - don't dispose the session mid-inference), during
+  // an in-flight (re)load, or during a live recording/phone capture.
+  const modelSwapBlocked = isTranscribing
+    || status === 'loadingModel'
+    || status === 'creatingSessions'
+    || isRecording
+    || remoteMicRecording;
+
   return (
     <div className="app">
       {devMode && (
@@ -4931,12 +4979,12 @@ export default function App() {
                 <InfoTooltip text={t('tooltipBackend')} />
               </span>
               <div className="setting-options">
-                <label className={status === 'modelReady' ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => chooseBackend(e.target.value)} disabled={status === 'modelReady'} />
+                <label className={modelSwapBlocked ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked} />
                   {t('wasmCpu')}
                 </label>
-                <label className={status === 'modelReady' || webgpuAvailable === false ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => chooseBackend(e.target.value)} disabled={status === 'modelReady' || webgpuAvailable === false} />
+                <label className={modelSwapBlocked || webgpuAvailable === false ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked || webgpuAvailable === false} />
                   {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
                   {webgpuAvailable === false && (
                     <InfoTooltip text={t(`webgpuReason_${webgpuUnavailableReason || 'noAdapter'}`)} />
@@ -4979,10 +5027,10 @@ export default function App() {
                   </span>
                   <div className="setting-options">
                     {rows.map(r => {
-                      const disabled = status === 'modelReady' || !r.available;
+                      const disabled = modelSwapBlocked || !r.available;
                       return (
                         <label key={r.value} className={disabled ? 'disabled-option' : ''}>
-                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && effectiveQuant === r.value} onChange={e => setQuant(e.target.value)} disabled={disabled} />
+                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && effectiveQuant === r.value} onChange={e => { armModelReloadIfLoaded(); setQuant(e.target.value); }} disabled={disabled} />
                           {r.label}{!r.available ? ` ${r.note}` : ''}
                         </label>
                       );
@@ -5000,6 +5048,7 @@ export default function App() {
                 </span>
                 <input
                   type="number"
+                  name="cpuThreads"
                   inputMode="numeric"
                   min="1"
                   max={maxCores}
@@ -5008,8 +5057,14 @@ export default function App() {
                     const v = Number(e.target.value);
                     if (Number.isFinite(v)) setCpuThreads(Math.max(1, Math.min(maxCores, v)));
                   }}
-                  disabled={status === 'modelReady'}
-                  style={{ width: '4.5rem', opacity: status === 'modelReady' ? 0.5 : 1 }}
+                  onBlur={() => {
+                    // Q1: reload with the new thread count once a model is
+                    // loaded, but only when the committed value truly changed
+                    // (a number field can't reload sanely on every keystroke).
+                    if (modelRef.current && cpuThreads !== loadedCpuThreadsRef.current) loadModel();
+                  }}
+                  disabled={modelSwapBlocked}
+                  style={{ width: '4.5rem', opacity: modelSwapBlocked ? 0.5 : 1 }}
                 />
               </div>
             )}
