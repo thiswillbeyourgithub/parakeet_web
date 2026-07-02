@@ -556,24 +556,38 @@ function stdev(a) {
 }
 
 // Cell-level summary of the opt-in per-utterance beamStats (collectBeamStats).
-// Each sample is one utterance's beamStats (see parakeet.js summarizeBeamStats):
-// `expansion` carries that utterance's own max/median expansion width (the
-// per-step joint-network batch size B = how many hypotheses were expanded that
-// step, the CPU cost driver), `steps` its decode-step count. We roll those up
-// across the cell's utterances:
-//   - hyp_med: the MEDIAN across utterances of each utterance's expansion median
-//   - hyp_max: the MAX across utterances of each utterance's expansion max
-//   - steps:   the MEAN across utterances of each utterance's step count
+// Each sample is one utterance's beamStats (see parakeet.js summarizeBeamStats),
+// which carries TWO distinct series that are easy to conflate:
+//   - `kept`      = the surviving beam size after each frame's merge+prune
+//                   (<= beamWidth): the TRUE beam occupancy, i.e. how many
+//                   distinct hypotheses the search is actually keeping alive.
+//   - `expansion` = the per-step joint-network batch size B = how many of those
+//                   live hypotheses are DUE on the same encoder frame and get fed
+//                   to one batched joiner call. TDT emits a (token, duration) per
+//                   step, so hypotheses scatter across frames by their durations
+//                   and only a few are ever due at once: this is MUCH smaller than
+//                   the occupancy and is the per-call CPU cost driver.
+// We roll BOTH up across the cell's utterances (do not read one as the other: the
+// beam can run full at 5 while the joiner batch sits at ~2):
+//   - beam_med / beam_max:   median-across-utterances of kept.median /
+//                            max-of-kept.max  (the real beam width sustained)
+//   - batch_med / batch_max: median-across-utterances of expansion.median /
+//                            max-of-expansion.max  (the joiner batch size B)
+//   - steps:  the MEAN across utterances of each utterance's decode-step count
 // Returns null when no sample ran the beam decoder (e.g. a greedy beam=1 cell),
 // so those table columns render "-" and auto-hide on a pure-greedy run.
 function summarizeCellBeam(samples) {
   if (!samples.length) return null;
-  const meds = samples.map((s) => s.expansion.median);
-  const maxes = samples.map((s) => s.expansion.max);
+  const keptMeds = samples.map((s) => s.kept.median);
+  const keptMaxes = samples.map((s) => s.kept.max);
+  const batchMeds = samples.map((s) => s.expansion.median);
+  const batchMaxes = samples.map((s) => s.expansion.max);
   const steps = samples.map((s) => s.steps);
   return {
-    hyp_med: +median(meds).toFixed(2),
-    hyp_max: maxes.reduce((a, b) => Math.max(a, b), 0),
+    beam_med: +median(keptMeds).toFixed(2),
+    beam_max: keptMaxes.reduce((a, b) => Math.max(a, b), 0),
+    batch_med: +median(batchMeds).toFixed(2),
+    batch_max: batchMaxes.reduce((a, b) => Math.max(a, b), 0),
     steps: +mean(steps).toFixed(1),
   };
 }
@@ -757,13 +771,16 @@ const pickColumns = (cols) => (row) => cols.map((c) => row[c]);
 // on decode speed is visible. The per-utterance WER spread (mean/median/stdev)
 // and the raw edit/ref counts are dropped from the table to keep it readable;
 // they remain in the JSONL records.
-// The trailing hyp_med/hyp_max/steps columns are the opt-in beam-search
-// expansion stats (collectBeamStats), appended after the timing columns so the
+// The trailing beam_med/beam_max/batch_med/batch_max/steps columns are the opt-in
+// beam-search stats (collectBeamStats), appended after the timing columns so the
 // existing layout is unchanged; they render "-" (and auto-hide, like any unswept
-// knob) on a cell with no beam run. The final load5 column is the OS 5-minute
-// load average captured when the cell finished, a trust flag for the timing
-// columns (see cellLoad5).
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'hyp_med', 'hyp_max', 'steps', 'load5'];
+// knob) on a cell with no beam run. beam_* is the TRUE beam occupancy (surviving
+// hypotheses, <= beam width); batch_* is the joiner batch size B (hypotheses due
+// per frame), which is much smaller because TDT durations scatter the beam across
+// frames (see summarizeCellBeam). The final load5 column is the OS 5-minute load
+// average captured when the cell finished, a trust flag for the timing columns
+// (see cellLoad5).
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'beam_med', 'beam_max', 'batch_med', 'batch_max', 'steps', 'load5'];
 // MAES knob columns, inserted just before the 'dataset' column ONLY for the knobs
 // actually swept (in the `show` set), so a normal run's table is unchanged and a
 // MAES sweep gains just the columns that vary. Each entry: [header, accessor].
@@ -795,12 +812,16 @@ function cellProcPerDur(r) {
 function datasetDecAud(d) {
   return d.audioSec > 0 ? ((d.decodeMs / 1000) / d.audioSec).toFixed(3) : '-';
 }
-// Cell-level beam-expansion stats (collectBeamStats), shared across a cell's
+// Cell-level beam-search stats (collectBeamStats), shared across a cell's
 // dataset rows like proc_t/dur_t. Render "-" when the cell has no beam run (a
 // greedy beam=1 cell never invokes the beam decoder), so those columns auto-hide
-// on a pure-greedy run via nonEmptyColumnIndices.
-function cellHypMed(r) { return r.beamCell ? String(r.beamCell.hyp_med) : '-'; }
-function cellHypMax(r) { return r.beamCell ? String(r.beamCell.hyp_max) : '-'; }
+// on a pure-greedy run via nonEmptyColumnIndices. beam_* = true occupancy (kept),
+// batch_* = joiner batch size (expansion); see summarizeCellBeam for why they
+// differ.
+function cellBeamMed(r) { return r.beamCell ? String(r.beamCell.beam_med) : '-'; }
+function cellBeamMax(r) { return r.beamCell ? String(r.beamCell.beam_max) : '-'; }
+function cellBatchMed(r) { return r.beamCell ? String(r.beamCell.batch_med) : '-'; }
+function cellBatchMax(r) { return r.beamCell ? String(r.beamCell.batch_max) : '-'; }
 function cellSteps(r) { return r.beamCell ? String(r.beamCell.steps) : '-'; }
 // Cell-level OS 5-minute load average (os.loadavg()[1]) captured when the cell
 // finished, shared across the cell's dataset rows like proc_t/dur_t. A load above
@@ -830,8 +851,10 @@ function accuracyBody(rows, show = EMPTY_SHOW) {
         pct(d.charEdits, d.refChars).toFixed(2),
         procPerDur,
         datasetDecAud(d),
-        cellHypMed(r),
-        cellHypMax(r),
+        cellBeamMed(r),
+        cellBeamMax(r),
+        cellBatchMed(r),
+        cellBatchMax(r),
         cellSteps(r),
         cellLoad5(r),
       ]);
@@ -860,8 +883,10 @@ function topBody(rows, show = EMPTY_SHOW) {
       pct(d.charEdits, d.refChars).toFixed(2),
       cellProcPerDur(r),
       datasetDecAud(d),
-      cellHypMed(r),
-      cellHypMax(r),
+      cellBeamMed(r),
+      cellBeamMax(r),
+      cellBatchMed(r),
+      cellBatchMax(r),
       cellSteps(r),
       cellLoad5(r),
     ];
@@ -1079,9 +1104,10 @@ async function main() {
     const perDs = new Map();
     const order = [];
     // Recover the cell-level beam stats from each utterance's raw beamStats
-    // (collectBeamStats), so a resumed cell renders the hyp_med/hyp_max/steps
-    // columns identically to a freshly-run one. Pre-feature records have no
-    // beamStats and contribute nothing (the cell then shows "-").
+    // (collectBeamStats), so a resumed cell renders the beam_med/beam_max/
+    // batch_med/batch_max/steps columns identically to a freshly-run one.
+    // Pre-feature records have no beamStats and contribute nothing (the cell
+    // then shows "-").
     const beamStatsSamples = [];
     for (const u of utts) {
       if (u.beamStats) beamStatsSamples.push(u.beamStats);
@@ -1516,6 +1542,7 @@ if (pathToFileURL(process.argv[1] || '').href === import.meta.url) {
 export {
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset, cellRate,
+  summarizeCellBeam,
   ACC_HEAD, accuracyBody, topBody, OVERALL,
   nonEmptyColumnIndices, pickColumns,
   makeEtaEstimator, fmtDuration, renderLiveRegion,
