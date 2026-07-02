@@ -118,6 +118,16 @@ function parseArgs(argv) {
     resume: false,          // skip grid cells already completed in the jsonl
     ffmpeg: null,
     verbose: false,
+    // Diagnostic decoder knobs (murmure #338 study; all default to production
+    // behaviour). mergeDuplicates=NeMo merge_duplicate_hypotheses; lengthNormPrune
+    // ranks the per-frame survival prune by length-normalized score; forceBeam
+    // runs the beam decoder even at width 1 (vs the greedy loop); oracleNbest>1
+    // makes each beam decode also return its top-N distinct paths so the harness
+    // can score the best-achievable (oracle) WER/CER.
+    mergeDuplicates: true,
+    lengthNormPrune: false,
+    forceBeam: false,
+    oracleNbest: 1,
   };
   const need = (i, name) => {
     if (i + 1 >= argv.length) throw new Error(`Missing value for ${name}`);
@@ -125,6 +135,12 @@ function parseArgs(argv) {
   };
   const numList = (s) => s.split(',').map((x) => x.trim()).filter(Boolean).map(Number);
   const strList = (s) => s.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const onOff = (s) => {
+    const v = String(s).trim().toLowerCase();
+    if (['on', 'true', '1', 'yes'].includes(v)) return true;
+    if (['off', 'false', '0', 'no'].includes(v)) return false;
+    throw new Error(`expected on/off (got ${s})`);
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const eq = arg.indexOf('=');
@@ -163,6 +179,10 @@ function parseArgs(argv) {
       case '--md': a.md = val(flag); break;
       case '--resume': a.resume = true; break;
       case '--ffmpeg': a.ffmpeg = val(flag); break;
+      case '--merge-duplicates': a.mergeDuplicates = onOff(val(flag)); break;
+      case '--length-norm-prune': a.lengthNormPrune = onOff(val(flag)); break;
+      case '--force-beam': a.forceBeam = onOff(val(flag)); break;
+      case '--oracle-nbest': a.oracleNbest = parseInt(val(flag), 10); break;
       case '-v': case '--verbose': a.verbose = true; break;
       default:
         if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -171,6 +191,9 @@ function parseArgs(argv) {
   }
   if (!a.manifests.length) throw new Error('No --manifest given. See --help.');
   if (a.sortBy !== 'wer' && a.sortBy !== 'cer') throw new Error(`--sort-by must be wer or cer (got ${a.sortBy})`);
+  if (!Number.isInteger(a.oracleNbest) || a.oracleNbest < 1 || a.oracleNbest > 64) {
+    throw new Error(`--oracle-nbest must be an integer in [1, 64] (got ${a.oracleNbest})`);
+  }
   // --quant is a swept dimension: a comma-separated list (e.g. "int8,fp16,fp32")
   // benchmarks each quant in turn (one model load + encoder-cache reset apiece).
   // Dedupe while preserving order so a repeated quant can't collide on its
@@ -369,6 +392,20 @@ appears in the tables when it is actually swept:
                                  NeMo default 1. Default 1.
       --frame-stride N           Decimate encoder frames [1,4]. Default 1.
 
+Diagnostics (beam-vs-greedy study; single value each, constant across the run):
+      --merge-duplicates on|off  NeMo merge_duplicate_hypotheses (log-sum-exp
+                                 recombine). off = Viterbi (keep best route only).
+                                 Default on.
+      --length-norm-prune on|off Rank the per-frame survival prune by
+                                 length-normalized score instead of raw score
+                                 (candidate fix for wide-beam deletion bias).
+                                 Default off (NeMo: only the final pick is normed).
+      --force-beam on|off        Run the beam decoder even at width 1 (compare a
+                                 width-1 beam against the greedy loop). Default off.
+      --oracle-nbest N           Also return each beam decode's top-N distinct
+                                 paths and score the best-achievable (oracle)
+                                 WER/CER per utterance. 1 = off. Default 1.
+
 WER:
       --strip-accents      Also fold accents (é -> e) when normalizing. By
                            default text is lowercased and punctuation-stripped
@@ -444,18 +481,56 @@ function levenshtein(a, b) {
   return prev[m];
 }
 
+// Levenshtein distance WITH the substitution/deletion/insertion breakdown (the
+// NIST WER decomposition S/D/I). Unlike `levenshtein` above it keeps ref/hyp in
+// place (the split is asymmetric: a deletion is a ref token missing from the
+// hyp, an insertion an extra hyp token) and backtraces one optimal path, so it
+// needs the full O(n*m) matrix. Utterance-scale sequences make that cheap.
+// `total` equals the plain Levenshtein distance, so WER is unchanged; the split
+// answers the diagnostic question "does a wider beam delete more?".
+// @returns {{sub:number, del:number, ins:number, total:number}}
+export function levenshteinCounts(ref, hyp) {
+  const n = ref.length, m = hyp.length;
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = 0; i <= n; i++) dp[i][0] = i;
+  for (let j = 0; j <= m; j++) dp[0][j] = j;
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const cost = ref[i - 1] === hyp[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  // Backtrace, preferring the diagonal (match/substitution) so matches are not
+  // mis-split into a deletion+insertion pair.
+  let i = n, j = m, sub = 0, del = 0, ins = 0;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0) {
+      const cost = ref[i - 1] === hyp[j - 1] ? 0 : 1;
+      if (dp[i][j] === dp[i - 1][j - 1] + cost) { if (cost) sub++; i--; j--; continue; }
+    }
+    if (i > 0 && dp[i][j] === dp[i - 1][j] + 1) { del++; i--; continue; }
+    ins++; j--; // only j>0 remains reachable here
+  }
+  return { sub, del, ins, total: sub + del + ins };
+}
+
 // Score one hypothesis vs reference: word-level edits (for WER) and char-level
 // edits (for CER / raw Levenshtein distance). Empty references contribute no
-// denominator but still count any inserted words/chars as errors.
+// denominator but still count any inserted words/chars as errors. The word-level
+// edits carry the S/D/I breakdown (levenshteinCounts); `wordEdits` still equals
+// the plain Levenshtein distance, so existing WER figures are unchanged.
 function score(refNorm, hypNorm) {
   const refWords = refNorm ? refNorm.split(' ') : [];
   const hypWords = hypNorm ? hypNorm.split(' ') : [];
-  const wordEdits = levenshtein(refWords, hypWords);
+  const wc = levenshteinCounts(refWords, hypWords);
   const charEdits = levenshtein(refNorm, hypNorm); // string => char array
   return {
     refWords: refWords.length,
     hypWords: hypWords.length,
-    wordEdits,
+    wordEdits: wc.total,
+    wordSub: wc.sub,
+    wordDel: wc.del,
+    wordIns: wc.ins,
     refChars: refNorm.length,
     charEdits,
   };
@@ -603,13 +678,23 @@ const OVERALL = 'overall';
 // this dataset's total decode time and audio length so the table can show the
 // decode-time-to-audio-length ratio (how the beam width moves decode speed).
 function newAcc() {
-  return { refWords: 0, hypWords: 0, wordEdits: 0, refChars: 0, charEdits: 0, werSamples: [], decodeMs: 0, audioSec: 0 };
+  return { refWords: 0, hypWords: 0, wordEdits: 0, refChars: 0, charEdits: 0,
+    // NIST S/D/I decomposition of the 1-best word edits, and the oracle (best
+    // achievable over the beam n-best) edits. Zero-summed when a run emits no
+    // decomposition/oracle (greedy runs, or the pure scoring tests).
+    wordSub: 0, wordDel: 0, wordIns: 0, oracleWordEdits: 0, oracleCharEdits: 0,
+    werSamples: [], decodeMs: 0, audioSec: 0 };
 }
 // decodeMs / audioSec default to 0 so the pure scoring tests (which pass only a
-// score object) keep working; live/resume callers pass the real timings.
+// score object) keep working; live/resume callers pass the real timings. Oracle
+// edits fall back to the 1-best edits when a score object carries no oracle
+// (greedy / no n-best), so oracle == 1-best in that case.
 function addScore(acc, sc, decodeMs = 0, audioSec = 0) {
   acc.refWords += sc.refWords; acc.hypWords += sc.hypWords; acc.wordEdits += sc.wordEdits;
   acc.refChars += sc.refChars; acc.charEdits += sc.charEdits;
+  acc.wordSub += sc.wordSub ?? 0; acc.wordDel += sc.wordDel ?? 0; acc.wordIns += sc.wordIns ?? 0;
+  acc.oracleWordEdits += sc.oracleWordEdits ?? sc.wordEdits;
+  acc.oracleCharEdits += sc.oracleCharEdits ?? sc.charEdits;
   acc.werSamples.push(pct(sc.wordEdits, sc.refWords));
   acc.decodeMs += decodeMs; acc.audioSec += audioSec;
 }
@@ -625,6 +710,9 @@ function buildDatasets(perDs, datasetNames) {
     for (const d of datasets) {
       all.refWords += d.refWords; all.hypWords += d.hypWords; all.wordEdits += d.wordEdits;
       all.refChars += d.refChars; all.charEdits += d.charEdits;
+      all.wordSub += d.wordSub ?? 0; all.wordDel += d.wordDel ?? 0; all.wordIns += d.wordIns ?? 0;
+      all.oracleWordEdits += d.oracleWordEdits ?? d.wordEdits;
+      all.oracleCharEdits += d.oracleCharEdits ?? d.charEdits;
       all.werSamples.push(...d.werSamples);
       all.decodeMs += d.decodeMs; all.audioSec += d.audioSec;
     }
@@ -1043,6 +1131,12 @@ async function main() {
     returnConfidences: false,
     enableProfiling: true,     // populate result.metrics with per-phase timings
     collectBeamStats: true,    // populate result.beamStats with per-step expansion widths (beam runs only)
+    // Diagnostic knobs, constant across the run (see parseArgs). nBest>1 makes
+    // the beam return its top-N distinct paths for the oracle score below.
+    mergeDuplicates: args.mergeDuplicates,
+    lengthNormPrune: args.lengthNormPrune,
+    forceBeam: args.forceBeam,
+    nBest: args.oracleNbest,
   });
 
   // transcribe() logs a "[Perf]" line + console.table per call when profiling
@@ -1124,6 +1218,11 @@ async function main() {
       addScore(perDs.get(name), {
         refWords: u.refWords || 0, hypWords: u.hypWords || 0, wordEdits: u.wordEdits || 0,
         refChars: u.refChars || 0, charEdits: u.charEdits || 0,
+        // Decomposition / oracle carried through on resume so a resumed cell's
+        // summary matches a fresh one. Pre-feature records lack these; addScore's
+        // ?? fallbacks then treat oracle as the 1-best and the S/D/I split as 0.
+        wordSub: u.wordSub, wordDel: u.wordDel, wordIns: u.wordIns,
+        oracleWordEdits: u.oracleWordEdits, oracleCharEdits: u.oracleCharEdits,
       }, m.decode_ms ?? 0, audioSec);
       for (const [key] of PHASES) timings[key].push(m[key] ?? 0);
       // Recompute proc_t/dur_t from the raw total_ms: the stored metrics.procPerDur
@@ -1335,6 +1434,22 @@ async function main() {
         const refNorm = normalizeText(e.text, args.stripAccents);
         const hypNorm = normalizeText(hyp, args.stripAccents);
         const sc = score(refNorm, hypNorm);
+        // Oracle: the best-achievable edits if we could pick the closest of the
+        // beam's n-best paths (each metric minimized independently). Present only
+        // when --oracle-nbest > 1 populated result.nbest; otherwise oracle == the
+        // 1-best (the ?? fallbacks in addScore handle the greedy/no-nbest case).
+        let oracleWordEdits = sc.wordEdits, oracleCharEdits = sc.charEdits, oracleHyp = null;
+        const nbestSize = Array.isArray(result.nbest) ? result.nbest.length : 0;
+        if (nbestSize) {
+          for (const cand of result.nbest) {
+            const cNorm = normalizeText(cand.text ?? '', args.stripAccents);
+            const cs = score(refNorm, cNorm);
+            if (cs.wordEdits < oracleWordEdits) { oracleWordEdits = cs.wordEdits; oracleHyp = cNorm; }
+            if (cs.charEdits < oracleCharEdits) oracleCharEdits = cs.charEdits;
+          }
+        }
+        sc.oracleWordEdits = oracleWordEdits;
+        sc.oracleCharEdits = oracleCharEdits;
         addScore(ensureDs(e.dataset), sc, metrics.decode_ms ?? 0, audioSec);
         // Accumulate per-phase timings for this run's mean/median.
         for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
@@ -1351,6 +1466,11 @@ async function main() {
           ref: e.text, hyp, refNorm, hypNorm,
           wordEdits: sc.wordEdits, refWords: sc.refWords,
           charEdits: sc.charEdits, refChars: sc.refChars,
+          // NIST S/D/I split of the 1-best word edits (does a wider beam delete more?).
+          wordSub: sc.wordSub, wordDel: sc.wordDel, wordIns: sc.wordIns,
+          // Oracle over the beam n-best: best-achievable edits, and the winning
+          // candidate text when it beat the 1-best. nbestSize=0 means greedy/no-nbest.
+          oracleWordEdits, oracleCharEdits, nbestSize, oracleHyp,
           metrics, beamStats,
         });
         // Two stacked progress bars: this run, then the whole grid (one line
@@ -1391,6 +1511,12 @@ async function main() {
         wer_stdev_pct: +stdev(d.werSamples).toFixed(4),
         cer_pct: +pct(d.charEdits, d.refChars).toFixed(4),
         wordEdits: d.wordEdits, refWords: d.refWords, charEdits: d.charEdits, refChars: d.refChars,
+        // NIST S/D/I split + oracle (best achievable over the beam n-best). Oracle
+        // equals the 1-best on greedy / no-nbest runs (addScore's ?? fallback).
+        wordSub: d.wordSub, wordDel: d.wordDel, wordIns: d.wordIns,
+        oracleWordEdits: d.oracleWordEdits, oracleCharEdits: d.oracleCharEdits,
+        oracle_wer_pct: +pct(d.oracleWordEdits, d.refWords).toFixed(4),
+        oracle_cer_pct: +pct(d.oracleCharEdits, d.refChars).toFixed(4),
         decode_ms: +d.decodeMs.toFixed(1), audio_sec: +d.audioSec.toFixed(3),
         decode_audio_ratio: d.audioSec > 0 ? +((d.decodeMs / 1000) / d.audioSec).toFixed(4) : null,
       });
@@ -1407,6 +1533,10 @@ async function main() {
         wer_stdev_pct: +stdev(overall.werSamples).toFixed(4),
         cer_pct: +pct(overall.charEdits, overall.refChars).toFixed(4),
         wordEdits: overall.wordEdits, refWords: overall.refWords, charEdits: overall.charEdits, refChars: overall.refChars,
+        wordSub: overall.wordSub, wordDel: overall.wordDel, wordIns: overall.wordIns,
+        oracleWordEdits: overall.oracleWordEdits, oracleCharEdits: overall.oracleCharEdits,
+        oracle_wer_pct: +pct(overall.oracleWordEdits, overall.refWords).toFixed(4),
+        oracle_cer_pct: +pct(overall.oracleCharEdits, overall.refChars).toFixed(4),
         datasets: datasets.map(dsSummary),
         wall_ms: timeMs,
         timing_ms: phaseStats(timings),
