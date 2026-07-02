@@ -4670,9 +4670,6 @@ export default function App() {
           <span className="setting-label">{t('language')}</span>
           <LanguageSwitcher />
         </div>
-        <p>
-          <strong>{t('model')}:</strong> {repoId} <span style={{fontSize:'0.9em', color: 'var(--text-subtle)'}}>(nemo128)</span>
-        </p>
 
           <div className="settings-content">
           <CollapsibleSection id="general" title={t('settingsGroupGeneral')} open={!!sectionsOpen.general} onToggle={toggleSection}>
@@ -4889,6 +4886,17 @@ export default function App() {
           </CollapsibleSection>
 
           <CollapsibleSection id="engine" title={t('settingsGroupEngine')} open={!!sectionsOpen.engine} onToggle={toggleSection}>
+            <p style={{ marginTop: 0 }}>
+              <strong>{t('model')}:</strong>{' '}
+              {/* Link to the HuggingFace model page whenever weights come from HF
+                  ('hf' or 'both'); in 'local' mode there is no HF page to open,
+                  so show the repo id as plain text. */}
+              {modelSource !== 'local'
+                ? <a href={`https://huggingface.co/${repoId}`} target="_blank" rel="noopener noreferrer">{repoId}</a>
+                : repoId}
+              {' '}<span style={{ fontSize: '0.9em', color: 'var(--text-subtle)' }}>(nemo128)</span>
+            </p>
+
             <div className="setting-row">
               <label>
                 <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
