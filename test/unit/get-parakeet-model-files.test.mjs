@@ -87,6 +87,17 @@ const REPO_LITE = [
   'encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
 ];
+// How the model repo (parakeet-tdt-0.6b-v3-smoothquant-onnx) ACTUALLY ships on
+// HuggingFace: the flat single-file fp32 encoder at the root (WebGPU) PLUS the
+// <2GB shards under a `sharded/` subfolder (WASM), which the HF tree API lists
+// with that prefix. The old flat-only shard regex missed these, so WASM fp32
+// wrongly threw "not serving fp32" while WebGPU (flat single-file) worked.
+const REPO_HF_SHARDED = [
+  'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+  'encoder-model.onnx', 'encoder-model.onnx.data',
+  'sharded/encoder-model.onnx', 'sharded/encoder-model.onnx.data.000', 'sharded/encoder-model.onnx.data.001',
+  'vocab.txt', 'nemo128.onnx',
+];
 
 describe('getParakeetModel file selection: WASM', () => {
   test('int8 request -> int8 encoder/decoder, no external sidecar, no preprocessor (JS default)', async () => {
@@ -212,6 +223,66 @@ describe('getParakeetModel: sharded fp32 from a local mirror with a sharded/ sub
     // vocab + int8 decoder stay flat at the root.
     assert.ok(downloaded.includes('vocab.txt') && downloaded.includes('decoder_joint-model.int8.onnx'));
     assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'the flat 2.4 GB sidecar must never be fetched');
+  });
+});
+
+describe('getParakeetModel: sharded fp32 straight from HuggingFace (shards under sharded/)', () => {
+  // Regression for "the instance is not serving the fp32 on WASM but WebGPU works":
+  // the HF repo ships the shards under sharded/, which the tree API lists with the
+  // prefix. WASM fp32 must fetch the rewritten graph + shards from sharded/ (no
+  // /models mirror needed); WebGPU fp32 must keep loading the flat single-file so
+  // this fix does not perturb the working GPU path.
+  let originalFetch2;
+  beforeEach(() => { originalFetch2 = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = originalFetch2; });
+
+  // Path-aware HF mock: unlike mockHf (which records only the trailing segment),
+  // this records the FULL repo-relative path after /resolve/<rev>/ so a test can
+  // tell `sharded/encoder-model.onnx` apart from the flat `encoder-model.onnx`.
+  function mockHfPaths(repoFiles) {
+    const present = new Set(repoFiles);
+    const downloaded = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (u.includes('/api/models/') && u.includes('/tree/')) {
+        const arr = repoFiles.map((path) => ({ type: 'file', path }));
+        return new Response(JSON.stringify(arr), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      const m = u.match(/\/resolve\/[^/]+\/(.+?)(?:\?|$)/);
+      const rel = m ? m[1].split('/').map(decodeURIComponent).join('/') : u;
+      if (opts.method === 'HEAD') return new Response(null, { status: present.has(rel) ? 200 : 404 });
+      if (!present.has(rel)) return new Response('not found', { status: 404 });
+      downloaded.push(rel);
+      return bodyResponse();
+    };
+    return downloaded;
+  }
+
+  test('WASM fp32: fetches the rewritten graph + shards from sharded/, never the flat single-file', async () => {
+    const downloaded = mockHfPaths(REPO_HF_SHARDED);
+    const r = await getParakeetModel('test/hf-sharded-wasm', {
+      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.equal(r.filenames.encoder, 'encoder-model.onnx', 'filename stays the bare basename the graph references');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path), ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.ok(downloaded.includes('sharded/encoder-model.onnx'), 'must fetch the rewritten graph from sharded/');
+    assert.ok(downloaded.includes('sharded/encoder-model.onnx.data.000') && downloaded.includes('sharded/encoder-model.onnx.data.001'));
+    assert.ok(!downloaded.includes('encoder-model.onnx'), 'must NOT fetch the flat single-file graph on WASM');
+    assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must NOT fetch the flat 2.4GB sidecar on WASM');
+    // vocab + the int8 decoder stay at the flat root (sharded/ carries neither).
+    assert.ok(downloaded.includes('vocab.txt') && downloaded.includes('decoder_joint-model.int8.onnx'));
+  });
+
+  test('WebGPU fp32: keeps the flat single-file graph + sidecar, ignores the sharded/ copy', async () => {
+    const downloaded = mockHfPaths(REPO_HF_SHARDED);
+    const r = await getParakeetModel('test/hf-sharded-webgpu', {
+      backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.ok(!Array.isArray(r.urls.encoderDataUrl), 'WebGPU must load the single sidecar, not a shard array');
+    assert.ok(downloaded.includes('encoder-model.onnx') && downloaded.includes('encoder-model.onnx.data'), 'WebGPU keeps the flat single-file');
+    assert.ok(!downloaded.some((f) => f.startsWith('sharded/')), 'WebGPU must not fetch anything from sharded/');
   });
 });
 

@@ -8,12 +8,21 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveModelQuant, quantSatisfiable } from '../../app/src/hub.js';
+import { resolveModelQuant, quantSatisfiable, parseEncoderShards, isSafeRepoPath } from '../../app/src/hub.js';
 
 const WITH_FP16 = ['encoder-model.fp16.onnx', 'decoder_joint-model.fp16.onnx', 'encoder-model.int8.onnx', 'encoder-model.onnx'];
 const NO_FP16 = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.int8.onnx'];
 // A repo that ships the fp32 encoder as <2GB shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py).
 const WITH_FP32_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'decoder_joint-model.int8.onnx'];
+// The SAME shards as the model repo actually ships them: under a `sharded/`
+// subfolder (scripts/shard-fp32.py's default output), which is exactly how the HF
+// tree API lists them (`sharded/encoder-model.onnx.data.NNN`). The flat single-
+// file fp32 encoder (encoder-model.onnx[.data]) sits at the root for WebGPU.
+const WITH_FP32_SHARDS_SUBFOLDER = [
+  'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+  'encoder-model.onnx', 'encoder-model.onnx.data',
+  'sharded/encoder-model.onnx', 'sharded/encoder-model.onnx.data.000', 'sharded/encoder-model.onnx.data.001',
+];
 // A repo that ALSO ships the lighter int8 encoder (encoder-model.int8.lite.onnx).
 const WITH_LITE = ['encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'encoder-model.onnx', 'decoder_joint-model.int8.onnx'];
 
@@ -62,6 +71,66 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true });
     assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
     assert.equal(r.pinnedToInt8, false);
+  });
+
+  // Regression: the model repo ships the shards under `sharded/`, and the HF tree
+  // API lists them with that prefix. The old flat-only regex missed them, so WASM
+  // fp32 was wrongly pinned (surfacing as "the instance is not serving fp32")
+  // even though the shards were right there. They must now be recognised.
+  test('opt-in + fp32 request + shards under a sharded/ subfolder -> fp32 (not pinned)', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS_SUBFOLDER, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS_SUBFOLDER, allowWasmFp32: true }), true);
+  });
+});
+
+describe('isSafeRepoPath: allows the sharded/ subfolder, still blocks traversal', () => {
+  test('accepts flat names and a single safe subfolder', () => {
+    for (const ok of [
+      'encoder-model.onnx',
+      'vocab.txt',
+      'sharded/encoder-model.onnx',
+      'sharded/encoder-model.onnx.data.000',
+      'a/b/c.onnx',
+    ]) assert.equal(isSafeRepoPath(ok), true, `${ok} should be accepted`);
+  });
+
+  test('rejects traversal, absolute/empty segments, and unsafe characters', () => {
+    for (const bad of [
+      '', '..', '.', '../etc/passwd', 'sharded/../secret',
+      '/abs/path', 'trailing/', 'a//b', './rel',
+      'a\\b', 'file?x=1', 'has space.onnx', 'name#frag', 'x/..',
+    ]) assert.equal(isSafeRepoPath(bad), false, `${bad} should be rejected`);
+  });
+});
+
+describe('parseEncoderShards: normalises flat and sharded/ layouts', () => {
+  test('flat basenames (local mirror layout) -> basenames, no subdir', () => {
+    const { shards, subdir } = parseEncoderShards(WITH_FP32_SHARDS);
+    assert.deepEqual(shards, ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.equal(subdir, '');
+  });
+
+  test('sharded/ subfolder (HF tree layout) -> basenames + sharded/ subdir', () => {
+    const { shards, subdir } = parseEncoderShards(WITH_FP32_SHARDS_SUBFOLDER);
+    assert.deepEqual(shards, ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.equal(subdir, 'sharded/');
+  });
+
+  test('no shards -> empty list, empty subdir (single sidecar is not a shard)', () => {
+    const { shards, subdir } = parseEncoderShards(NO_FP16);
+    assert.deepEqual(shards, []);
+    assert.equal(subdir, '');
+  });
+
+  test('shards are returned sorted by index regardless of listing order', () => {
+    const { shards } = parseEncoderShards([
+      'sharded/encoder-model.onnx.data.002',
+      'sharded/encoder-model.onnx.data.000',
+      'sharded/encoder-model.onnx.data.001',
+    ]);
+    assert.deepEqual(shards, ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'encoder-model.onnx.data.002']);
   });
 });
 

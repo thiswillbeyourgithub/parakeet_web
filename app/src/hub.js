@@ -134,12 +134,28 @@ async function headRevalidate(url) {
   }
 }
 
-// Filenames accepted from HF's API. Restrict to a flat, safe alphabet so
+// One path SEGMENT accepted from HF's API. Restrict to a safe alphabet so
 // a poisoned or attacker-controlled response cannot smuggle path
 // traversal ('..'), query/fragment delimiters ('?', '#'), URL-encoding
 // edge cases, or DOM-template gadgets if the value is ever interpolated
 // somewhere stricter than a fetch URL.
 const SAFE_RFILENAME_RE = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Whether a repo file PATH from the HF tree API is safe to fetch/cache. A path
+ * may legitimately contain a subfolder (the model repo ships the fp32 encoder
+ * shards under `sharded/`, listed by the recursive tree API as
+ * `sharded/encoder-model.onnx.data.000`), so allow forward-slash-separated
+ * segments, but require EVERY segment to be a plain SAFE_RFILENAME_RE token and
+ * reject any empty ('//', leading/trailing '/') or traversal ('.'/'..') segment.
+ * Pure; used by listRepoFiles's filterSafe.
+ * @param {string} name Repo-relative path.
+ * @returns {boolean}
+ */
+export function isSafeRepoPath(name) {
+  if (typeof name !== 'string' || name.length === 0) return false;
+  return name.split('/').every((seg) => SAFE_RFILENAME_RE.test(seg) && seg !== '.' && seg !== '..');
+}
 
 async function listRepoFiles(repoId, revision = 'main') {
   const cacheKey = `${repoId}@${revision}`;
@@ -154,7 +170,7 @@ async function listRepoFiles(repoId, revision = 'main') {
   const modelUrl = `https://huggingface.co/api/models/${repoId}?revision=${encodedRevision}`;
 
   const filterSafe = (names, source) => {
-    const files = names.filter(name => typeof name === 'string' && SAFE_RFILENAME_RE.test(name));
+    const files = names.filter(isSafeRepoPath);
     if (files.length !== names.length) {
       console.warn(`[Hub] listRepoFiles ${repoId}@${revision} (${source}): dropped ${names.length - files.length} entry(ies) with unsafe filenames`);
     }
@@ -935,6 +951,34 @@ export async function listLocalRepoFiles(baseUrl) {
 export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
 
 /**
+ * Parse the fp32 encoder shard set out of a repo file listing. The shards
+ * (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py, `<name>.data.NNN`)
+ * can be reported in either of two layouts and this normalises both:
+ *   - flat basenames (`encoder-model.onnx.data.000`), how a local mirror reports
+ *     them via listLocalRepoFiles, and
+ *   - full subfolder paths (`sharded/encoder-model.onnx.data.000`), how the HF
+ *     tree API returns them AND how the model repo actually ships them (scripts/
+ *     shard-fp32.py's default output is a `sharded/` subfolder).
+ * Returns the shard BASENAMES (the path each is mounted under, baked into the
+ * encoder graph's external_data location) sorted ascending, plus the common
+ * subfolder prefix they live under ('' when flat). Pure so both resolveModelQuant
+ * (does a shard set exist?) and getParakeetModel (where do we fetch them?) share
+ * one parser and can be unit-tested without any I/O.
+ *
+ * @param {string[]} repoFiles Filenames/paths available in the repo/mirror.
+ * @param {string} [encoderName='encoder-model.onnx'] Encoder graph basename.
+ * @returns {{ shards: string[], subdir: string }}
+ */
+export function parseEncoderShards(repoFiles, encoderName = 'encoder-model.onnx') {
+  const shardRe = new RegExp(`^(.*/)?(${encoderName.replace(/[.]/g, '\\.')}\\.data\\.\\d+)$`);
+  const entries = repoFiles
+    .map((f) => { const m = typeof f === 'string' ? f.match(shardRe) : null; return m ? { dir: m[1] || '', base: m[2] } : null; })
+    .filter(Boolean)
+    .sort((a, b) => a.base.localeCompare(b.base));
+  return { shards: entries.map((e) => e.base), subdir: entries.length ? entries[0].dir : '' };
+}
+
+/**
  * Resolve the effective encoder/decoder quantisation for a backend, given what
  * the repo actually ships. Pure (no I/O) so it can be unit-tested.
  *
@@ -970,7 +1014,10 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   if (!backend.startsWith('webgpu')) {
     // Opt-in sharded fp32 on WASM: needs the explicit flag, an fp32 request, and
     // the repo to actually ship the <2GB shards. Anything missing keeps int8.
-    const hasFp32Shards = repoFiles.some((f) => /^encoder-model\.onnx\.data\.\d+$/.test(f));
+    // parseEncoderShards matches them flat OR under a `sharded/` subfolder (how
+    // the HF tree API lists them and how the model repo ships them), so a request
+    // is no longer wrongly pinned just because the shards live in `sharded/`.
+    const hasFp32Shards = parseEncoderShards(repoFiles).shards.length > 0;
     if (allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
       return {
         encoderQ: 'fp32',
@@ -1193,19 +1240,24 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // < 2 GB so it clears the WASM ArrayBuffer / Chromium blob-fetch caps; a plain
   // export keeps a single <name>.data sidecar. Detect the shards here (before the
   // download list is built) so the encoder graph fetch can be routed to wherever
-  // the shards actually live.
-  const shardRe = new RegExp(`^${encoderName.replace(/[.]/g, '\\.')}\\.data\\.\\d+$`);
-  const encoderShards = repoFiles.filter((f) => shardRe.test(f)).sort();
+  // the shards actually live. parseEncoderShards returns bare basenames (the path
+  // each is mounted under, baked into the graph's external_data) plus the common
+  // subfolder they sit in: '' when the listing is flat, 'sharded/' when the HF
+  // tree API reports `sharded/encoder-model.onnx.data.NNN` (how the model repo
+  // ships them). This is what lets sharded fp32 load straight from HuggingFace on
+  // WASM, not only from a local /models mirror.
+  const { shards: encoderShards, subdir: shardListingSubdir } = parseEncoderShards(repoFiles, encoderName);
 
-  // scripts/shard-fp32.py's default output is a `sharded/` subfolder holding the rewritten
-  // encoder-model.onnx (its graph points at .data.NNN, not a single .data sidecar)
-  // plus the shards. On a local mirror those may sit under sharded/ rather than
-  // flat; HEAD-probe once to find out and reroute the encoder graph + shard
-  // fetches there. vocab.txt and the int8 decoder stay at the flat root (the
-  // sharded/ dir does NOT carry the int8 decoder), so only the encoder pieces are
-  // rerouted. Mirrors the file-specific routing in test/e2e/serve.mjs.
-  let encoderSubdir = '';
-  if (effectiveLocalBase && encoderShards.length) {
+  // Subfolder the rewritten encoder graph (its external_data points at .data.NNN,
+  // not a single .data sidecar) and the shards live under. The HF tree listing
+  // already carries it (parseEncoderShards read it off the path); a LOCAL mirror
+  // reports basenames only (listLocalRepoFiles), so when the listing gave no
+  // prefix HEAD-probe flat-then-sharded/ to discover it. vocab.txt and the int8
+  // decoder stay at the flat root (the sharded/ dir does NOT carry the int8
+  // decoder), so only the encoder pieces are rerouted. Mirrors the file-specific
+  // routing in test/e2e/serve.mjs.
+  let encoderSubdir = shardListingSubdir;
+  if (effectiveLocalBase && encoderShards.length && !encoderSubdir) {
     const reachable = async (rel) => {
       try { return (await fetch(`${effectiveLocalBase}/${rel}`, { method: 'HEAD' })).ok; }
       catch { return false; }
@@ -1214,7 +1266,16 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       encoderSubdir = 'sharded/';
     }
   }
-  const encoderFetchName = `${encoderSubdir}${encoderName}`;
+  // Use the sharded layout only where it is needed. WASM cannot load the single
+  // >2 GB fp32 sidecar, so it MUST mount the shards. WebGPU can (and always has)
+  // loaded the single file, so when the repo ships a flat sidecar keep using it
+  // on WebGPU: this fix targets the WASM path and must not perturb the working
+  // GPU load. WebGPU only falls back to shards when no flat sidecar exists. The
+  // sharded encoder graph (which points at .data.NNN) is fetched from encoderSubdir;
+  // the flat single-file graph sits at the root.
+  const hasFlatSidecar = repoFiles.includes(`${encoderName}.data`);
+  const useShards = encoderShards.length > 0 && (!backend.startsWith('webgpu') || !hasFlatSidecar);
+  const encoderFetchName = useShards ? `${encoderSubdir}${encoderName}` : encoderName;
 
   // The big encoder/decoder weights are handed to ORT as bytes (not a blob URL)
   // on WebGPU, where they are fp16/fp32 (>1 GB) and a blob-URL fetch OOMs (see
@@ -1239,11 +1300,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Preprocessor: JS (mel.js) — skipping ${preprocessor}.onnx download`);
   }
 
-  // Prefer the shards detected above (they also let WebGPU fp32 dodge the 2 GB
-  // fetch cap) when present; otherwise mount the single <name>.data sidecar. The
-  // shards themselves are downloaded after the main loop into an array of
-  // { path, data } entries (parakeet.js buildExternalData mounts that directly).
-  if (encoderShards.length === 0 && repoFiles.includes(`${encoderName}.data`)) {
+  // Mount the single <name>.data sidecar whenever we are NOT using the shards
+  // (WebGPU with a flat sidecar, or any single-file fp32 export). The shards, when
+  // used, are downloaded after the main loop into an array of { path, data }
+  // entries (parakeet.js buildExternalData mounts that directly).
+  if (!useShards && hasFlatSidecar) {
     filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data`, weight: true });
   }
 
@@ -1320,7 +1381,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   //     fine: they are huge and re-downloaded rarely, and the sharded encoder is
   //     an explicit opt-in. Each shard is < 2 GB by construction (scripts/shard-fp32.py),
   //     so the single Uint8Array clears the ArrayBuffer cap.
-  if (encoderShards.length) {
+  if (useShards) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
     for (const name of encoderShards) {
