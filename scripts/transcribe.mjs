@@ -177,8 +177,8 @@ function parseArgs(argv) {
   if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
   if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node' && a.ortBackend !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ortBackend})`);
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
-  if (a.boostMinp !== null && (!Number.isFinite(a.boostMinp) || a.boostMinp <= 0 || a.boostMinp > 1)) {
-    throw new Error('--boost-minp must be a number in (0, 1]');
+  if (a.boostMinp !== null && (!Number.isFinite(a.boostMinp) || a.boostMinp < 0 || a.boostMinp > 1)) {
+    throw new Error('--boost-minp must be a number in [0, 1] (0 = boost all, 1 = disabled)');
   }
   if (a.depthScaling !== null && (!Number.isFinite(a.depthScaling) || a.depthScaling < 0)) {
     throw new Error('--depth-scaling must be a number >= 0 (0 = flat, no per-depth growth)');
@@ -231,12 +231,13 @@ Options:
   -s, --boost-strength N   Global boost-strength multiplier (UI slider). Default 1.
                            0 disables boosting entirely.
       --boost-minp N       Global min-p gate override applied to EVERY boost phrase
-                           (number in (0, 1]), superseding any per-phrase :MINP and
+                           (number in [0, 1]), superseding any per-phrase :MINP and
                            the built-in default. A token is only boosted when its
                            probability is at least N times the model's top token for
-                           that step; lower = looser (more recall, more risk of
-                           hallucinating the phrase), higher = stricter. Default:
-                           each phrase's own baked min-p (no override).
+                           that step; monotonic: 0 = boost all (no gate, most recall,
+                           most risk of hallucinating the phrase), 1 = disabled (only
+                           the model's own top token). Default: omitted, i.e. each
+                           phrase's own baked min-p (no override).
       --depth-scaling N    Trie depth-scaling factor (number >= 0), overriding the
                            built-in default. The per-token boost at trie depth d is
                            weight*(1 + N*(d-1)), so this controls how much deeper

@@ -343,6 +343,14 @@ async function clearAllSettings() {
 // Injected by Vite from app/package.json — no need to manually sync
 const VERSION = __APP_VERSION__;
 
+// Default for the global min-p gate override (the "Min-p gate override" knob).
+// The value IS the min-p, monotonic in [0, 1]: 0 = boost every candidate (no
+// gate), 1 = disabled (only the model's own top token is ever boosted). null
+// (a blank field) turns the override off, so each phrase keeps its own baked
+// min-p. 0.01 is a near-widest default so a wanted phrase is not silently gated
+// out (the failure mode a strict default produced).
+const BOOST_MINP_DEFAULT = 0.01;
+
 // Module-scope hook: persists `value` to IndexedDB whenever it changes,
 // gated on `loaded` so we don't overwrite the on-disk value with the
 // initial React default before loadSetting has had a chance to run.
@@ -702,13 +710,16 @@ export default function App() {
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
   // Advanced boost knobs, mirroring the CLI's --boost-minp / --depth-scaling
-  // (scripts/transcribe.mjs). `boostMinp` is a GLOBAL min-p override: 0 = off
-  // (each phrase keeps its own gate, default DEFAULT_BOOST_MIN_P), a value in
-  // (0, 1] supersedes every per-phrase min-p at decode time (trie.minpOverride,
-  // mutable like strength, no rebuild). `boostDepthScaling` is the linear
+  // (scripts/transcribe.mjs). `boostMinp` is a GLOBAL min-p override: a number
+  // in [0, 1] supersedes every per-phrase min-p at decode time
+  // (trie.minpOverride, mutable like strength, no rebuild). The value IS the
+  // min-p and is monotonic: 0 = boost every candidate (no gate), 1 = disabled
+  // (only the model's top token). `null` (a blank field) turns the override off
+  // so each phrase keeps its own baked gate. Note this is NOT `0`: 0 is a real
+  // value (boost all), the off state is null. `boostDepthScaling` is the linear
   // per-depth reward growth; it is baked into node bonuses at insert time, so
   // changing it re-runs the (debounced) trie rebuild.
-  const [boostMinp, setBoostMinp] = useState(0);
+  const [boostMinp, setBoostMinp] = useState(BOOST_MINP_DEFAULT);
   const [boostDepthScaling, setBoostDepthScaling] = useState(DEFAULT_DEPTH_SCALING);
   // Surface-form augmentation (Title Case, ALL CAPS, proclitic prefixes,
   // symbol-stripped forms) is opt-in per phrase via the `:AUG` field, or list-wide
@@ -726,7 +737,7 @@ export default function App() {
   // Current min-p override for the debounced rebuild closure (which, like
   // strength, must not be a rebuild dependency: moving the knob only mutates
   // the live trie, but a rebuild from another cause must carry it over).
-  const boostMinpRef = useRef(0);
+  const boostMinpRef = useRef(BOOST_MINP_DEFAULT);
   // boostBuildKey of the last COMPLETED trie build (or completed decision that
   // no trie is possible/needed). waitForBoostReady() polls this against the
   // key expected for the live config, so a transcription that starts while the
@@ -1332,7 +1343,7 @@ export default function App() {
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
           loadSetting('boostStrength', 1),
-          loadSetting('boostMinp', 0), // 0 = off (per-phrase gates apply)
+          loadSetting('boostMinp', BOOST_MINP_DEFAULT), // null = off; number in [0,1] = gate (0 boost-all, 1 off)
           loadSetting('boostDepthScaling', DEFAULT_DEPTH_SCALING),
           // Load with `null` (not the Custom sentinel) so the restore below can
           // tell "user never picked a boost source" apart from "user explicitly
@@ -1409,9 +1420,15 @@ export default function App() {
         setBoostPhrases(restoredSource === BOOST_SOURCE_CUSTOM && typeof savedBoostPhrases === 'string'
           ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
-        // The override is only valid in (0, 1]; anything else (including the
-        // stored 0) means "off, per-phrase gates apply".
-        setBoostMinp(Number.isFinite(savedBoostMinp) && savedBoostMinp > 0 && savedBoostMinp <= 1 ? savedBoostMinp : 0);
+        // The override is `null` (a blank field) = off, so each phrase keeps its
+        // own gate; or a number in [0, 1] = the global gate (0 = boost all, 1 =
+        // disabled). Any other stored value (undefined/NaN) falls back to the
+        // default; an explicit null is preserved as off.
+        setBoostMinp(
+          savedBoostMinp === null ? null
+            : (Number.isFinite(savedBoostMinp) && savedBoostMinp >= 0 && savedBoostMinp <= 1
+              ? savedBoostMinp : BOOST_MINP_DEFAULT)
+        );
         setBoostDepthScaling(Number.isFinite(savedBoostDepthScaling) && savedBoostDepthScaling >= 0 ? savedBoostDepthScaling : DEFAULT_DEPTH_SCALING);
         {
           const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
@@ -2192,7 +2209,7 @@ export default function App() {
           strength: boostStrengthRef.current,
           depthScaling: boostDepthScaling,
           // Carry the live decode-time override into the fresh trie (0 = off).
-          minpOverride: boostMinpRef.current > 0 ? boostMinpRef.current : null,
+          minpOverride: boostMinpRef.current, // null = off (per-phrase gates); 0 = boost all; 1 = disabled
         });
         trie.skipped = skipped;
         // Phrases with characters the model vocab cannot represent (e.g. CJK)
@@ -2238,7 +2255,10 @@ export default function App() {
   // is enough. 0 is the UI's "off" sentinel -> null (per-phrase gates apply).
   useEffect(() => {
     boostMinpRef.current = boostMinp;
-    if (phraseBoostRef.current) phraseBoostRef.current.minpOverride = boostMinp > 0 ? boostMinp : null;
+    // Pass the value straight through: null = off (per-phrase gates), a number
+    // in [0,1] = the global gate (0 = boost all, 1 = disabled). applyBoost reads
+    // Math.log(override), and Math.log(0) = -Infinity is exactly "no gate".
+    if (phraseBoostRef.current) phraseBoostRef.current.minpOverride = boostMinp;
   }, [boostMinp]);
 
   // Live mirrors of the boost-build-key inputs for waitForBoostReady().
@@ -5575,10 +5595,15 @@ export default function App() {
                     inputMode="decimal"
                     min="0"
                     max="1"
-                    step="0.05"
-                    value={boostMinp}
+                    step="0.01"
+                    placeholder={t('boostMinpOff')}
+                    value={boostMinp ?? ''}
                     onChange={e=>{
-                      const v = Number(e.target.value);
+                      const raw = e.target.value;
+                      // Blank field = off (each phrase keeps its own gate); a
+                      // number in [0,1] = the global gate (0 = boost all, 1 = off).
+                      if (raw === '') { setBoostMinp(null); return; }
+                      const v = Number(raw);
                       if (Number.isFinite(v)) setBoostMinp(Math.max(0, Math.min(1, v)));
                     }}
                     style={{ width: '4.5rem' }}

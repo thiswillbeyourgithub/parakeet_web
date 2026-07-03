@@ -362,6 +362,40 @@ test('minpOverride supersedes every per-phrase min-p (the grid-search sweep knob
   assert.equal(loose.applyBoost(logits), null, 'a stricter override gates out what the baked min-p would pass');
 });
 
+test('minpOverride extremes: 0 = boost all, 1 = only the model top token', () => {
+  const V = fixture.id2token.length;
+  // A strict baked gate (0.5) that would reject any non-top candidate; the
+  // override must win in both directions regardless of it.
+  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.5 }], encoder, { strength: 1 });
+
+  // override 0 => floor = maxLogit + Math.log(0) = -Infinity => EVERY candidate
+  // clears the gate, even one the model barely considered (20 logits down).
+  const deep = new Float32Array(V);
+  deep[100] = 20; deep[ids[0]] = 0; // ids[0] is exp(-20) ~= 2e-9 as likely as the max
+  trie.minpOverride = 0;
+  trie.reset();
+  const savedAll = trie.applyBoost(deep);
+  assert.ok(Array.isArray(savedAll) && deep[ids[0]] === 5, 'override 0 boosts a candidate the model barely considered (weight*1 = 5)');
+  trie.restore(deep, savedAll);
+  assert.equal(deep[ids[0]], 0, 'restore after boost-all');
+
+  // override 1 => floor = maxLogit + Math.log(1) = maxLogit => only a token tied
+  // with the model's top logit is boosted. A phrase token one logit below is out.
+  const below = new Float32Array(V);
+  below[100] = 2; below[ids[0]] = 1;
+  trie.minpOverride = 1;
+  trie.reset();
+  assert.equal(trie.applyBoost(below), null, 'override 1 disables boosting for any non-top token');
+
+  // ...but when the phrase's first token IS the model's argmax it still boosts
+  // (that token was going to win anyway, so this is effectively "off").
+  const atTop = new Float32Array(V);
+  atTop[ids[0]] = 5; // ids[0] is the max
+  trie.reset();
+  const savedTop = trie.applyBoost(atTop);
+  assert.ok(Array.isArray(savedTop) && atTop[ids[0]] === 10, 'override 1 still boosts the top token when it is a phrase token');
+});
+
 describe('skip <unk> phrases', () => {
   test('CJK encodes to <unk>', () => assert.ok(encoder.encode('東京').includes(encoder.unkId)));
   const mixedTrie = BoostingTrie.buildFromPhrases(

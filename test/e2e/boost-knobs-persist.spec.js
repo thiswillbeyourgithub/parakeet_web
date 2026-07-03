@@ -77,4 +77,19 @@ test('boost min-p and depth-scaling knobs restore, gate on phrases, and persist 
   await expandSettingsSection(page, 'Phrase boosting');
   await expect(knobInput(page, 'Min-p gate override')).toHaveValue('0.5');
   await expect(knobInput(page, 'Depth scaling')).toHaveValue('2');
+
+  // Min-p is a monotonic gate now: 0 is a REAL value (boost all), not "off".
+  // It must persist as 0, not snap back to a strict per-phrase default.
+  const minp2 = knobInput(page, 'Min-p gate override');
+  await minp2.fill('0');
+  await expect.poll(() => readSetting(page, 'boostMinp')).toBe(0);
+
+  // Clearing the field entirely = off (per-phrase gates); it persists as null
+  // (distinct from 0) and restores as a blank input across a reload.
+  await minp2.fill('');
+  await expect.poll(() => readSetting(page, 'boostMinp')).toBe(null);
+  await page.reload();
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Phrase boosting');
+  await expect(knobInput(page, 'Min-p gate override')).toHaveValue('');
 });
