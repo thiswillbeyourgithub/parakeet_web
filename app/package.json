@@ -1,6 +1,6 @@
 {
   "name": "parakeet-web",
-  "version": "9.3.1",
+  "version": "9.4.0",
   "description": "NVIDIA Parakeet speech recognition for the browser (WebGPU/WASM) powered by ONNX Runtime Web.",
   "type": "module",
   "exports": {
