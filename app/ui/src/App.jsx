@@ -432,6 +432,16 @@ const BOOST_REBUILD_DEBOUNCE_MS = 300;
 // only flicker; above it the user benefits from knowing to wait.
 const BOOST_SPINNER_MIN_PHRASES = 500;
 
+// Identity of one boost-trie build: exactly the inputs whose change forces a
+// rebuild (the phrase text, the depth scaling baked into node bonuses, and the
+// vocab the phrases are encoded against). The rebuild effect stamps the key of
+// every COMPLETED build into boostBuiltKeyRef; waitForBoostReady() compares it
+// against the key expected for the live config to know whether the async
+// rebuild has caught up. Strength and min-p are absent by design: they mutate
+// the live trie and never need a rebuild.
+const boostBuildKey = (text, depthScaling, vocabSig) =>
+  `${vocabSig ?? 'no-vocab'}|${depthScaling}|${text}`;
+
 // Byte cap for a server-prebuilt boost encoding (token ids). Larger than the
 // 5 MB text cap because the encoded JSON of a 100k-phrase list is bigger than
 // its source text; oversize just falls back to encoding the .txt in-browser.
@@ -717,6 +727,17 @@ export default function App() {
   // strength, must not be a rebuild dependency: moving the knob only mutates
   // the live trie, but a rebuild from another cause must carry it over).
   const boostMinpRef = useRef(0);
+  // boostBuildKey of the last COMPLETED trie build (or completed decision that
+  // no trie is possible/needed). waitForBoostReady() polls this against the
+  // key expected for the live config, so a transcription that starts while the
+  // debounced/async rebuild is still running (worst case: the capture queue
+  // drains in the very tick that publishes the vocab signature, BEFORE the
+  // rebuild effect has even run) waits for the trie instead of silently
+  // decoding boost-less. Live mirrors of the key's inputs sit beside it
+  // because the waiter polls between renders, where closure state goes stale.
+  const boostBuiltKeyRef = useRef(null);
+  const boostPhrasesRef = useRef('');
+  const boostDepthScalingRef = useRef(DEFAULT_DEPTH_SCALING);
   // Vocab signature of the currently loaded tokenizer (null when no model is
   // loaded). This is the *only* model-side input the boost-trie rebuild needs:
   // it changes when (and only when) the model's vocab does, so the rebuild
@@ -2091,6 +2112,13 @@ export default function App() {
     const tokenizer = modelRef.current?.tokenizer;
     if (!phraseEntries.length || !tokenizer) {
       phraseBoostRef.current = null;
+      // A completed decision is a completed "build": stamp the key so
+      // waitForBoostReady() doesn't hold runs for a trie that can't or
+      // needn't exist (no phrases, or no tokenizer yet).
+      boostBuiltKeyRef.current = boostBuildKey(
+        boostPhrases, boostDepthScaling,
+        tokenizer?.id2token ? vocabSignature(tokenizer.id2token) : null,
+      );
       // No tokenizer yet (model not loaded), but a server-prebuilt artifact
       // already ships its own `skipped` list (the phrases the model vocab can't
       // represent, computed against that vocab at prebuild time) and is fetched
@@ -2171,6 +2199,7 @@ export default function App() {
         // were dropped during encode; surface them so the user knows why.
         setBoostUnkWarnings(skipped);
         phraseBoostRef.current = trie.isEmpty ? null : trie;
+        boostBuiltKeyRef.current = boostBuildKey(boostPhrases, boostDepthScaling, sig);
         if (verboseLogRef.current) {
           const ms = performance.now() - t0;
           const perLine = count ? ms / count : 0;
@@ -2184,6 +2213,9 @@ export default function App() {
         if (cancelled) return;
         console.warn('[Boost] failed to build boosting trie:', e);
         phraseBoostRef.current = null;
+        // A failed build is complete too: waiting longer would not produce a
+        // trie, so release any waiter (the run proceeds unboosted, as before).
+        boostBuiltKeyRef.current = boostBuildKey(boostPhrases, boostDepthScaling, sig);
       } finally {
         if (showSpinner) setBoostRebuilding(false);
       }
@@ -2208,6 +2240,10 @@ export default function App() {
     boostMinpRef.current = boostMinp;
     if (phraseBoostRef.current) phraseBoostRef.current.minpOverride = boostMinp > 0 ? boostMinp : null;
   }, [boostMinp]);
+
+  // Live mirrors of the boost-build-key inputs for waitForBoostReady().
+  useEffect(() => { boostPhrasesRef.current = boostPhrases; }, [boostPhrases]);
+  useEffect(() => { boostDepthScalingRef.current = boostDepthScaling; }, [boostDepthScaling]);
 
   // Keep the verbose-log ref current for the debounced rebuild closure.
   useEffect(() => { verboseLogRef.current = verboseLog; }, [verboseLog]);
@@ -3814,10 +3850,52 @@ export default function App() {
   // an AudioContext: the record/upload path (processAudioFile) and "Transcribe
   // again" (which feeds stored PCM, skipping a second resample) both reuse it.
   // audioBlob/pcm are attached to NEW entries only and live in memory.
+  // Wait until the boost trie matches the current phrase list, depth scaling
+  // and loaded vocab before a run starts decoding. The trie rebuilds
+  // asynchronously (a 300 ms debounce plus BPE-encode time, inside an effect
+  // that only runs after the next render), while a run can start SYNCHRONOUSLY
+  // with the config change: on model-ready, loadModel publishes the vocab
+  // signature and drains the capture queue in the same tick, so a queued
+  // capture's run began before the rebuild effect had even been scheduled and
+  // silently decoded boost-less (same file + same sidebar produced a different
+  // transcript than every later run). Any manual upload inside the debounce
+  // window raced it the same way. Polling with a real sleep (not a spin) keeps
+  // this robust to that effect ordering; the cap means a pathological build
+  // can only delay a run, never wedge it (it then proceeds exactly as before
+  // the fix, and says so).
+  async function waitForBoostReady(capMs = 30_000) {
+    // Fast path: no phrases configured and no trie active -> nothing to wait for.
+    if (!boostPhrasesRef.current.trim() && !phraseBoostRef.current) return;
+    const t0 = performance.now();
+    // The vocab signature hashes the whole id2token table; cache it per
+    // tokenizer identity so the poll loop doesn't recompute it every tick.
+    let sigTk = null, sigVal = null;
+    for (;;) {
+      const tk = modelRef.current?.tokenizer;
+      if (tk !== sigTk) { sigTk = tk; sigVal = tk?.id2token ? vocabSignature(tk.id2token) : null; }
+      const expected = boostBuildKey(boostPhrasesRef.current, boostDepthScalingRef.current, sigVal);
+      if (boostBuiltKeyRef.current === expected) {
+        const waited = performance.now() - t0;
+        if (waited > 50 && verboseLogRef.current) {
+          console.log(`[Boost] transcription waited ${Math.round(waited)}ms for the trie rebuild`);
+        }
+        return;
+      }
+      if (performance.now() - t0 > capMs) {
+        console.warn(`[Boost] trie still building after ${Math.round(capMs)}ms; transcribing with the previous boost state.`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   async function runTranscription(pcm, { safeName, audioDuration, audioBlob = null, replaceId = null }) {
     setTranscribing(true);
     setStatus(`${t('transcribingFile')} "${safeName}"…`);
     try {
+      // Never decode with a stale/absent boost trie while a rebuild for the
+      // current config is pending (see waitForBoostReady above).
+      await waitForBoostReady();
       // Chunk large audio files to avoid "too many function arguments" error
       // This happens when audio is very long and internal operations hit JS engine limits
       // Chunking can be toggled off to send full audio to the model in one pass
