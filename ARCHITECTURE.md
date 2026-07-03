@@ -246,6 +246,7 @@ slow, model-loading tier run separately.
 | `test/e2e/boost-default-source.spec.js` | **Tier 3** (model-free): a curated phrase-boost list can be pre-selected via `?phrase_boost=<name>` or the operator default, but NEITHER overrides a returning user's saved choice. |
 | `test/e2e/boost-rebuild-on-status.spec.js` | **Tier 3** regression: the phrase-boost trie rebuilds once per real model change, NOT on every `status` transition (which used to refreeze the UI on large curated lists). Counts `[Boost] rebuilding trie` logs across a full transcription. |
 | `test/e2e/boost-unk-preview-before-model.spec.js` | **Tier 3** (model-free) regression: the "untokenizable terms" warning for a curated list appears as soon as the list loads (from the prebuilt artifact's `skipped`), not only after a model is loaded. |
+| `test/e2e/boost-knobs-persist.spec.js` | **Tier 3** (model-free): the advanced boost knobs (min-p gate override, depth scaling) restore from saved settings, hide while the phrase list is empty, and persist UI edits across a reload. |
 | `test/e2e/seed.mjs` | Shared `seedSettings(page, extra)` helper: writes the app's settings IndexedDB so a spec boots with a known config (local WASM model source + spec-specific keys). |
 | `test/e2e/text-overlap.mjs` | Shared transcript-comparison helpers (`words()`, `overlap()`, and order/count-sensitive `wer()`) used by the transcription + chunking specs and the WER benches. |
 | `test/e2e/serve.mjs` | Static server for the E2E (serves the built UI + weights with the cross-origin-isolation headers ORT needs). |
