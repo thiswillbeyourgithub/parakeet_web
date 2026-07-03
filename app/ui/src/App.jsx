@@ -1571,20 +1571,23 @@ export default function App() {
           }
           // Once loading has begun (or the model is ready): R/Space start
           // recording. Audio captured mid-load is queued and transcribed once
-          // the model is ready (Q2).
+          // the model is ready (Q2). Mirroring the buttons, this also works
+          // while a transcription is running (isTranscribing: the status is a
+          // free-form "Transcribing ..." string then); the capture queues.
           e.preventDefault();
-          if ((status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions')
-              && !isTranscribing && !isRecording && !isRemoteMic) {
+          if ((status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions' || isTranscribing)
+              && !isRecording && !isRemoteMic) {
             startRecordingCountdown();
           }
           break;
 
         case 'f':
-          // Send a file (also allowed mid-load: it is decoded and queued).
+          // Send a file (also allowed mid-load or mid-transcription: it is
+          // decoded and queued, same gate as the upload button).
           e.preventDefault();
           if (fileInputRef.current
-              && (status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions')
-              && !isTranscribing && !isRecording) {
+              && (status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions' || isTranscribing)
+              && !isRecording) {
             fileInputRef.current.click();
           }
           break;
@@ -2448,6 +2451,13 @@ export default function App() {
     if (!liveTranscriptionEnabledRef.current) return;
     if (!modelRef.current) return;
     if (liveTranscriberRef.current) return;
+    // A capture can now start while another transcription is running (it gets
+    // queued on stop), but the live pass shares the single ORT session with the
+    // batch path, and concurrent invocations either queue silently or race on
+    // the encoder's intermediate tensors and emit garbage (F-82). A recording
+    // started mid-transcription therefore runs WITHOUT the live preview; the
+    // final batch pass is unaffected.
+    if (isTranscribingRef.current) return;
     setLiveTranscript({ text: '', words: [] });
     setLiveStats(null);
     const winSetting = liveContextWindowRef.current;
@@ -2693,8 +2703,10 @@ export default function App() {
     // rate and back, degrading the signal). The entry carries this exact PCM +
     // WAV so "Transcribe again" stays lossless. Go through the shared queue: it
     // transcribes now if the model is ready, or waits until the in-progress
-    // load finishes (Q2) instead of dropping the recording.
-    if (modelRef.current) setStatus('modelReady');
+    // load finishes (Q2) instead of dropping the recording. Skip the status
+    // reset when another transcription is mid-flight: this capture is only
+    // being queued behind it, and 'modelReady' would clobber its progress line.
+    if (modelRef.current && !isTranscribingRef.current) setStatus('modelReady');
     console.log('[Record] Queuing for transcription...');
     captureQueue.submit({ pcm: pcm16k, opts: { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob } });
   }
@@ -3287,8 +3299,9 @@ export default function App() {
     // Feed the already-16kHz PCM directly so we don't decode+resample the WAV a
     // second time (see stopRecording). Through the shared queue so a phone
     // batch captured while the model is still loading is transcribed once it is
-    // ready (Q2) rather than dropped.
-    if (modelRef.current) setStatus('modelReady');
+    // ready (Q2) rather than dropped. As in stopRecording, don't reset the
+    // status while another transcription is running (this batch just queues).
+    if (modelRef.current && !isTranscribingRef.current) setStatus('modelReady');
     console.log('[RemoteMic] Queuing for transcription...');
     captureQueue.submit({ pcm: pcm16k, opts: { safeName, audioDuration: pcm16k.length / targetSampleRate, audioBlob: wavBlob } });
   }
@@ -3620,8 +3633,18 @@ export default function App() {
     // console.time below since those are devtools-only.
     const safeName = sanitizeDeviceName(file.name, 'file');
 
-    setTranscribing(true);
-    setStatus(`${t('transcribingFile')} "${safeName}"…`);
+    // A file can be handed in WHILE another transcription is running (the
+    // upload control stays enabled so the user can keep feeding the queue). In
+    // that case the busy flag, status line and progress text belong to the
+    // in-flight run: leave them alone for the whole decode and let the
+    // queued-captures banner be the feedback. Snapshot once here; no await sits
+    // between this read and setTranscribing(true) below, so the flag cannot
+    // flip in between.
+    const anotherRunActive = isTranscribingRef.current;
+    if (!anotherRunActive) {
+      setTranscribing(true);
+      setStatus(`${t('transcribingFile')} "${safeName}"…`);
+    }
 
     // Hoisted so the outer finally can close the AudioContext even if the
     // transcription path throws. The decoded native-rate AudioBuffer plus
@@ -3665,8 +3688,10 @@ export default function App() {
       
       // Yield to UI before heavy resampling operation
       await new Promise(resolve => setTimeout(resolve, 0));
-      setStatus(`${t('processingResampling')} "${safeName}"`);
-      setProgressText(t('resamplingTo16k'));
+      if (!anotherRunActive) {
+        setStatus(`${t('processingResampling')} "${safeName}"`);
+        setProgressText(t('resamplingTo16k'));
+      }
 
       const resampleStart = performance.now();
       const offlineCtx = new OfflineAudioContext(
@@ -3723,20 +3748,26 @@ export default function App() {
       const audioBlob = createWavBlob(pcm, targetSampleRate);
 
       // Hand the already-resampled PCM to the shared queue. It transcribes now
-      // if the model is ready, or waits until the in-progress load finishes
-      // (Q2). Clear the decode-phase busy flag first so the queue's own
-      // runTranscription owns isTranscribing cleanly (and canRun() is not
-      // blocked by our own flag). "Transcribe again" calls runTranscription
+      // if the model is ready, waits until the in-progress load finishes (Q2),
+      // or waits behind the transcription already running. Clear the
+      // decode-phase busy flag first so the queue's own runTranscription owns
+      // isTranscribing cleanly (and canRun() is not blocked by our own flag);
+      // when another run set the flag it is NOT ours to clear (the queue drains
+      // from that run's finally). "Transcribe again" calls runTranscription
       // directly with the stored PCM, skipping a second (lossy) resample.
-      setTranscribing(false);
+      if (!anotherRunActive) setTranscribing(false);
       captureQueue.submit({ pcm, opts: { safeName, audioDuration, audioBlob } });
     } catch (error) {
       // Only the decode/resample stage can throw here: runTranscription owns
-      // (and swallows) model-side errors. Surface decode failures the same way.
+      // (and swallows) model-side errors. Surface decode failures the same way,
+      // but never reset state owned by a transcription that is still running
+      // (the alert below is this file's whole failure surface then).
       console.error('[Transcribe] Audio decode/resample failed:', error);
-      setStatus('transcriptionFailed');
-      setTranscribing(false);
-      setAwaitingFinal(false);
+      if (!anotherRunActive) {
+        setStatus('transcriptionFailed');
+        setTranscribing(false);
+        setAwaitingFinal(false);
+      }
       // F-124: file.name is OS-controlled and can contain bidi-override or
       // control codepoints. safeName is already sanitized above.
       alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
@@ -5663,12 +5694,18 @@ export default function App() {
 
       {showCaptureControls && (
       <div className="controls">
+        {/* The upload / record / phone entry points stay ENABLED while a
+            transcription is running: new audio just joins the capture queue
+            (drained from runTranscription's finally), so the user can keep
+            stacking work instead of waiting for each run. They only lock
+            during an active local recording, where a second capture source
+            makes no sense. */}
         <input
           ref={fileInputRef}
           type="file"
           accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.opus,.webm"
           onChange={transcribeFile}
-          disabled={isTranscribing || isRecording}
+          disabled={isRecording}
           style={{ display: 'none' }}
           id="audio-file-input"
         />
@@ -5676,8 +5713,8 @@ export default function App() {
           htmlFor="audio-file-input"
           className="file-upload-button"
           style={{
-            opacity: (isTranscribing || isRecording) ? 0.5 : 1,
-            pointerEvents: (isTranscribing || isRecording) ? 'none' : 'auto',
+            opacity: isRecording ? 0.5 : 1,
+            pointerEvents: isRecording ? 'none' : 'auto',
             flex: 1
           }}
           data-umami-event="upload_file_button"
@@ -5727,7 +5764,6 @@ export default function App() {
             {!remoteMicRecording && (
               <button
                 onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-                disabled={isTranscribing}
                 className="primary record-button"
                 style={{
                   background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
@@ -5750,7 +5786,7 @@ export default function App() {
           <>
             <button
               onClick={recordingCountdown !== null ? stopRecording : startRecordingCountdown}
-              disabled={isTranscribing || isRemoteMic}
+              disabled={isRemoteMic}
               className="primary record-button"
               style={{
                 background: recordingCountdown !== null ? 'var(--danger)' : 'var(--success)',
@@ -5762,7 +5798,7 @@ export default function App() {
             </button>
             <button
               onClick={() => startRemoteMic()}
-              disabled={isTranscribing || isRecording || isRemoteMic}
+              disabled={isRecording || isRemoteMic}
               className="primary record-button"
               style={{ background: '#8b5cf6', flex: 1 }}
               title={t('remoteMicTooltip') || 'Use your phone as a microphone'}
@@ -5887,9 +5923,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Captures made before the model finished loading are buffered; tell the
-          user they will transcribe automatically once it is ready (Q2). */}
-      {pendingCaptureCount > 0 && !modelLoaded && (
+      {/* Captures made while the model is loading (Q2) OR while another
+          transcription is running are buffered; tell the user they will
+          transcribe automatically once the model is free. */}
+      {pendingCaptureCount > 0 && (
         <Banner tone="info" style={{ marginTop: '0.5rem', justifyContent: 'center' }}>
           ⏳ {t('capturesQueued').replace('{n}', String(pendingCaptureCount))}
         </Banner>
