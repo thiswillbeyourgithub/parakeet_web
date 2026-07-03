@@ -201,13 +201,16 @@ export function pruneBeam(hyps, beamWidth, { lengthNormPrune }) {
  * arrays (the seed node has no parent and is skipped). Reads only scalars/ids,
  * so it is safe after the decoder states have been disposed. Shared by the
  * 1-best reconstruction and the n-best (oracle) reconstruction so there is one
- * copy of the walk.
+ * copy of the walk. With `collectDebug`, also gathers each emit node's `dbg`
+ * record (attached by _decodeBeam under collectDecodeDebug), index-aligned
+ * with `idsR`, so the winning path's per-token decode diagnostics survive the
+ * walk.
  * @param {object|null} best leaf hypothesis, or null for an empty decode
- * @param {{returnTimestamps?:boolean, returnConfidences?:boolean}} [opts]
- * @returns {{idsR:number[], framesR:number[], timesR:Array, confsR:number[], overall:number}}
+ * @param {{returnTimestamps?:boolean, returnConfidences?:boolean, collectDebug?:boolean}} [opts]
+ * @returns {{idsR:number[], framesR:number[], timesR:Array, confsR:number[], dbgR:Array, overall:number}}
  */
-export function reconstructBeamPath(best, { returnTimestamps = false, returnConfidences = false } = {}) {
-  const idsR = [], framesR = [], timesR = [], confsR = [];
+export function reconstructBeamPath(best, { returnTimestamps = false, returnConfidences = false, collectDebug = false } = {}) {
+  const idsR = [], framesR = [], timesR = [], confsR = [], dbgR = [];
   let overall = 0;
   if (best) {
     overall = best.overallLogProb;
@@ -217,12 +220,33 @@ export function reconstructBeamPath(best, { returnTimestamps = false, returnConf
         idsR.push(node.id);
         if (returnTimestamps) timesR.push(node.tokenTime);
         if (returnConfidences) confsR.push(node.confVal);
+        if (collectDebug) dbgR.push(node.dbg ?? null);
       }
     }
-    idsR.reverse(); framesR.reverse(); timesR.reverse(); confsR.reverse();
+    idsR.reverse(); framesR.reverse(); timesR.reverse(); confsR.reverse(); dbgR.reverse();
   }
-  return { idsR, framesR, timesR, confsR, overall };
+  return { idsR, framesR, timesR, confsR, dbgR, overall };
 }
+
+/**
+ * Last up-to-`n` EMITTED token ids of a beam hypothesis, oldest-first, by
+ * walking its backpointer chain (blank nodes are skipped). Decode-debug only:
+ * the per-frame beam timeline uses it to label each surviving hypothesis with
+ * a readable tail without storing full sequences on every node.
+ */
+function hypTailIds(hyp, n) {
+  const out = [];
+  for (let node = hyp; node && node.parent && out.length < n; node = node.parent) {
+    if (node.emit) out.push(node.id);
+  }
+  return out.reverse();
+}
+
+// Number of alternative tokens recorded per emitted token when decode-debug
+// collection is on (collectDecodeDebug). Small on purpose: the tail of the
+// distribution is noise for troubleshooting, and every record is retained in
+// memory for the whole transcription.
+const DEBUG_ALTERNATIVES_K = 5;
 
 /**
  * Lightweight Parakeet model wrapper designed for browser usage.
@@ -828,6 +852,41 @@ export class ParakeetModel {
   }
 
   /**
+   * Decode-debug record for one GREEDY emission (the beam path builds its
+   * records from _expandHyp's candidate stats instead, where the boosted
+   * distribution is already in hand). Called with the TRUE (restored) logits;
+   * `boosted` maps the ids applyBoost touched to their boosted values, so
+   * per-candidate bonus = boosted - true. The chosen token is forced into the
+   * alternatives so the view can always show it in context, and alternatives
+   * are sorted by boosted value: the order the argmax actually saw.
+   * @param {Float32Array} tokenLogits true (unboosted) logits
+   * @param {{chosenId:number, frame:number, duration:number, conf:number, boosted:Map|null}} info
+   * @returns {object} per-token debug record (see transcribe()'s decodeDebug)
+   */
+  _debugEmitRecord(tokenLogits, { chosenId, frame, duration, conf, boosted = null }) {
+    const altIds = this._topK(tokenLogits, DEBUG_ALTERNATIVES_K);
+    if (!altIds.includes(chosenId)) altIds.push(chosenId);
+    const logZ = this._logSumExp(tokenLogits);
+    const bonusOf = (id) => (boosted?.has(id) ? boosted.get(id) - tokenLogits[id] : 0);
+    const alternatives = altIds.map((id) => ({
+      id,
+      logit: tokenLogits[id],
+      logp: tokenLogits[id] - logZ,
+      boostBonus: bonusOf(id),
+    })).sort((a, b) => (b.logit + b.boostBonus) - (a.logit + a.boostBonus));
+    return {
+      frame,
+      duration,
+      conf,
+      trueLogit: tokenLogits[chosenId],
+      logp: tokenLogits[chosenId] - logZ,
+      boostBonus: bonusOf(chosenId),
+      rankDelta: null, // greedy has no joint (token+duration) beam score
+      alternatives,
+    };
+  }
+
+  /**
    * Expand one beam hypothesis by a single joiner step (the per-hypothesis core
    * of the MAES decoder). Returns the candidate continuations and the shared next
    * decoder state.
@@ -877,7 +936,7 @@ export class ParakeetModel {
    * @returns {{cands: Array<object>, newState: object}}
    */
   _expandHyp(hyp, stepOut, opts) {
-    const { temperature, expandK, maesExpansionGamma, phraseBoost } = opts;
+    const { temperature, expandK, maesExpansionGamma, phraseBoost, collectDecodeDebug = false } = opts;
     // The beam scores over the raw duration logits (see below), so it ignores
     // the pre-argmaxed `step` the greedy path consumes.
     const { tokenLogits, durLogits, newState, _logitsTensor } = stepOut;
@@ -913,6 +972,20 @@ export class ParakeetModel {
       const trueLogit = tokenLogits[id];
       const boostBonus = boostedVal.get(id) - trueLogit;
       tokenLP.set(id, { trueLogit, logp: (trueLogit - logZ) + boostBonus });
+    }
+
+    // Decode-debug: one shared alternatives list per expansion (true logit,
+    // true log-prob, boost bonus for every over-generated candidate), attached
+    // by reference to each emitted cand so the winning path can report what
+    // this step's competition looked like. Sorted by boosted value, i.e. the
+    // order the beam actually ranked them in.
+    let dbgAlts = null;
+    if (collectDecodeDebug) {
+      dbgAlts = topIds.map((id) => {
+        const { trueLogit, logp } = tokenLP.get(id);
+        const logpTrue = trueLogit - logZ;
+        return { id, logit: trueLogit, logp: logpTrue, boostBonus: logp - logpTrue };
+      }).sort((a, b) => (b.logit + b.boostBonus) - (a.logit + a.boostBonus));
     }
 
     // Cross every kept token with every TDT duration; score the joint
@@ -972,7 +1045,17 @@ export class ParakeetModel {
           activeCache.set(id, active);
         }
       }
-      cands.push({ id, isBlank, emit: !isBlank, step, confVal, rankDelta, active });
+      if (dbgAlts) {
+        // Debug-only extra fields (production cands stay lean): the chosen
+        // candidate's true logit / log-prob / boost bonus plus the shared
+        // alternatives list, consumed by makeChild's dbg record.
+        const { trueLogit: tl, logp } = tokenLP.get(id);
+        const logpTrue = tl - logZ;
+        cands.push({ id, isBlank, emit: !isBlank, step, confVal, rankDelta, active,
+          trueLogit: tl, logpTrue, boostBonus: logp - logpTrue, dbgAlts });
+      } else {
+        cands.push({ id, isBlank, emit: !isBlank, step, confVal, rankDelta, active });
+      }
     }
 
     _logitsTensor?.dispose?.();
@@ -1197,30 +1280,37 @@ export class ParakeetModel {
             // unchanged): mergeDuplicates=true is NeMo merge_duplicate_hypotheses,
             // lengthNormPrune=false ranks the per-frame survival prune by raw
             // score (NeMo), nBest=1 emits only the single best path.
-            mergeDuplicates = true, lengthNormPrune = false, nBest = 1 } = opts;
+            mergeDuplicates = true, lengthNormPrune = false, nBest = 1,
+            collectDecodeDebug = false } = opts;
 
     // Opt-in instrumentation (default OFF): when on, record the per-step
     // joint-network batch size (expansionSizes) and the surviving beam size after
     // each frame's prune (keptSizes). Guarded by this cheap boolean so the common
     // path allocates nothing and stays byte-for-byte unchanged.
     const stats = collectBeamStats ? { expansionSizes: [], keptSizes: [] } : null;
+    // Opt-in decode-debug (default OFF, same zero-overhead contract): per-frame
+    // snapshots of the surviving beam (the "beam timeline") plus per-emit dbg
+    // records attached to backpointer nodes (see makeChild) that the winner's
+    // reconstruction walk collects at the end.
+    const timeline = collectDecodeDebug ? [] : null;
 
     if (Tenc <= 0) {
       const out = { ids: [], tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0 };
       if (stats) out.beamStats = summarizeBeamStats(stats);
+      if (collectDecodeDebug) { out.debugTokens = []; out.beamTimeline = []; }
       return out;
     }
 
     // Per-hypothesis expansion budget: top-(beamWidth+beta) tokens. Threaded into
     // _expandHyp alongside the gamma threshold via the shared opts object below.
     const expandK = beamWidth + maesExpansionBeta;
-    const expandOpts = { temperature: opts.temperature, phraseBoost, expandK, maesExpansionGamma };
+    const expandOpts = { temperature: opts.temperature, phraseBoost, expandK, maesExpansionGamma, collectDecodeDebug };
 
     // Build one backpointer child node from a parent hypothesis and one of its
     // (token, duration) expansion candidates.
     const makeChild = (hyp, c, newState) => {
       const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, c.id, c.step, frameStride, maesNumSteps);
-      return {
+      const child = {
         parent: hyp,
         emit: c.emit,
         id: c.emit ? c.id : null,
@@ -1242,6 +1332,23 @@ export class ParakeetModel {
         // unchanged). Used to detect duplicate hypotheses for merging.
         seqKey: c.emit ? hyp.seqKey + c.id + ',' : hyp.seqKey,
       };
+      // Decode-debug record for emitted tokens: the chosen candidate's stats
+      // plus the shared alternatives list from _expandHyp. Lives on the
+      // backpointer node so only the winner's records are ever read (see
+      // reconstructBeamPath's collectDebug).
+      if (collectDecodeDebug && c.emit) {
+        child.dbg = {
+          frame: hyp.t,
+          duration: c.step > 0 ? c.step : 1,
+          conf: c.confVal,
+          trueLogit: c.trueLogit,
+          logp: c.logpTrue,
+          boostBonus: c.boostBonus,
+          rankDelta: c.rankDelta,
+          alternatives: c.dbgAlts,
+        };
+      }
+      return child;
     };
 
     const rootActive = phraseBoost ? phraseBoost.active : null; // caller already reset()
@@ -1357,6 +1464,24 @@ export class ParakeetModel {
         keptHyps = pruneBeam(merged, beamWidth, { lengthNormPrune });
         if (stats) stats.keptSizes.push(keptHyps.length); // surviving beam this frame
 
+        // Decode-debug beam timeline: what survived this frame's merge+prune,
+        // each hypothesis labelled with its score and the tail of its emitted
+        // sequence. `merged` counts how many duplicates were collapsed.
+        if (timeline) {
+          timeline.push({
+            frame: timeIdx,
+            time: +(timeIdx * timeStride).toFixed(3),
+            merged: futures.length + produced.length - merged.length,
+            hyps: keptHyps.map((h) => ({
+              score: +h.score.toFixed(4),
+              normScore: +lengthNormalizedScore(h).toFixed(4),
+              numEmitted: h.numEmitted,
+              nextFrame: h.t,
+              tail: hypTailIds(h, 8),
+            })),
+          });
+        }
+
         // Sweep: free every in-play state no surviving hypothesis (or best) points at.
         const keep = new Set();
         for (const h of keptHyps) keep.add(h.state);
@@ -1376,10 +1501,11 @@ export class ParakeetModel {
 
     // Reconstruct the winning path from the backpointer chain (seed has no
     // frame). Only scalars/ids are read here, so the disposed states don't matter.
-    const { idsR, framesR, timesR, confsR, overall } =
-      reconstructBeamPath(best, { returnTimestamps, returnConfidences });
+    const { idsR, framesR, timesR, confsR, dbgR, overall } =
+      reconstructBeamPath(best, { returnTimestamps, returnConfidences, collectDebug: collectDecodeDebug });
     const result = { ids: idsR, tokenTimes: timesR, tokenConfs: confsR, frameConfs: framesR, overallLogProb: overall };
     if (stats) result.beamStats = summarizeBeamStats(stats);
+    if (collectDecodeDebug) { result.debugTokens = dbgR; result.beamTimeline = timeline; }
     // n-best (oracle) list: the top distinct emitted sequences by
     // length-normalized score, best first. Only its ids are reconstructed (the
     // oracle scores text, not timing/confidence). Absent on the default path.
@@ -1533,6 +1659,13 @@ export class ParakeetModel {
       // per-step joint-network batch sizes. Off by default so production, e2e
       // and existing callers are byte-for-byte unaffected.
       collectBeamStats = false,
+      // Opt-in decode-debug collection (default OFF, same zero-overhead
+      // contract): the result carries a `decodeDebug` object with a per-token
+      // record for the winning path (true logit, log-prob, boost bonus, TDT
+      // duration, top-k alternatives) and, on beam runs, a per-frame snapshot
+      // of the surviving beam (`beamTimeline`). Never changes WHAT is decoded,
+      // only what is reported. Feeds the UI's per-entry "Debug" token view.
+      collectDecodeDebug = false,
       // Diagnostic decoder knobs (all default to the production behaviour, so
       // the common path is unchanged). mergeDuplicates/lengthNormPrune/nBest are
       // forwarded into the beam decoder (see _decodeBeam). forceBeam runs the
@@ -1600,6 +1733,10 @@ export class ParakeetModel {
     // Opt-in per-utterance beam stats: only the beam path fills this (greedy
     // width-1 never runs the beam decoder), and only when collectBeamStats is on.
     let beamStats = null;
+    // Opt-in decode-debug accumulators: per-emitted-token records (both paths,
+    // index-aligned with `ids`) and the beam-only per-frame timeline.
+    let dbgTokens = collectDecodeDebug ? [] : null;
+    let beamTimeline = null;
 
     let nbest = null; // beam n-best list (oracle), only when nBest > 1
     if (!useBeam) {
@@ -1640,6 +1777,17 @@ export class ParakeetModel {
         const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
         let { maxId, maxLogit } = this._pickArgmax(tokenLogits);
 
+        // Decode-debug: the boosted values only exist between applyBoost and
+        // restore, so capture them here (id -> boosted logit) for the emit
+        // record below; per-candidate bonus = boosted - true after restore.
+        let dbgBoosted = null;
+        if (dbgTokens && boostSaved) {
+          dbgBoosted = new Map();
+          for (let i = 0; i < boostSaved.length; i += 2) {
+            dbgBoosted.set(boostSaved[i], tokenLogits[boostSaved[i]]);
+          }
+        }
+
         // _frameConfidence assumes maxLogit == tokenLogits[maxId] (chosen
         // token's numerator is 1), so reset maxLogit to the true logit.
         if (boostSaved) {
@@ -1665,6 +1813,15 @@ export class ParakeetModel {
             hyp.tokenTimes.push([start, end]);
           }
           if (returnConfidences) hyp.tokenConfs.push(confVal);
+          if (dbgTokens) {
+            dbgTokens.push(this._debugEmitRecord(tokenLogits, {
+              chosenId: maxId,
+              frame: hyp.t,
+              duration: step > 0 ? step : 1,
+              conf: confVal,
+              boosted: dbgBoosted,
+            }));
+          }
           // Only adopt the new decoder state when a non-blank token is emitted.
           // Free the previous state (unless caller-owned) before reassigning.
           if (hyp.state && hyp.state !== newState && hyp.state !== externalInitialState) {
@@ -1722,6 +1879,7 @@ export class ParakeetModel {
         maesExpansionGamma: Number.isFinite(maesExpansionGamma) ? maesExpansionGamma : 2.3,
         maesPrefixAlpha: Math.max(0, Math.floor(maesPrefixAlpha) || 0),
         collectBeamStats,
+        collectDecodeDebug,
         mergeDuplicates,
         lengthNormPrune,
         nBest: Math.max(1, Math.floor(nBest) || 1),
@@ -1733,6 +1891,10 @@ export class ParakeetModel {
       overallLogProb = out.overallLogProb;
       beamStats = out.beamStats ?? null;
       nbest = out.nbest ?? null;
+      if (collectDecodeDebug) {
+        dbgTokens = out.debugTokens ?? [];
+        beamTimeline = out.beamTimeline ?? null;
+      }
       finalDecoderState = null;
       decoderState = null;
     }
@@ -1755,6 +1917,52 @@ export class ParakeetModel {
       ? nbest.map((h) => ({ text: this._normalizer(this.tokenizer.decode(h.ids)), score: h.score }))
       : null;
 
+    // Opt-in decode-debug payload: the winning path's per-token records mapped
+    // to vocab pieces (id -> subword string, kept raw with the sentencepiece
+    // word-start marker so the view shows exactly what the model emits), plus
+    // the beam timeline with each hypothesis tail decoded the same way. Built
+    // before the early exit so the payload does not depend on the
+    // timestamp/confidence options.
+    let decodeDebug = null;
+    if (collectDecodeDebug) {
+      const piece = (id) => this.tokenizer.id2token[id] ?? `#${id}`;
+      const round = (v, p) => (v == null || !Number.isFinite(v) ? null : +v.toFixed(p));
+      decodeDebug = {
+        strategy: useBeam ? 'beam' : 'greedy',
+        beamWidth: useBeam ? effBeamWidth : 1,
+        tokens: ids.map((tokId, i) => {
+          const d = dbgTokens[i] || null;
+          const ts = tokenTimes[i] || null;
+          return {
+            id: tokId,
+            piece: piece(tokId),
+            start: ts ? round(ts[0], 3) : null,
+            end: ts ? round(ts[1], 3) : null,
+            frame: d ? d.frame : null,
+            duration: d ? d.duration : null,
+            conf: d ? round(d.conf, 4) : null,
+            logit: d ? round(d.trueLogit, 4) : null,
+            logp: d ? round(d.logp, 4) : null,
+            boostBonus: d ? round(d.boostBonus, 4) : 0,
+            score: d ? round(d.rankDelta, 4) : null,
+            alternatives: d ? d.alternatives.map((a) => ({
+              id: a.id,
+              piece: piece(a.id),
+              logit: round(a.logit, 4),
+              logp: round(a.logp, 4),
+              boostBonus: round(a.boostBonus, 4),
+            })) : [],
+          };
+        }),
+        beamTimeline: beamTimeline
+          ? beamTimeline.map((f) => ({
+              ...f,
+              hyps: f.hyps.map((h) => ({ ...h, tailPieces: h.tail.map(piece) })),
+            }))
+          : null,
+      };
+    }
+
     // Early exit if no extras requested
     if (!returnTimestamps && !returnConfidences) {
       const metrics = buildPerfMetrics(perfEnabled, {
@@ -1765,6 +1973,7 @@ export class ParakeetModel {
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
       if (beamStats) earlyOut.beamStats = beamStats;
       if (nbestTexts) earlyOut.nbest = nbestTexts;
+      if (decodeDebug) earlyOut.decodeDebug = decodeDebug;
       return earlyOut;
     }
 
@@ -1838,6 +2047,7 @@ export class ParakeetModel {
     if (returnDecoderState) fullOut.decoderState = finalDecoderState;
     if (beamStats) fullOut.beamStats = beamStats;
     if (nbestTexts) fullOut.nbest = nbestTexts;
+    if (decodeDebug) fullOut.decodeDebug = decodeDebug;
     return fullOut;
 
     } finally {
@@ -1920,6 +2130,14 @@ export class ParakeetModel {
           elapsedMs: performance.now() - t0,
         });
       }
+      // Uniform decode-debug shape for consumers (opt-in, see transcribe()):
+      // even the single-pass path wraps its payload as one "chunk" so the UI
+      // renders one code path regardless of how the audio was split.
+      if (result.decodeDebug) {
+        result.decodeDebug = {
+          chunks: [{ chunkNum: 1, startSec: 0, endSec: audio.length / sampleRate, ...result.decodeDebug }],
+        };
+      }
       return result;
     }
 
@@ -1947,6 +2165,12 @@ export class ParakeetModel {
     let anyMetrics = false;
     let chunkNum = 0;
     let prevEnd = null; // absolute sample index where the previous chunk ended
+    // Opt-in decode-debug: one entry per chunk, kept UNSTITCHED on purpose. The
+    // overlap regions each chunk decoded (later trimmed by the seam dedup
+    // above) are exactly where stitching bugs live, so the debug view groups
+    // tokens per chunk with its absolute [startSec, endSec] window instead of
+    // pretending the chunks were one pass.
+    const debugChunks = [];
 
     // Text reflecting what's currently in combinedWords (deduped) when we have
     // words, otherwise the raw per-chunk concatenation.
@@ -1995,6 +2219,14 @@ export class ParakeetModel {
       if (chunkNum === 1) {
         firstChunkConfidences = chunkRes.confidence_scores;
       }
+      if (chunkRes.decodeDebug) {
+        debugChunks.push({
+          chunkNum,
+          startSec: start / sampleRate,
+          endSec: end / sampleRate,
+          ...chunkRes.decodeDebug,
+        });
+      }
       const m = chunkRes.metrics;
       if (m) {
         anyMetrics = true;
@@ -2023,6 +2255,7 @@ export class ParakeetModel {
     return {
       utterance_text: combinedText,
       words: combinedWords,
+      ...(debugChunks.length ? { decodeDebug: { chunks: debugChunks } } : {}),
       confidence_scores: firstChunkConfidences || {},
       metrics: anyMetrics ? {
         preprocess_ms: +totalPreprocessMs.toFixed(1),
