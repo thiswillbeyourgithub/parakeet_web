@@ -35,8 +35,13 @@
 // The gate is on the model's own raw logits, so the strength multiplier and
 // weight sign do not affect which tokens are eligible.
 
-/** Internal: default linear depth-scaling factor (PLAN.md section 3). */
-const DEFAULT_DEPTH_SCALING = 0.5;
+/**
+ * Default linear depth-scaling factor (PLAN.md section 3). Exported so the UI
+ * (App.jsx) and the CLI (scripts/transcribe.mjs docs) can reference the same
+ * default instead of hardcoding 0.5: the sidebar exposes it as the "Depth
+ * scaling" boost knob, passed to the {@link BoostingTrie} constructor.
+ */
+export const DEFAULT_DEPTH_SCALING = 0.5;
 
 /**
  * Per-phrase weight bounds (UI input is validated to this range). The accepted

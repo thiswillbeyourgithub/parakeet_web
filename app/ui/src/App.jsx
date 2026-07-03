@@ -21,7 +21,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
@@ -685,6 +685,15 @@ export default function App() {
   // unrelated state), and the strength slider just mutates trie.strength.
   const [boostPhrases, setBoostPhrases] = useState('');
   const [boostStrength, setBoostStrength] = useState(1);
+  // Advanced boost knobs, mirroring the CLI's --boost-minp / --depth-scaling
+  // (scripts/transcribe.mjs). `boostMinp` is a GLOBAL min-p override: 0 = off
+  // (each phrase keeps its own gate, default DEFAULT_BOOST_MIN_P), a value in
+  // (0, 1] supersedes every per-phrase min-p at decode time (trie.minpOverride,
+  // mutable like strength, no rebuild). `boostDepthScaling` is the linear
+  // per-depth reward growth; it is baked into node bonuses at insert time, so
+  // changing it re-runs the (debounced) trie rebuild.
+  const [boostMinp, setBoostMinp] = useState(0);
+  const [boostDepthScaling, setBoostDepthScaling] = useState(DEFAULT_DEPTH_SCALING);
   // Surface-form augmentation (Title Case, ALL CAPS, proclitic prefixes,
   // symbol-stripped forms) is opt-in per phrase via the `:AUG` field, or list-wide
   // via a `*:::AUG` defaults line; there is no global UI toggle. The BPE encoder is
@@ -698,6 +707,10 @@ export default function App() {
   const [boostRebuilding, setBoostRebuilding] = useState(false);
   const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
   const boostStrengthRef = useRef(1);
+  // Current min-p override for the debounced rebuild closure (which, like
+  // strength, must not be a rebuild dependency: moving the knob only mutates
+  // the live trie, but a rebuild from another cause must carry it over).
+  const boostMinpRef = useRef(0);
   // Vocab signature of the currently loaded tokenizer (null when no model is
   // loaded). This is the *only* model-side input the boost-trie rebuild needs:
   // it changes when (and only when) the model's vocab does, so the rebuild
@@ -1252,6 +1265,8 @@ export default function App() {
           savedLiveContextWindow,
           savedBoostPhrases,
           savedBoostStrength,
+          savedBoostMinp,
+          savedBoostDepthScaling,
           savedBoostSource,
           savedBoostCustomText,
           savedSectionsOpen,
@@ -1288,6 +1303,8 @@ export default function App() {
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
           loadSetting('boostStrength', 1),
+          loadSetting('boostMinp', 0), // 0 = off (per-phrase gates apply)
+          loadSetting('boostDepthScaling', DEFAULT_DEPTH_SCALING),
           // Load with `null` (not the Custom sentinel) so the restore below can
           // tell "user never picked a boost source" apart from "user explicitly
           // chose Custom". Only the former falls back to the ?phrase_boost= param
@@ -1362,6 +1379,10 @@ export default function App() {
         setBoostPhrases(restoredSource === BOOST_SOURCE_CUSTOM && typeof savedBoostPhrases === 'string'
           ? savedBoostPhrases : '');
         setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
+        // The override is only valid in (0, 1]; anything else (including the
+        // stored 0) means "off, per-phrase gates apply".
+        setBoostMinp(Number.isFinite(savedBoostMinp) && savedBoostMinp > 0 && savedBoostMinp <= 1 ? savedBoostMinp : 0);
+        setBoostDepthScaling(Number.isFinite(savedBoostDepthScaling) && savedBoostDepthScaling >= 0 ? savedBoostDepthScaling : DEFAULT_DEPTH_SCALING);
         {
           const customText = typeof savedBoostCustomText === 'string' ? savedBoostCustomText : '';
           // Migration: pre-feature profiles have no boostCustomText but may
@@ -1779,6 +1800,8 @@ export default function App() {
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
   usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
   usePersistedSetting('boostStrength', boostStrength, settingsLoaded);
+  usePersistedSetting('boostMinp', boostMinp, settingsLoaded);
+  usePersistedSetting('boostDepthScaling', boostDepthScaling, settingsLoaded);
   usePersistedSetting('boostSource', boostSource, settingsLoaded);
   usePersistedSetting('boostCustomText', boostCustomText, settingsLoaded);
   usePersistedSetting('settingsSectionsOpen', sectionsOpen, settingsLoaded);
@@ -2124,7 +2147,12 @@ export default function App() {
           ? { encoded: pre.encoded, skipped: pre.skipped }
           : await encodeBoostPhrases(entries, tokenizer);
         if (cancelled) return;
-        const trie = BoostingTrie.buildFromEncoded(encoded, { strength: boostStrengthRef.current });
+        const trie = BoostingTrie.buildFromEncoded(encoded, {
+          strength: boostStrengthRef.current,
+          depthScaling: boostDepthScaling,
+          // Carry the live decode-time override into the fresh trie (0 = off).
+          minpOverride: boostMinpRef.current > 0 ? boostMinpRef.current : null,
+        });
         trie.skipped = skipped;
         // Phrases with characters the model vocab cannot represent (e.g. CJK)
         // were dropped during encode; surface them so the user knows why.
@@ -2148,13 +2176,25 @@ export default function App() {
       }
     }, BOOST_REBUILD_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(timer); if (showSpinner) setBoostRebuilding(false); };
-  }, [boostPhrases, boostParsed, tokenizerVocabSig, encodeBoostPhrases]);
+    // boostDepthScaling is a dep (unlike strength/min-p, which mutate the live
+    // trie) because insert() bakes it into every node bonus, so a change needs
+    // a rebuild. The rebuild is debounced and, on the prebuilt/cached path,
+    // insert-only, so this stays cheap for curated lists.
+  }, [boostPhrases, boostParsed, tokenizerVocabSig, encodeBoostPhrases, boostDepthScaling]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {
     boostStrengthRef.current = boostStrength;
     if (phraseBoostRef.current) phraseBoostRef.current.strength = boostStrength;
   }, [boostStrength]);
+
+  // Apply the global min-p override without rebuilding the trie: it is a
+  // decode-time gate (BoostingTrie.applyBoost), so mutating the live instance
+  // is enough. 0 is the UI's "off" sentinel -> null (per-phrase gates apply).
+  useEffect(() => {
+    boostMinpRef.current = boostMinp;
+    if (phraseBoostRef.current) phraseBoostRef.current.minpOverride = boostMinp > 0 ? boostMinp : null;
+  }, [boostMinp]);
 
   // Keep the verbose-log ref current for the debounced rebuild closure.
   useEffect(() => { verboseLogRef.current = verboseLog; }, [verboseLog]);
@@ -5390,6 +5430,54 @@ export default function App() {
                 </details>
               )}
             </div>
+
+            {/* Advanced boost knobs (the CLI's --boost-minp / --depth-scaling),
+                presented like the MAES rows above. Only meaningful when a
+                phrase list is loaded (with no phrases the trie is inert), so
+                hide them otherwise, mirroring the beamWidth>1 gate on MAES. */}
+            {boostPhrases.trim() && (
+              <>
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('boostMinp')}:
+                    <InfoTooltip text={t('tooltipBoostMinp')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={boostMinp}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setBoostMinp(Math.max(0, Math.min(1, v)));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('boostDepthScaling')}:
+                    <InfoTooltip text={t('tooltipBoostDepthScaling')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    max="5"
+                    step="0.1"
+                    value={boostDepthScaling}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setBoostDepthScaling(Math.max(0, Math.min(5, v)));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+              </>
+            )}
 
           </CollapsibleSection>
 
