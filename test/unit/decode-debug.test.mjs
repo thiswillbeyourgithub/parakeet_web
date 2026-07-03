@@ -193,6 +193,60 @@ describe('collectDecodeDebug: greedy path', () => {
   });
 });
 
+describe('collectDecodeDebug: confidence is the intrinsic (temperature-1) token probability', () => {
+  // Regression for "confidence always 1.0 in the debug view": the app pins the
+  // decoder temperature to 0, and _frameConfidence returns a constant 1.0 at
+  // temperature 0 (a point-mass softmax). The debug conf must instead report the
+  // chosen token's temperature-1 softmax probability exp(logp), so it stays a
+  // real, sub-1.0 confidence at the app's actual temperature.
+  const expectedProb = (logits, chosenId) => {
+    const m = Math.max(...logits);
+    const Z = logits.reduce((s, v) => s + Math.exp(v - m), 0);
+    return Math.exp(logits[chosenId] - m) / Z;
+  };
+
+  test('greedy: temperature 0 yields a meaningful (<1) conf equal to exp(logp)', async () => {
+    const model = makeModel(SCRIPT);
+    const res = await model.transcribe(new Float32Array(0), 16000, {
+      returnTimestamps: true, temperature: 0, // the app's pinned default
+      encoded: model.encodedFor(SCRIPT.length), collectDecodeDebug: true,
+    });
+    const [t2, t0] = res.decodeDebug.tokens;
+    // The bug: this used to be exactly 1.0 for every token.
+    assert.ok(t2.conf < 1 && t2.conf > 0, `token 2 conf is a real probability, got ${t2.conf}`);
+    assert.ok(t0.conf < 1 && t0.conf > 0, `token 0 conf is a real probability, got ${t0.conf}`);
+    // conf == exp(logp) == softmax prob of the chosen token on the true logits.
+    assert.ok(Math.abs(t2.conf - Math.exp(t2.logp)) < 1e-3, 'conf tracks exp(logp)');
+    assert.ok(Math.abs(t2.conf - expectedProb(SCRIPT[0].logits, 2)) < 1e-3, 'conf is the token-2 softmax prob');
+    assert.ok(Math.abs(t0.conf - expectedProb(SCRIPT[1].logits, 0)) < 1e-3, 'conf is the token-0 softmax prob');
+  });
+
+  test('greedy: conf is identical at temperature 0 and temperature 1 (decoupled from the UI knob)', async () => {
+    const at = async (temperature) => {
+      const model = makeModel(SCRIPT);
+      const res = await model.transcribe(new Float32Array(0), 16000, {
+        returnTimestamps: true, temperature,
+        encoded: model.encodedFor(SCRIPT.length), collectDecodeDebug: true,
+      });
+      return res.decodeDebug.tokens.map((tk) => tk.conf);
+    };
+    assert.deepEqual(await at(0), await at(1));
+  });
+
+  test('beam: temperature 0 conf is the same intrinsic probability, not 1.0', async () => {
+    const model = makeModel(SCRIPT);
+    const res = await model.transcribe(new Float32Array(0), 16000, {
+      returnTimestamps: true, temperature: 0,
+      encoded: model.encodedFor(SCRIPT.length), collectDecodeDebug: true, beamWidth: 2,
+    });
+    const [t2, t0] = res.decodeDebug.tokens;
+    assert.ok(t2.conf < 1 && t2.conf > 0, `beam token 2 conf is a real probability, got ${t2.conf}`);
+    assert.ok(Math.abs(t2.conf - Math.exp(t2.logp)) < 1e-3, 'beam conf tracks exp(logp)');
+    assert.ok(Math.abs(t2.conf - expectedProb(SCRIPT[0].logits, 2)) < 1e-3, 'beam conf is the token-2 softmax prob');
+    assert.ok(Math.abs(t0.conf - expectedProb(SCRIPT[1].logits, 0)) < 1e-3, 'beam conf is the token-0 softmax prob');
+  });
+});
+
 describe('collectDecodeDebug: beam path', () => {
   test('winner-path records + beam timeline', async () => {
     const model = makeModel(SCRIPT);

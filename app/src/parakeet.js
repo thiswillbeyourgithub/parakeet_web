@@ -860,10 +860,10 @@ export class ParakeetModel {
    * alternatives so the view can always show it in context, and alternatives
    * are sorted by boosted value: the order the argmax actually saw.
    * @param {Float32Array} tokenLogits true (unboosted) logits
-   * @param {{chosenId:number, frame:number, duration:number, conf:number, boosted:Map|null}} info
+   * @param {{chosenId:number, frame:number, duration:number, boosted:Map|null}} info
    * @returns {object} per-token debug record (see transcribe()'s decodeDebug)
    */
-  _debugEmitRecord(tokenLogits, { chosenId, frame, duration, conf, boosted = null }) {
+  _debugEmitRecord(tokenLogits, { chosenId, frame, duration, boosted = null }) {
     const altIds = this._topK(tokenLogits, DEBUG_ALTERNATIVES_K);
     if (!altIds.includes(chosenId)) altIds.push(chosenId);
     const logZ = this._logSumExp(tokenLogits);
@@ -874,12 +874,19 @@ export class ParakeetModel {
       logp: tokenLogits[id] - logZ,
       boostBonus: bonusOf(id),
     })).sort((a, b) => (b.logit + b.boostBonus) - (a.logit + a.boostBonus));
+    const logpChosen = tokenLogits[chosenId] - logZ;
     return {
       frame,
       duration,
-      conf,
+      // Confidence shown in the debug view = the chosen token's temperature-1
+      // softmax probability exp(logp). Deliberately NOT the decoder's confVal:
+      // confVal follows the UI sampling temperature and collapses to a constant
+      // 1.0 at temperature 0 (the app's pinned default), which made this column
+      // and the pill colouring useless. This intrinsic probability is the
+      // model's real per-token confidence and is meaningful at any UI temperature.
+      conf: Math.exp(logpChosen),
       trueLogit: tokenLogits[chosenId],
-      logp: tokenLogits[chosenId] - logZ,
+      logp: logpChosen,
       boostBonus: bonusOf(chosenId),
       rankDelta: null, // greedy has no joint (token+duration) beam score
       alternatives,
@@ -1340,7 +1347,10 @@ export class ParakeetModel {
         child.dbg = {
           frame: hyp.t,
           duration: c.step > 0 ? c.step : 1,
-          conf: c.confVal,
+          // Temperature-1 softmax probability of the chosen token (exp(logp)),
+          // NOT the UI-temperature confVal that collapses to 1.0 at temperature
+          // 0. Matches _debugEmitRecord's greedy conf so the view is consistent.
+          conf: Math.exp(c.logpTrue),
           trueLogit: c.trueLogit,
           logp: c.logpTrue,
           boostBonus: c.boostBonus,
@@ -1818,7 +1828,6 @@ export class ParakeetModel {
               chosenId: maxId,
               frame: hyp.t,
               duration: step > 0 ? step : 1,
-              conf: confVal,
               boosted: dbgBoosted,
             }));
           }
