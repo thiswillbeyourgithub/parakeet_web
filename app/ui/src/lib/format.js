@@ -113,39 +113,53 @@ export function formatMetricsTooltip(metrics, durationSec, labels) {
 }
 
 /**
- * Exponential-moving-average tracker for download speed and ETA. It is pure:
- * pass the previous `state` (or `null` to start) and the latest byte-progress
- * sample, and it returns `{ state, rate, eta }` where `rate` is bytes/second
- * and `eta` is the estimated seconds left for the current file (both `null`
- * until enough data exists).
+ * Sliding-window tracker for download speed and ETA. It is pure: pass the
+ * previous `state` (or `null` to start) and the latest byte-progress sample,
+ * and it returns `{ state, rate, eta }` where `rate` is bytes/second and `eta`
+ * is the estimated seconds left for the current file (both `null` until
+ * enough data exists).
+ *
+ * The rate is the mean throughput over (roughly) the trailing `windowMs`
+ * (default 10 s): accepted samples are kept in `state.samples` and the rate is
+ * bytes-moved / time-elapsed between the oldest in-window sample and now. This
+ * replaced an EMA (alpha 0.3 per >=300 ms tick, so ~1 s of effective memory)
+ * that made the displayed bandwidth and countdown twitch with every network
+ * burst; a 10 s window follows real throughput changes while staying visually
+ * steady. Until the window fills, the mean simply spans the data seen so far.
  *
  * Re-anchors whenever the `file` changes or `loaded` goes backwards (a resume
  * or retry resets the per-file counter), so a counter reset never reads as a
- * negative delta. To keep the rate stable against the very frequent progress
- * ticks, a fresh sample is only folded into the EMA once at least
- * `minIntervalMs` has elapsed since the last anchor; in between we keep the
- * last smoothed rate and just recompute the ETA against the current position so
- * it keeps ticking down smoothly.
+ * negative delta. Progress events arrive far more often than we want samples,
+ * so one is only recorded every `minIntervalMs`, which bounds the buffer to
+ * ~windowMs/minIntervalMs entries; in between we keep the last rate and just
+ * recompute the ETA against the current position so it keeps ticking down
+ * smoothly.
  */
 export function updateDownloadRate(state, { file, loaded, total, now }, opts = {}) {
   const minIntervalMs = opts.minIntervalMs ?? 300;
-  const alpha = opts.alpha ?? 0.3;
+  const windowMs = opts.windowMs ?? 10_000;
   const etaFor = (rate) =>
     rate > 0 && total > 0 && total > loaded ? (total - loaded) / rate : null;
 
-  if (!state || state.file !== file || loaded < state.anchorLoaded) {
-    const next = { file, anchorTime: now, anchorLoaded: loaded, rate: null };
+  const last = state ? state.samples[state.samples.length - 1] : null;
+  if (!state || state.file !== file || loaded < last.loaded) {
+    const next = { file, samples: [{ t: now, loaded }], rate: null };
     return { state: next, rate: null, eta: null };
   }
 
-  const dt = now - state.anchorTime;
-  if (dt < minIntervalMs) {
+  if (now - last.t < minIntervalMs) {
     return { state, rate: state.rate, eta: etaFor(state.rate) };
   }
 
-  const dBytes = loaded - state.anchorLoaded;
-  const instant = dBytes > 0 ? (dBytes / dt) * 1000 : 0;
-  const rate = state.rate == null ? instant : alpha * instant + (1 - alpha) * state.rate;
-  const next = { file, anchorTime: now, anchorLoaded: loaded, rate };
+  // Prune so samples[0] stays the NEWEST sample at or before the window
+  // boundary: it is the baseline, so the mean spans at least windowMs once
+  // enough history exists (dropping everything older than the boundary
+  // instead would shrink the window by up to one sampling interval).
+  const samples = [...state.samples, { t: now, loaded }];
+  while (samples.length > 2 && samples[1].t <= now - windowMs) samples.shift();
+  const dt = now - samples[0].t;
+  const dBytes = loaded - samples[0].loaded;
+  const rate = dBytes > 0 && dt > 0 ? (dBytes / dt) * 1000 : 0;
+  const next = { file, samples, rate };
   return { state: next, rate, eta: etaFor(rate) };
 }

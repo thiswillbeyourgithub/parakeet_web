@@ -617,7 +617,8 @@ export default function App() {
   const [progress, setProgress] = useState('');
   const [progressText, setProgressText] = useState('');
   const [progressPct, setProgressPct] = useState(null);
-  // EMA state for the download speed / ETA estimate, reset per model load.
+  // Sliding-window state (trailing 10 s mean) for the download speed / ETA
+  // estimate, reset per model load.
   const downloadRateRef = useRef(null);
   // Open/closed state of each collapsible settings group, keyed by section id.
   // A section is open only when its id maps to true, so every group starts
@@ -2251,7 +2252,8 @@ export default function App() {
         const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
         const prefix = resumed ? `${t('resuming')} ` : '';
         const sizes = total > 0 ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
-        // Smoothed transfer rate + MM:SS ETA, recomputed as bytes flow.
+        // Transfer rate averaged over the trailing 10 s window + MM:SS ETA,
+        // recomputed as bytes flow.
         const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
         const { state, rate, eta } = updateDownloadRate(downloadRateRef.current, { file, loaded, total, now });
         downloadRateRef.current = state;

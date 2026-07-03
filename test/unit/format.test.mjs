@@ -105,7 +105,7 @@ describe('formatEta (MM:SS)', () => {
   });
 });
 
-describe('updateDownloadRate (EMA speed + ETA)', () => {
+describe('updateDownloadRate (windowed speed + ETA)', () => {
   const MB = 1024 * 1024;
 
   test('first sample anchors with no rate yet', () => {
@@ -113,7 +113,7 @@ describe('updateDownloadRate (EMA speed + ETA)', () => {
     assert.equal(r.rate, null);
     assert.equal(r.eta, null);
     assert.equal(r.state.file, 'a');
-    assert.equal(r.state.anchorLoaded, 0);
+    assert.deepEqual(r.state.samples, [{ t: 0, loaded: 0 }]);
   });
 
   test('measures rate once minInterval elapses and computes ETA', () => {
@@ -132,7 +132,9 @@ describe('updateDownloadRate (EMA speed + ETA)', () => {
     const r = updateDownloadRate(s, { file: 'a', loaded: 2 * MB, total: 10 * MB, now: 1050 });
     assert.equal(r.rate, MB);
     assert.equal(r.eta, 8);
-    assert.equal(r.state.anchorLoaded, MB); // anchor not advanced
+    // The sub-interval event was not recorded as a sample.
+    assert.equal(r.state.samples.length, 2);
+    assert.equal(r.state.samples[1].loaded, MB);
   });
 
   test('re-anchors on a new file (no negative delta)', () => {
@@ -148,17 +150,35 @@ describe('updateDownloadRate (EMA speed + ETA)', () => {
     let s = updateDownloadRate(null, { file: 'a', loaded: 3 * MB, total: 10 * MB, now: 0 }).state;
     const r = updateDownloadRate(s, { file: 'a', loaded: 1 * MB, total: 10 * MB, now: 1000 });
     assert.equal(r.rate, null);
-    assert.equal(r.state.anchorLoaded, MB);
+    assert.deepEqual(r.state.samples, [{ t: 1000, loaded: MB }]);
   });
 
-  test('EMA smooths a rate change instead of jumping', () => {
+  test('rate is the mean over the window, not the last instant', () => {
     let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 100 * MB, now: 0 }).state;
-    // First window: 1 MB/s.
+    // First second: 1 MB/s.
     let r = updateDownloadRate(s, { file: 'a', loaded: 1 * MB, total: 100 * MB, now: 1000 });
     assert.equal(r.rate, MB);
-    // Second window: instantaneous 3 MB/s; EMA (alpha 0.3) -> 0.3*3 + 0.7*1 = 1.6 MB/s.
+    // Second second: instantaneous 3 MB/s; window mean -> 4 MB over 2 s = 2 MB/s.
     r = updateDownloadRate(r.state, { file: 'a', loaded: 4 * MB, total: 100 * MB, now: 2000 });
-    assert.ok(Math.abs(r.rate - 1.6 * MB) < 1);
+    assert.equal(r.rate, 2 * MB);
+  });
+
+  test('samples older than windowMs age out of the mean', () => {
+    // 100 MB burst in the first second, then a steady 1 MB/s for 11 s. Once
+    // the burst falls outside the 10 s window, the rate must be the steady
+    // 1 MB/s, not still inflated by the burst.
+    let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 500 * MB, now: 0 }).state;
+    let loaded = 100 * MB;
+    let r = updateDownloadRate(s, { file: 'a', loaded, total: 500 * MB, now: 1000 });
+    assert.equal(r.rate, 100 * MB);
+    for (let t = 2000; t <= 12000; t += 1000) {
+      loaded += 1 * MB;
+      r = updateDownloadRate(r.state, { file: 'a', loaded, total: 500 * MB, now: t });
+    }
+    // At t=12000 the window baseline is the t=2000 sample: 10 MB over 10 s.
+    assert.equal(r.rate, MB);
+    // The pre-burst and burst samples were pruned from the buffer.
+    assert.equal(r.state.samples[0].t, 2000);
   });
 
   test('no ETA once the file is complete', () => {
