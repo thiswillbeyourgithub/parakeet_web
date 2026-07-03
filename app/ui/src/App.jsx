@@ -18,6 +18,7 @@ import {
     getAdaptiveFingerprintLength, computePairFingerprintForRole
 } from './lib/remote-mic-handshake.js';
 import VerificationModal from './components/VerificationModal.jsx';
+import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
@@ -643,6 +644,10 @@ export default function App() {
   // was ready). Surfaces a small "waiting for the model" note.
   const [pendingCaptureCount, setPendingCaptureCount] = useState(0);
   const [verboseLog, setVerboseLog] = useState(false);
+  // Collect per-token decode introspection (logits, boost bonus, beam
+  // timeline) on every transcription and expose a per-entry "Debug" view.
+  // In-memory only: the payload is never persisted (slimTranscriptForPersist).
+  const [debugDecode, setDebugDecode] = useState(false);
   const [frameStride, setFrameStride] = useState(1);
   // Beam search width. 1 = greedy (default, fastest, behavior unchanged). Higher
   // widths explore alternative hypotheses (~Nx decode cost) and let phrase
@@ -1244,6 +1249,7 @@ export default function App() {
           savedWebgpuEncoderQuant,
           savedPreprocessor,
           savedVerboseLog,
+          savedDebugDecode,
           savedFrameStride,
           savedBeamWidth,
           savedMaesNumSteps,
@@ -1277,6 +1283,7 @@ export default function App() {
           loadSetting('webgpuEncoderQuant', 'fp16'),
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('verboseLog', false),
+          loadSetting('debugDecode', false),
           loadSetting('frameStride', 1),
           loadSetting('beamWidth', DEFAULT_BEAM_WIDTH),
           loadSetting('maesNumSteps', 2),
@@ -1328,6 +1335,7 @@ export default function App() {
         setWebgpuEncoderQuant(savedWebgpuEncoderQuant === 'fp32' ? 'fp32' : 'fp16');
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
+        setDebugDecode(!!savedDebugDecode);
         setFrameStride(savedFrameStride);
         setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(10, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
         setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 3);
@@ -1761,6 +1769,7 @@ export default function App() {
   // not all eighteen of them.
   usePersistedSetting('preprocessor', preprocessor, settingsLoaded);
   usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
+  usePersistedSetting('debugDecode', debugDecode, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
   usePersistedSetting('beamWidth', beamWidth, settingsLoaded);
   usePersistedSetting('maesNumSteps', maesNumSteps, settingsLoaded);
@@ -3856,6 +3865,9 @@ export default function App() {
         // the timestamp hover tooltip and the advanced perf panel.
         enableProfiling: true,
         phraseBoost: phraseBoostRef.current,
+        // Opt-in decode introspection for the per-entry Debug view (sidebar
+        // "Decode debug" checkbox). Off = zero overhead in the decoder.
+        collectDecodeDebug: debugDecode,
       }, async ({ chunkNum, totalChunks, result, partialText, elapsedMs }) => {
         // decode_ms scales with beam width; sum it for the single-beam estimate.
         totalDecodeMs += result.metrics?.decode_ms || 0;
@@ -3920,7 +3932,11 @@ export default function App() {
         duration: audioDuration, // original duration (without padding)
         wordCount: res.words?.length || 0,
         metrics: res.metrics,
-        words: res.words || [] // Store word-level data (timestamps)
+        words: res.words || [], // Store word-level data (timestamps)
+        // In-memory only (slimTranscriptForPersist allowlist drops it): the
+        // per-token decode-debug payload when the sidebar checkbox was on.
+        // Also clears a stale payload on a "Transcribe again" with debug off.
+        decodeDebug: res.decodeDebug ?? null
       };
 
       if (replaceId != null) {
@@ -4103,11 +4119,12 @@ export default function App() {
   const defaultBase = transcriptDisplayMode.includes('diarized') ? 'diarized' : 'raw';
   const defaultDictation = transcriptDisplayMode.includes('dictation');
 
-  // The structural base view for one entry ('raw'|'diarized'): its own override,
-  // else the global default decomposed.
+  // The structural base view for one entry ('raw'|'diarized'|'debug'): its own
+  // override, else the global default decomposed. 'debug' is per-entry only
+  // (never a global default) and callers gate it on trans.decodeDebug.
   function getEntryBase(id) {
     const m = entryDisplayModes[id];
-    if (m === 'diarized' || m === 'raw') return m;
+    if (m === 'diarized' || m === 'raw' || m === 'debug') return m;
     return defaultBase;
   }
   function setEntryBase(id, base) {
@@ -5534,6 +5551,17 @@ export default function App() {
                 <option value="full">{t('debugFullLogs')}</option>
               </select>
             </div>
+            <div className="setting-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={debugDecode}
+                  onChange={e => setDebugDecode(e.target.checked)}
+                />
+                {t('debugDecode')}
+                <InfoTooltip text={t('tooltipDebugDecode')} />
+              </label>
+            </div>
           </CollapsibleSection>
           </div>
 
@@ -6077,6 +6105,19 @@ export default function App() {
                           {t('cancel')}
                         </button>
                       )}
+                      {/* Decode-debug view: only offered when the entry carries a
+                          debug payload (run with the sidebar checkbox on; the
+                          payload is in-memory only, so reloaded entries never
+                          have it). */}
+                      {trans.decodeDebug && (
+                        <button
+                          onClick={() => setEntryBase(trans.id, 'debug')}
+                          className={`display-mode-button${entryBase === 'debug' ? ' active' : ''}`}
+                          title={t('debugModeHint')}
+                        >
+                          {t('debugMode')}
+                        </button>
+                      )}
                     </div>
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">
@@ -6171,7 +6212,9 @@ export default function App() {
 
                   <div className="history-text-container">
                     <div className="history-text">
-                      {entryBase === 'diarized' && hasDiarization(trans)
+                      {entryBase === 'debug' && trans.decodeDebug
+                        ? <DecodeDebugView debug={trans.decodeDebug} t={t} />
+                        : entryBase === 'diarized' && hasDiarization(trans)
                         ? renderDiarizedTranscript(trans)
                         /* Raw or dictation-cleaned text */
                         : <span style={{ whiteSpace: 'pre-wrap' }}>{getDisplayText(trans)}</span>}

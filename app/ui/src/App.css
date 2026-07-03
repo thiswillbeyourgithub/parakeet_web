@@ -1365,3 +1365,113 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .diar-speaker-5 { --diar-color: hsl(190 70% 42%); --diar-bg: hsl(190 70% 42% / 0.12); }
 .diar-speaker-6 { --diar-color: hsl(320 60% 55%); --diar-bg: hsl(320 60% 55% / 0.12); }
 .diar-speaker-7 { --diar-color: hsl(95 50% 42%);  --diar-bg: hsl(95 50% 42% / 0.14); }
+
+/* --- Decode-debug view (per-entry "Debug" base mode) --------------------- */
+/* Token pills + inline detail card fed by transcribe()'s collectDecodeDebug
+   payload. Colours ride the theme variables so dark mode needs no overrides. */
+.decode-debug { font-size: 0.9rem; }
+.decode-debug__summary {
+  color: var(--text-subtle);
+  margin-bottom: 0.5rem;
+}
+.decode-debug__chunk-header {
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.75rem 0 0.25rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.5rem;
+}
+.decode-debug__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  row-gap: 4px;
+  align-items: baseline;
+}
+.debug-pill {
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.3rem;
+  cursor: pointer;
+  line-height: 1.4;
+}
+/* Word-start pieces (SentencePiece '▁') open a visible word gap. */
+.debug-pill--wordstart { margin-left: 0.45rem; }
+.decode-debug__pills .debug-pill:first-child { margin-left: 0; }
+/* Confidence tint on the bottom edge: red = the decoder hesitated here. */
+.debug-pill--conf-low  { border-bottom: 3px solid hsl(348 78% 52% / 0.8); }
+.debug-pill--conf-mid  { border-bottom: 3px solid hsl(38 92% 48% / 0.8); }
+.debug-pill--conf-high { border-bottom: 3px solid hsl(150 60% 40% / 0.55); }
+/* Phrase-boosted emissions. */
+.debug-pill--boosted {
+  background: var(--accent-soft-bg);
+  border-color: var(--accent-soft-border);
+  color: var(--accent-soft-text);
+}
+.debug-pill:hover { border-color: var(--border-strong); }
+.debug-pill.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.decode-debug__card {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.decode-debug__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.decode-debug__metric-label {
+  display: block;
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.decode-debug__metric-value {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+.decode-debug__subtitle {
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  margin: 0.6rem 0 0.25rem;
+}
+/* Wide tables scroll inside the card, never the page. */
+.decode-debug__table-wrap { overflow-x: auto; }
+.decode-debug__table {
+  border-collapse: collapse;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+}
+.decode-debug__table th {
+  text-align: left;
+  color: var(--text-subtle);
+  font-weight: 600;
+  padding: 0.15rem 0.75rem 0.15rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.decode-debug__table td {
+  padding: 0.15rem 0.75rem 0.15rem 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.decode-debug__row--chosen td {
+  background: var(--accent-soft-bg);
+  color: var(--accent-soft-text);
+}
+.decode-debug__tail { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; }
