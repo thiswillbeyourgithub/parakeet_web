@@ -55,15 +55,19 @@ export const MAX_PHRASE_WEIGHT = 10;
  * Default min-p gate for a phrase (see {@link BoostingTrie#applyBoost}). A phrase
  * token only receives its boost when its probability is at least this fraction of
  * the model's top token for that step, so boosting nudges the ranking without
- * forcing a token the model ranked far down. 0.2 = "at least 20% as likely as the
- * top candidate". Overridable per-phrase via the `:weight:minp` suffix.
+ * forcing a token the model ranked far down. 0.025 = "at least 2.5% as likely as
+ * the top candidate". Overridable per-phrase via the `:weight:minp` suffix, or
+ * globally by the decode-time min-p override ({@link BoostingTrie#minpOverride}).
  *
- * Tuned to 0.2 from a grid search (NeMo perso benchmark, beam 5, strength 1):
- * versus the looser 0.05, min-p 0.2 best protects off-domain (general French)
- * WER from boost-driven insertions while keeping the in-domain gain, at a
- * negligible CER cost. See the in-repo grid-search benchmark notes.
+ * Deliberately loose: a strict gate silently drops a wanted term when the model
+ * ranks its first token only moderately below the top candidate (e.g. a drug
+ * name the model half-heard), which is the failure mode the "Min-p gate override"
+ * knob was added to work around. The default therefore favours recall and leans
+ * on the per-phrase weight / global override to tighten when needed. (An earlier
+ * default of 0.2 came from a grid search that optimised off-domain WER; it was
+ * loosened here in favour of in-domain recall.)
  */
-export const DEFAULT_BOOST_MIN_P = 0.2;
+export const DEFAULT_BOOST_MIN_P = 0.025;
 
 /**
  * The full augmentation set, applied to a phrase that has no explicit `:AUG`
