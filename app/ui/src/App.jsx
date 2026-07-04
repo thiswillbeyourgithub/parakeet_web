@@ -3711,11 +3711,6 @@ export default function App() {
       setStatus(`${t('transcribingFile')} "${safeName}"…`);
     }
 
-    // Hoisted so the outer finally can close the AudioContext even if the
-    // transcription path throws. The decoded native-rate AudioBuffer plus
-    // the audio thread can hold hundreds of MB for long files; leaving them
-    // alive while the user transcribes a sequence of files balloons memory.
-    let audioCtx = null;
     try {
       console.log(`[Transcribe] Starting transcription for file: "${file.name}"`);
       console.log(`[Transcribe] File details:`, {
@@ -3729,66 +3724,74 @@ export default function App() {
       let buf = await file.arrayBuffer();
       console.log(`[Transcribe] ArrayBuffer loaded, size: ${buf.byteLength} bytes`);
 
-      console.log(`[Transcribe] Creating AudioContext at native sample rate...`);
-      audioCtx = new AudioContext();  // Use native rate
-      console.log(`[Transcribe] AudioContext created:`, {
-        sampleRate: audioCtx.sampleRate,
-        state: audioCtx.state,
-        baseLatency: audioCtx.baseLatency
-      });
-
-      console.log(`[Transcribe] Decoding audio data...`);
-      let decoded = await audioCtx.decodeAudioData(buf);
-      buf = null; // the ArrayBuffer is no longer needed once decoded
-      console.log(`[Transcribe] Audio decoded successfully at native rate:`, {
-        duration: `${decoded.duration.toFixed(2)}s`,
-        numberOfChannels: decoded.numberOfChannels,
-        sampleRate: decoded.sampleRate,
-        length: decoded.length
-      });
-
-      // Properly resample to 16kHz using OfflineAudioContext
       const targetSampleRate = 16000;
-      console.log(`[Transcribe] Resampling from ${decoded.sampleRate}Hz to ${targetSampleRate}Hz...`);
-      
-      // Yield to UI before heavy resampling operation
+
+      // Single-pass decode + resample. decodeAudioData on a BaseAudioContext
+      // resamples straight to that context's sampleRate, so decoding on an
+      // OfflineAudioContext already at 16 kHz goes source-rate -> 16 kHz in ONE
+      // pass. The old path opened a realtime AudioContext at the OS device rate
+      // (usually 48 kHz), decoded there, then resampled 48 kHz -> 16 kHz in a
+      // second OfflineAudioContext: two cascaded resamples (e.g. 44.1 -> 48 ->
+      // 16) that smear the spectrum. One high-quality pass is strictly better
+      // and needs no realtime AudioContext (no audio thread to close).
+      console.log(`[Transcribe] Decoding + resampling to ${targetSampleRate}Hz in one pass...`);
+      const resampleStart = performance.now();
+
+      // Yield to UI before the heavy decode/resample.
       await new Promise(resolve => setTimeout(resolve, 0));
       if (!anotherRunActive) {
         setStatus(`${t('processingResampling')} "${safeName}"`);
         setProgressText(t('resamplingTo16k'));
       }
 
-      const resampleStart = performance.now();
-      const offlineCtx = new OfflineAudioContext(
-        1,  // mono
-        Math.ceil(decoded.duration * targetSampleRate),
-        targetSampleRate
-      );
-      
-      const source = offlineCtx.createBufferSource();
-      source.buffer = decoded;
-      source.connect(offlineCtx.destination);
-      source.start();
+      // length must be >= 1; the decoded buffer's length is independent of it.
+      const decodeCtx = new OfflineAudioContext(1, 1, targetSampleRate);
+      let decoded = await decodeCtx.decodeAudioData(buf);
+      buf = null; // the ArrayBuffer is no longer needed once decoded
+      console.log(`[Transcribe] Audio decoded:`, {
+        duration: `${decoded.duration.toFixed(2)}s`,
+        numberOfChannels: decoded.numberOfChannels,
+        sampleRate: decoded.sampleRate,
+        length: decoded.length
+      });
 
-      let resampled = await offlineCtx.startRendering();
+      let pcm;
+      if (decoded.sampleRate === targetSampleRate && decoded.numberOfChannels === 1) {
+        // Already mono at 16 kHz: the decoded samples are the PCM. pcm is a view
+        // onto decoded's only channel; dropping the AudioBuffer wrapper below
+        // keeps the storage alive through pcm, so this holds no extra memory.
+        pcm = decoded.getChannelData(0);
+      } else {
+        // Downmix to mono (spec average of the channels) in one OfflineAudioContext
+        // render at 16 kHz. If a browser ignored the decode context's rate and
+        // decoded at the device rate instead, this same render also resamples to
+        // 16 kHz, i.e. the old two-pass path as a rare fallback (never on the
+        // Chromium the app targets, which honours the offline decode rate).
+        const mixCtx = new OfflineAudioContext(
+          1,  // mono
+          Math.ceil(decoded.duration * targetSampleRate),
+          targetSampleRate
+        );
+        const source = mixCtx.createBufferSource();
+        source.buffer = decoded;
+        source.connect(mixCtx.destination);
+        source.start();
+        let mixed = await mixCtx.startRendering();
+        pcm = mixed.getChannelData(0);
+        mixed = null;
+      }
 
-      // Yield to UI after heavy resampling operation
+      // Yield to UI after the heavy decode/resample.
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      const pcm = resampled.getChannelData(0);
-
-      // The native-rate AudioBuffer is large (often >100MB for hour-long
-      // files at 48kHz stereo). Now that pcm is in hand, drop references so
-      // GC can reclaim them before the chunking loop allocates its own
-      // working memory. Closing audioCtx also signals the audio thread it
-      // can release the decoded buffer it still holds.
+      // The decoded AudioBuffer can be large (hundreds of MB for long files, and
+      // holds every source channel). pcm keeps only the storage it views alive,
+      // so drop the wrapper to let GC reclaim the rest before the chunking loop
+      // allocates its own working memory.
       decoded = null;
-      resampled = null;
-      try { await audioCtx.close(); } catch (_) { /* already closed */ }
-      audioCtx = null;
 
       const resampleSeconds = (performance.now() - resampleStart) / 1000;
-      console.log(`[Transcribe] Resampled successfully to ${targetSampleRate}Hz in ${resampleSeconds.toFixed(2)}s`);
+      console.log(`[Transcribe] Decoded + resampled to ${targetSampleRate}Hz in ${resampleSeconds.toFixed(2)}s`);
       const audioDuration = pcm.length / 16000;
       
       // Find min/max without spreading to avoid "too many arguments" error
@@ -3836,14 +3839,11 @@ export default function App() {
       // F-124: file.name is OS-controlled and can contain bidi-override or
       // control codepoints. safeName is already sanitized above.
       alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
-    } finally {
-      // If we threw before the explicit close above, the AudioContext is
-      // still holding the decoded buffer + an audio thread. Make sure it
-      // shuts down on every exit path.
-      if (audioCtx) {
-        try { await audioCtx.close(); } catch (_) { /* already closed */ }
-      }
     }
+    // No finally/close needed: decode + resample now runs entirely on
+    // OfflineAudioContexts, which hold no realtime audio thread. Their decoded
+    // buffers are dropped above (decoded = null) or become GC-eligible when
+    // this scope unwinds, so there is nothing to tear down on the error path.
   }
 
   // Format a transcription error into a user-facing alert string. Shared by the

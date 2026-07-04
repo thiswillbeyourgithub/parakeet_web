@@ -44,7 +44,7 @@ test('a file uploaded while another transcription runs is queued and transcribed
   let transcribeRuns = 0;
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
-    if (m.text().includes('[Transcribe] Resampled successfully')) resampleLogs += 1;
+    if (m.text().includes('[Transcribe] Decoded + resampled')) resampleLogs += 1;
     if (m.text().includes('[Transcribe] Total time for entire audio')) transcribeRuns += 1;
   });
 
