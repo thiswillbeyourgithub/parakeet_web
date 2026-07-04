@@ -5,7 +5,7 @@ import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
-import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
+import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates } from './lib/audio.js';
 import { decodeToPcm16kFfmpeg, decodeToPcm16kWebAudio } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
@@ -2595,20 +2595,18 @@ export default function App() {
       console.log('[Record] Microphone access granted');
       console.log('[Record] Actual mic settings:', settings);
 
-      // Try to create an AudioContext that matches the mic's actual sample rate.
-      // Some devices (e.g. Philips SpeechMike) use non-standard rates (16k, 22.05k, 44.1k)
-      // and connecting AudioNodes across mismatched sample rates throws an error.
-      // Strategy: try the reported rate first, then SpeechMike-specific rates, then
-      // fall back to the browser default and infer the actual rate from the context.
+      // Open the recording AudioContext at the mic's NATIVE sample rate so the
+      // context matches the mic; resamplePcmTo16k (below) then owns the 16 kHz
+      // conversion offline. Chromium reports the native rate via
+      // settings.sampleRate; Firefox reports nothing, so buildRecordingRateCandidates
+      // tries the browser default (== native) before the SpeechMike-specific low
+      // rates. This avoids forcing a 16 kHz context on a normal Firefox mic, which
+      // Firefox silently relabels into ~3x slowed-down audio (see the helper's
+      // docstring and mdn/browser-compat-data #16213). SpeechMike rates remain as
+      // fallbacks; connecting AudioNodes across mismatched rates can throw, which
+      // the try/catch below skips past.
       const reportedRate = settings.sampleRate;
-      const ratesToTry = [
-        reportedRate,           // what the browser reports (may be undefined/0)
-        16000, 22050, 44100,    // SpeechMike-specific rates
-        48000,                  // common default
-        undefined,              // browser default (no sampleRate option)
-      ].filter((r, i, a) => r && a.indexOf(r) === i); // dedupe, drop falsy
-      // Always include a browser-default fallback at the end
-      ratesToTry.push(undefined);
+      const ratesToTry = buildRecordingRateCandidates(reportedRate);
 
       let audioCtx = null;
       let sourceNode = null;

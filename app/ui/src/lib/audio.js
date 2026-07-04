@@ -35,6 +35,45 @@ export function createLevelMonitor(audioCtx, sourceNode, onLevel) {
 }
 
 /**
+ * Build the ordered list of sample rates to try when opening the recording
+ * AudioContext. Best candidate first.
+ *
+ * We want to capture at the mic's NATIVE rate so the recording context matches
+ * the mic; the offline resamplePcmTo16k pass then owns the 16 kHz conversion
+ * (a dedicated OfflineAudioContext with no live-stream rate mismatch). Chromium
+ * reports the native rate via getSettings().sampleRate, so it is tried first.
+ * Firefox reports NOTHING there, so we fall back to the browser default (which
+ * IS the native rate) BEFORE the SpeechMike-specific low rates.
+ *
+ * Why the order matters: forcing a low rate (e.g. 16 kHz) on a normal Firefox
+ * mic used to be the first attempt (reportedRate was undefined, so 16000 led
+ * the list). Firefox no longer throws when the context rate mismatches the mic
+ * rate; it silently relabels the downsampled stream, so a 48 kHz mic captured
+ * in a 16 kHz context came out ~3x SLOWED DOWN (the WAV declared 16 kHz while
+ * carrying 48 kHz-worth of samples). See mdn/browser-compat-data #16213.
+ * Trying the browser default first keeps Firefox on the native rate and avoids
+ * the mismatch entirely. The SpeechMike rates (16k/22.05k/44.1k) stay as
+ * fallbacks for devices whose native rate the browser default cannot open
+ * (connecting AudioNodes across mismatched rates can still throw there, which
+ * the caller's try/catch skips past).
+ *
+ * `undefined` in the returned array means "browser default (no sampleRate
+ * option)". The caller passes `rate ? { sampleRate: rate } : undefined` to the
+ * AudioContext constructor and reads back the actual ctx.sampleRate.
+ *
+ * @param {number|undefined} reportedRate settings.sampleRate, or undefined.
+ * @returns {Array<number|undefined>} Sample rates to try, best first.
+ */
+export function buildRecordingRateCandidates(reportedRate) {
+  const out = [];
+  const push = (r) => { if (!out.some((x) => x === r)) out.push(r); };
+  push(reportedRate || undefined); // mic's reported native rate, if the browser gives one
+  push(undefined);                 // browser default (== native rate when unknown, e.g. Firefox)
+  for (const r of [16000, 22050, 44100, 48000]) push(r); // SpeechMike-specific fallbacks
+  return out;
+}
+
+/**
  * Resample a Float32 PCM buffer to 16kHz mono via OfflineAudioContext.
  * If the source is already 16kHz, returns the input unchanged.
  *
