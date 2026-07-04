@@ -64,7 +64,7 @@ test('WASM fp32 fails loudly (no silent int8 downgrade) when no source ships the
   // Opt into fp32 via the real encoder-precision radio (offered on WASM and WebGPU; here on WASM).
   await page.locator('.settings-toggle').click();
   // The encoder-precision radios live in the (collapsed) Engine section.
-  await expandSettingsSection(page, 'Engine');
+  await expandSettingsSection(page, 'Model and performance');
   const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
   await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await fp32Radio.check();

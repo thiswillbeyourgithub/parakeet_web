@@ -5005,6 +5005,70 @@ export default function App() {
               </p>
             </div>
           )}
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
+                {t('autoCopyToClipboard')}
+                <InfoTooltip text={t('tooltipAutoCopy')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={persistTranscripts}
+                  onChange={e => {
+                    const next = e.target.checked;
+                    setPersistTranscripts(next);
+                    // Toggle OFF: scrub the on-disk copy immediately so the
+                    // user's existing history doesn't sit there forever.
+                    // usePersistedSetting's gate already stops new writes.
+                    if (!next) forgetPersistedTranscripts();
+                  }}
+                />
+                {t('persistTranscripts')}
+                <InfoTooltip text={t('tooltipPersistTranscripts')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('defaultTranscriptDisplay')}:
+                <InfoTooltip text={t('tooltipDisplayMode')} />
+              </span>
+              <select
+                value={transcriptDisplayMode}
+                onChange={e => setTranscriptDisplayMode(e.target.value)}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="raw">{t('raw')}</option>
+                {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
+                {/* Grey out the Speakers default options when the diarization
+                    models could not be loaded; the title surfaces the reason on
+                    hover in the open dropdown. */}
+                <option value="diarized" disabled={!!diarizationModelError} title={diarizationModelError ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})` : undefined}>{t('speakers')}</option>
+                {dictationRegexRules.length > 0 && <option value="diarized+dictation" disabled={!!diarizationModelError} title={diarizationModelError ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})` : undefined}>{t('speakers')} + {t('dictationExp')}</option>}
+              </select>
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('numSpeakers')}:
+                <InfoTooltip text={t('tooltipNumSpeakers')} />
+              </span>
+              <select
+                value={diarizationNumSpeakers}
+                onChange={e => setDiarizationNumSpeakers(parseInt(e.target.value, 10) || 0)}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+              >
+                <option value="0">{t('auto')}</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
           </CollapsibleSection>
 
           <CollapsibleSection id="recording" title={t('settingsGroupRecording')} open={!!sectionsOpen.recording} onToggle={toggleSection}>
@@ -5096,334 +5160,6 @@ export default function App() {
                 </p>
               )}
             </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection id="output" title={t('settingsGroupOutput')} open={!!sectionsOpen.output} onToggle={toggleSection}>
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={autoCopyToClipboard} onChange={e => setAutoCopyToClipboard(e.target.checked)} />
-                {t('autoCopyToClipboard')}
-                <InfoTooltip text={t('tooltipAutoCopy')} />
-              </label>
-            </div>
-
-            <div className="setting-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={persistTranscripts}
-                  onChange={e => {
-                    const next = e.target.checked;
-                    setPersistTranscripts(next);
-                    // Toggle OFF: scrub the on-disk copy immediately so the
-                    // user's existing history doesn't sit there forever.
-                    // usePersistedSetting's gate already stops new writes.
-                    if (!next) forgetPersistedTranscripts();
-                  }}
-                />
-                {t('persistTranscripts')}
-                <InfoTooltip text={t('tooltipPersistTranscripts')} />
-              </label>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('defaultTranscriptDisplay')}:
-                <InfoTooltip text={t('tooltipDisplayMode')} />
-              </span>
-              <select
-                value={transcriptDisplayMode}
-                onChange={e => setTranscriptDisplayMode(e.target.value)}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
-              >
-                <option value="raw">{t('raw')}</option>
-                {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
-                {/* Grey out the Speakers default options when the diarization
-                    models could not be loaded; the title surfaces the reason on
-                    hover in the open dropdown. */}
-                <option value="diarized" disabled={!!diarizationModelError} title={diarizationModelError ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})` : undefined}>{t('speakers')}</option>
-                {dictationRegexRules.length > 0 && <option value="diarized+dictation" disabled={!!diarizationModelError} title={diarizationModelError ? `${t('diarizeModelsUnavailable')} (${diarizationModelError})` : undefined}>{t('speakers')} + {t('dictationExp')}</option>}
-              </select>
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('numSpeakers')}:
-                <InfoTooltip text={t('tooltipNumSpeakers')} />
-              </span>
-              <select
-                value={diarizationNumSpeakers}
-                onChange={e => setDiarizationNumSpeakers(parseInt(e.target.value, 10) || 0)}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
-              >
-                <option value="0">{t('auto')}</option>
-                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection id="engine" title={t('settingsGroupEngine')} open={!!sectionsOpen.engine} onToggle={toggleSection}>
-            <p style={{ marginTop: 0 }}>
-              <strong>{t('model')}:</strong>{' '}
-              {/* Link to the HuggingFace model page whenever weights come from HF
-                  ('hf' or 'both'); in 'local' mode there is no HF page to open,
-                  so show the repo id as plain text. */}
-              {modelSource !== 'local'
-                ? <a href={`https://huggingface.co/${repoId}`} target="_blank" rel="noopener noreferrer">{repoId}</a>
-                : repoId}
-              {' '}<span style={{ fontSize: '0.9em', color: 'var(--text-subtle)' }}>(nemo128)</span>
-            </p>
-
-            <div className="setting-row">
-              <label>
-                <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
-                {t('chunkLongAudio')}
-                <InfoTooltip text={t('tooltipChunking')} />
-              </label>
-              {enableChunking && (
-                <div style={{ marginTop: '0.25rem', width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                    {t('chunkDuration')} (s):
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="15"
-                    max="300"
-                    step="5"
-                    value={chunkDuration}
-                    onChange={e => {
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setChunkDuration(Math.max(15, Math.min(300, v)));
-                    }}
-                    style={{ width: '5rem' }}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('backend')}:
-                <InfoTooltip text={t('tooltipBackend')} />
-              </span>
-              <div className="setting-options">
-                <label className={modelSwapBlocked ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked} />
-                  {t('wasmCpu')}
-                </label>
-                <label className={modelSwapBlocked || webgpuAvailable === false ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked || webgpuAvailable === false} />
-                  {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
-                  {webgpuAvailable === false && (
-                    <InfoTooltip text={t(`webgpuReason_${webgpuUnavailableReason || 'noAdapter'}`)} />
-                  )}
-                </label>
-              </div>
-            </div>
-
-            {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
-              // Single fixed list (int8 / fp16 / fp32); only the greying moves
-              // with the backend. int8 has no GPU encoder kernel (unavailable on
-              // WebGPU); fp16 overflows the WASM heap (unavailable on WASM); fp32
-              // runs on both. The remembered selection is per-backend, so WASM
-              // keeps its int8<->fp32 choice and WebGPU its fp16<->fp32 choice.
-              const isWebgpu = backend.startsWith('webgpu');
-              const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
-              const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
-              // fp16 needs the GPU's shader-f16 feature; when an adapter resolved
-              // WITHOUT it, fp16 can't run so it's greyed out and the load
-              // silently resolves to fp32 (hub.js). null = unknown -> leave fp16
-              // selectable (assume supported, matching the resolver default).
-              const webgpuNoF16 = isWebgpu && webgpuShaderF16 === false;
-              // Show the precision that will ACTUALLY load: fp32 when fp16 is
-              // blocked, so the radio doesn't sit on a disabled fp16 option.
-              const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
-              const rows = [
-                { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                // The lite int8 encoder is a WASM-only build (no GPU int8 kernel);
-                // opt-in, and hub.js throws QuantUnavailableError if the repo
-                // doesn't ship encoder-model.int8.lite.onnx (no silent downgrade).
-                { value: 'int8-lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : t('precisionUnavailableWasm') },
-                { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
-              ];
-              return (
-                <div className="setting-row">
-                  <span className="setting-label">
-                    {t('encoderPrecision')}:
-                    <InfoTooltip text={t('tooltipEncoderPrecision')} />
-                  </span>
-                  <div className="setting-options">
-                    {rows.map(r => {
-                      const disabled = modelSwapBlocked || !r.available;
-                      return (
-                        <label key={r.value} className={disabled ? 'disabled-option' : ''}>
-                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && effectiveQuant === r.value} onChange={e => { armModelReloadIfLoaded(); setQuant(e.target.value); }} disabled={disabled} />
-                          {r.label}{!r.available ? ` ${r.note}` : ''}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {(backend === 'wasm' || backend.startsWith('webgpu')) && (
-              <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                  {t('cpuThreads')} (1-{maxCores}):
-                  <InfoTooltip text={t('tooltipCpuThreads')} />
-                </span>
-                <input
-                  type="number"
-                  name="cpuThreads"
-                  inputMode="numeric"
-                  min="1"
-                  max={maxCores}
-                  value={cpuThreads}
-                  onChange={e=>{
-                    const v = Number(e.target.value);
-                    if (Number.isFinite(v)) setCpuThreads(Math.max(1, Math.min(maxCores, v)));
-                  }}
-                  onBlur={() => {
-                    // Q1: reload with the new thread count once a model is
-                    // loaded, but only when the committed value truly changed
-                    // (a number field can't reload sanely on every keystroke).
-                    if (modelRef.current && cpuThreads !== loadedCpuThreadsRef.current) loadModel();
-                  }}
-                  disabled={modelSwapBlocked}
-                  style={{ width: '4.5rem', opacity: modelSwapBlocked ? 0.5 : 1 }}
-                />
-              </div>
-            )}
-
-          </CollapsibleSection>
-
-          <CollapsibleSection id="decoding" title={t('settingsGroupDecoding')} open={!!sectionsOpen.decoding} onToggle={toggleSection}>
-            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-              <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                {t('frameStride')} (1-4):
-                <InfoTooltip text={t('tooltipFrameStride')} />
-              </span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                max="4"
-                value={frameStride}
-                onChange={e=>{
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setFrameStride(Math.max(1, Math.min(4, v)));
-                }}
-                style={{ width: '4.5rem' }}
-              />
-            </div>
-
-            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-              <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                {t('beamWidth')} (1-10):
-                <InfoTooltip text={t('tooltipBeamWidth')} />
-              </span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                max="10"
-                value={beamWidth}
-                onChange={e=>{
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(10, Math.round(v))));
-                }}
-                style={{ width: '4.5rem' }}
-              />
-            </div>
-
-            {/* MAES knobs: only meaningful when beamWidth>1 (the decoder ignores
-                them at width 1, which is plain greedy), so hide them otherwise. */}
-            {beamWidth > 1 && (
-              <>
-                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                    {t('maesNumSteps')}:
-                    <InfoTooltip text={t('tooltipMaesNumSteps')} />
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max="10"
-                    value={maesNumSteps}
-                    onChange={e=>{
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setMaesNumSteps(Math.max(1, Math.min(10, Math.round(v))));
-                    }}
-                    style={{ width: '4.5rem' }}
-                  />
-                </div>
-
-                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                    {t('maesExpansionBeta')}:
-                    <InfoTooltip text={t('tooltipMaesExpansionBeta')} />
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    max="10"
-                    value={maesExpansionBeta}
-                    onChange={e=>{
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setMaesExpansionBeta(Math.max(0, Math.min(10, Math.round(v))));
-                    }}
-                    style={{ width: '4.5rem' }}
-                  />
-                </div>
-
-                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                    {t('maesExpansionGamma')}:
-                    <InfoTooltip text={t('tooltipMaesExpansionGamma')} />
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0.1"
-                    max="20"
-                    step="0.1"
-                    value={maesExpansionGamma}
-                    onChange={e=>{
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v) && v > 0) setMaesExpansionGamma(Math.min(20, v));
-                    }}
-                    style={{ width: '4.5rem' }}
-                  />
-                </div>
-
-                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                    {t('maesPrefixAlpha')}:
-                    <InfoTooltip text={t('tooltipMaesPrefixAlpha')} />
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    max="5"
-                    value={maesPrefixAlpha}
-                    onChange={e=>{
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setMaesPrefixAlpha(Math.max(0, Math.min(5, Math.round(v))));
-                    }}
-                    style={{ width: '4.5rem' }}
-                  />
-                </div>
-              </>
-            )}
-
           </CollapsibleSection>
 
           <CollapsibleSection id="boosting" title={t('settingsGroupBoosting')} open={!!sectionsOpen.boosting} onToggle={toggleSection}>
@@ -5591,6 +5327,265 @@ export default function App() {
                     onChange={e=>{
                       const v = Number(e.target.value);
                       if (Number.isFinite(v)) setBoostDepthScaling(Math.max(0, Math.min(5, v)));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+              </>
+            )}
+
+          </CollapsibleSection>
+
+          <CollapsibleSection id="engine" title={t('settingsGroupEngine')} open={!!sectionsOpen.engine} onToggle={toggleSection}>
+            <p style={{ marginTop: 0 }}>
+              <strong>{t('model')}:</strong>{' '}
+              {/* Link to the HuggingFace model page whenever weights come from HF
+                  ('hf' or 'both'); in 'local' mode there is no HF page to open,
+                  so show the repo id as plain text. */}
+              {modelSource !== 'local'
+                ? <a href={`https://huggingface.co/${repoId}`} target="_blank" rel="noopener noreferrer">{repoId}</a>
+                : repoId}
+              {' '}<span style={{ fontSize: '0.9em', color: 'var(--text-subtle)' }}>(nemo128)</span>
+            </p>
+
+            <div className="setting-row">
+              <label>
+                <input type="checkbox" checked={enableChunking} onChange={e => setEnableChunking(e.target.checked)} />
+                {t('chunkLongAudio')}
+                <InfoTooltip text={t('tooltipChunking')} />
+              </label>
+              {enableChunking && (
+                <div style={{ marginTop: '0.25rem', width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('chunkDuration')} (s):
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="15"
+                    max="300"
+                    step="5"
+                    value={chunkDuration}
+                    onChange={e => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setChunkDuration(Math.max(15, Math.min(300, v)));
+                    }}
+                    style={{ width: '5rem' }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('backend')}:
+                <InfoTooltip text={t('tooltipBackend')} />
+              </span>
+              <div className="setting-options">
+                <label className={modelSwapBlocked ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked} />
+                  {t('wasmCpu')}
+                </label>
+                <label className={modelSwapBlocked || webgpuAvailable === false ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked || webgpuAvailable === false} />
+                  {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
+                  {webgpuAvailable === false && (
+                    <InfoTooltip text={t(`webgpuReason_${webgpuUnavailableReason || 'noAdapter'}`)} />
+                  )}
+                </label>
+              </div>
+            </div>
+
+            {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
+              // Single fixed list (int8 / fp16 / fp32); only the greying moves
+              // with the backend. int8 has no GPU encoder kernel (unavailable on
+              // WebGPU); fp16 overflows the WASM heap (unavailable on WASM); fp32
+              // runs on both. The remembered selection is per-backend, so WASM
+              // keeps its int8<->fp32 choice and WebGPU its fp16<->fp32 choice.
+              const isWebgpu = backend.startsWith('webgpu');
+              const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
+              const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
+              // fp16 needs the GPU's shader-f16 feature; when an adapter resolved
+              // WITHOUT it, fp16 can't run so it's greyed out and the load
+              // silently resolves to fp32 (hub.js). null = unknown -> leave fp16
+              // selectable (assume supported, matching the resolver default).
+              const webgpuNoF16 = isWebgpu && webgpuShaderF16 === false;
+              // Show the precision that will ACTUALLY load: fp32 when fp16 is
+              // blocked, so the radio doesn't sit on a disabled fp16 option.
+              const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
+              const rows = [
+                { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
+                // The lite int8 encoder is a WASM-only build (no GPU int8 kernel);
+                // opt-in, and hub.js throws QuantUnavailableError if the repo
+                // doesn't ship encoder-model.int8.lite.onnx (no silent downgrade).
+                { value: 'int8-lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
+                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : t('precisionUnavailableWasm') },
+                { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
+              ];
+              return (
+                <div className="setting-row">
+                  <span className="setting-label">
+                    {t('encoderPrecision')}:
+                    <InfoTooltip text={t('tooltipEncoderPrecision')} />
+                  </span>
+                  <div className="setting-options">
+                    {rows.map(r => {
+                      const disabled = modelSwapBlocked || !r.available;
+                      return (
+                        <label key={r.value} className={disabled ? 'disabled-option' : ''}>
+                          <input type="radio" name="encoderQuant" value={r.value} checked={r.available && effectiveQuant === r.value} onChange={e => { armModelReloadIfLoaded(); setQuant(e.target.value); }} disabled={disabled} />
+                          {r.label}{!r.available ? ` ${r.note}` : ''}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {(backend === 'wasm' || backend.startsWith('webgpu')) && (
+              <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                  {t('cpuThreads')} (1-{maxCores}):
+                  <InfoTooltip text={t('tooltipCpuThreads')} />
+                </span>
+                <input
+                  type="number"
+                  name="cpuThreads"
+                  inputMode="numeric"
+                  min="1"
+                  max={maxCores}
+                  value={cpuThreads}
+                  onChange={e=>{
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v)) setCpuThreads(Math.max(1, Math.min(maxCores, v)));
+                  }}
+                  onBlur={() => {
+                    // Q1: reload with the new thread count once a model is
+                    // loaded, but only when the committed value truly changed
+                    // (a number field can't reload sanely on every keystroke).
+                    if (modelRef.current && cpuThreads !== loadedCpuThreadsRef.current) loadModel();
+                  }}
+                  disabled={modelSwapBlocked}
+                  style={{ width: '4.5rem', opacity: modelSwapBlocked ? 0.5 : 1 }}
+                />
+              </div>
+            )}
+
+            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('frameStride')} (1-4):
+                <InfoTooltip text={t('tooltipFrameStride')} />
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="4"
+                value={frameStride}
+                onChange={e=>{
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setFrameStride(Math.max(1, Math.min(4, v)));
+                }}
+                style={{ width: '4.5rem' }}
+              />
+            </div>
+
+            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('beamWidth')} (1-10):
+                <InfoTooltip text={t('tooltipBeamWidth')} />
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="10"
+                value={beamWidth}
+                onChange={e=>{
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(10, Math.round(v))));
+                }}
+                style={{ width: '4.5rem' }}
+              />
+            </div>
+
+            {/* MAES knobs: only meaningful when beamWidth>1 (the decoder ignores
+                them at width 1, which is plain greedy), so hide them otherwise. */}
+            {beamWidth > 1 && (
+              <>
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesNumSteps')}:
+                    <InfoTooltip text={t('tooltipMaesNumSteps')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="10"
+                    value={maesNumSteps}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setMaesNumSteps(Math.max(1, Math.min(10, Math.round(v))));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesExpansionBeta')}:
+                    <InfoTooltip text={t('tooltipMaesExpansionBeta')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max="10"
+                    value={maesExpansionBeta}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setMaesExpansionBeta(Math.max(0, Math.min(10, Math.round(v))));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesExpansionGamma')}:
+                    <InfoTooltip text={t('tooltipMaesExpansionGamma')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.1"
+                    max="20"
+                    step="0.1"
+                    value={maesExpansionGamma}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v) && v > 0) setMaesExpansionGamma(Math.min(20, v));
+                    }}
+                    style={{ width: '4.5rem' }}
+                  />
+                </div>
+
+                <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                    {t('maesPrefixAlpha')}:
+                    <InfoTooltip text={t('tooltipMaesPrefixAlpha')} />
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max="5"
+                    value={maesPrefixAlpha}
+                    onChange={e=>{
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) setMaesPrefixAlpha(Math.max(0, Math.min(5, Math.round(v))));
                     }}
                     style={{ width: '4.5rem' }}
                   />

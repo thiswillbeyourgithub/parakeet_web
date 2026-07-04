@@ -38,11 +38,11 @@ test('model params stay editable after load and a change live-swaps the model', 
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
   expect(disposeLogs, 'first load must not dispose (no prior model)').toBe(0);
 
-  // Open settings and reveal the Engine & performance group where the model
+  // Open settings and reveal the Model and performance group where the model
   // params now live.
   await page.locator('.settings-toggle').click();
   await expect(page.locator('.settings-sidebar')).toBeVisible();
-  await expandSettingsSection(page, 'Engine');
+  await expandSettingsSection(page, 'Model and performance');
 
   // The crux of "make them usable": with the model loaded, the backend radio,
   // an encoder-precision radio, and the CPU-threads field are all ENABLED

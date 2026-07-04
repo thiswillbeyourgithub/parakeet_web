@@ -71,7 +71,7 @@ test('transcribes JFK English (MP3) with the WASM int8 lite encoder', async ({ p
   // radios live in the (collapsed) Engine section. Driving the radio directly is
   // race-free (synchronous React state) and exercises the real UI path.
   await page.locator('.settings-toggle').click();
-  await expandSettingsSection(page, 'Engine');
+  await expandSettingsSection(page, 'Model and performance');
   const liteRadio = page.locator('input[name="encoderQuant"][value="int8-lite"]');
   await liteRadio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await liteRadio.check();

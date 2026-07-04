@@ -61,7 +61,7 @@ test('WASM int8 lite fails loudly (no silent default-int8 downgrade) when no sou
 
   // Opt into the lite encoder via the real encoder-precision radio (WASM-only).
   await page.locator('.settings-toggle').click();
-  await expandSettingsSection(page, 'Engine');
+  await expandSettingsSection(page, 'Model and performance');
   const liteRadio = page.locator('input[name="encoderQuant"][value="int8-lite"]');
   await liteRadio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await liteRadio.check();

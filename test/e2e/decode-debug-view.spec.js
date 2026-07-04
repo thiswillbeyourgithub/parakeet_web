@@ -33,7 +33,7 @@ test('decode debug checkbox collects a payload and the Debug view exposes tokens
   await page.locator('.settings-toggle').click();
   await expandSettingsSection(page, 'Debug');
   const checkbox = page
-    .locator('.setting-row', { hasText: 'Decode debug view' })
+    .locator('.setting-row', { hasText: 'Add decoder debug view' })
     .locator('input[type="checkbox"]');
   await checkbox.check();
   await expect(checkbox).toBeChecked();

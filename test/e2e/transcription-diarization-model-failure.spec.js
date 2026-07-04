@@ -42,10 +42,10 @@ test('diarization model-load failure greys out the Speakers controls with a tool
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
 
   // --- Sidebar default-display option: the "Speakers" option must become
-  // disabled once the prefetch fails (it lives in the collapsible Output
-  // section of the settings drawer). ---
+  // disabled once the prefetch fails (the transcript-output controls now live
+  // in the collapsible General section of the settings drawer). ---
   await page.locator('.settings-toggle').click();
-  await expandSettingsSection(page, 'Transcript output');
+  await expandSettingsSection(page, 'General');
   const diarizedOption = page.locator('option[value="diarized"]');
   // Auto-retries until the prefetch failure propagates: the reason-tooltip title
   // is only set once diarizationModelError lands, so this waits on the state.
