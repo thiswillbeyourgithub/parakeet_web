@@ -66,6 +66,12 @@ export default defineConfig({
       { find: /^onnxruntime-web$/, replacement: path.resolve(__dirname, 'vendor/onnxruntime-web') },
       // Vendored dictation_support (Apache-2.0). UMD bundle in app/ui/vendor/dictation_support/.
       { find: /^dictation_support$/, replacement: path.resolve(__dirname, 'vendor/dictation_support/dist/index.js') },
+      // Vendored ffmpeg.wasm wrapper (@ffmpeg/ffmpeg, MIT). The FFmpeg class
+      // spawns its module worker via `new URL('./worker.js', import.meta.url)`,
+      // which Vite bundles as a same-origin worker chunk. The GPL-2.0-or-later
+      // core (ffmpeg-core.js + .wasm) is served same-origin from public/ffmpeg/
+      // and loaded lazily at runtime (see src/lib/ffmpegDecode.js).
+      { find: /^@ffmpeg\/ffmpeg$/, replacement: path.resolve(__dirname, 'vendor/ffmpeg/ffmpeg/dist/esm/index.js') },
       ...preactAliases,
     ],
   },
