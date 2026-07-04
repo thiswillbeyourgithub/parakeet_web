@@ -10,7 +10,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRecordingRateCandidates } from '../../app/ui/src/lib/audio.js';
+import { buildRecordingRateCandidates, pickRemoteMicCaptureRate } from '../../app/ui/src/lib/audio.js';
 
 describe('buildRecordingRateCandidates', () => {
   test('Firefox (no reported rate) tries browser default BEFORE 16 kHz', () => {
@@ -65,5 +65,23 @@ describe('buildRecordingRateCandidates', () => {
     const order = buildRecordingRateCandidates(0);
     assert.ok(!order.includes(0), '0 Hz must never be an attempted rate');
     assert.equal(order[0], undefined, 'falls back to browser default first');
+  });
+});
+
+describe('pickRemoteMicCaptureRate (phone capture over WebRTC)', () => {
+  test('Firefox (no reported rate) captures at native, not a forced 16 kHz', () => {
+    // undefined return === open a native-rate AudioContext (no sampleRate opt),
+    // so the context matches the mic and Firefox does not mislabel/slow it.
+    assert.equal(pickRemoteMicCaptureRate(undefined), undefined);
+  });
+
+  test('Chrome/Safari (reports the mic rate) forces 16 kHz to keep the wire small', () => {
+    assert.equal(pickRemoteMicCaptureRate(48000), 16000);
+    assert.equal(pickRemoteMicCaptureRate(44100), 16000);
+    assert.equal(pickRemoteMicCaptureRate(16000), 16000);
+  });
+
+  test('falsy reported rate (0) is treated as unknown -> native capture', () => {
+    assert.equal(pickRemoteMicCaptureRate(0), undefined);
   });
 });

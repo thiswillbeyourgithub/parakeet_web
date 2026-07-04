@@ -74,6 +74,33 @@ export function buildRecordingRateCandidates(reportedRate) {
 }
 
 /**
+ * Decide the sample rate to request for the remote-mic PHONE capture context.
+ *
+ * The phone streams PCM over WebRTC, so 16 kHz is preferred to keep the wire
+ * small (the desktop wants 16 kHz anyway, and resamples whatever rate the phone
+ * declares). Forcing a 16 kHz AudioContext is safe on browsers that resample a
+ * live mic into a lower-rate context correctly; those same browsers (Chrome,
+ * Safari) also report the mic rate via getSettings().sampleRate, so a reported
+ * rate is the signal that forcing 16 kHz is OK.
+ *
+ * Firefox reports NO mic rate and silently relabels the downsampled live stream
+ * when the context rate differs from the mic (mdn/browser-compat-data #16213):
+ * forcing 16 kHz there streamed ~3x slowed-down audio. So when the browser does
+ * not report a rate, capture at the NATIVE rate (undefined = no sampleRate
+ * option) so the context matches the mic, and let the desktop resample. That
+ * costs more wire bandwidth on Firefox, but the audio is correct (vs broken).
+ *
+ * This mirrors the local-recording buildRecordingRateCandidates signal (a
+ * missing getSettings().sampleRate means "do not force a low context rate").
+ *
+ * @param {number|undefined} reportedRate track.getSettings().sampleRate, or undefined.
+ * @returns {number|undefined} 16000 to force a 16 kHz context, or undefined for native.
+ */
+export function pickRemoteMicCaptureRate(reportedRate) {
+  return reportedRate ? 16000 : undefined;
+}
+
+/**
  * Resample a Float32 PCM buffer to 16kHz mono via OfflineAudioContext.
  * If the source is already 16kHz, returns the input unchanged.
  *

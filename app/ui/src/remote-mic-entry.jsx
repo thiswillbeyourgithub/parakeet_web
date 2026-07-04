@@ -24,7 +24,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
-import { createLevelMonitor } from './lib/audio.js';
+import { createLevelMonitor, pickRemoteMicCaptureRate } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
 import { parseRemoteMicLink } from './lib/remote-mic-link.js';
 
@@ -892,18 +892,27 @@ function RemoteMicSender() {
             });
             streamRef.current = stream;
 
-            // Create AudioContext — try 16kHz, fall back to browser default
+            // Pick the capture rate. We stream PCM over WebRTC, so 16 kHz keeps
+            // the wire small. Forcing a 16 kHz AudioContext is safe on browsers
+            // that report the mic rate and resample a live mic correctly
+            // (Chrome/Safari); Firefox reports no rate and mislabels the
+            // downsampled live stream when the context rate differs from the mic
+            // (mdn/browser-compat-data #16213), which streamed ~3x slowed audio.
+            // For those, capture at the native rate and let the desktop resample.
+            // See pickRemoteMicCaptureRate.
+            const reportedRate = stream.getAudioTracks()[0]?.getSettings().sampleRate;
+            const requestedRate = pickRemoteMicCaptureRate(reportedRate);
             let audioCtx;
             try {
-                audioCtx = new AudioContext({ sampleRate: 16000 });
+                audioCtx = new AudioContext(requestedRate ? { sampleRate: requestedRate } : undefined);
             } catch (e) {
-                console.warn('[RemoteMic] 16kHz AudioContext failed, using default:', e.message);
+                console.warn('[RemoteMic] AudioContext at requested rate failed, using default:', e.message);
                 audioCtx = new AudioContext();
             }
             audioCtxRef.current = audioCtx;
 
             const actualRate = audioCtx.sampleRate;
-            console.log(`[RemoteMic] AudioContext sample rate: ${actualRate}`);
+            console.log(`[RemoteMic] Capture rate: requested=${requestedRate ?? 'native'} reported=${reportedRate ?? 'n/a'} actual=${actualRate}`);
 
             // Always tell computer the sample rate (also serves as "new recording started" signal).
             // `format: 'pcm-s16'` opts us in to Int16 wire encoding (-50% bytes vs Float32, no
