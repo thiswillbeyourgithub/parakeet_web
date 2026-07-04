@@ -6,6 +6,7 @@ import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { resamplePcmTo16k, createLevelMonitor } from './lib/audio.js';
+import { decodeToPcm16kFfmpeg, decodeToPcm16kWebAudio } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
 import { createCaptureQueue } from './lib/captureQueue.js';
@@ -3720,78 +3721,43 @@ export default function App() {
         lastModified: new Date(file.lastModified).toISOString()
       });
 
-      console.log(`[Transcribe] Reading file as ArrayBuffer...`);
-      let buf = await file.arrayBuffer();
-      console.log(`[Transcribe] ArrayBuffer loaded, size: ${buf.byteLength} bytes`);
-
       const targetSampleRate = 16000;
 
-      // Single-pass decode + resample. decodeAudioData on a BaseAudioContext
-      // resamples straight to that context's sampleRate, so decoding on an
-      // OfflineAudioContext already at 16 kHz goes source-rate -> 16 kHz in ONE
-      // pass. The old path opened a realtime AudioContext at the OS device rate
-      // (usually 48 kHz), decoded there, then resampled 48 kHz -> 16 kHz in a
-      // second OfflineAudioContext: two cascaded resamples (e.g. 44.1 -> 48 ->
-      // 16) that smear the spectrum. One high-quality pass is strictly better
-      // and needs no realtime AudioContext (no audio thread to close).
-      console.log(`[Transcribe] Decoding + resampling to ${targetSampleRate}Hz in one pass...`);
+      // Decode + resample to 16 kHz mono float32. Prefer the vendored ffmpeg.wasm
+      // decoder (src/lib/audioDecode.js) so the browser reproduces the CLI's
+      // `ffmpeg -i <file> -ac 1 -ar 16000 -f f32le` byte-for-byte, including the
+      // AAC encoder-delay/priming trim that decodeAudioData omits. If the ~31 MB
+      // core cannot load (CSP/memory) or the decode throws, fall back to the Web
+      // Audio single-pass path (decodeAudioData into a 16 kHz OfflineAudioContext)
+      // so uploads never hard-break. Both decoders read the File themselves; the
+      // fallback re-reads it (File stays re-readable) after ffmpeg detaches its
+      // own copy, so a failed ffmpeg attempt cannot corrupt the fallback input.
+      console.log(`[Transcribe] Decoding + resampling "${file.name}" to ${targetSampleRate}Hz...`);
       const resampleStart = performance.now();
 
-      // Yield to UI before the heavy decode/resample.
+      // Yield to UI before the heavy decode so the status line paints.
       await new Promise(resolve => setTimeout(resolve, 0));
       if (!anotherRunActive) {
         setStatus(`${t('processingResampling')} "${safeName}"`);
         setProgressText(t('resamplingTo16k'));
       }
 
-      // length must be >= 1; the decoded buffer's length is independent of it.
-      const decodeCtx = new OfflineAudioContext(1, 1, targetSampleRate);
-      let decoded = await decodeCtx.decodeAudioData(buf);
-      buf = null; // the ArrayBuffer is no longer needed once decoded
-      console.log(`[Transcribe] Audio decoded:`, {
-        duration: `${decoded.duration.toFixed(2)}s`,
-        numberOfChannels: decoded.numberOfChannels,
-        sampleRate: decoded.sampleRate,
-        length: decoded.length
-      });
-
       let pcm;
-      if (decoded.sampleRate === targetSampleRate && decoded.numberOfChannels === 1) {
-        // Already mono at 16 kHz: the decoded samples are the PCM. pcm is a view
-        // onto decoded's only channel; dropping the AudioBuffer wrapper below
-        // keeps the storage alive through pcm, so this holds no extra memory.
-        pcm = decoded.getChannelData(0);
-      } else {
-        // Downmix to mono (spec average of the channels) in one OfflineAudioContext
-        // render at 16 kHz. If a browser ignored the decode context's rate and
-        // decoded at the device rate instead, this same render also resamples to
-        // 16 kHz, i.e. the old two-pass path as a rare fallback (never on the
-        // Chromium the app targets, which honours the offline decode rate).
-        const mixCtx = new OfflineAudioContext(
-          1,  // mono
-          Math.ceil(decoded.duration * targetSampleRate),
-          targetSampleRate
-        );
-        const source = mixCtx.createBufferSource();
-        source.buffer = decoded;
-        source.connect(mixCtx.destination);
-        source.start();
-        let mixed = await mixCtx.startRendering();
-        pcm = mixed.getChannelData(0);
-        mixed = null;
+      let decodedVia;
+      try {
+        pcm = await decodeToPcm16kFfmpeg(file);
+        decodedVia = 'ffmpeg.wasm';
+      } catch (err) {
+        console.warn('[Transcribe] ffmpeg.wasm decode unavailable/failed; falling back to Web Audio single-pass:', err);
+        pcm = await decodeToPcm16kWebAudio(file);
+        decodedVia = 'web-audio';
       }
 
-      // Yield to UI after the heavy decode/resample.
+      // Yield to UI after the heavy decode.
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // The decoded AudioBuffer can be large (hundreds of MB for long files, and
-      // holds every source channel). pcm keeps only the storage it views alive,
-      // so drop the wrapper to let GC reclaim the rest before the chunking loop
-      // allocates its own working memory.
-      decoded = null;
-
       const resampleSeconds = (performance.now() - resampleStart) / 1000;
-      console.log(`[Transcribe] Decoded + resampled to ${targetSampleRate}Hz in ${resampleSeconds.toFixed(2)}s`);
+      console.log(`[Transcribe] Decoded + resampled to ${targetSampleRate}Hz via ${decodedVia} in ${resampleSeconds.toFixed(2)}s`);
       const audioDuration = pcm.length / 16000;
       
       // Find min/max without spreading to avoid "too many arguments" error
