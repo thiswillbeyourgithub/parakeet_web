@@ -175,6 +175,102 @@ export function mergeHypotheses(hyps, { mergeDuplicates, logAddExp }) {
 }
 
 /**
+ * Normalize a word's text for cross-chunk overlap matching: lowercase and strip
+ * everything but alphanumerics. This lets "You." and "you" (a common
+ * chunk-boundary punctuation/case disagreement) still align. Comparison-only:
+ * the ORIGINAL word object is what we emit, so the survivor keeps its casing and
+ * punctuation.
+ * @param {string} t
+ * @returns {string}
+ */
+export function normalizeWordText(t) {
+  return (t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Longest common subsequence over two arrays of (already normalized) tokens.
+ * Returns the matched index pairs [[i, j], ...] in ascending order. Plain O(n*m)
+ * DP; the overlap zone is only a couple of seconds (a handful of words per
+ * side), so n and m are tiny and this never shows up in a profile.
+ * @param {string[]} a
+ * @param {string[]} b
+ * @returns {Array<[number, number]>}
+ */
+export function lcsPairs(a, b) {
+  const n = a.length;
+  const m = b.length;
+  if (!n || !m) return [];
+  // dp[i][j] = LCS length of a[i:] and b[j:].
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const pairs = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { pairs.push([i, j]); i += 1; j += 1; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i += 1;
+    else j += 1;
+  }
+  return pairs;
+}
+
+/**
+ * Merge the two independent transcripts of a shared overlap zone into a single
+ * deduped word list. `leftOverlap` comes from the EARLIER chunk (reliable at its
+ * start, degrading toward that chunk's trailing edge, i.e. toward the seam);
+ * `rightOverlap` from the LATER chunk (degrading at its leading edge near the
+ * seam, reliable afterwards). Both are timestamped word objects with `.text`.
+ *
+ * Strategy: align the two token sequences by longest common subsequence over
+ * normalized text, then splice at the MIDDLE common anchor: keep the earlier
+ * chunk up to and including that anchor (its higher-context first half), then
+ * the later chunk after the matching anchor (its higher-context second half).
+ * The shared anchor survives exactly once (from the left). This is robust to the
+ * timestamp jitter that a pure midpoint-time split suffers from: the same word,
+ * decoded in both chunks with different surrounding context, can get a slightly
+ * different frame alignment on each side and land on opposite sides of a time
+ * seam, so it gets duplicated or dropped. Anchoring on the TEXT instead makes
+ * each shared word appear once regardless of that jitter.
+ *
+ * Falls back to the timestamp midpoint split (the historical behaviour) only
+ * when the two sides share no common token at all, i.e. there is no reliable
+ * text anchor to splice on.
+ *
+ * @param {Array} leftOverlap   earlier chunk's words inside the overlap zone
+ * @param {Array} rightOverlap  later chunk's words inside the overlap zone
+ * @param {{seamSec:number, wordMid:(w:object)=>number}} opts
+ * @returns {Array} the deduped overlap words, time-ordered
+ */
+export function mergeOverlapWords(leftOverlap, rightOverlap, { seamSec, wordMid }) {
+  if (!leftOverlap.length) return rightOverlap.slice();
+  if (!rightOverlap.length) return leftOverlap.slice();
+
+  const ln = leftOverlap.map((w) => normalizeWordText(w.text));
+  const rn = rightOverlap.map((w) => normalizeWordText(w.text));
+  const pairs = lcsPairs(ln, rn);
+
+  if (pairs.length) {
+    // Middle common anchor: take roughly half the overlap from each side, always
+    // dropping each chunk's low-context edge nearest the seam.
+    const [li, rj] = pairs[Math.floor((pairs.length - 1) / 2)];
+    return leftOverlap.slice(0, li + 1).concat(rightOverlap.slice(rj + 1));
+  }
+
+  // No shared token: nothing to anchor on. Fall back to the timestamp midpoint
+  // split so a garbled overlap still emits each side's half exactly once.
+  const merged = [];
+  for (const w of leftOverlap) if (wordMid(w) < seamSec) merged.push(w);
+  for (const w of rightOverlap) if (wordMid(w) >= seamSec) merged.push(w);
+  return merged;
+}
+
+/**
  * Sort hypotheses best-first and keep the top `beamWidth`. `lengthNormPrune`
  * selects the ranking key for the intermediate per-frame survival prune:
  *   - false (default, matches NeMo): rank by RAW score. Only the FINAL best
@@ -2087,13 +2183,17 @@ export class ParakeetModel {
    *
    * Overlap dedup: consecutive chunks share `overlapSec` of audio, so each side
    * independently transcribes the same words in that zone. Rather than emit them
-   * twice, we split the shared zone at its midpoint (the "seam") using the
-   * absolute word timestamps: the earlier chunk keeps the words whose midpoint
-   * falls before the seam, the later chunk keeps the words at/after it, so every
-   * overlap word survives exactly once. The combined transcript text is then
-   * rebuilt from the deduped words so text and word list stay consistent. This
-   * requires `returnTimestamps: true`; without timestamps there are no words to
-   * align on, so we fall back to plain text concatenation (the old behaviour).
+   * twice, we align the two overlap transcripts by TEXT (longest common
+   * subsequence) and splice at their middle shared word, so every overlap word
+   * survives exactly once and each chunk contributes its higher-context half (see
+   * mergeOverlapWords). This is deliberately text-anchored rather than a pure
+   * midpoint-time cut: the same word decoded in both chunks can get slightly
+   * different frame timestamps, and a time cut would then duplicate or drop it
+   * right at the seam. Only when the two sides share no word at all do we fall
+   * back to the timestamp midpoint split. The combined transcript text is rebuilt
+   * from the deduped words so text and word list stay consistent. This requires
+   * `returnTimestamps: true`; without timestamps there are no words to align on,
+   * so we fall back to plain text concatenation (the old behaviour).
    *
    * When chunking is disabled (`enableChunking: false`) or the audio is shorter
    * than one chunk, this falls back to a single this.transcribe() pass; the
@@ -2205,20 +2305,34 @@ export class ParakeetModel {
         word.end_time += timeOffset;
       }
 
-      // Stitch this chunk's words onto the running list, deduping the overlap
-      // zone [start, prevEnd] at its midpoint seam. The first chunk (prevEnd
-      // null) and the no-timestamp fallback just append everything.
+      // Stitch this chunk's words onto the running list, deduping the shared
+      // overlap zone [start, prevEnd]. Both neighbouring chunks transcribed that
+      // zone independently, so each shared word appears on both sides. We align
+      // the two overlap transcripts by text (LCS) and splice at their middle
+      // common word (see mergeOverlapWords), which is robust to the timestamp
+      // jitter a pure midpoint-time cut suffers at the seam. The first chunk
+      // (prevEnd null) and the no-timestamp fallback just append everything.
       if (canDedup && prevEnd != null && combinedWords.length && chunkWords.length) {
+        const overlapStartSec = start / sampleRate;
+        const overlapEndSec = prevEnd / sampleRate;
         const seamSec = (start + prevEnd) / 2 / sampleRate;
-        // Drop the previous chunk's words past the seam (combinedWords stays
-        // time-ordered, so the overlap words are exactly the trailing run).
-        while (combinedWords.length && wordMid(combinedWords[combinedWords.length - 1]) >= seamSec) {
-          combinedWords.pop();
+
+        // Peel the earlier chunk's overlap words off the running list: it stays
+        // time-ordered, so they are exactly the trailing run with a midpoint at
+        // or after the overlap start.
+        let splitIdx = combinedWords.length;
+        while (splitIdx > 0 && wordMid(combinedWords[splitIdx - 1]) >= overlapStartSec) splitIdx -= 1;
+        const leftOverlap = combinedWords.splice(splitIdx);
+
+        // Split this chunk into (overlap, exclusive tail) at the overlap end.
+        let rIdx = 0;
+        while (rIdx < chunkWords.length && wordMid(chunkWords[rIdx]) < overlapEndSec) rIdx += 1;
+        const rightOverlap = chunkWords.slice(0, rIdx);
+
+        for (const word of mergeOverlapWords(leftOverlap, rightOverlap, { seamSec, wordMid })) {
+          combinedWords.push(word);
         }
-        // Keep only this chunk's words at/after the seam.
-        for (const word of chunkWords) {
-          if (wordMid(word) >= seamSec) combinedWords.push(word);
-        }
+        for (let k = rIdx; k < chunkWords.length; k += 1) combinedWords.push(chunkWords[k]);
       } else {
         for (const word of chunkWords) combinedWords.push(word);
       }

@@ -14,7 +14,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ParakeetModel } from '../../app/src/parakeet.js';
+import { ParakeetModel, lcsPairs, mergeOverlapWords, normalizeWordText } from '../../app/src/parakeet.js';
 
 const SR = 16000;
 
@@ -106,14 +106,15 @@ describe('transcribeChunked overlap dedup (seam)', () => {
     assert.equal(res.utterance_text, 'alpha bravo echo charlie delta');
   });
 
-  test('seam assigns by word midpoint: before-seam word kept from earlier chunk, at/after from later', async () => {
+  test('overlap words are text-anchored: earlier chunk kept through the middle anchor, later chunk after', async () => {
     const model = makeModel();
     const res = await model.transcribeChunked(AUDIO, SR, CHUNK_OPTS);
     const echo = res.words.find((w) => w.text === 'echo');
     const charlie = res.words.find((w) => w.text === 'charlie');
-    // "echo" midpoint 8.3 < seam 9.0 => kept from chunk 1 (its absolute time, unshifted).
+    // Overlap ["echo","charlie"] aligns 1:1; the middle common anchor is "echo",
+    // so "echo" is kept from chunk 1 and "charlie" from chunk 2. Both chunks
+    // report the same absolute times here, so the values are unambiguous.
     assert.ok(Math.abs(echo.start_time - 8.2) < 1e-6 && Math.abs(echo.end_time - 8.4) < 1e-6);
-    // "charlie" midpoint 9.0 == seam => kept from chunk 2; absolute time still 8.5..9.5.
     assert.ok(Math.abs(charlie.start_time - 8.5) < 1e-6 && Math.abs(charlie.end_time - 9.5) < 1e-6);
   });
 
@@ -175,5 +176,93 @@ describe('transcribeChunked metrics aggregation', () => {
     const model = makeModel({ metricsPerCall: null });
     const res = await model.transcribeChunked(AUDIO, SR, CHUNK_OPTS);
     assert.equal(res.metrics, null);
+  });
+});
+
+// Word factory for the pure-function tests below: a timestamped word centred at
+// `mid` seconds (a nominal 0.2 s span, only the midpoint matters to the seam).
+const W = (text, mid) => ({ text, start_time: mid - 0.1, end_time: mid + 0.1 });
+const wordMid = (w) => (w.start_time + w.end_time) / 2;
+
+describe('normalizeWordText', () => {
+  test('lowercases and strips punctuation so "You." matches "you"', () => {
+    assert.equal(normalizeWordText('You.'), normalizeWordText('you'));
+    assert.equal(normalizeWordText('  Ask, '), 'ask');
+    assert.equal(normalizeWordText("don't"), 'dont');
+    assert.equal(normalizeWordText(undefined), '');
+  });
+});
+
+describe('lcsPairs', () => {
+  test('empty inputs yield no pairs', () => {
+    assert.deepEqual(lcsPairs([], ['a']), []);
+    assert.deepEqual(lcsPairs(['a'], []), []);
+  });
+  test('identical sequences pair up 1:1', () => {
+    assert.deepEqual(lcsPairs(['a', 'b', 'c'], ['a', 'b', 'c']), [[0, 0], [1, 1], [2, 2]]);
+  });
+  test('finds the longest common subsequence with a gap on each side', () => {
+    // a X b c  vs  a b Y c  => common a,b,c
+    assert.deepEqual(lcsPairs(['a', 'x', 'b', 'c'], ['a', 'b', 'y', 'c']), [[0, 0], [2, 1], [3, 3]]);
+  });
+  test('no shared token yields no pairs', () => {
+    assert.deepEqual(lcsPairs(['a', 'b'], ['c', 'd']), []);
+  });
+});
+
+describe('mergeOverlapWords (text-anchored seam)', () => {
+  const seamSec = 9.0; // overlap [8,10], midpoint 9
+
+  test('empty side returns the other verbatim', () => {
+    const r = [W('delta', 9.5)];
+    assert.deepEqual(mergeOverlapWords([], r, { seamSec, wordMid }), r);
+    assert.deepEqual(mergeOverlapWords(r, [], { seamSec, wordMid }), r);
+  });
+
+  test('a word both chunks agree on survives exactly once (splice at the anchor)', () => {
+    const left = [W('echo', 8.3), W('charlie', 9.0)];
+    const right = [W('echo', 8.3), W('charlie', 9.0)];
+    const merged = mergeOverlapWords(left, right, { seamSec, wordMid });
+    assert.deepEqual(merged.map((w) => w.text), ['echo', 'charlie']);
+  });
+
+  test('JITTER: shared word whose per-chunk midpoints straddle the seam is NOT duplicated', () => {
+    // "hello" decoded at 8.8 in the earlier chunk (< seam) and at 9.1 in the
+    // later chunk (>= seam) due to frame-alignment jitter. A pure midpoint-time
+    // split would keep it from BOTH sides and duplicate it; text anchoring keeps
+    // it once.
+    const left = [W('hello', 8.8)];
+    const right = [W('hello', 9.1)];
+    const merged = mergeOverlapWords(left, right, { seamSec, wordMid });
+    assert.deepEqual(merged.map((w) => w.text), ['hello']);
+  });
+
+  test('JITTER: shared word whose midpoints cross the OTHER way is NOT dropped', () => {
+    // Mirror case: "world" at 9.1 in the earlier chunk (>= seam, a midpoint cut
+    // drops it from the left) and at 8.8 in the later chunk (< seam, dropped
+    // from the right) => the old logic loses it entirely. Text anchoring keeps
+    // it.
+    const left = [W('world', 9.1)];
+    const right = [W('world', 8.8)];
+    const merged = mergeOverlapWords(left, right, { seamSec, wordMid });
+    assert.deepEqual(merged.map((w) => w.text), ['world']);
+  });
+
+  test('case/punctuation disagreement still aligns (You. vs you)', () => {
+    const left = [W('for', 8.4), W('You.', 8.9)];
+    const right = [W('you', 8.9), W('ask', 9.4)];
+    const merged = mergeOverlapWords(left, right, { seamSec, wordMid });
+    // "You." (earlier chunk's casing) survives once; "ask" comes from the later
+    // chunk. "for" is the earlier chunk's exclusive lead-in.
+    assert.deepEqual(merged.map((w) => w.text), ['for', 'You.', 'ask']);
+  });
+
+  test('no shared token falls back to the timestamp midpoint split', () => {
+    // Total disagreement across the seam: keep left words before the seam and
+    // right words at/after it, each once.
+    const left = [W('aaa', 8.5), W('bbb', 9.4)];  // 8.5 < seam kept; 9.4 dropped
+    const right = [W('ccc', 8.6), W('ddd', 9.3)]; // 8.6 dropped; 9.3 >= seam kept
+    const merged = mergeOverlapWords(left, right, { seamSec, wordMid });
+    assert.deepEqual(merged.map((w) => w.text), ['aaa', 'ddd']);
   });
 });
