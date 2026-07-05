@@ -120,6 +120,7 @@ function parseArgs(argv) {
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: DEFAULT_CHUNK_DURATION_SEC, // sidebar: max chunk length, seconds
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
+    snapToSilence: 1.0,    // snap chunk seams to the quietest point within this many s (0 disables)
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',          // encoder quantisation
@@ -155,6 +156,7 @@ function parseArgs(argv) {
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--chunk-duration': a.chunkDuration = Number(val(flag)); break;
       case '--overlap': a.overlap = Number(val(flag)); break;
+      case '--snap-to-silence': a.snapToSilence = Number(val(flag)); break;
       case '--no-chunking': a.chunking = false; break;
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
@@ -191,6 +193,7 @@ function parseArgs(argv) {
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) throw new Error('--frame-stride must be an integer in [1, 4]');
   if (!Number.isFinite(a.chunkDuration) || a.chunkDuration < MIN_CHUNK_DURATION_SEC || a.chunkDuration > MAX_CHUNK_DURATION_SEC) throw new Error(`--chunk-duration must be a number in [${MIN_CHUNK_DURATION_SEC}, ${MAX_CHUNK_DURATION_SEC}] seconds (parakeet degrades noticeably above ~${MAX_CHUNK_DURATION_SEC} s)`);
   if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
+  if (!Number.isFinite(a.snapToSilence) || a.snapToSilence < 0) throw new Error('--snap-to-silence must be a non-negative number (0 disables)');
   return a;
 }
 
@@ -278,6 +281,9 @@ Options:
                            printed as it is produced.
       --overlap N          Overlap between chunks in seconds. Default 2 (matches
                            the web UI).
+      --snap-to-silence N  Snap each chunk seam to the quietest point within N
+                           seconds before its nominal end, so seams land in
+                           pauses not mid-word. Default 1; 0 disables.
       --no-chunking        Disable chunking; transcribe the whole file in one
                            pass (matches unticking the sidebar's chunking box).
       --model KEY          Model key (${listModels().join(', ')}).
@@ -744,7 +750,8 @@ async function main() {
   }
   const willChunk = args.chunking && pcm.length > args.chunkDuration * 16000;
   if (willChunk) {
-    console.error(`[transcribe] chunking: ${args.chunkDuration}s chunks, ${args.overlap}s overlap`);
+    const snapNote = args.snapToSilence > 0 ? `, ${args.snapToSilence}s silence-snap` : ', no silence-snap';
+    console.error(`[transcribe] chunking: ${args.chunkDuration}s chunks, ${args.overlap}s overlap${snapNote}`);
   }
 
   // Same chunking/stitching path the web UI uses (ParakeetModel.transcribeChunked).
@@ -753,6 +760,7 @@ async function main() {
     enableChunking: args.chunking,
     chunkDurationSec: args.chunkDuration,
     overlapSec: args.overlap,
+    snapToSilenceSec: args.snapToSilence,
     phraseBoost,
     beamWidth: args.beamWidth,
     maesNumSteps: args.maesNumSteps,
