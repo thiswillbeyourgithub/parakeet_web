@@ -14,7 +14,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ParakeetModel, lcsPairs, mergeOverlapWords, normalizeWordText } from '../../app/src/parakeet.js';
+import { ParakeetModel, lcsPairs, mergeOverlapWords, normalizeWordText, planChunks } from '../../app/src/parakeet.js';
 
 const SR = 16000;
 
@@ -82,7 +82,11 @@ function makeModel({ withTimestamps = true, metricsPerCall } = {}) {
 //   chunk 1: [0, 160000]      => 0..10 s
 //   chunk 2: [128000, 200000] => 8..12.5 s
 // overlap [8 s, 10 s], seam at the midpoint 9.0 s.
-const CHUNK_OPTS = { enableChunking: true, chunkDurationSec: 10, overlapSec: 2, returnTimestamps: true };
+// snapToSilenceSec: 0 pins the fixed-stride layout: the audio[i]=i harness has
+// monotonically increasing "energy" (it encodes sample indices, not real audio),
+// which would snap every seam to the window start and move the boundaries these
+// dedup tests reason about. Silence snapping has its own tests over planChunks.
+const CHUNK_OPTS = { enableChunking: true, chunkDurationSec: 10, overlapSec: 2, returnTimestamps: true, snapToSilenceSec: 0 };
 const AUDIO = makeAudio(200000);
 
 describe('transcribeChunked overlap dedup (seam)', () => {
@@ -264,5 +268,91 @@ describe('mergeOverlapWords (text-anchored seam)', () => {
     const right = [W('ccc', 8.6), W('ddd', 9.3)]; // 8.6 dropped; 9.3 >= seam kept
     const merged = mergeOverlapWords(left, right, { seamSec, wordMid });
     assert.deepEqual(merged.map((w) => w.text), ['aaa', 'ddd']);
+  });
+});
+
+describe('planChunks (silence-aware boundaries)', () => {
+  test('with snapping off, reproduces the fixed-stride layout exactly', () => {
+    // 290 samples, max 160, overlap 32 => stride 128. Matches the old
+    // for(start+=stride) loop: [0,160], [128,288], [256,290].
+    const plan = planChunks(290, { maxChunkSamples: 160, overlapSamples: 32 });
+    assert.deepEqual(plan, [
+      { start: 0, end: 160 },
+      { start: 128, end: 288 },
+      { start: 256, end: 290 },
+    ]);
+  });
+
+  test('short audio is a single chunk', () => {
+    assert.deepEqual(planChunks(100, { maxChunkSamples: 160, overlapSamples: 32 }), [{ start: 0, end: 100 }]);
+  });
+
+  test('chunks tile the whole buffer with the requested overlap', () => {
+    const plan = planChunks(1000, { maxChunkSamples: 200, overlapSamples: 40 });
+    assert.equal(plan[0].start, 0);
+    assert.equal(plan[plan.length - 1].end, 1000, 'last chunk reaches the end');
+    for (let i = 1; i < plan.length; i++) {
+      assert.ok(plan[i].start < plan[i - 1].end, 'consecutive chunks overlap');
+      assert.ok(plan[i].start > plan[i - 1].start, 'each chunk advances');
+      assert.ok(plan[i].end - plan[i].start <= 200, 'no chunk exceeds the max length');
+    }
+  });
+
+  test('snaps the interior boundary to the quietest point within the radius', () => {
+    // energyAt: loud everywhere except a narrow dip at sample 180. The nominal
+    // first boundary is 200; with a radius of 40 the window is [160,200] and the
+    // quietest point 180 must be chosen, cutting the chunk short at 180.
+    const energyAt = (i) => (i === 180 ? 0 : 1);
+    const plan = planChunks(1000, {
+      maxChunkSamples: 200,
+      overlapSamples: 40,
+      snapRadiusSamples: 40,
+      snapStepSamples: 1,
+      energyAt,
+    });
+    assert.equal(plan[0].end, 180, 'first seam snapped to the silent dip');
+    assert.equal(plan[1].start, 140, 'next chunk starts overlapSamples before the snapped seam');
+  });
+
+  test('never snaps past the max length (searches backward only, respecting the ~25 s wall)', () => {
+    // A dip AFTER the nominal end must be ignored: honoring it would make the
+    // chunk longer than maxChunkSamples.
+    const energyAt = (i) => (i === 230 ? 0 : 1); // 230 > nominal end 200
+    const plan = planChunks(1000, {
+      maxChunkSamples: 200,
+      overlapSamples: 40,
+      snapRadiusSamples: 40,
+      snapStepSamples: 1,
+      energyAt,
+    });
+    assert.ok(plan[0].end <= 200, 'first chunk never exceeds the max length');
+  });
+
+  test('a flat window (no strictly-quieter point) is NOT snapped, so the chunk is not needlessly shortened', () => {
+    // Uniform energy everywhere (e.g. pure silence or steady tone): nothing beats
+    // the nominal boundary, so it must stay put rather than collapse to the
+    // window start. This is the all-zero-audio case that must not shrink chunks.
+    const energyAt = () => 0;
+    const plan = planChunks(1000, {
+      maxChunkSamples: 200,
+      overlapSamples: 40,
+      snapRadiusSamples: 40,
+      snapStepSamples: 1,
+      energyAt,
+    });
+    assert.equal(plan[0].end, 200, 'flat window leaves the nominal boundary untouched');
+  });
+
+  test('the final boundary (== length) is never snapped', () => {
+    // Even with a dip just before the end, the last chunk must still reach length.
+    const energyAt = (i) => (i === 980 ? 0 : 1);
+    const plan = planChunks(1000, {
+      maxChunkSamples: 400,
+      overlapSamples: 40,
+      snapRadiusSamples: 40,
+      snapStepSamples: 1,
+      energyAt,
+    });
+    assert.equal(plan[plan.length - 1].end, 1000, 'coverage reaches the end regardless of a nearby dip');
   });
 });

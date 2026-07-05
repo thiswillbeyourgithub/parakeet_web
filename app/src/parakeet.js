@@ -271,6 +271,70 @@ export function mergeOverlapWords(leftOverlap, rightOverlap, { seamSec, wordMid 
 }
 
 /**
+ * Plan the [start, end) sample windows for long-audio chunking. Each chunk spans
+ * at most `maxChunkSamples` and overlaps the previous one by `overlapSamples`.
+ *
+ * Silence-aware boundaries: when `energyAt` is supplied and `snapRadiusSamples`
+ * > 0, each interior boundary is snapped to the QUIETEST point within
+ * `snapRadiusSamples` BEFORE its nominal end (searching backward only, so a chunk
+ * never grows past `maxChunkSamples` and the ~25 s quality wall is respected).
+ * A chunk edge is where the encoder has the least acoustic context, so a word
+ * sitting on the seam is transcribed with low context on both sides; landing the
+ * seam in a pause instead removes that worst case. The overlap + text-anchored
+ * dedup (see mergeOverlapWords) still runs and remains the primary safety net,
+ * so a window with no real pause (continuous speech) is no worse than a fixed
+ * cut. With snapping off (no `energyAt` / zero radius) this reproduces the plain
+ * fixed-stride layout exactly.
+ *
+ * Pure and deterministic: `energyAt(i)` returns a short-window energy for the
+ * candidate boundary sample i (lower = quieter); it is probed every
+ * `snapStepSamples`. Returns [{start, end}, ...] covering [0, length).
+ *
+ * @param {number} length  total sample count.
+ * @param {{maxChunkSamples:number, overlapSamples?:number, snapRadiusSamples?:number, snapStepSamples?:number, energyAt?:((i:number)=>number)|null}} opts
+ * @returns {Array<{start:number, end:number}>}
+ */
+export function planChunks(length, {
+  maxChunkSamples,
+  overlapSamples = 0,
+  snapRadiusSamples = 0,
+  snapStepSamples = 1,
+  energyAt = null,
+}) {
+  const chunks = [];
+  if (length <= 0 || maxChunkSamples <= 0) return chunks;
+  let start = 0;
+  // guard: start strictly advances each iteration, so length+1 iterations is an
+  // impossible upper bound; it only exists to make a degenerate-params infinite
+  // loop structurally impossible.
+  for (let guard = 0; start < length && guard <= length; guard += 1) {
+    let end = Math.min(start + maxChunkSamples, length);
+    if (energyAt && snapRadiusSamples > 0 && end < length) {
+      const lo = Math.max(start + 1, end - snapRadiusSamples);
+      const step = Math.max(1, snapStepSamples);
+      // Baseline is the nominal boundary itself: only move the cut earlier for a
+      // STRICTLY quieter point, so a flat/rising window (no real pause, e.g. pure
+      // silence or continuous speech) stays at `end` and the chunk is not
+      // needlessly shortened. Scan backward so ties resolve to the LATEST (i.e.
+      // closest-to-nominal) minimum, again minimizing how much we shorten.
+      let bestI = end;
+      let bestE = energyAt(end);
+      for (let i = end - step; i >= lo; i -= step) {
+        const e = energyAt(i);
+        if (e != null && e < bestE) { bestE = e; bestI = i; }
+      }
+      if (bestI > start) end = bestI;
+    }
+    chunks.push({ start, end });
+    if (end >= length) break;
+    // Next chunk starts `overlapSamples` before this end; clamp so it always
+    // advances even if degenerate params would otherwise stall.
+    start = Math.max(start + 1, end - overlapSamples);
+  }
+  return chunks;
+}
+
+/**
  * Sort hypotheses best-first and keep the top `beamWidth`. `lengthNormPrune`
  * selects the ranking key for the intermediate per-frame survival prune:
  *   - false (default, matches NeMo): rank by RAW score. Only the FINAL best
@@ -2195,6 +2259,12 @@ export class ParakeetModel {
    * `returnTimestamps: true`; without timestamps there are no words to align on,
    * so we fall back to plain text concatenation (the old behaviour).
    *
+   * Silence-aware seams: each interior chunk boundary is snapped to the quietest
+   * point within `snapToSilenceSec` before its nominal end (see planChunks), so
+   * the seam tends to fall in a pause rather than mid-word. This complements the
+   * overlap dedup above; set `snapToSilenceSec: 0` to disable and get a plain
+   * fixed-stride layout.
+   *
    * When chunking is disabled (`enableChunking: false`) or the audio is shorter
    * than one chunk, this falls back to a single this.transcribe() pass; the
    * `onChunk` callback still fires once (with totalChunks === 1) so callers have
@@ -2206,6 +2276,7 @@ export class ParakeetModel {
    *   @param {boolean} [opts.enableChunking=true]  Split long audio into chunks.
    *   @param {number}  [opts.chunkDurationSec=60]  Max chunk length, seconds.
    *   @param {number}  [opts.overlapSec=2]         Overlap between chunks, seconds.
+   *   @param {number}  [opts.snapToSilenceSec=1]   Silence-snap search radius (s); 0 disables.
    *   (all other keys are forwarded to this.transcribe())
    * @param {function}     [onChunk]       Optional async callback invoked after
    *   each chunk with { chunkNum, totalChunks, result, partialText, start, end,
@@ -2218,6 +2289,11 @@ export class ParakeetModel {
       enableChunking = true,
       chunkDurationSec = 60,
       overlapSec = 2,
+      // Silence-aware seams: snap each chunk boundary to the quietest point
+      // within this many seconds BEFORE its nominal end, so the seam lands in a
+      // pause instead of mid-word. 0 disables (fixed-stride layout). See
+      // planChunks.
+      snapToSilenceSec = 1.0,
       ...transcribeOpts
     } = opts;
 
@@ -2251,8 +2327,33 @@ export class ParakeetModel {
     }
 
     const overlapSamples = Math.max(0, Math.round(overlapSec * sampleRate));
-    const stride = Math.max(1, maxChunkSamples - overlapSamples);
-    const totalChunks = Math.ceil(audio.length / stride);
+
+    // Short-window energy (mean square) around a candidate boundary sample, used
+    // to snap seams into pauses. ~25 ms window, probed every ~5 ms; both are
+    // wide enough to find inter-word/sentence gaps cheaply.
+    const energyWindow = Math.max(1, Math.round(0.025 * sampleRate));
+    const energyHalf = energyWindow >> 1;
+    const energyAt = (i) => {
+      const a = Math.max(0, i - energyHalf);
+      const b = Math.min(audio.length, a + energyWindow);
+      let s = 0;
+      for (let k = a; k < b; k += 1) { const v = audio[k]; s += v * v; }
+      return s / Math.max(1, b - a);
+    };
+    const snapRadiusSamples = Math.max(0, Math.round(snapToSilenceSec * sampleRate));
+    const snapStepSamples = Math.max(1, Math.round(0.005 * sampleRate));
+
+    // Plan every chunk window up front (silence-snapped when enabled). Iterating
+    // the plan makes totalChunks exact, so the per-chunk progress callback's
+    // totalChunks matches the number of chunks actually produced.
+    const chunkPlan = planChunks(audio.length, {
+      maxChunkSamples,
+      overlapSamples,
+      snapRadiusSamples,
+      snapStepSamples,
+      energyAt: snapRadiusSamples > 0 ? energyAt : null,
+    });
+    const totalChunks = chunkPlan.length;
 
     // Dedup is only possible when transcribe() returns timestamped words; with
     // returnTimestamps off there are no words, so we keep the plain-concat path.
@@ -2287,8 +2388,7 @@ export class ParakeetModel {
       ? combinedWords.map((w) => w.text).join(' ')
       : combinedTextParts.join(' '));
 
-    for (let start = 0; start < audio.length; start += stride) {
-      const end = Math.min(start + maxChunkSamples, audio.length);
+    for (const { start, end } of chunkPlan) {
       // subarray (zero-copy view); the model copies into its own ORT tensor.
       const chunk = audio.subarray(start, end);
       chunkNum += 1;
