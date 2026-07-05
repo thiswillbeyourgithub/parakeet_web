@@ -274,9 +274,10 @@ export function mergeOverlapWords(leftOverlap, rightOverlap, { seamSec, wordMid 
  * Plan the [start, end) sample windows for long-audio chunking. Each chunk spans
  * at most `maxChunkSamples` and overlaps the previous one by `overlapSamples`.
  *
- * Silence-aware boundaries: when `energyAt` is supplied and `snapRadiusSamples`
- * > 0, each interior boundary is snapped to the QUIETEST point within
- * `snapRadiusSamples` BEFORE its nominal end (searching backward only, so a chunk
+ * Silence-aware boundaries (opt-in; the caller passes no `energyAt` by default,
+ * see transcribeChunked's snapToSilenceSec): when `energyAt` is supplied and
+ * `snapRadiusSamples` > 0, each interior boundary is snapped to the QUIETEST
+ * point within `snapRadiusSamples` BEFORE its nominal end (searching backward, so a chunk
  * never grows past `maxChunkSamples` and the ~25 s quality wall is respected).
  * A chunk edge is where the encoder has the least acoustic context, so a word
  * sitting on the seam is transcribed with low context on both sides; landing the
@@ -2259,11 +2260,13 @@ export class ParakeetModel {
    * `returnTimestamps: true`; without timestamps there are no words to align on,
    * so we fall back to plain text concatenation (the old behaviour).
    *
-   * Silence-aware seams: each interior chunk boundary is snapped to the quietest
-   * point within `snapToSilenceSec` before its nominal end (see planChunks), so
-   * the seam tends to fall in a pause rather than mid-word. This complements the
-   * overlap dedup above; set `snapToSilenceSec: 0` to disable and get a plain
-   * fixed-stride layout.
+   * Silence-aware seams (OPT-IN, default off): when `snapToSilenceSec > 0`, each
+   * interior chunk boundary is snapped to the quietest point within that many
+   * seconds before its nominal end (see planChunks), so the seam tends to fall in
+   * a pause rather than mid-word. It complements the overlap dedup above but is
+   * off by default: the dedup alone already leaves no seam-duplication artifacts,
+   * and snapping was a wash (occasionally a regression) in a single-clip A/B, so
+   * it awaits a proper multi-clip WER study before being enabled by default.
    *
    * When chunking is disabled (`enableChunking: false`) or the audio is shorter
    * than one chunk, this falls back to a single this.transcribe() pass; the
@@ -2276,7 +2279,7 @@ export class ParakeetModel {
    *   @param {boolean} [opts.enableChunking=true]  Split long audio into chunks.
    *   @param {number}  [opts.chunkDurationSec=60]  Max chunk length, seconds.
    *   @param {number}  [opts.overlapSec=2]         Overlap between chunks, seconds.
-   *   @param {number}  [opts.snapToSilenceSec=1]   Silence-snap search radius (s); 0 disables.
+   *   @param {number}  [opts.snapToSilenceSec=0]   Silence-snap search radius (s); 0 (default) disables.
    *   (all other keys are forwarded to this.transcribe())
    * @param {function}     [onChunk]       Optional async callback invoked after
    *   each chunk with { chunkNum, totalChunks, result, partialText, start, end,
@@ -2291,9 +2294,17 @@ export class ParakeetModel {
       overlapSec = 2,
       // Silence-aware seams: snap each chunk boundary to the quietest point
       // within this many seconds BEFORE its nominal end, so the seam lands in a
-      // pause instead of mid-word. 0 disables (fixed-stride layout). See
-      // planChunks.
-      snapToSilenceSec = 1.0,
+      // pause instead of mid-word. See planChunks.
+      //
+      // OFF by default (0). A single-clip A/B on the 3 min JFK fixture showed it
+      // is a wash against the overlap + text-anchored dedup that already runs
+      // (which alone leaves no seam-duplication artifacts), and it can REGRESS a
+      // word when an RMS minimum falls mid-word at a stop-consonant closure
+      // rather than at a real pause. It stays available (opt-in via this option /
+      // the CLI --snap-to-silence) but must not be turned on by default without a
+      // proper multi-clip WER study, per this repo's "validate with a real WER
+      // A/B, not single-clip eyeballing" rule.
+      snapToSilenceSec = 0,
       ...transcribeOpts
     } = opts;
 
@@ -2329,9 +2340,12 @@ export class ParakeetModel {
     const overlapSamples = Math.max(0, Math.round(overlapSec * sampleRate));
 
     // Short-window energy (mean square) around a candidate boundary sample, used
-    // to snap seams into pauses. ~25 ms window, probed every ~5 ms; both are
-    // wide enough to find inter-word/sentence gaps cheaply.
-    const energyWindow = Math.max(1, Math.round(0.025 * sampleRate));
+    // to snap seams into pauses. The window is ~150 ms (probed every ~5 ms): a
+    // real inter-word/sentence pause is that long, whereas a stop-consonant
+    // closure inside a word is only ~20-50 ms, so a window this wide averages the
+    // closure back up and only a genuine pause reads as a minimum. A narrower
+    // window would let the seam snap into the middle of a word at its closure.
+    const energyWindow = Math.max(1, Math.round(0.15 * sampleRate));
     const energyHalf = energyWindow >> 1;
     const energyAt = (i) => {
       const a = Math.max(0, i - energyHalf);

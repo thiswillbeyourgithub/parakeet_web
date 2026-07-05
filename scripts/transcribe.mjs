@@ -120,7 +120,7 @@ function parseArgs(argv) {
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: DEFAULT_CHUNK_DURATION_SEC, // sidebar: max chunk length, seconds
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
-    snapToSilence: 1.0,    // snap chunk seams to the quietest point within this many s (0 disables)
+    snapToSilence: 0,      // snap chunk seams to the quietest point within this many s (0 = off; opt-in, see transcribeChunked)
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',          // encoder quantisation
@@ -283,7 +283,8 @@ Options:
                            the web UI).
       --snap-to-silence N  Snap each chunk seam to the quietest point within N
                            seconds before its nominal end, so seams land in
-                           pauses not mid-word. Default 1; 0 disables.
+                           pauses not mid-word. Default 0 (off); opt-in, pending
+                           a multi-clip WER study (see transcribeChunked).
       --no-chunking        Disable chunking; transcribe the whole file in one
                            pass (matches unticking the sidebar's chunking box).
       --model KEY          Model key (${listModels().join(', ')}).
