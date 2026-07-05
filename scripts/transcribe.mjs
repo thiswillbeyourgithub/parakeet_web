@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 import * as ortmod from '../app/ui/vendor/onnxruntime-web/dist/ort.node.min.mjs';
-import { ParakeetModel } from '../app/src/parakeet.js';
+import { ParakeetModel, DEFAULT_SNAP_TO_SILENCE_SEC } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
@@ -120,7 +120,7 @@ function parseArgs(argv) {
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: DEFAULT_CHUNK_DURATION_SEC, // sidebar: max chunk length, seconds
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
-    snapToSilence: 0,      // snap chunk seams to the quietest point within this many s (0 = off; opt-in, see transcribeChunked)
+    snapToSilence: DEFAULT_SNAP_TO_SILENCE_SEC, // snap chunk seams to quietest point within this many s (0 = off); mirrors the app default
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',          // encoder quantisation
@@ -283,8 +283,8 @@ Options:
                            the web UI).
       --snap-to-silence N  Snap each chunk seam to the quietest point within N
                            seconds before its nominal end, so seams land in
-                           pauses not mid-word. Default 0 (off); opt-in, pending
-                           a multi-clip WER study (see transcribeChunked).
+                           pauses not mid-word. Default ${DEFAULT_SNAP_TO_SILENCE_SEC} (matches the app); 0
+                           disables.
       --no-chunking        Disable chunking; transcribe the whole file in one
                            pass (matches unticking the sidebar's chunking box).
       --model KEY          Model key (${listModels().join(', ')}).

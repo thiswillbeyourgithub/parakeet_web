@@ -3913,6 +3913,10 @@ export default function App() {
         enableChunking,
         chunkDurationSec: MAX_CHUNK_DURATION,
         overlapSec: 2,
+        // Silence-aware seam snapping is intentionally NOT passed here: it uses
+        // transcribeChunked's hardcoded DEFAULT_SNAP_TO_SILENCE_SEC. It is a
+        // product default, deliberately not surfaced as a user setting (an extra
+        // knob would only confuse users).
         returnTimestamps: true,
         frameStride,
         // Pinned to 0: temperature never changes the transcript (greedy argmax
