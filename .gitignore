@@ -45,3 +45,4 @@ test/e2e/.cache
 
 audio_testfiles
 .serena
+.tokensave
