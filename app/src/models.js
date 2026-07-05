@@ -129,10 +129,16 @@ export function listModels() {
 // got a shorter window because the stock int8 encoder dropped long-range content
 // past ~20 s within a chunk. The SmoothQuant int8 encoder this app ships no longer
 // has that problem (it tracks fp16 over long single passes, see the model repo's
-// WER tables), and fp16/fp32 never did, so the special case is gone. parakeet-tdt
-// v3 handles very long audio; 60 s balances peak WASM-heap RAM (smaller chunks =
-// less resident activation memory) against the number of stitch seams.
-export const DEFAULT_CHUNK_DURATION_SEC = 60;
+// WER tables), and fp16/fp32 never did, so the special case is gone.
+//
+// The window is capped low (20 s default, 25 s max) because parakeet-tdt v3
+// transcription quality degrades noticeably once a single chunk runs much past
+// ~25 s of audio: accuracy drops off past that point regardless of backend or
+// precision, so we never let a chunk grow long enough to hit it. The floor
+// (10 s min) keeps the number of stitch seams sane on long files.
+export const DEFAULT_CHUNK_DURATION_SEC = 20;
+export const MIN_CHUNK_DURATION_SEC = 10;
+export const MAX_CHUNK_DURATION_SEC = 25;
 
 /**
  * Get language display name.

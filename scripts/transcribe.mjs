@@ -35,7 +35,7 @@ import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
 import { BoostingTrie, parseBoostDirectives, resolveBoostLines, expandAugmentations, DEFAULT_BOOST_MIN_P } from '../app/src/phraseBoost.js';
 import { artifactMatchesVocab, readPwc } from '../app/src/boostCompile.js';
-import { getModelConfig, DEFAULT_MODEL, listModels } from '../app/src/models.js';
+import { getModelConfig, DEFAULT_MODEL, listModels, DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../app/src/models.js';
 
 const ort = ortmod.default || ortmod;
 
@@ -118,7 +118,7 @@ function parseArgs(argv) {
                            // decode time (beam 5, int8, CPU+GPU). See parakeet.js.
     frameStride: 1,        // sidebar: decimate encoder frames (1 = none)
     chunking: true,        // sidebar: split long audio into chunks
-    chunkDuration: 60,     // sidebar: max chunk length, seconds
+    chunkDuration: DEFAULT_CHUNK_DURATION_SEC, // sidebar: max chunk length, seconds
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
     model: DEFAULT_MODEL,
     modelDir: null,
@@ -189,7 +189,7 @@ function parseArgs(argv) {
   if (!Number.isFinite(a.maesExpansionGamma) || a.maesExpansionGamma <= 0) throw new Error('--maes-expansion-gamma must be a positive number');
   if (!Number.isInteger(a.maesPrefixAlpha) || a.maesPrefixAlpha < 0) throw new Error('--maes-prefix-alpha must be an integer >= 0');
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) throw new Error('--frame-stride must be an integer in [1, 4]');
-  if (!Number.isFinite(a.chunkDuration) || a.chunkDuration <= 0) throw new Error('--chunk-duration must be a positive number');
+  if (!Number.isFinite(a.chunkDuration) || a.chunkDuration < MIN_CHUNK_DURATION_SEC || a.chunkDuration > MAX_CHUNK_DURATION_SEC) throw new Error(`--chunk-duration must be a number in [${MIN_CHUNK_DURATION_SEC}, ${MAX_CHUNK_DURATION_SEC}] seconds (parakeet degrades noticeably above ~${MAX_CHUNK_DURATION_SEC} s)`);
   if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
   return a;
 }
@@ -272,8 +272,10 @@ Options:
       --frame-stride N     Decimate encoder frames before decoding (integer in
                            [1, 4]). 1 = use every frame (default). Sidebar knob.
       --chunk-duration N   Max chunk length in seconds for long audio. Default
-                           60. Long audio is split into overlapping chunks and
-                           each chunk's transcript is printed as it is produced.
+                           ${DEFAULT_CHUNK_DURATION_SEC}, allowed range ${MIN_CHUNK_DURATION_SEC}-${MAX_CHUNK_DURATION_SEC} (parakeet degrades
+                           noticeably above ~${MAX_CHUNK_DURATION_SEC} s). Long audio is split into
+                           overlapping chunks and each chunk's transcript is
+                           printed as it is produced.
       --overlap N          Overlap between chunks in seconds. Default 2 (matches
                            the web UI).
       --no-chunking        Disable chunking; transcribe the whole file in one

@@ -1,5 +1,5 @@
 // Tier-3 realistic long-audio chunking E2E. chunking.spec.js stresses the
-// chunk/stitch path with a tiny 5 s window on the ~11 s JFK clip; this is the
+// chunk/stitch path with a tiny 10 s window on the ~11 s JFK clip; this is the
 // complementary realistic case: a ~3 minute continuous speech run through the
 // app at its DEFAULT chunk window.
 //
@@ -13,9 +13,9 @@
 // stitched FLEURS clip is still used as the default WER-bench subject; only this
 // e2e was repointed.)
 //
-// The default chunk window is now a single 60 s for every backend (see
-// app/src/models.js); at 60 s a 3 min clip splits into only ~3 chunks, too few to
-// stress the stitcher. So this spec SEEDS a short 20 s window explicitly: the
+// The default chunk window is a single 20 s for every backend (see
+// app/src/models.js). This spec SEEDS that 20 s window explicitly (also the
+// max is 25 s, so the window is always short): the
 // 3 min clip then splits into ~10 chunks and the stitched transcript must recover
 // the content across seams that land mid-sentence.
 //
@@ -54,8 +54,8 @@ test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', as
     if (hit) { chunkLogs += 1; chunkTotals.add(Number(hit[2])); }
   });
 
-  // Seed backend (wasm) + local model + a short 20 s chunk window. The default is
-  // 60 s for every backend now, so we force a small window to get many seams.
+  // Seed backend (wasm) + local model + a 20 s chunk window (the default, and
+  // near the 25 s max), which gives many seams on a 3 min clip.
   await page.goto('/');
   await seedSettings(page, { chunkDuration: 20 });
   await page.reload();
@@ -71,9 +71,8 @@ test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', as
   await expect(historyText).not.toContainText('transcribing', { timeout: 6 * 60 * 1000 });
 
   // Chunking really engaged at the seeded 20 s window: a single consistent total,
-  // and MANY chunks. A 3 min clip at a 20 s window splits into ~10 chunks; at the
-  // 60 s default it would be only ~3, so a high chunk count proves the seeded
-  // small window actually took effect.
+  // and MANY chunks. A 3 min clip at a 20 s window splits into ~10 chunks, so a
+  // high chunk count proves the window actually took effect.
   const total = [...chunkTotals][0];
   expect(chunkTotals.size, `inconsistent chunk totals: ${[...chunkTotals]}`).toBe(1);
   expect(total, 'expected the seeded 20 s window to split the 3 min clip into many chunks').toBeGreaterThanOrEqual(6);

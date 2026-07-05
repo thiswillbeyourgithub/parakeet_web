@@ -13,8 +13,16 @@ import assert from 'node:assert/strict';
 import * as models from '../../app/src/models.js';
 
 describe('default chunk window', () => {
-  test('is a single 60 s default for every backend/precision', () => {
-    assert.equal(models.DEFAULT_CHUNK_DURATION_SEC, 60);
+  test('is a single 20 s default for every backend/precision', () => {
+    assert.equal(models.DEFAULT_CHUNK_DURATION_SEC, 20);
+  });
+
+  test('is bounded to [10, 25] s because parakeet degrades noticeably past ~25 s', () => {
+    assert.equal(models.MIN_CHUNK_DURATION_SEC, 10);
+    assert.equal(models.MAX_CHUNK_DURATION_SEC, 25);
+    // The default must sit inside the allowed range.
+    assert.ok(models.DEFAULT_CHUNK_DURATION_SEC >= models.MIN_CHUNK_DURATION_SEC);
+    assert.ok(models.DEFAULT_CHUNK_DURATION_SEC <= models.MAX_CHUNK_DURATION_SEC);
   });
 
   test('the removed int8 special-case window stays removed', () => {

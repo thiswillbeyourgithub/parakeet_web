@@ -2,14 +2,15 @@
 // real headless Chromium. The chunk/stitch path (ParakeetModel.transcribeChunked)
 // only engages when the audio is longer than one chunk, which the short happy-
 // path fixtures never trigger, so it had no in-browser coverage (only the tier-1
-// chunk-stitch unit test). Here we shrink the chunk window to 5 s and feed the
-// ~11 s JFK clip, forcing several chunks, then assert the stitched transcript
-// recovered the spoken content.
+// chunk-stitch unit test). Here we shrink the chunk window to 10 s (the minimum
+// allowed) and feed the ~11 s JFK clip, forcing >1 chunk, then assert the
+// stitched transcript recovered the spoken content.
 //
 // Reuses the WASM-int8 local-model setup of transcription.spec.js (serve.mjs
 // serves the weights at /models; seedSettings forces local source + wasm). The
-// 5 s chunk duration is seeded directly into the settings DB (below the UI's
-// 15 s input floor, which is fine: it is read back verbatim on load).
+// 10 s chunk duration is seeded directly into the settings DB; it sits at the
+// UI's input floor, so it is read back verbatim on load (the load-time clamp
+// leaves in-range values untouched).
 //
 // Built with Claude Code.
 
@@ -22,12 +23,12 @@ import { words, overlap } from './text-overlap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AUDIO = resolve(here, '../fixtures/jfk.mp3');
-// The golden is the clean single-pass transcript (default 60 s, no chunking):
-// the stitched 5 s-chunk output must recover the same words, proving the
-// chunk/overlap path did not drop or mangle content at the seams.
+// The golden is the clean single-pass transcript (default 20 s, no chunking on
+// this ~11 s clip): the stitched 10 s-chunk output must recover the same words,
+// proving the chunk/overlap path did not drop or mangle content at the seams.
 const GOLDEN = readFileSync(resolve(here, '../fixtures/jfk.expected.txt'), 'utf-8').trim();
 
-test('chunks long audio at a 5 s window and stitches it back together', async ({ page }) => {
+test('chunks long audio at a 10 s window and stitches it back together', async ({ page }) => {
   const errors = [];
   // The app logs "[Transcribe] Completed chunk N/total" once per chunk whenever
   // there is more than one chunk; capture the totals so we can prove chunking
@@ -42,17 +43,18 @@ test('chunks long audio at a 5 s window and stitches it back together', async ({
   });
 
   // First load creates the settings DB/store. chunkDuration is persisted via
-  // usePersistedSetting, so the app writes its default (60) back to the DB right
+  // usePersistedSetting, so the app writes its default (20) back to the DB right
   // after the initial settings restore; if we seed before that write lands it is
-  // clobbered and the reload reads 60 (single pass, no chunking). So wait until
-  // the restore is done (the load-model button only renders once settings are
-  // loaded), let the default write flush, THEN seed our 5 s window, then reload.
+  // clobbered and the reload reads 20. So wait until the restore is done (the
+  // load-model button only renders once settings are loaded), let the default
+  // write flush, THEN seed our 10 s window (the minimum allowed), then reload.
+  // 10 s is small enough to split this ~11 s clip into >1 chunk.
   // (modelSource/backend are not auto-persisted, which is why the other specs can
   // seed immediately; chunkDuration is the one that needs this ordering.)
   await page.goto('/');
   await page.locator('[data-umami-event="load_model_button"]').waitFor({ timeout: 30 * 1000 });
   await page.waitForTimeout(500); // let the first-load default-persist effects flush
-  await seedSettings(page, { chunkDuration: 5 });
+  await seedSettings(page, { chunkDuration: 10 });
   await page.reload();
 
   // Fail loudly (not silently single-pass) if the seed did not survive the
@@ -70,7 +72,7 @@ test('chunks long audio at a 5 s window and stitches it back together', async ({
       r.onerror = () => rej(r.error);
     });
   });
-  expect(persisted, 'seeded chunkDuration did not survive reload').toBe(5);
+  expect(persisted, 'seeded chunkDuration did not survive reload').toBe(10);
 
   await page.locator('[data-umami-event="load_model_button"]').click();
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
@@ -88,7 +90,7 @@ test('chunks long audio at a 5 s window and stitches it back together', async ({
   // Chunking really engaged: more than one chunk, and every chunk reported in.
   const total = [...chunkTotals][0];
   expect(chunkTotals.size, `saw inconsistent chunk totals: ${[...chunkTotals]}`).toBe(1);
-  expect(total, 'expected the 11 s clip at a 5 s window to split into >1 chunk').toBeGreaterThan(1);
+  expect(total, 'expected the 11 s clip at a 10 s window to split into >1 chunk').toBeGreaterThan(1);
   expect(chunkLogs, `expected ${total} chunk-complete logs, saw ${chunkLogs}`).toBe(total);
 
   // The stitched transcript recovered the spoken content (robust to the casing/
@@ -102,7 +104,7 @@ test('chunks long audio at a 5 s window and stitches it back together', async ({
   // Guard against runaway boundary duplication: a broken stitch that re-emits
   // whole overlapped chunks would still pass the overlap check above (every
   // golden word is present, just repeated), so cap the length too. Some seam
-  // repetition at a 5 s window is expected; 2x the golden word count is the
+  // repetition at a 10 s window is expected; 2x the golden word count is the
   // ceiling that a healthy stitch stays well under.
   const got = (await historyText.innerText()).trim();
   expect(words(got).length,

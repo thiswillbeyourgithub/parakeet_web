@@ -25,7 +25,7 @@ import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from 
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
 import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
-import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
+import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
 import { runDiarization, cancelDiarization } from './lib/diarizer.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
@@ -1394,9 +1394,12 @@ export default function App() {
         setKeyboardShortcutsEnabled(savedKeyboardShortcutsEnabled === true);
         setEnableChunking(savedEnableChunking);
         // A saved value means the user previously picked a chunk window; honour
-        // it. When absent, chunkDuration keeps its DEFAULT_CHUNK_DURATION_SEC
-        // initial value.
-        if (savedChunkDuration != null) setChunkDuration(savedChunkDuration);
+        // it, but clamp to the allowed range so a value persisted before the
+        // range was tightened (e.g. the old 60 s default) can't exceed the cap.
+        // When absent, chunkDuration keeps its DEFAULT_CHUNK_DURATION_SEC initial value.
+        if (savedChunkDuration != null) {
+          setChunkDuration(Math.max(MIN_CHUNK_DURATION_SEC, Math.min(MAX_CHUNK_DURATION_SEC, savedChunkDuration)));
+        }
         // 'confidence' was a removed display mode; map any persisted value to 'raw'.
         setTranscriptDisplayMode(savedTranscriptDisplayMode === 'confidence' ? 'raw' : savedTranscriptDisplayMode);
         setDiarizationNumSpeakers(Number.isInteger(savedDiarizationNumSpeakers) && savedDiarizationNumSpeakers > 0 ? savedDiarizationNumSpeakers : 0);
@@ -5356,17 +5359,18 @@ export default function App() {
                 <div style={{ marginTop: '0.25rem', width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span className="setting-label" style={{ flex: '1 1 auto' }}>
                     {t('chunkDuration')} (s):
+                    <InfoTooltip text={t('tooltipChunkDuration')} />
                   </span>
                   <input
                     type="number"
                     inputMode="numeric"
-                    min="15"
-                    max="300"
-                    step="5"
+                    min={MIN_CHUNK_DURATION_SEC}
+                    max={MAX_CHUNK_DURATION_SEC}
+                    step="1"
                     value={chunkDuration}
                     onChange={e => {
                       const v = Number(e.target.value);
-                      if (Number.isFinite(v)) setChunkDuration(Math.max(15, Math.min(300, v)));
+                      if (Number.isFinite(v)) setChunkDuration(Math.max(MIN_CHUNK_DURATION_SEC, Math.min(MAX_CHUNK_DURATION_SEC, v)));
                     }}
                     style={{ width: '5rem' }}
                   />
