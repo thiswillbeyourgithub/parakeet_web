@@ -232,6 +232,13 @@ body {
 
 .info-section a:hover { color: var(--accent-hover); }
 
+/* Sidebar (settings) links, e.g. the model / HuggingFace repo link. Without
+   this they fall back to the browser default blue, which is hard to read on the
+   dark theme's background. --accent is theme-aware (readable in light + dark). */
+.settings-group-body a { text-decoration: underline; color: var(--accent); }
+
+.settings-group-body a:hover { color: var(--accent-hover); }
+
 /* ─── Controls row ───────────────────────────────────────────────────────── */
 .controls {
   display: flex;
