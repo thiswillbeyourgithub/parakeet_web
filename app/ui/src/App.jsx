@@ -270,6 +270,10 @@ function slimTranscriptForPersist(t) {
   if (t.speakerNames && typeof t.speakerNames === 'object' && Object.keys(t.speakerNames).length > 0) {
     slim.speakerNames = t.speakerNames;
   }
+  // RTF is a pure performance ratio (transcribe time / audio duration); it
+  // carries no content, per-word timing, or duration fingerprint, so it is
+  // F-130-safe to keep so the reloaded kebab menu can still show it.
+  if (typeof t.rtf === 'number') slim.rtf = t.rtf;
   return slim;
 }
 
@@ -4067,6 +4071,12 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString(),
         duration: audioDuration, // original duration (without padding)
         wordCount: res.words?.length || 0,
+        // Full wall-clock RTF (real-time factor): total transcribe time / audio
+        // duration. Distinct from metrics.procPerDur (model-internal proc/dur):
+        // this includes decode/resample, chunk overhead and gaps. Shown in the
+        // kebab menu. Persisted (harmless speed number, no PHI) so it survives a
+        // reload; see slimTranscriptForPersist.
+        rtf: procPerDur,
         metrics: res.metrics,
         words: res.words || [], // Store word-level data (timestamps)
         // In-memory only (slimTranscriptForPersist allowlist drops it): the
@@ -6281,6 +6291,13 @@ export default function App() {
                       </button>
                       {openKebabId === trans.id && (
                         <div className="kebab-dropdown">
+                          {/* Real-time factor: wall-clock transcribe time vs
+                              audio length (lower is faster than real time). */}
+                          {typeof trans.rtf === 'number' && (
+                            <div className="kebab-info" title={t('rtfHint')}>
+                              {t('rtf')}: {trans.rtf.toFixed(2)}×
+                            </div>
+                          )}
                           <button onClick={() => { copyHistoryItem(trans); setOpenKebabId(null); }}>
                             {copiedHistoryId === trans.id ? t('copied') : t('copyText')}
                           </button>

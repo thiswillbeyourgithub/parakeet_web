@@ -294,6 +294,8 @@ const translations = {
     tokenize: 'Tokenize',
     decodePerDur: 'Decode / duration',
     encodeDecodePerDur: '(Encode + decode) / duration',
+    rtf: 'RTF',
+    rtfHint: 'Real-time factor: total transcription time divided by audio duration. Below 1× means faster than real time.',
 
     // Misc
     help: 'Help',
@@ -675,6 +677,8 @@ const translations = {
     tokenize: 'Tokenisation',
     decodePerDur: 'D\u00e9codage / dur\u00e9e',
     encodeDecodePerDur: '(Encodage + d\u00e9codage) / dur\u00e9e',
+    rtf: 'RTF',
+    rtfHint: 'Facteur temps r\u00e9el : temps total de transcription divis\u00e9 par la dur\u00e9e de l\'audio. En dessous de 1\u00d7, c\'est plus rapide que le temps r\u00e9el.',
 
     // Misc
     help: 'Aide',

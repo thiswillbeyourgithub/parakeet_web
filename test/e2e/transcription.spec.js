@@ -102,6 +102,12 @@ for (const fx of FIXTURES) {
     const before = (await historyText.innerText()).trim();
     const runsBefore = transcribeRuns;
     await page.getByRole('button', { name: 'More actions' }).first().click();
+    // The kebab menu shows this run's RTF (real-time factor = transcribe time /
+    // audio duration) as a "RTF: N.NN×" info line. Assert it before the
+    // Transcribe-again click, which dismisses the menu.
+    const rtfLine = page.locator('.kebab-info').first();
+    await expect(rtfLine).toBeVisible();
+    await expect(rtfLine).toHaveText(/RTF:\s*\d+\.\d{2}×/);
     await page.getByRole('button', { name: 'Transcribe again' }).first().click();
     // Wait for the pipeline to log a second completion (the re-run finished).
     await expect.poll(() => transcribeRuns, { timeout: 6 * 60 * 1000 }).toBeGreaterThan(runsBefore);

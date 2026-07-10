@@ -784,6 +784,16 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   overflow: hidden;
 }
 
+/* Read-only info line (e.g. the RTF) at the top of the kebab dropdown. */
+.kebab-info {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+}
+
 .kebab-dropdown button {
   display: block;
   width: 100%;
