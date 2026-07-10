@@ -25,6 +25,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Phrase Boosting](#phrase-boosting)
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
+- [Resetting the app](#resetting-the-app)
 - [Mobile debugging](#mobile-debugging)
 - [Architecture](#architecture)
 - [License](#license)
@@ -308,6 +309,17 @@ is auto-promoted to `both`.
 The container runs as UID 1000. If your files end up unreadable to UID
 1000, run `chmod -R a+rX /host/path/to/onnx-files` (or
 `chown -R 1000:1000 /host/path/to/onnx-files`).
+
+Built with [Claude Code](https://claude.com/claude-code).
+
+## Resetting the app
+
+If a saved setting ever leaves the app in a broken or frozen state (so the in-app
+**Reset All** can no longer be reached), load the page with `?reset` appended to the
+URL, e.g. `https://your-instance/?reset`. This wipes the saved settings and boots on
+defaults; the `?reset` is then stripped from the address bar so a normal reload does
+not keep purging. Your transcript history lives in a separate store and is left
+intact. A `#reset` hash fallback is also honoured on a fresh load or reload.
 
 Built with [Claude Code](https://claude.com/claude-code).
 

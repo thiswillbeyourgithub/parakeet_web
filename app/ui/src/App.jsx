@@ -341,6 +341,36 @@ async function clearAllSettings() {
   }
 }
 
+// Escape hatch for a persisted setting that has wedged the app: loading the
+// page with `?reset` (or the `#reset` hash fallback, in case a query string is
+// awkward to add) wipes the saved settings and boots on defaults, WITHOUT
+// touching transcript history (it lives in its own DB). This is the recovery
+// path when the in-app "Reset All" can no longer be reached because a bad value
+// froze the UI. See the reset branch at the top of loadSettings().
+function urlRequestsSettingsReset() {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (new URLSearchParams(window.location.search).has('reset')) return true;
+    return (window.location.hash || '').replace(/^#/, '') === 'reset';
+  } catch {
+    return false;
+  }
+}
+
+// Strip the reset directive from the address bar after we honour it, so a plain
+// reload (or a bookmarked/shared link) does not keep re-purging on every visit.
+function stripSettingsResetFromUrl() {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('reset');
+    if ((url.hash || '').replace(/^#/, '') === 'reset') url.hash = '';
+    window.history.replaceState(null, '', url.toString());
+  } catch {
+    /* replaceState can throw in exotic sandboxes; the purge already happened */
+  }
+}
+
 // Injected by Vite from app/package.json — no need to manually sync
 const VERSION = __APP_VERSION__;
 
@@ -1264,6 +1294,21 @@ export default function App() {
 
     async function loadSettings() {
       try {
+        // Escape hatch: `?reset` / `#reset` in the URL wipes saved settings and
+        // boots on defaults (recovery for a persisted value that wedged the UI).
+        // Runs BEFORE any saved value is read, so a bad setting is never applied.
+        if (urlRequestsSettingsReset()) {
+          console.log('[App] URL reset requested; purging saved settings and booting on defaults.');
+          await clearAllSettings();
+          await saveSetting('version', VERSION);
+          stripSettingsResetFromUrl();
+          if (booted) return;
+          booted = true;
+          clearTimeout(watchdog);
+          setSettingsLoaded(true);
+          return;
+        }
+
         // Check version first - purge old data if version mismatch
         const storedVersion = await loadSetting('version', null);
         if (booted) return; // watchdog already booted on defaults; skip late restore

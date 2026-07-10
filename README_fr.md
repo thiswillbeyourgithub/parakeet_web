@@ -25,6 +25,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Renforcement de phrases](#renforcement-de-phrases)
 - [Microphone distant (téléphone comme micro)](#microphone-distant-téléphone-comme-micro)
 - [Modèle local de secours](#modèle-local-de-secours)
+- [Réinitialiser l'application](#réinitialiser-lapplication)
 - [Débogage mobile](#débogage-mobile)
 - [Architecture](#architecture)
 - [Licence](#licence)
@@ -314,6 +315,19 @@ est automatiquement promu en `both`.
 Le conteneur s'exécute sous l'UID 1000. Si vos fichiers finissent par être illisibles pour l'UID
 1000, exécutez `chmod -R a+rX /host/path/to/onnx-files` (ou
 `chown -R 1000:1000 /host/path/to/onnx-files`).
+
+Construit avec [Claude Code](https://claude.com/claude-code).
+
+## Réinitialiser l'application
+
+Si un paramètre enregistré laisse un jour l'application dans un état bloqué ou figé
+(au point que le bouton **Tout réinitialiser** intégré n'est plus accessible), chargez
+la page avec `?reset` ajouté à l'URL, par exemple `https://votre-instance/?reset`. Cela
+efface les paramètres enregistrés et démarre sur les valeurs par défaut ; le `?reset`
+est ensuite retiré de la barre d'adresse afin qu'un rechargement normal ne purge pas à
+nouveau. Votre historique de transcriptions est stocké séparément et reste intact. Un
+repli via le hash `#reset` est aussi pris en compte lors d'un chargement ou d'un
+rechargement neuf.
 
 Construit avec [Claude Code](https://claude.com/claude-code).
 
