@@ -101,6 +101,32 @@ test('VITE_PHRASE_BOOST_DEFAULT pre-selects a curated list for a fresh visitor',
   await expect(boostTextarea(page)).toHaveValue(/venlafaxine/, { timeout: 15 * 1000 });
 });
 
+test('the Disabled choice turns boosting off, hides the textarea, and persists', async ({ page }) => {
+  // Start with a curated list selected (its phrases loaded into the textarea),
+  // then pick the Disabled option. Boosting must switch off: the editable
+  // textarea is replaced by the disabled hint, and the choice survives a reload.
+  await page.goto('/?phrase_boost=clinical-cjk');
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Phrase boosting');
+
+  await expect(boostSelect(page)).toHaveValue('clinical-cjk.txt', { timeout: 15 * 1000 });
+  await expect(boostTextarea(page)).toHaveValue(/venlafaxine/, { timeout: 15 * 1000 });
+
+  // Switch to Disabled. The textarea disappears and the off-hint shows.
+  await boostSelect(page).selectOption('__disabled__');
+  await expect(boostSelect(page)).toHaveValue('__disabled__');
+  await expect(boostTextarea(page)).toHaveCount(0);
+  await expect(page.getByText(/Phrase boosting is turned off/)).toBeVisible();
+
+  // The choice persists across a reload (and does not fall back to a curated
+  // list / Custom): still Disabled, still no boost textarea.
+  await page.reload();
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Phrase boosting');
+  await expect(boostSelect(page)).toHaveValue('__disabled__', { timeout: 15 * 1000 });
+  await expect(boostTextarea(page)).toHaveCount(0);
+});
+
 test('?phrase_boost= does NOT override a returning user\'s saved choice', async ({ page }) => {
   // First load creates the DB; seed a saved Custom choice with custom text, then
   // reload WITH the query param. The saved choice must win.

@@ -407,6 +407,13 @@ const SERVED_FILE_MAX_BYTES = 5 * 1024 * 1024;
 // valid manifest entry (those all end in .txt), so it can never collide.
 const BOOST_SOURCE_CUSTOM = '__custom__';
 
+// Sentinel for the boost-phrase source selector meaning "boosting is turned
+// off". Like the Custom sentinel it is not a valid manifest entry (those end in
+// .txt), so it never collides. Selecting it clears the phrase text, which hits
+// the empty-phrase fast path in the trie-rebuild effect (no encode, no build),
+// so switching to it from a very large curated list is instant.
+const BOOST_SOURCE_DISABLED = '__disabled__';
+
 // Normalise a curated-list name to a manifest entry: manifest entries all end
 // in `.txt`, so a bare name (e.g. "medical", as supplied via the
 // ?phrase_boost= query param or the VITE_PHRASE_BOOST_DEFAULT env default) gets
@@ -419,6 +426,7 @@ function normalizeBoostName(raw) {
   const name = raw.trim();
   if (!name) return null;
   if (name === BOOST_SOURCE_CUSTOM) return name;
+  if (name === BOOST_SOURCE_DISABLED) return name;
   return name.endsWith('.txt') ? name : `${name}.txt`;
 }
 
@@ -1923,6 +1931,16 @@ export default function App() {
   // onChange and the one-shot init resolution below.
   async function applyBoostSource(src) {
     setBoostSource(src);
+    if (src === BOOST_SOURCE_DISABLED) {
+      // Turn boosting off. Clearing the phrase text hits the empty-phrase fast
+      // path in the rebuild effect (phraseBoostRef -> null, no encode/build) and
+      // cancels any in-flight trie build for the previous list, so switching
+      // here from a very large curated list is instant (fetches nothing). The
+      // user's Custom text is left untouched in boostCustomTextRef for later.
+      prebuiltBoostRef.current = null;
+      setBoostPhrases('');
+      return;
+    }
     if (src === BOOST_SOURCE_CUSTOM) {
       prebuiltBoostRef.current = null; // user text is never server-prebuilt
       setBoostPhrases(boostCustomTextRef.current);
@@ -2019,7 +2037,11 @@ export default function App() {
     if (!boostSourceSavedRef.current && source === BOOST_SOURCE_CUSTOM) {
       source = URL_PHRASE_BOOST || normalizeBoostName(CONFIG.VITE_PHRASE_BOOST_DEFAULT) || BOOST_SOURCE_CUSTOM;
     }
-    if (source !== BOOST_SOURCE_CUSTOM) {
+    if (source === BOOST_SOURCE_DISABLED) {
+      // Explicit "boosting off": leave it off (restore already cleared the
+      // phrase text). Don't treat it as a stale/unknown list name below.
+      setBoostPhrases('');
+    } else if (source !== BOOST_SOURCE_CUSTOM) {
       if (boostFiles.includes(source)) {
         if (source !== boostSource) setBoostSource(source);
         applyBoostSource(source);
@@ -5180,6 +5202,7 @@ export default function App() {
                     onChange={e => applyBoostSource(e.target.value)}
                     style={{ flex: '1 1 auto', minWidth: 0, padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
                   >
+                    <option value={BOOST_SOURCE_DISABLED}>{t('boostSourceDisabled')}</option>
                     <option value={BOOST_SOURCE_CUSTOM}>{t('boostSourceCustom')}</option>
                     {boostFiles.map(f => (
                       <option key={f} value={f}>{f.replace(/\.txt$/, '')}</option>
@@ -5204,7 +5227,18 @@ export default function App() {
                   />
                 </label>
               </div>
-              {boostCollapsed ? (
+              {boostSource === BOOST_SOURCE_DISABLED ? (
+                <div
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    fontSize: '0.78rem', padding: '0.6rem 0.7rem',
+                    borderRadius: '4px', border: '1px dashed #d1d5db',
+                    background: 'var(--surface-muted, #f9fafb)', color: 'var(--text-muted, #6b7280)',
+                  }}
+                >
+                  {t('boostDisabledHint')}
+                </div>
+              ) : boostCollapsed ? (
                 <div
                   style={{
                     width: '100%', boxSizing: 'border-box',
