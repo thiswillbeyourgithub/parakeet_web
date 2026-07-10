@@ -5,7 +5,7 @@ import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
-import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates } from './lib/audio.js';
+import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import { decodeToPcm16kFfmpeg, decodeToPcm16kWebAudio } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
@@ -5890,7 +5890,7 @@ export default function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.opus,.webm"
+          accept={AUDIO_FILE_ACCEPT}
           onChange={transcribeFile}
           disabled={isRecording}
           style={{ display: 'none' }}

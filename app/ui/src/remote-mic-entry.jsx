@@ -24,7 +24,7 @@ import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
-import { createLevelMonitor, pickRemoteMicCaptureRate } from './lib/audio.js';
+import { createLevelMonitor, pickRemoteMicCaptureRate, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
 import { parseRemoteMicLink } from './lib/remote-mic-link.js';
 
@@ -1220,7 +1220,7 @@ function RemoteMicSender() {
             <input
                 ref={fileInputRef}
                 type="file"
-                accept="audio/*"
+                accept={AUDIO_FILE_ACCEPT}
                 style={{ display: 'none' }}
                 onChange={(e) => {
                     const f = e.target.files && e.target.files[0];

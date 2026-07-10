@@ -2,6 +2,17 @@
  * Audio helpers shared between local and remote-mic recording paths.
  */
 
+// `accept` attribute for every audio file picker (main upload + remote-mic
+// "Send a file"). We keep the broad `audio/*` MIME wildcard AND list explicit
+// extensions, because some OS/mobile pickers hide files whose sniffed MIME type
+// doesn't match `audio/*` (e.g. an .ogg sniffed as application/ogg, or an .aac
+// with no MIME) unless the extension is named. These are the container/codec
+// combinations the browser's decodeAudioData (or our ffmpeg fallback) can
+// ingest; a file the decoder ultimately can't read is still rejected gracefully
+// downstream. Single source of truth so the two pickers never drift apart.
+export const AUDIO_FILE_ACCEPT =
+  'audio/*,.aac,.m4a,.m4b,.mp3,.mp4,.wav,.ogg,.oga,.opus,.flac,.webm,.weba';
+
 /**
  * Attach an RMS level monitor to an AudioContext source. The monitor
  * pumps a 0..100 "level" value to `onLevel` once per animation frame
