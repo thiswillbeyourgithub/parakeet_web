@@ -60,7 +60,7 @@ const LEAK_MIN_CHUNKS = 6; // need this many chunks to bucket early/late heap
 function parseArgs(argv) {
   // Default to the bundled Playwright Chromium ('chromium'): it is always present,
   // whereas system Google Chrome ('chrome') may not be installed on a given box.
-  const a = { full: false, headless: false, maxGrowth: 1.5, port: 4179, pollMs: 2000, channel: 'chromium' };
+  const a = { full: false, headless: false, fp32: false, maxGrowth: 1.5, port: 4179, pollMs: 2000, channel: 'chromium' };
   // Flags that take a value, accepted as either --flag=value or --flag value.
   const takesValue = new Set(['--max-growth', '--port', '--poll-ms', '--channel']);
   for (let i = 0; i < argv.length; i++) {
@@ -76,6 +76,7 @@ function parseArgs(argv) {
     switch (k) {
       case '--full': a.full = true; break;
       case '--headless': a.headless = true; break;
+      case '--fp32': a.fp32 = true; break;
       case '--max-growth': a.maxGrowth = Number(v); break;
       case '--port': a.port = Number(v); break;
       case '--poll-ms': a.pollMs = Number(v); break;
@@ -84,6 +85,8 @@ function parseArgs(argv) {
         console.log(`Usage: node scripts/webgpu-check.mjs [options]
   --full             Run the full ~17 min speech (memory-leak mode) instead of the 3 min crop
   --headless         Run headless (WebGPU is more reliable headed on a GPU box)
+  --fp32             Use the fp32 WebGPU encoder instead of fp16 (needs no shader-f16;
+                     the only path that runs real WebGPU compute on a Dawn build lacking it)
   --max-growth F     Max late/early JS-heap median ratio before it is a leak (default: 1.5)
   --channel C        Browser channel: 'chrome' (installed) or 'chromium' (bundled) (default: chromium)
   --port N           Static server port (default: 4179)
@@ -159,12 +162,24 @@ async function main() {
     let crashed = false;
     let sessionMode = null;        // "[Parakeet.js] Creating ONNX sessions with execution mode '...'"
     let lastChunk = 0, chunkTotal = 0;
+    let pipelineEngaged = false;   // saw App.jsx's "[Decode] pipeline engaged" marker
     const debug = !!process.env.WEBGPU_DEBUG; // forward all page console to stderr
-    // Benign console noise to ignore: with local source, hub.js HEAD-probes
-    // candidate weights that may not exist locally (decoder fp16/fp32 sidecars,
-    // fp32 shards), and Chromium logs each probe miss as a "Failed to load
-    // resource ... 404" console error. Those are by-design, not failures.
-    const benign = (t) => /Failed to load resource.*\b404\b/i.test(t);
+    // Benign console noise to ignore, all by-design and not failures:
+    //  - "Failed to load resource ... 404": with local source, hub.js HEAD-probes
+    //    candidate weights that may not exist locally (decoder fp16/fp32 sidecars),
+    //    and serve.mjs does not ship the optional runtime /config.js. Each miss is
+    //    logged as a 404 console error.
+    //  - the /config.js 404 is served as an HTML error page, so the browser's
+    //    attempt to parse it as a script raises a "Unexpected token '<'" pageerror.
+    //  - ORT's "VerifyEachNodeIsAssignedToAnEp" is a W:onnxruntime WARNING (routed
+    //    to console.error by ort-web) emitted on EVERY webgpu-HYBRID session: hybrid
+    //    deliberately runs some nodes (shape ops, the joiner) on CPU, so a partial
+    //    EP assignment is the expected, healthy state, not an error.
+    const benign = (t) => (
+      /Failed to load resource.*\b404\b/i.test(t)
+      || /Unexpected token '<'/.test(t)
+      || /VerifyEachNodeIsAssignedToAnEp|Some nodes were not assigned to the preferred execution providers|Rerunning with verbose output/.test(t)
+    );
     page.on('console', (m) => {
       const txt = m.text();
       if (debug) console.error(`  [page:${m.type()}] ${txt}`);
@@ -173,8 +188,9 @@ async function main() {
       if (md) sessionMode = md[1];
       const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(txt);
       if (hit) { lastChunk = Number(hit[1]); chunkTotal = Number(hit[2]); }
+      if (txt.includes('[Decode] pipeline engaged')) pipelineEngaged = true;
     });
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+    page.on('pageerror', (e) => { if (!benign(e.message)) errors.push(`pageerror: ${e.message}`); });
     page.on('crash', () => { crashed = true; });
 
     // Force the LOCAL model source (serve.mjs /models), which is where the fp16
@@ -210,10 +226,15 @@ async function main() {
     }
     console.error(`[webgpu-check] WebGPU adapter: ${gpu.adapter || 'unknown'}`);
 
-    await seedSettings(page, { backend: 'webgpu-hybrid' });
+    // --fp32 forces the fp32 WebGPU encoder. fp32 needs no shader-f16 (the one
+    // WebGPU feature this box's Dawn build does not expose), so it is the only
+    // in-harness way to exercise the real WebGPU compute path here, and it is
+    // what makes the decode-worker pipeline observable end to end.
+    const quant = args.fp32 ? 'fp32' : 'fp16';
+    await seedSettings(page, { backend: 'webgpu-hybrid', webgpuEncoderQuant: quant });
     await page.reload();
 
-    console.error('[webgpu-check] loading model on WebGPU (fp16) ...');
+    console.error(`[webgpu-check] loading model on WebGPU (${quant}) ...`);
     await page.locator('[data-umami-event="load_model_button"]').click();
     const loadDeadline = Date.now() + 6 * 60 * 1000;
     while (Date.now() < loadDeadline) {
@@ -288,6 +309,10 @@ async function main() {
       contentChecks.push({ name: 'chunking engaged (>=2)', ok: chunkTotal >= 2, detail: `total=${chunkTotal}` });
       contentChecks.push({ name: `content overlap (>=${MIN_OVERLAP})`, ok: o >= MIN_OVERLAP, detail: o.toFixed(2) });
       contentChecks.push({ name: 'no runaway duplication', ok: gotN <= goldN * 1.5, detail: `${gotN} words vs golden ${goldN}` });
+      // The decode-worker pipeline (GPU encode overlapping WASM decode) engages
+      // on any WebGPU multi-chunk run; assert the marker so a green run proves
+      // the worker path ran rather than silently falling through to in-thread.
+      contentChecks.push({ name: 'decode-worker pipeline engaged', ok: pipelineEngaged, detail: pipelineEngaged ? 'yes' : 'NOT engaged (fell through to in-thread?)' });
     } else {
       contentChecks.push({ name: `chunking engaged (>=${LEAK_MIN_CHUNKS})`, ok: chunkTotal >= LEAK_MIN_CHUNKS, detail: `total=${chunkTotal}` });
     }
