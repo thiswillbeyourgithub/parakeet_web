@@ -15,7 +15,9 @@
     "fixture:bpe": "python scripts/gen-bpe-fixture.py > test/fixtures/bpe-fixture.json",
     "fixture:moon": "node scripts/gen-jfk-moon-fixtures.mjs",
     "webgpu:check": "node scripts/webgpu-check.mjs",
-    "webgpu:memcheck": "node scripts/webgpu-check.mjs --full"
+    "webgpu:memcheck": "node scripts/webgpu-check.mjs --full",
+    "webgpu:check:fp32": "node scripts/webgpu-check.mjs --fp32",
+    "webgpu:memcheck:fp32": "node scripts/webgpu-check.mjs --full --fp32"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
