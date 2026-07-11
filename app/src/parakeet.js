@@ -76,6 +76,74 @@ function buildPerfMetrics(perfEnabled, { t0, audioSec, preprocessMs, encodeMs, d
   };
 }
 
+// Hard ceiling on the encoder batch. Batching past this buys little (GPU
+// dispatch overhead is already amortized) and only raises OOM risk, so even a
+// huge GPU stays capped here.
+const MAX_ENCODER_BATCH_CEIL = 4;
+
+// Approximate encoder WEIGHT footprint on the GPU, inferred from the quant in
+// the filename (int8 ~0.6 GB, fp16 ~1.2 GB, fp32 ~2.4 GB; see CLAUDE.md). Used
+// only to leave room for weights when sizing the activation budget below.
+export function encoderWeightBytesFromName(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('fp32') || (!n.includes('int8') && !n.includes('fp16'))) return 2.4e9; // fp32 / plain
+  if (n.includes('fp16')) return 1.2e9;
+  return 0.6e9; // int8 (and int8.smoothquant, int8.lite)
+}
+
+/**
+ * Pick the largest encoder batch to fold into one encoderSession.run, adapting
+ * to the actual GPU. WASM is always 1 (batching gains nothing on a single CPU
+ * thread and the per-chunk encode() path must stay byte-identical). On WebGPU
+ * we probe the adapter's memory limits and subtract the encoder weight
+ * footprint so a big GPU batches more (up to MAX_ENCODER_BATCH_CEIL) and a small
+ * one stays at the safe floor of 2.
+ *
+ * WebGPU exposes no total-VRAM figure, so we use `maxBufferSize` /
+ * `maxStorageBufferBindingSize` as the strongest available proxy (Dawn/Chromium
+ * scale these with the device: ~256 MB on weak GPUs, up to 2 GB+ on strong
+ * ones). This is a heuristic, deliberately conservative, and guarded end to end:
+ * any failure (no navigator.gpu, no adapter, Node) falls back to 2 on WebGPU.
+ *
+ * @param {{backend: string, encoderFilename?: string, verbose?: boolean}} p
+ * @returns {Promise<number>}
+ */
+export async function resolveMaxEncoderBatch({ backend, encoderFilename, verbose = false }) {
+  if (!backend || !backend.startsWith('webgpu')) return 1;
+  const FLOOR = 2; // WebGPU always gets at least a small batch
+  try {
+    const gpu = (typeof navigator !== 'undefined') ? navigator.gpu : null;
+    if (!gpu || typeof gpu.requestAdapter !== 'function') return FLOOR;
+    const adapter = await gpu.requestAdapter();
+    const limits = adapter?.limits;
+    if (!limits) return FLOOR;
+    // Largest single GPU buffer the device permits, our VRAM-headroom proxy.
+    const maxBuffer = Number(limits.maxBufferSize || limits.maxStorageBufferBindingSize || 0);
+    if (!(maxBuffer > 0)) return FLOOR;
+
+    const weightBytes = encoderWeightBytesFromName(encoderFilename);
+    // Budget the device can plausibly spare for batched activations: treat the
+    // max single buffer as the headroom signal, minus the resident weights.
+    // Each extra batched item roughly costs one weight-scale of transient
+    // activation on a conformer, so use weightBytes as the per-item unit.
+    const headroom = maxBuffer - weightBytes;
+    let batch = FLOOR;
+    if (headroom > 0) {
+      // +1 batch item per weight-sized slab of headroom, on top of the floor.
+      batch = FLOOR + Math.floor(headroom / Math.max(1, weightBytes));
+    }
+    batch = Math.max(FLOOR, Math.min(MAX_ENCODER_BATCH_CEIL, batch));
+    if (verbose) {
+      console.log(`[Perf] encoder batch=${batch} (maxBufferSize ${(maxBuffer / 1e9).toFixed(2)} GB, ` +
+        `enc weights ~${(weightBytes / 1e9).toFixed(1)} GB)`);
+    }
+    return batch;
+  } catch (e) {
+    if (verbose) console.log(`[Perf] encoder batch probe failed (${e?.message ?? e}); using ${FLOOR}`);
+    return FLOOR;
+  }
+}
+
 /**
  * NeMo's `score_norm=True` (rnnt_beam_decoding.py: the final n-best is sorted by
  * `score / len(y_sequence)`): the beam's final best-hypothesis selection ranks by
@@ -634,12 +702,14 @@ export class ParakeetModel {
     // encoder ONNX has a dynamic batch axis, so grouping chunks cuts GPU
     // dispatch overhead. WASM keeps 1 (single-threaded CPU gains nothing from
     // batching and the per-chunk encode() path must stay byte-identical); on
-    // WebGPU a small default (2) is safe within VRAM. `cfg.maxEncoderBatch`
-    // overrides for benchmarks/tests. Kept a hardcoded sensible default (no UI
-    // knob), matching the project's chunk-overlap / silence-snap style.
+    // WebGPU the batch AUTO-ADAPTS to the GPU (see resolveMaxEncoderBatch:
+    // adapter memory limits + encoder weight size), so big GPUs batch more and
+    // small ones stay conservative. `cfg.maxEncoderBatch` is an explicit
+    // override for benchmarks/tests. No UI knob, matching the project's
+    // chunk-overlap / silence-snap hardcoded-default style.
     const maxEncoderBatch = Number.isFinite(cfg.maxEncoderBatch)
       ? Math.max(1, Math.floor(cfg.maxEncoderBatch))
-      : (backend.startsWith('webgpu') ? 2 : 1);
+      : await resolveMaxEncoderBatch({ backend, encoderFilename: filenames?.encoder, verbose });
 
     return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose, maxEncoderBatch });
   }
