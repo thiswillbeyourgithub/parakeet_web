@@ -4182,6 +4182,9 @@ export default function App() {
             && await (decodeWorkerReadyRef.current || Promise.resolve(false))) {
           await syncDecodeWorkerBoost(decodeWorkerRef.current);
           pipelineDecodeChunk = decodeChunkViaWorker;
+          // Positive marker so a run can confirm the GPU-encode || WASM-decode
+          // overlap actually engaged (vs. a silent fall-through to in-thread).
+          console.log('[Decode] pipeline engaged: GPU encode overlapping WASM decode in worker');
         }
       } catch (e) {
         console.warn('[Decode] pipeline setup failed, using in-thread decode:', e);
