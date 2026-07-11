@@ -2581,13 +2581,49 @@ export class ParakeetModel {
       ? combinedWords.map((w) => w.text).join(' ')
       : combinedTextParts.join(' '));
 
-    for (const { start, end } of chunkPlan) {
+    // Encoder batching (WebGPU throughput lever). When this.maxEncoderBatch > 1
+    // we group consecutive EQUAL-LENGTH chunks into one encodeBatch() call, then
+    // feed each chunk's precomputed encoder output to transcribe() via
+    // opts.encoded so the decode/stitch path below is byte-for-byte the same.
+    // Only equal-length chunks are grouped (unequal padding leaks, see
+    // encodeBatch): planChunks emits fixed-length chunks except the final
+    // remainder, which just forms its own group of 1. On WASM (maxEncoderBatch
+    // == 1) this is fully disabled and transcribe() encodes each chunk itself,
+    // exactly as before. The encoder's own preprocess_ms/encode_ms ride through
+    // encoded.* into transcribe()'s metrics, so the totals below are unchanged.
+    const batchEncode = this.maxEncoderBatch > 1;
+    const perfEnabled = this.verbose || !!transcribeOpts.enableProfiling;
+    const chunkLen = (p) => p.end - p.start;
+    const encodedCache = new Array(chunkPlan.length).fill(null);
+    const ensureEncoded = async (ci) => {
+      if (encodedCache[ci]) return encodedCache[ci];
+      // Greedily grow an equal-length group [ci, ci+g) up to maxEncoderBatch.
+      const base = chunkPlan[ci];
+      const group = [ci];
+      for (let j = ci + 1; j < chunkPlan.length && group.length < this.maxEncoderBatch; j += 1) {
+        if (chunkLen(chunkPlan[j]) !== chunkLen(base)) break;
+        group.push(j);
+      }
+      const pcms = group.map((gi) => audio.subarray(chunkPlan[gi].start, chunkPlan[gi].end));
+      const encs = await this.encodeBatch(pcms, sampleRate, { enableProfiling: perfEnabled });
+      group.forEach((gi, k) => { encodedCache[gi] = encs[k]; });
+      return encodedCache[ci];
+    };
+
+    for (let ci = 0; ci < chunkPlan.length; ci += 1) {
+      const { start, end } = chunkPlan[ci];
       // subarray (zero-copy view); the model copies into its own ORT tensor.
       const chunk = audio.subarray(start, end);
       chunkNum += 1;
 
       const tChunk = performance.now();
-      const chunkRes = await this.transcribe(chunk, sampleRate, transcribeOpts);
+      // Batched path: reuse the group-encoded output; else let transcribe()
+      // encode this chunk itself (the unchanged WASM/CLI path).
+      const encoded = batchEncode ? await ensureEncoded(ci) : null;
+      const chunkOpts = encoded ? { ...transcribeOpts, encoded } : transcribeOpts;
+      const chunkRes = await this.transcribe(chunk, sampleRate, chunkOpts);
+      // Release the (large) encoder output for this chunk now that it's decoded.
+      encodedCache[ci] = null;
       const elapsedMs = performance.now() - tChunk;
 
       // Shift word timestamps from chunk-local to absolute time.

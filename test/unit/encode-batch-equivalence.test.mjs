@@ -131,3 +131,41 @@ describe('encodeBatch numeric equivalence', () => {
     );
   });
 });
+
+describe('transcribeChunked batched-encode wiring', () => {
+  // Prove the transcribeChunked encode-ahead grouping (maxEncoderBatch > 1)
+  // yields output identical to the un-batched path (maxEncoderBatch == 1, i.e.
+  // the WASM/CLI path). Multi-chunk fixed-stride layout (snap off) so the full
+  // chunks are equal length and actually get grouped; the shorter final
+  // remainder falls back to its own group of 1. Noise input is fine: we assert
+  // equality between the two runs, not correctness of the transcript.
+  const CHUNK_OPTS = {
+    enableChunking: true,
+    chunkDurationSec: 3,
+    overlapSec: 1,
+    snapToSilenceSec: 0, // fixed stride -> equal-length full chunks
+    returnTimestamps: true, // exercise the word-dedup stitch path too
+  };
+  const audio = makePcm(Math.round(10 * SR), 424242); // ~10 s -> several chunks
+
+  test('maxEncoderBatch=2 transcript equals maxEncoderBatch=1 transcript', async (t) => {
+    if (skipReason) return t.skip(skipReason);
+
+    const saved = model.maxEncoderBatch;
+    try {
+      model.maxEncoderBatch = 1;
+      const seq = await model.transcribeChunked(audio, SR, CHUNK_OPTS);
+      model.maxEncoderBatch = 2;
+      const batched = await model.transcribeChunked(audio, SR, CHUNK_OPTS);
+
+      assert.equal(batched.utterance_text, seq.utterance_text, 'utterance_text must match');
+      assert.equal(
+        JSON.stringify(batched.words ?? []),
+        JSON.stringify(seq.words ?? []),
+        'per-word timestamps must match',
+      );
+    } finally {
+      model.maxEncoderBatch = saved;
+    }
+  });
+});
