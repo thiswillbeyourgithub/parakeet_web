@@ -424,12 +424,18 @@ const DEBUG_ALTERNATIVES_K = 5;
  * transformerjs style) exported by parakeet TDT.
  */
 export class ParakeetModel {
-  constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s, verbose = false }) {
+  constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s, verbose = false, maxEncoderBatch = 1 }) {
     this.tokenizer = tokenizer;
     this.encoderSession = encoderSession;
     this.joinerSession = joinerSession;
     this.preprocessor = preprocessor;
     this.ort = ort;
+
+    // Largest batch the encoder may fold into a single encoderSession.run.
+    // 1 == today's byte-identical per-chunk encode (WASM, and the default). On
+    // WebGPU it is raised so transcribeChunked can group-encode chunks (dynamic
+    // batch axis, see encodeBatch); computed in fromUrls from the backend.
+    this.maxEncoderBatch = Math.max(1, Math.floor(maxEncoderBatch) || 1);
 
     // Read blank ID from tokenizer (last vocab entry for TDT models).
     // Dynamic instead of hardcoded so multilingual models (v3, vocabSize 4097)
@@ -624,7 +630,18 @@ export class ParakeetModel {
 
     const [tokenizer, preprocessor] = await Promise.all([tokenizerPromise, preprocPromise]);
 
-    return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose });
+    // Largest encoder batch transcribeChunked may fold into one run. The
+    // encoder ONNX has a dynamic batch axis, so grouping chunks cuts GPU
+    // dispatch overhead. WASM keeps 1 (single-threaded CPU gains nothing from
+    // batching and the per-chunk encode() path must stay byte-identical); on
+    // WebGPU a small default (2) is safe within VRAM. `cfg.maxEncoderBatch`
+    // overrides for benchmarks/tests. Kept a hardcoded sensible default (no UI
+    // knob), matching the project's chunk-overlap / silence-snap style.
+    const maxEncoderBatch = Number.isFinite(cfg.maxEncoderBatch)
+      ? Math.max(1, Math.floor(cfg.maxEncoderBatch))
+      : (backend.startsWith('webgpu') ? 2 : 1);
+
+    return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose, maxEncoderBatch });
   }
 
   async _runCombinedStep(encTensor, token, currentState = null) {
@@ -1799,6 +1816,161 @@ export class ParakeetModel {
       input?.dispose?.();
       lenTensor?.dispose?.();
       enc?.dispose?.();
+    }
+  }
+
+  /**
+   * Batched encode: fold N EQUAL-LENGTH chunks into ONE encoderSession.run and
+   * return an index-aligned array of the same `{ transposed, D, Tenc,
+   * preprocess_ms, encode_ms }` objects encode() returns, each ready to feed
+   * transcribe() via `opts.encoded`. The encoder ONNX has dynamic batch + time
+   * axes, so batching is a WebGPU throughput lever (fewer GPU dispatches /
+   * better occupancy). On WASM the caller keeps maxEncoderBatch=1 and never
+   * groups, so encode() stays the only path there, byte-for-byte unchanged.
+   *
+   * ALL CHUNKS MUST HAVE THE SAME feature length (same PCM sample count). This
+   * is a hard requirement, enforced with a throw: an ablation on the real int8
+   * encoder (test/unit/encode-batch-equivalence.test.mjs) showed equal-length
+   * batches are byte-IDENTICAL to standalone encode() (maxAbsDiff 0), but a
+   * padded, unequal-length batch diverges ~0.03 across ALL output frames because
+   * the conformer's subsampling/normalization layers leak the zero-padding
+   * despite the `length` mask (`length` only masks attention, not the convs). So
+   * the caller (transcribeChunked) groups only runs of equal-length chunks and
+   * encodes the odd final remainder alone. Never pass mixed lengths: it would
+   * silently degrade quality.
+   *
+   * @param {Float32Array[]} chunksPcm  Mono 16-kHz PCM per chunk, all same length.
+   * @param {number} sampleRate
+   * @param {{enableProfiling?: boolean}} [opts]
+   * @returns {Promise<Array<{transposed: Float32Array, D: number, Tenc: number, preprocess_ms: number, encode_ms: number}>>}
+   */
+  async encodeBatch(chunksPcm, sampleRate = 16000, opts = {}) {
+    const N = chunksPcm.length;
+    if (N === 0) return [];
+    // Single chunk: defer to encode() so a group of 1 is byte-identical to the
+    // un-batched path (no slicing, same tensor lifetimes).
+    if (N === 1) return [await this.encode(chunksPcm[0], sampleRate, opts)];
+
+    const { enableProfiling = false } = opts;
+    const perfEnabled = this.verbose || enableProfiling;
+
+    let input = null, lenTensor = null, enc = null, encLen = null;
+    try {
+      // 1. Feature extraction per chunk (kept independent so a chunk-specific
+      // failure surfaces before we allocate the batch buffer). Track each
+      // chunk's feature length T_i; melBins is shared across chunks.
+      const feats = new Array(N);
+      const Ts = new Array(N);
+      let melBins = 0;
+      let tPreproc = 0;
+      for (let n = 0; n < N; n++) {
+        const s = perfEnabled ? performance.now() : 0;
+        const { features, T, melBins: mb } = await this.computeFeatures(chunksPcm[n], sampleRate);
+        if (perfEnabled) tPreproc += performance.now() - s;
+        feats[n] = features;
+        Ts[n] = T;
+        melBins = mb;
+      }
+      // Hard equal-length guard: mixed lengths would need zero-padding, which the
+      // encoder leaks (see method doc). The caller must group by equal length.
+      const T0 = Ts[0];
+      for (let n = 1; n < N; n++) {
+        if (Ts[n] !== T0) {
+          throw new Error(
+            `encodeBatch requires equal-length chunks (got T=${Ts[n]} vs ${T0} at index ${n}); ` +
+            `group by feature length or encode the remainder alone`,
+          );
+        }
+      }
+      const Tmax = T0; // all equal, so no padding actually occurs below
+
+      // 2. Pack each chunk's [melBins, T] into a shared [N, melBins, T] buffer.
+      // With equal lengths this is a straight copy (Tmax === T_i, zero padding).
+      const padded = new Float32Array(N * melBins * Tmax);
+      for (let n = 0; n < N; n++) {
+        const src = feats[n];
+        const Ti = Ts[n];
+        const itemBase = n * melBins * Tmax;
+        for (let m = 0; m < melBins; m++) {
+          padded.set(src.subarray(m * Ti, m * Ti + Ti), itemBase + m * Tmax);
+        }
+      }
+      const lengths = BigInt64Array.from(Ts, (t) => BigInt(t));
+
+      input = new this.ort.Tensor('float32', padded, [N, melBins, Tmax]);
+      lenTensor = new this.ort.Tensor('int64', lengths, [N]);
+
+      const sEnc = perfEnabled ? performance.now() : 0;
+      const encOut = await this.encoderSession.run({ audio_signal: input, length: lenTensor });
+      const tEncode = perfEnabled ? performance.now() - sEnc : 0;
+
+      enc = encOut['outputs'] ?? Object.values(encOut)[0];
+      // The per-item real output length. Unlike encode() (which discards it),
+      // batching NEEDS it: it is how each item's padding is trimmed off.
+      encLen = encOut['encoded_lengths']
+        ?? Object.values(encOut).find((v) => v !== enc && v?.dims?.length === 1)
+        ?? null;
+      const encLenData = encLen?.data ?? null;
+      // Dispose any auxiliary outputs we are not reading (mirrors encode()).
+      for (const v of Object.values(encOut)) {
+        if (v !== enc && v !== encLen) v?.dispose?.();
+      }
+      input.dispose?.(); input = null;
+      lenTensor.dispose?.(); lenTensor = null;
+
+      const [ , D, TmaxEnc ] = enc.dims;
+      const encData = enc.data;
+
+      // 3. Slice + transpose each item [D, TmaxEnc] (valid width Tenc_n) ➔
+      // [Tenc_n, D], reusing encode()'s 8x-unrolled inner loop with a per-item
+      // base offset into the shared batch buffer.
+      const results = new Array(N);
+      for (let n = 0; n < N; n++) {
+        // Real encoded length for this item; clamp to the padded width and fall
+        // back to it if the encoder emitted no length output.
+        let Tenc = encLenData ? Number(encLenData[n]) : TmaxEnc;
+        if (!(Tenc > 0) || Tenc > TmaxEnc) Tenc = TmaxEnc;
+        const srcBase = n * D * TmaxEnc;
+        const transposed = new Float32Array(Tenc * D);
+        for (let t = 0; t < Tenc; t++) {
+          const tOffset = t * D;
+          let d = 0;
+          for (; d <= D - 8; d += 8) {
+            const srcOffset = srcBase + d * TmaxEnc + t;
+            transposed[tOffset + d]     = encData[srcOffset];
+            transposed[tOffset + d + 1] = encData[srcOffset + TmaxEnc];
+            transposed[tOffset + d + 2] = encData[srcOffset + 2 * TmaxEnc];
+            transposed[tOffset + d + 3] = encData[srcOffset + 3 * TmaxEnc];
+            transposed[tOffset + d + 4] = encData[srcOffset + 4 * TmaxEnc];
+            transposed[tOffset + d + 5] = encData[srcOffset + 5 * TmaxEnc];
+            transposed[tOffset + d + 6] = encData[srcOffset + 6 * TmaxEnc];
+            transposed[tOffset + d + 7] = encData[srcOffset + 7 * TmaxEnc];
+          }
+          for (; d < D; d++) {
+            transposed[tOffset + d] = encData[srcBase + d * TmaxEnc + t];
+          }
+        }
+        results[n] = {
+          transposed,
+          D,
+          Tenc,
+          // Preprocess is per-chunk; the encode call is shared, so attribute the
+          // whole group's encode time to the first item and 0 to the rest. This
+          // keeps SUM(encode_ms) == real wall-clock encode for the group (what
+          // transcribeChunked's totalEncodeMs sums), without double counting.
+          preprocess_ms: perfEnabled ? tPreproc / N : 0,
+          encode_ms: perfEnabled && n === 0 ? tEncode : 0,
+        };
+      }
+
+      enc.dispose?.(); enc = null;
+      encLen?.dispose?.(); encLen = null;
+      return results;
+    } finally {
+      input?.dispose?.();
+      lenTensor?.dispose?.();
+      enc?.dispose?.();
+      encLen?.dispose?.();
     }
   }
 
