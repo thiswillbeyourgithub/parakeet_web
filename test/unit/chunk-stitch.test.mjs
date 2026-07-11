@@ -183,6 +183,75 @@ describe('transcribeChunked metrics aggregation', () => {
   });
 });
 
+// Pipelined-decode driver: when transcribeChunked is given an injected async
+// `decodeChunk`, it encodes ahead on the main thread and off-loads decode (in
+// the app, to a worker), draining the OLDEST decode first so stitching stays in
+// chunk order even when decodes finish out of order. This model provides a
+// chunk[0]-based `transcribe` (the un-pipelined path), an identity `encodeBatch`
+// carrying the chunk's absolute start/len, and a `decodeChunk` that resolves the
+// SAME per-chunk result the transcribe would, but after a delay chosen so
+// EARLIER chunks resolve LATER (forcing out-of-order completion).
+function makePipelineModel() {
+  const spanResult = (startSec, endSec) => {
+    const inChunk = TRUTH.filter((w) => w.start >= startSec && w.end <= endSec);
+    return {
+      utterance_text: inChunk.map((w) => w.text).join(' '),
+      words: inChunk.map((w) => ({
+        text: w.text,
+        start_time: +(w.start - startSec).toFixed(3),
+        end_time: +(w.end - startSec).toFixed(3),
+        confidence: 1,
+      })),
+      confidence_scores: {},
+      metrics: { total_ms: 1 },
+      is_final: true,
+    };
+  };
+  return {
+    maxEncoderBatch: 2,
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    // chunk[0] === absolute start sample (audio[i] = i), matching makeModel.
+    transcribe: async (chunk, sampleRate) =>
+      spanResult(chunk[0] / sampleRate, (chunk[0] + chunk.length) / sampleRate),
+    // Identity "encoder": carry the chunk's absolute start/len to the decoder.
+    encodeBatch: async (pcms) => pcms.map((p) => ({ __start: p[0], __len: p.length })),
+    // Injected async decode; earlier chunkIndex waits longer -> out-of-order.
+    decodeChunk: (enc, meta) => new Promise((resolve) => {
+      const startSec = enc.__start / SR;
+      const endSec = (enc.__start + enc.__len) / SR;
+      setTimeout(() => resolve(spanResult(startSec, endSec)), (8 - meta.chunkIndex) * 4);
+    }),
+  };
+}
+
+describe('transcribeChunked pipelined decode (injected decodeChunk)', () => {
+  // Small chunks so the multi-chunk layout actually exercises the bounded
+  // in-flight queue and out-of-order completion.
+  const PIPE_OPTS = { enableChunking: true, chunkDurationSec: 3, overlapSec: 1, returnTimestamps: true, snapToSilenceSec: 0 };
+
+  test('pipelined output equals the un-pipelined output despite out-of-order decode', async () => {
+    const model = makePipelineModel();
+    const seq = await model.transcribeChunked(AUDIO, SR, PIPE_OPTS);
+    const piped = await model.transcribeChunked(AUDIO, SR, { ...PIPE_OPTS, decodeChunk: model.decodeChunk });
+    assert.equal(piped.utterance_text, seq.utterance_text, 'text must match');
+    assert.deepEqual(
+      piped.words.map((w) => [w.text, w.start_time, w.end_time]),
+      seq.words.map((w) => [w.text, w.start_time, w.end_time]),
+      'deduped words must match',
+    );
+  });
+
+  test('onChunk fires in ascending chunk order under pipelining', async () => {
+    const model = makePipelineModel();
+    const order = [];
+    await model.transcribeChunked(AUDIO, SR, { ...PIPE_OPTS, decodeChunk: model.decodeChunk },
+      async ({ chunkNum }) => { order.push(chunkNum); });
+    const sorted = [...order].sort((a, b) => a - b);
+    assert.deepEqual(order, sorted, `onChunk order ${order} must be ascending`);
+    assert.equal(order[0], 1, 'first reported chunk is 1');
+  });
+});
+
 // Word factory for the pure-function tests below: a timestamped word centred at
 // `mid` seconds (a nominal 0.2 s span, only the midpoint matters to the seam).
 const W = (text, mid) => ({ text, start_time: mid - 0.1, end_time: mid + 0.1 });

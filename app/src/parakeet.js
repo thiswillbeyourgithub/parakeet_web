@@ -2636,7 +2636,6 @@ export class ParakeetModel {
     let totalTokenizeMs = 0;
     let totalProcessingTime = 0;
     let anyMetrics = false;
-    let chunkNum = 0;
     let prevEnd = null; // absolute sample index where the previous chunk ended
     // Opt-in decode-debug: one entry per chunk, kept UNSTITCHED on purpose. The
     // overlap regions each chunk decoded (later trimmed by the seam dedup
@@ -2680,21 +2679,14 @@ export class ParakeetModel {
       return encodedCache[ci];
     };
 
-    for (let ci = 0; ci < chunkPlan.length; ci += 1) {
+    // Fold one decoded chunk result into the running transcript. MUST be called
+    // in ascending chunk order (it depends on prevEnd / append order); both
+    // drivers below honour that. Extracted verbatim from the old inline loop so
+    // the stitch behaviour is identical whether decode ran in-thread or in a
+    // worker.
+    const consume = async (ci, chunkRes, elapsedMs) => {
       const { start, end } = chunkPlan[ci];
-      // subarray (zero-copy view); the model copies into its own ORT tensor.
-      const chunk = audio.subarray(start, end);
-      chunkNum += 1;
-
-      const tChunk = performance.now();
-      // Batched path: reuse the group-encoded output; else let transcribe()
-      // encode this chunk itself (the unchanged WASM/CLI path).
-      const encoded = batchEncode ? await ensureEncoded(ci) : null;
-      const chunkOpts = encoded ? { ...transcribeOpts, encoded } : transcribeOpts;
-      const chunkRes = await this.transcribe(chunk, sampleRate, chunkOpts);
-      // Release the (large) encoder output for this chunk now that it's decoded.
-      encodedCache[ci] = null;
-      const elapsedMs = performance.now() - tChunk;
+      const chunkNum = ci + 1;
 
       // Shift word timestamps from chunk-local to absolute time.
       const timeOffset = start / sampleRate;
@@ -2769,6 +2761,56 @@ export class ParakeetModel {
           end,
           elapsedMs,
         });
+      }
+    };
+
+    // Optional injected decoder: an async fn (encoded, meta, decodeOpts) ->
+    // transcribe-shaped result. App.jsx wires this to a decode WORKER so the
+    // WASM decode of chunk k overlaps the GPU encode of chunk k+1 (the encoder
+    // stays on this thread; only decode is off-loaded). parakeet.js never
+    // imports the worker, keeping it worker-agnostic (Node/CLI never sets this).
+    const decodeChunk = typeof transcribeOpts.decodeChunk === 'function'
+      ? transcribeOpts.decodeChunk : null;
+
+    if (decodeChunk) {
+      // Pipelined producer/consumer. Producer: encode ahead on this thread and
+      // dispatch each chunk's decode without awaiting it. A bounded in-flight
+      // queue (depth ~ maxEncoderBatch + 1) caps how far the GPU runs ahead of
+      // the worker, bounding memory. Consumer: drain the OLDEST decode first, so
+      // consume() always sees chunks in order regardless of completion order.
+      const depth = Math.max(2, (this.maxEncoderBatch || 1) + 1);
+      const inflight = [];
+      const { decodeChunk: _dc, encoded: _enc, ...decodeOpts } = transcribeOpts;
+      const drainOne = async () => {
+        const item = inflight.shift();
+        const chunkRes = await item.promise;
+        await consume(item.ci, chunkRes, performance.now() - item.tStart);
+      };
+      for (let ci = 0; ci < chunkPlan.length; ci += 1) {
+        const enc = await ensureEncoded(ci);
+        const { start, end } = chunkPlan[ci];
+        const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
+        const tStart = performance.now();
+        const promise = Promise.resolve(decodeChunk(enc, meta, decodeOpts));
+        encodedCache[ci] = null; // producer done with it; worker owns it now
+        inflight.push({ ci, promise, tStart });
+        if (inflight.length >= depth) await drainOne();
+      }
+      while (inflight.length) await drainOne();
+    } else {
+      for (let ci = 0; ci < chunkPlan.length; ci += 1) {
+        const { start, end } = chunkPlan[ci];
+        // subarray (zero-copy view); the model copies into its own ORT tensor.
+        const chunk = audio.subarray(start, end);
+        const tChunk = performance.now();
+        // Batched path: reuse the group-encoded output; else let transcribe()
+        // encode this chunk itself (the unchanged WASM/CLI path).
+        const encoded = batchEncode ? await ensureEncoded(ci) : null;
+        const chunkOpts = encoded ? { ...transcribeOpts, encoded } : transcribeOpts;
+        const chunkRes = await this.transcribe(chunk, sampleRate, chunkOpts);
+        // Release the (large) encoder output now that it's decoded.
+        encodedCache[ci] = null;
+        await consume(ci, chunkRes, performance.now() - tChunk);
       }
     }
 
