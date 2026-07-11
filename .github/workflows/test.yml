@@ -66,6 +66,15 @@ jobs:
       - name: Fetch model weights (cache miss only)
         run: npm run e2e:models
 
+      # The batching numeric-equivalence gate (batched encode is byte-identical
+      # to standalone encode) is a tier-1 unit test, but it needs the real int8
+      # weights and so SELF-SKIPS in the fast job (which downloads no model).
+      # Run it here, where the weights already exist, so a batching regression
+      # cannot merge green. Uses the vendored ORT (no extra deps); modelDir comes
+      # from PARAKEET_E2E_MODEL_DIR (the flat int8 set fetch-e2e-models writes).
+      - name: Batching equivalence gate (needs weights)
+        run: node --test test/unit/encode-batch-equivalence.test.mjs
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run E2E
