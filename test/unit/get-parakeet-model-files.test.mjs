@@ -229,9 +229,12 @@ describe('getParakeetModel: sharded fp32 from a local mirror with a sharded/ sub
 describe('getParakeetModel: sharded fp32 straight from HuggingFace (shards under sharded/)', () => {
   // Regression for "the instance is not serving the fp32 on WASM but WebGPU works":
   // the HF repo ships the shards under sharded/, which the tree API lists with the
-  // prefix. WASM fp32 must fetch the rewritten graph + shards from sharded/ (no
-  // /models mirror needed); WebGPU fp32 must keep loading the flat single-file so
-  // this fix does not perturb the working GPU path.
+  // prefix. BOTH backends must fetch the rewritten graph + shards from sharded/
+  // when they exist: WASM cannot load the flat >2 GB single-file (32-bit
+  // ArrayBuffer cap), and WebGPU cannot either (the 2.3 GB flat sidecar is cached
+  // to IndexedDB and its readback throws "Failed to fetch" past Chromium's ~2 GB
+  // Blob wall; verified headed + headless on an RTX 3090 Ti). The shard loop
+  // streams each <2 GB shard straight to memory, clearing the wall on both.
   let originalFetch2;
   beforeEach(() => { originalFetch2 = globalThis.fetch; });
   afterEach(() => { globalThis.fetch = originalFetch2; });
@@ -274,15 +277,22 @@ describe('getParakeetModel: sharded fp32 straight from HuggingFace (shards under
     assert.ok(downloaded.includes('vocab.txt') && downloaded.includes('decoder_joint-model.int8.onnx'));
   });
 
-  test('WebGPU fp32: keeps the flat single-file graph + sidecar, ignores the sharded/ copy', async () => {
+  test('WebGPU fp32: fetches the rewritten graph + shards from sharded/, never the flat single-file', async () => {
     const downloaded = mockHfPaths(REPO_HF_SHARDED);
     const r = await getParakeetModel('test/hf-sharded-webgpu', {
       backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
     });
     assert.equal(r.quantisation.encoder, 'fp32');
-    assert.ok(!Array.isArray(r.urls.encoderDataUrl), 'WebGPU must load the single sidecar, not a shard array');
-    assert.ok(downloaded.includes('encoder-model.onnx') && downloaded.includes('encoder-model.onnx.data'), 'WebGPU keeps the flat single-file');
-    assert.ok(!downloaded.some((f) => f.startsWith('sharded/')), 'WebGPU must not fetch anything from sharded/');
+    // WebGPU used to load the flat single-file here; that path is broken (the
+    // 2.3 GB sidecar dies on IndexedDB readback past Chromium's ~2 GB Blob wall),
+    // so with shards present WebGPU now mounts them exactly like WASM.
+    assert.ok(Array.isArray(r.urls.encoderDataUrl), 'WebGPU with shards present must mount the shard array');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path), ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.ok(downloaded.includes('sharded/encoder-model.onnx'), 'must fetch the rewritten graph from sharded/');
+    assert.ok(downloaded.includes('sharded/encoder-model.onnx.data.000') && downloaded.includes('sharded/encoder-model.onnx.data.001'));
+    assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must NOT fetch the flat 2.4GB sidecar on WebGPU');
+    // WebGPU still hands the big weights to ORT as bytes (the graph fetched from sharded/).
+    assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder graph must load as bytes');
   });
 });
 

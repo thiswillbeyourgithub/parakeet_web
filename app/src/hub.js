@@ -1266,15 +1266,20 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       encoderSubdir = 'sharded/';
     }
   }
-  // Use the sharded layout only where it is needed. WASM cannot load the single
-  // >2 GB fp32 sidecar, so it MUST mount the shards. WebGPU can (and always has)
-  // loaded the single file, so when the repo ships a flat sidecar keep using it
-  // on WebGPU: this fix targets the WASM path and must not perturb the working
-  // GPU load. WebGPU only falls back to shards when no flat sidecar exists. The
-  // sharded encoder graph (which points at .data.NNN) is fetched from encoderSubdir;
-  // the flat single-file graph sits at the root.
+  // Use the sharded layout wherever it is available. WASM cannot load the single
+  // >2 GB fp32 sidecar (32-bit ArrayBuffer cap), and WebGPU cannot either: the
+  // 2.3 GB flat sidecar is loaded as bytes but still cached to IndexedDB, and its
+  // readback throws "TypeError: Failed to fetch" because Chromium disk-spills the
+  // multi-GB Blob (the same ~2 GB wall that forced sharding on WASM; verified on a
+  // real GPU box, RTX 3090 Ti / Chromium 148, headed and headless alike). So
+  // whenever the repo ships shards, mount them on EITHER backend: the shard loop
+  // streams each <2 GB shard straight to memory (asBytes + noCache), never
+  // touching IDB. Only fp32 ever ships a `.data` sidecar alongside shards; fp16 is
+  // a single self-contained <2 GB file with no shards, so this never perturbs the
+  // working fp16 GPU path. The sharded encoder graph (external_data -> .data.NNN)
+  // is fetched from encoderSubdir; the flat single-file graph sits at the root.
   const hasFlatSidecar = repoFiles.includes(`${encoderName}.data`);
-  const useShards = encoderShards.length > 0 && (!backend.startsWith('webgpu') || !hasFlatSidecar);
+  const useShards = encoderShards.length > 0;
   const encoderFetchName = useShards ? `${encoderSubdir}${encoderName}` : encoderName;
 
   // The big encoder/decoder weights are handed to ORT as bytes (not a blob URL)
