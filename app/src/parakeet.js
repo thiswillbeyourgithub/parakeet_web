@@ -714,6 +714,48 @@ export class ParakeetModel {
     return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose, maxEncoderBatch });
   }
 
+  /**
+   * Build a DECODE-ONLY ParakeetModel: the joiner/decoder ONNX session (forced
+   * to the WASM EP, exactly as fromUrls forces it on WebGPU) + the tokenizer,
+   * with NO encoder session and NO preprocessor. Such a model can only run
+   * transcribe() when the caller supplies `opts.encoded` (precomputed encoder
+   * output) — it never preprocesses or encodes. This is what the decode worker
+   * (`app/ui/src/lib/decode.worker.js`) instantiates so WASM decode can overlap
+   * the main thread's GPU encode. Reuses the same session/tokenizer/externalData
+   * plumbing as fromUrls so no decode logic is duplicated.
+   *
+   * `decoderUrl`/`decoderDataUrl` may be URL strings OR raw bytes (Uint8Array),
+   * matching fromUrls; the caller (main thread) is expected to hand pre-verified
+   * bytes so the worker never does a second unverified fetch.
+   */
+  static async decoderOnlyFromUrls({
+    decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
+    wasmPaths, cpuThreads, subsampling = 8, windowStride = 0.01, verbose = false,
+  }) {
+    if (!decoderUrl || !tokenizerUrl) {
+      throw new Error('decoderOnlyFromUrls requires decoderUrl and tokenizerUrl');
+    }
+    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads });
+    const sessionOptions = {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+      executionMode: 'parallel',
+      enableCpuMemArena: true,
+      enableMemPattern: true,
+      logSeverityLevel: verbose ? 0 : 2,
+    };
+    const decoderExternalData = buildExternalData(decoderDataUrl, filenames?.decoder);
+    if (decoderExternalData) sessionOptions.externalData = decoderExternalData;
+    const [joinerSession, tokenizer] = await Promise.all([
+      ort.InferenceSession.create(decoderUrl, sessionOptions),
+      ParakeetTokenizer.fromUrl(tokenizerUrl),
+    ]);
+    return new ParakeetModel({
+      tokenizer, encoderSession: null, joinerSession, preprocessor: null,
+      ort, subsampling, windowStride, verbose, maxEncoderBatch: 1,
+    });
+  }
+
   async _runCombinedStep(encTensor, token, currentState = null) {
     const singleToken = typeof token === 'number' ? token : this.blankId;
 

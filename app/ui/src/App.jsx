@@ -832,6 +832,15 @@ export default function App() {
   // request so a superseded reply (after a debounce/model-swap race) is ignored.
   const boostWorkerRef = useRef(undefined);
   const boostReqIdRef = useRef(0);
+  // Decode worker (WebGPU-only): overlaps WASM decode with GPU encode. undefined
+  // = not created, null = unavailable/failed (fall back to in-thread decode).
+  const decodeWorkerRef = useRef(undefined);
+  const decodeWorkerReadyRef = useRef(null);   // Promise<boolean> resolved on init
+  const decodeReqIdRef = useRef(0);
+  const decodePendingRef = useRef(new Map());  // decode id -> { resolve, reject }
+  // Boost token-ids + params stashed for the decode worker to rebuild its trie
+  // (the live BoostingTrie itself is not structured-cloneable). null = no boost.
+  const boostEncodedRef = useRef(null);
   const maxCores = navigator.hardwareConcurrency || 8;
   // Default to all available CPU cores for best transcription throughput
   const [cpuThreads, setCpuThreads] = useState(maxCores);
@@ -2157,6 +2166,96 @@ export default function App() {
     if (boostWorkerRef.current) boostWorkerRef.current.terminate();
   }, []);
 
+  // --- Decode worker (WebGPU: overlap WASM decode with GPU encode) ----------
+  // Lazily (re)create the decode worker and init it with the just-loaded model's
+  // decoder + tokenizer bytes/URLs. Resolves true once the worker is ready to
+  // decode, false if it is unavailable or init failed (the run then falls back
+  // to in-thread decode). Called after a successful WebGPU model load; a model
+  // swap terminates the previous worker first.
+  const initDecodeWorker = useCallback((initParams) => {
+    if (decodeWorkerRef.current) { try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ } }
+    decodePendingRef.current.forEach(({ reject }) => reject(new Error('decode worker reset')));
+    decodePendingRef.current.clear();
+    let worker;
+    try {
+      worker = new Worker(new URL('./lib/decode.worker.js', import.meta.url), { type: 'module' });
+    } catch (e) {
+      console.warn('[Decode] worker unavailable, decoding on main thread:', e);
+      decodeWorkerRef.current = null;
+      decodeWorkerReadyRef.current = Promise.resolve(false);
+      return decodeWorkerReadyRef.current;
+    }
+    decodeWorkerRef.current = worker;
+    // Route decode replies (carry an id) to their pending promise.
+    worker.addEventListener('message', (ev) => {
+      const msg = ev.data || {};
+      if ((msg.type === 'result' || msg.type === 'error') && msg.id != null) {
+        const pending = decodePendingRef.current.get(msg.id);
+        if (!pending) return;
+        decodePendingRef.current.delete(msg.id);
+        if (msg.type === 'result') pending.resolve(msg.result);
+        else pending.reject(new Error(msg.message || 'decode failed'));
+      }
+    });
+    decodeWorkerReadyRef.current = new Promise((resolve) => {
+      const onReady = (ev) => {
+        const msg = ev.data || {};
+        if (msg.type === 'ready') { worker.removeEventListener('message', onReady); resolve(true); }
+        else if (msg.type === 'error' && msg.id == null) {
+          worker.removeEventListener('message', onReady);
+          console.warn('[Decode] worker init failed, falling back to in-thread decode:', msg.message);
+          resolve(false);
+        }
+      };
+      worker.addEventListener('message', onReady);
+      worker.postMessage(initParams);
+    });
+    return decodeWorkerReadyRef.current;
+  }, []);
+
+  // Push the current boost (cloneable ids + params) to the decode worker and
+  // await its rebuild, so the worker's trie matches the main thread before a run.
+  const syncDecodeWorkerBoost = useCallback((worker) => new Promise((resolve) => {
+    const b = boostEncodedRef.current;
+    const onMsg = (ev) => {
+      const msg = ev.data || {};
+      if (msg.type === 'boostReady' || (msg.type === 'error' && msg.id == null)) {
+        worker.removeEventListener('message', onMsg);
+        resolve();
+      }
+    };
+    worker.addEventListener('message', onMsg);
+    worker.postMessage(b
+      ? { type: 'boost', encoded: b.encoded, strength: b.strength, depthScaling: b.depthScaling, minpOverride: b.minpOverride }
+      : { type: 'boost', encoded: null });
+  }), []);
+
+  // Bridge handed to transcribeChunked as opts.decodeChunk: post the encoder
+  // output to the worker (transposed buffer TRANSFERRED, zero-copy) and resolve
+  // the decoded chunk. phraseBoost is dropped (not cloneable); the worker uses
+  // its own synced trie.
+  const decodeChunkViaWorker = useCallback((encoded, meta, decodeOpts) => {
+    const worker = decodeWorkerRef.current;
+    const { phraseBoost, ...cloneableOpts } = decodeOpts || {};
+    const buf = encoded.transposed.buffer;
+    return new Promise((resolve, reject) => {
+      const id = ++decodeReqIdRef.current;
+      decodePendingRef.current.set(id, { resolve, reject });
+      worker.postMessage({
+        type: 'decode', id, chunkIndex: meta.chunkIndex,
+        transposed: buf, D: encoded.D, Tenc: encoded.Tenc,
+        audioLen: meta.audioLen,
+        encodeMs: encoded.encode_ms, preprocessMs: encoded.preprocess_ms,
+        opts: cloneableOpts,
+      }, [buf]);
+    });
+  }, []);
+
+  // Terminate the decode worker on unmount.
+  useEffect(() => () => {
+    if (decodeWorkerRef.current) { try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ } }
+  }, []);
+
   // Parse the phrase text once per change, not once per render. The full line
   // scan is cheap per call but the App component re-renders on every unrelated
   // state change (recording timer, status flips, ...); re-scanning a 60k-line
@@ -2291,6 +2390,14 @@ export default function App() {
         // were dropped during encode; surface them so the user knows why.
         setBoostUnkWarnings(skipped);
         phraseBoostRef.current = trie.isEmpty ? null : trie;
+        // Stash the cloneable ids + params so the decode worker can rebuild an
+        // equivalent trie (the live trie instance cannot cross postMessage).
+        boostEncodedRef.current = trie.isEmpty ? null : {
+          encoded,
+          strength: boostStrengthRef.current,
+          depthScaling: boostDepthScaling,
+          minpOverride: boostMinpRef.current,
+        };
         boostBuiltKeyRef.current = boostBuildKey(boostPhrases, boostDepthScaling, sig);
         if (verboseLogRef.current) {
           const ms = performance.now() - t0;
@@ -2323,6 +2430,7 @@ export default function App() {
   useEffect(() => {
     boostStrengthRef.current = boostStrength;
     if (phraseBoostRef.current) phraseBoostRef.current.strength = boostStrength;
+    if (boostEncodedRef.current) boostEncodedRef.current.strength = boostStrength;
   }, [boostStrength]);
 
   // Apply the global min-p override without rebuilding the trie: it is a
@@ -2334,6 +2442,7 @@ export default function App() {
     // in [0,1] = the global gate (0 = boost all, 1 = disabled). applyBoost reads
     // Math.log(override), and Math.log(0) = -Infinity is exactly "no gate".
     if (phraseBoostRef.current) phraseBoostRef.current.minpOverride = boostMinp;
+    if (boostEncodedRef.current) boostEncodedRef.current.minpOverride = boostMinp;
   }, [boostMinp]);
 
   // Live mirrors of the boost-build-key inputs for waitForBoostReady().
@@ -2488,6 +2597,28 @@ export default function App() {
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });
+        // WebGPU only: spin up the decode worker so chunked runs can overlap
+        // WASM decode with GPU encode. Best-effort: any failure falls back to
+        // in-thread decode. On WASM there is no overlap to win, so skip it (and
+        // tear down any worker left over from a prior WebGPU session).
+        if (backend.startsWith('webgpu')) {
+          try {
+            initDecodeWorker({
+              type: 'init',
+              decoderUrl: modelUrls.urls.decoderUrl,
+              decoderDataUrl: modelUrls.urls.decoderDataUrl,
+              tokenizerUrl: modelUrls.urls.tokenizerUrl,
+              filenames: modelUrls.filenames,
+              numThreads: cpuThreads,
+            });
+          } catch (e) {
+            console.warn('[Decode] failed to start decode worker:', e);
+            decodeWorkerRef.current = null;
+          }
+        } else if (decodeWorkerRef.current) {
+          try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ }
+          decodeWorkerRef.current = null;
+        }
       } catch (sessErr) {
         // A cached weight file that fails ONNX deserialization (truncated
         // download, disk error, quota corruption) is recoverable: drop the bad
@@ -3980,7 +4111,7 @@ export default function App() {
       let runningProcessingMs = 0;   // sum of per-chunk model time for the ETA
       let chunksCompleted = 0;
 
-      const res = await modelRef.current.transcribeChunked(pcm, 16000, {
+      const chunkedOpts = {
         enableChunking,
         chunkDurationSec: MAX_CHUNK_DURATION,
         overlapSec: 2,
@@ -4008,7 +4139,8 @@ export default function App() {
         // Opt-in decode introspection for the per-entry Debug view (sidebar
         // "Decode debug" checkbox). Off = zero overhead in the decoder.
         collectDecodeDebug: debugDecode,
-      }, async ({ chunkNum, totalChunks, result, partialText, elapsedMs }) => {
+      };
+      const onChunk = async ({ chunkNum, totalChunks, result, partialText, elapsedMs }) => {
         // decode_ms scales with beam width; sum it for the single-beam estimate.
         totalDecodeMs += result.metrics?.decode_ms || 0;
         runningProcessingMs += result.metrics?.total_ms || 0;
@@ -4039,7 +4171,39 @@ export default function App() {
 
         // Yield to the browser so the progress paint lands between chunks.
         await new Promise(resolve => setTimeout(resolve, 0));
-      });
+      };
+
+      // WebGPU decode/encode pipeline: engage the decode worker only when it is
+      // ready, syncing its boost trie to the main thread's first. Best-effort:
+      // any setup failure just runs the in-thread path.
+      let pipelineDecodeChunk = null;
+      try {
+        if (backend.startsWith('webgpu') && decodeWorkerRef.current
+            && await (decodeWorkerReadyRef.current || Promise.resolve(false))) {
+          await syncDecodeWorkerBoost(decodeWorkerRef.current);
+          pipelineDecodeChunk = decodeChunkViaWorker;
+        }
+      } catch (e) {
+        console.warn('[Decode] pipeline setup failed, using in-thread decode:', e);
+        pipelineDecodeChunk = null;
+      }
+      // If a pipelined run fails mid-flight, reset progress accounting and retry
+      // once on the in-thread path so the old sequential loop stays ground truth.
+      const resetProgressCounters = () => {
+        lastReportedProgress = -1; runningProcessingMs = 0; chunksCompleted = 0; totalDecodeMs = 0;
+      };
+      let res;
+      if (pipelineDecodeChunk) {
+        try {
+          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk }, onChunk);
+        } catch (e) {
+          console.warn('[Decode] pipelined run failed, retrying in-thread:', e);
+          resetProgressCounters();
+          res = await modelRef.current.transcribeChunked(pcm, 16000, chunkedOpts, onChunk);
+        }
+      } else {
+        res = await modelRef.current.transcribeChunked(pcm, 16000, chunkedOpts, onChunk);
+      }
 
       // Clear progress indicators (no-op when no chunk UI ran).
       setProgressPct(null);
