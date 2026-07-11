@@ -1065,6 +1065,15 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     encoderQ = hasFp16Enc ? 'fp16' : 'fp32';
   }
   const decoderQ = (decoderQuant === 'fp16' && hasFp16Dec) ? 'fp16' : 'int8';
+  // A single-file fp32 encoder cannot load on WebGPU: the ~2.3 GB weights exceed
+  // BOTH Chromium's ~2 GB IndexedDB Blob-readback wall AND V8's ArrayBuffer cap,
+  // so neither the cached nor the stream-to-one-buffer path works (verified on a
+  // real GPU box). fp32 on WebGPU therefore REQUIRES the <2 GB shards, exactly
+  // like WASM. Flag when it resolved to fp32 with no shards so the caller can try
+  // a /models mirror that ships them, then surface QuantUnavailableError rather
+  // than attempting a load that dies deep in ORT (Module.MountedFiles).
+  const hasFp32Shards = parseEncoderShards(repoFiles).shards.length > 0;
+  const webgpuFp32NeedsShards = encoderQ === 'fp32' && !hasFp32Shards;
   return {
     encoderQ,
     decoderQ,
@@ -1074,6 +1083,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     // GPU has no shader-f16, fp32 is the best it can do and no mirror can help,
     // so don't trip the local-upgrade probe.
     encoderFellBackToFp32: canF16 && encoderQ === 'fp32' && encoderQuant !== 'fp32',
+    webgpuFp32NeedsShards,
   };
 }
 
@@ -1089,7 +1099,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
  */
 export function quantSatisfiable(args) {
   const r = resolveModelQuant(args);
-  return !r.pinnedToInt8 && !r.encoderFellBackToFp32;
+  return !r.pinnedToInt8 && !r.encoderFellBackToFp32 && !r.webgpuFp32NeedsShards;
 }
 
 /**
@@ -1180,7 +1190,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     : await listRepoFiles(repoId, effectiveRevision);
 
   // Resolve the effective quantisation per backend and per availability.
-  let { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
+  let { encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32, webgpuFp32NeedsShards } =
     resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32, shaderF16 });
 
   // Pre-download upgrade: the primary (HF) source could not serve the requested
@@ -1190,7 +1200,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // can satisfy the request, switch the whole load to local. Only on the HF
   // path (no explicit localFallbackBaseUrl) and only when a probe target was
   // provided by the caller (localUpgradeBaseUrl).
-  if (localUpgradeBaseUrl && !localFallbackBaseUrl && (pinnedToInt8 || encoderFellBackToFp32)) {
+  if (localUpgradeBaseUrl && !localFallbackBaseUrl && (pinnedToInt8 || encoderFellBackToFp32 || webgpuFp32NeedsShards)) {
     // Resolve flat-vs-nested once so the listing and the later weight fetches
     // both target the layout the operator actually mounted.
     const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId)) || localUpgradeBaseUrl;
@@ -1200,7 +1210,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         + `the local mirror at ${resolvedUpgrade} can — switching the load to it`);
       effectiveLocalBase = resolvedUpgrade;
       repoFiles = localFiles;
-      ({ encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32 } =
+      ({ encoderQ, decoderQ, pinnedToInt8, encoderFellBackToFp32, webgpuFp32NeedsShards } =
         resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32, shaderF16 }));
     }
   }
@@ -1226,6 +1236,23 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           + `${backend} backend from any available source. fp16 cannot run on WASM at all; `
           + `fp32 needs the <2 GB shards (encoder-model.onnx.data.NNN from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), `
           + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`,
+    });
+  }
+  if (webgpuFp32NeedsShards) {
+    // fp32 resolved on WebGPU (either explicitly requested, or fp16 unavailable)
+    // but NO source we tried ships the shards. The single-file fp32 encoder cannot
+    // load on WebGPU (its ~2.3 GB weights exceed both Chromium's IDB Blob-readback
+    // wall and V8's ArrayBuffer cap; verified on a real GPU box), so rather than
+    // attempt a load that dies deep in ORT with a cryptic Module.MountedFiles
+    // error, refuse cleanly exactly like the WASM pin above.
+    throw new QuantUnavailableError({
+      backend,
+      requested: { encoder: encoderQuant, decoder: decoderQuant },
+      message: `The fp32 encoder cannot run on the ${backend} backend as a single file `
+        + `(its ~2.3 GB weights exceed the browser's ~2 GB ArrayBuffer / Blob limits), and no `
+        + `source ships the <2 GB shards (encoder-model.onnx.data.NNN from `
+        + `parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py). Host the shards, `
+        + `or use fp16 on a GPU that supports it.`,
     });
   }
   if (encoderFellBackToFp32) {
@@ -1305,10 +1332,13 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Preprocessor: JS (mel.js) — skipping ${preprocessor}.onnx download`);
   }
 
-  // Mount the single <name>.data sidecar whenever we are NOT using the shards
-  // (WebGPU with a flat sidecar, or any single-file fp32 export). The shards, when
-  // used, are downloaded after the main loop into an array of { path, data }
-  // entries (parakeet.js buildExternalData mounts that directly).
+  // Mount the single <name>.data sidecar whenever we are NOT using the shards.
+  // In practice this is dead for the encoder: the only encoder with a .data
+  // sidecar is fp32, and single-file fp32 cannot load on EITHER backend (WASM
+  // pins to int8; WebGPU throws QuantUnavailableError because it needs the shards,
+  // see resolveModelQuant/webgpuFp32NeedsShards). It survives only as defence for
+  // a hypothetical small external-data export. The shards, when used, are handled
+  // after the main loop.
   if (!useShards && hasFlatSidecar) {
     filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data`, weight: true });
   }

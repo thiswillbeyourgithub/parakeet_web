@@ -312,18 +312,28 @@ describe('getParakeetModel file selection: WebGPU', () => {
     assert.ok(downloaded.includes('encoder-model.fp16.onnx'));
   });
 
-  test('fp16 request but no fp16 in repo -> fp32 encoder + its .data sidecar, decoder falls to int8', async () => {
-    const downloaded = mockHf(REPO_NO_FP16);
-    const r = await getParakeetModel('test/webgpu-fp32-fallback', {
-      backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16',
-    });
-    assert.equal(r.filenames.encoder, 'encoder-model.onnx');
-    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.onnx');
-    assert.deepEqual(r.quantisation, { encoder: 'fp32', decoder: 'int8' });
-    // The single-file fp32 encoder DOES carry an external-data sidecar here.
-    assert.ok(r.urls.encoderDataUrl, 'fp32 single-file encoder must select its .data sidecar');
-    assert.ok(!Array.isArray(r.urls.encoderDataUrl), 'single sidecar is a URL, not a shard array');
-    assert.ok(downloaded.includes('encoder-model.onnx.data'));
+  test('fp16 request, no fp16 AND no shards -> throws QuantUnavailableError (single-file fp32 is unloadable on WebGPU)', async () => {
+    mockHf(REPO_NO_FP16);
+    // fp16 unavailable -> resolves fp32, but the repo ships only the flat 2.3 GB
+    // sidecar and no shards. Single-file fp32 cannot load on WebGPU (exceeds the
+    // browser's ~2 GB ArrayBuffer/Blob limits), so rather than attempt a load that
+    // dies deep in ORT, getParakeetModel refuses cleanly.
+    await assert.rejects(
+      getParakeetModel('test/webgpu-fp32-fallback', {
+        backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16',
+      }),
+      (e) => e instanceof QuantUnavailableError && /shards|2 GB|ArrayBuffer/i.test(e.message),
+    );
+  });
+
+  test('explicit fp32 request, no shards -> throws QuantUnavailableError', async () => {
+    mockHf(REPO_NO_FP16);
+    await assert.rejects(
+      getParakeetModel('test/webgpu-fp32-explicit', {
+        backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
+      }),
+      (e) => e instanceof QuantUnavailableError,
+    );
   });
 });
 
@@ -344,13 +354,19 @@ describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
     assert.ok(!r.cacheInfo.filenames.includes('vocab.txt'), 'vocab is not a deserialized weight');
   });
 
-  test('single-file fp32 (WebGPU fallback): the .data sidecar is included', async () => {
-    mockHf(REPO_NO_FP16);
-    const r = await getParakeetModel('test/webgpu-fp32', {
-      backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16',
+  test('sharded fp32 on WebGPU: graph is evictable, noCache shards are not', async () => {
+    mockHf(REPO_HF_SHARDED);
+    // WebGPU fp32 loads via the shards (single-file is unloadable). The small
+    // rewritten graph is cached as bytes and stays evictable; the noCache shards
+    // never touch IndexedDB, so like the WASM case they must NOT be listed.
+    const r = await getParakeetModel('test/webgpu-fp32-shards', {
+      backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
     });
-    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx'));
-    assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx.data'), 'fp32 sidecar must be evictable too');
+    // REPO_HF_SHARDED ships the shards under sharded/, so the graph is fetched
+    // (and cached) as sharded/encoder-model.onnx.
+    assert.ok(r.cacheInfo.filenames.includes('sharded/encoder-model.onnx'));
+    assert.ok(!r.cacheInfo.filenames.some((f) => f.includes('encoder-model.onnx.data')),
+      'noCache shards are never in IndexedDB, so must not be in cacheInfo');
   });
 
   test('sharded fp32 (noCache): shards are NOT listed (never cached)', async () => {

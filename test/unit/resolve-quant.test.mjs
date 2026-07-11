@@ -251,11 +251,15 @@ describe('resolveModelQuant: WebGPU without shader-f16 falls back to fp32', () =
     assert.deepEqual([r.encoderQ, r.decoderQ], ['fp16', 'fp16']);
   });
 
-  test('quantSatisfiable: no fp16->fp32 downgrade to chase on a no-shader-f16 GPU', () => {
-    // The mirror ships fp16 but the GPU cannot run it; fp32 is the resolved and
-    // correct result, so the request is "satisfied" (no downgrade) and the UI
-    // must not needlessly switch sources hunting an fp16 file it can't use.
-    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: false }), true);
+  test('quantSatisfiable: no-shader-f16 GPU needs fp32 SHARDS, so a fp16-only repo is NOT satisfiable', () => {
+    // The GPU cannot run fp16, so fp32 is the resolved result, but fp32 on WebGPU
+    // needs the <2 GB shards (single-file 2.3 GB fp32 exceeds the browser's
+    // ArrayBuffer/Blob limits). A repo shipping fp16 but NO shards therefore cannot
+    // actually load here, so the request is NOT satisfied and the UI should probe a
+    // mirror that ships the shards (or surface QuantUnavailableError).
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP16, shaderF16: false }), false);
+    // With shards present, the fp32 fall-back CAN load, so it is satisfiable.
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16', repoFiles: WITH_FP32_SHARDS, shaderF16: false }), true);
   });
 });
 
