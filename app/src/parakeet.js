@@ -711,6 +711,13 @@ export class ParakeetModel {
       ? Math.max(1, Math.floor(cfg.maxEncoderBatch))
       : await resolveMaxEncoderBatch({ backend, encoderFilename: filenames?.encoder, verbose });
 
+    // Surface the resolved batch when batching is actually on (WebGPU, N>1) so a
+    // real GPU run confirms it engaged end-to-end (webgpu-check asserts batch>=2).
+    // WASM/CLI keeps N=1 and stays silent, so no CLI noise and no test-log churn.
+    if (maxEncoderBatch > 1) {
+      console.log(`[Parakeet.js] Encoder batching enabled: batch=${maxEncoderBatch} (backend=${backend})`);
+    }
+
     return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose, maxEncoderBatch });
   }
 

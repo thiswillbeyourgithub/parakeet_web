@@ -31,9 +31,24 @@
 //
 // Usage (on a GPU box):
 //   npm run build --prefix app/ui            # the harness serves app/ui/dist
-//   node scripts/webgpu-check.mjs            # 3 min chunk-correctness check
-//   node scripts/webgpu-check.mjs --full     # full 17 min memory-leak run
+//   npm run webgpu:check                     # 3 min chunk check, fp16 (DEFAULT)
+//   npm run webgpu:check:fp32                # same, fp32 encoder (via shards)
+//   npm run webgpu:memcheck[:fp32]           # full 17 min memory-leak run
 //   node scripts/webgpu-check.mjs --full --headless --max-growth=1.4
+//
+// Precision: the DEFAULT (fp16) needs the WebGPU `shader-f16` adapter feature.
+// GPUs/drivers whose Dawn build does not expose it (e.g. this repo's RTX 3090 Ti
+// box, see CLAUDE.md) load fp16 but emit an EMPTY transcript, so the default
+// check FAILS the content assertion there. On such a box use --fp32: fp32 needs
+// no shader-f16 and is the only path that exercises real WebGPU compute (encoder
+// on the GPU + the decode-worker pipeline) end to end. fp32 loads via the <2 GB
+// shards (single-file fp32 is unloadable on WebGPU; see hub.js), so the local
+// /models mirror must serve sharded/encoder-model.onnx.data.NNN.
+//
+// Backend coverage: this harness only exercises `webgpu-hybrid`, the sole
+// user-selectable WebGPU backend (App.jsx exposes wasm + webgpu-hybrid radios).
+// `webgpu-strict` (whole-model-on-GPU + graph capture) is an internal mode no UI
+// path can select, so it is intentionally left uncovered here.
 //
 // Built with Claude Code.
 
@@ -163,6 +178,7 @@ async function main() {
     let sessionMode = null;        // "[Parakeet.js] Creating ONNX sessions with execution mode '...'"
     let lastChunk = 0, chunkTotal = 0;
     let pipelineEngaged = false;   // saw App.jsx's "[Decode] pipeline engaged" marker
+    let encoderBatch = 0;          // parakeet.js's "[Parakeet.js] Encoder batching enabled: batch=N"
     let stageSplit = null;         // App.jsx's "[Transcribe] Stage split: ..." line
     let totalTimeLine = null;      // App.jsx's "[Transcribe] Total time for entire audio: ..."
     const debug = !!process.env.WEBGPU_DEBUG; // forward all page console to stderr
@@ -191,6 +207,8 @@ async function main() {
       const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(txt);
       if (hit) { lastChunk = Number(hit[1]); chunkTotal = Number(hit[2]); }
       if (txt.includes('[Decode] pipeline engaged')) pipelineEngaged = true;
+      const eb = /\[Parakeet\.js\] Encoder batching enabled: batch=(\d+)/.exec(txt);
+      if (eb) encoderBatch = Number(eb[1]);
       const st = /\[Transcribe\] Stage split: (encode [\d.]+s, decode [\d.]+s \| pipeline overlap ceiling ~[\d.]+s.*)/.exec(txt);
       if (st) stageSplit = st[1];
       const tt = /\[Transcribe\] Total time for entire audio: ([^(]+\(proc_t\/dur_t [\d.]+\))/.exec(txt);
@@ -322,12 +340,17 @@ async function main() {
     } else {
       contentChecks.push({ name: `chunking engaged (>=${LEAK_MIN_CHUNKS})`, ok: chunkTotal >= LEAK_MIN_CHUNKS, detail: `total=${chunkTotal}` });
     }
+    // Encoder batching is WebGPU-only (WASM stays N=1). A real GPU run should
+    // resolve batch>=2, confirming batching engaged end-to-end rather than only
+    // in the stubbed unit tests; parakeet.js logs the resolved batch at load.
+    contentChecks.push({ name: 'encoder batching engaged (batch>=2)', ok: encoderBatch >= 2, detail: `batch=${encoderBatch}` });
 
     // --- verdict --------------------------------------------------------------
     console.log(`\n=== WebGPU ${mode} result ===`);
     console.log(`chunks transcribed : ${lastChunk}/${chunkTotal}`);
     if (totalTimeLine) console.log(`wall time          : ${totalTimeLine}`);
     if (stageSplit) console.log(`${stageSplit}`);
+    console.log(`encoder batch      : ${encoderBatch || 'n/a'}`);
     console.log(`heap samples       : ${valid.length}`);
     if (canJudgeLeak) {
       console.log(`early-run median   : ${MB(earlyMed)} MB`);
