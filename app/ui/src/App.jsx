@@ -4229,6 +4229,19 @@ export default function App() {
       }
       console.log(transcribeTimeLog);
 
+      // Encode/decode split + the WebGPU pipeline's overlap ceiling. On the
+      // decode-worker path GPU encode runs concurrently with WASM decode, so the
+      // most wall time it can hide is min(encode, decode) (the shorter stage fits
+      // entirely under the longer). Logging the split makes that ceiling, and how
+      // decode-dominated a given backend/beam config is, measurable per run.
+      const mx = res.metrics;
+      if (mx && ((mx.encode_ms || 0) + (mx.decode_ms || 0)) > 0) {
+        const enc = mx.encode_ms || 0;
+        const dec = mx.decode_ms || 0;
+        console.log(`[Transcribe] Stage split: encode ${(enc / 1000).toFixed(1)}s, decode ${(dec / 1000).toFixed(1)}s`
+          + ` | pipeline overlap ceiling ~${(Math.min(enc, dec) / 1000).toFixed(1)}s (min of the two)`);
+      }
+
       setLatestMetrics(res.metrics);
 
       // Fields refreshed on every run, whether we append or replace in place.

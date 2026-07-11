@@ -163,6 +163,8 @@ async function main() {
     let sessionMode = null;        // "[Parakeet.js] Creating ONNX sessions with execution mode '...'"
     let lastChunk = 0, chunkTotal = 0;
     let pipelineEngaged = false;   // saw App.jsx's "[Decode] pipeline engaged" marker
+    let stageSplit = null;         // App.jsx's "[Transcribe] Stage split: ..." line
+    let totalTimeLine = null;      // App.jsx's "[Transcribe] Total time for entire audio: ..."
     const debug = !!process.env.WEBGPU_DEBUG; // forward all page console to stderr
     // Benign console noise to ignore, all by-design and not failures:
     //  - "Failed to load resource ... 404": with local source, hub.js HEAD-probes
@@ -189,6 +191,10 @@ async function main() {
       const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(txt);
       if (hit) { lastChunk = Number(hit[1]); chunkTotal = Number(hit[2]); }
       if (txt.includes('[Decode] pipeline engaged')) pipelineEngaged = true;
+      const st = /\[Transcribe\] Stage split: (encode [\d.]+s, decode [\d.]+s \| pipeline overlap ceiling ~[\d.]+s.*)/.exec(txt);
+      if (st) stageSplit = st[1];
+      const tt = /\[Transcribe\] Total time for entire audio: ([^(]+\(proc_t\/dur_t [\d.]+\))/.exec(txt);
+      if (tt) totalTimeLine = tt[1].trim();
     });
     page.on('pageerror', (e) => { if (!benign(e.message)) errors.push(`pageerror: ${e.message}`); });
     page.on('crash', () => { crashed = true; });
@@ -320,6 +326,8 @@ async function main() {
     // --- verdict --------------------------------------------------------------
     console.log(`\n=== WebGPU ${mode} result ===`);
     console.log(`chunks transcribed : ${lastChunk}/${chunkTotal}`);
+    if (totalTimeLine) console.log(`wall time          : ${totalTimeLine}`);
+    if (stageSplit) console.log(`${stageSplit}`);
     console.log(`heap samples       : ${valid.length}`);
     if (canJudgeLeak) {
       console.log(`early-run median   : ${MB(earlyMed)} MB`);
