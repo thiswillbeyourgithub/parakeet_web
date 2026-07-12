@@ -4,8 +4,8 @@
 // model weights at /models with the cross-origin-isolation headers ORT needs.
 // The single happy-path spec loads the WASM int8 model in a real headless
 // Chromium and transcribes a short fixture clip end to end, so the timeouts are
-// generous (model load + decode is the slow part). This tier is intentionally
-// NOT run by the pre-push hook.
+// generous (model load + decode is the slow part). This tier does not run in
+// CI's fast job; the pre-push hook offers it as an up-front opt-in.
 //
 // Built with Claude Code.
 
