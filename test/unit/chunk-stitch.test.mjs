@@ -425,3 +425,86 @@ describe('planChunks (silence-aware boundaries)', () => {
     assert.equal(plan[plan.length - 1].end, 1000, 'coverage reaches the end regardless of a nearby dip');
   });
 });
+
+describe('planChunks length-alignment (equal-length chunks for encoder batching)', () => {
+  // Interior chunk length == maxChunkSamples - pullback (pullback = nominalEnd -
+  // snappedEnd), so two chunks with the same pullback are EXACTLY equal-length.
+  // These tests pin that the slack biases seams toward reusing the prior
+  // pullback when a point there is quiet enough, and never otherwise.
+
+  test('without slack (default 0), seams stay ragged (each chunk its own quietest dip)', () => {
+    // Deep dips at DIFFERENT pullbacks per chunk: chunk 0 nominal end 200 has its
+    // quietest at 190 (pullback 10); chunk 1 nominal end (190-40)+200=350 has its
+    // quietest at 320 (pullback 30). With no alignment each takes its own dip, so
+    // the two lengths differ (190 vs 320-150=170).
+    const dips = new Set([190, 320]);
+    const energyAt = (i) => (dips.has(i) ? 0 : 1);
+    const plan = planChunks(2000, {
+      maxChunkSamples: 200, overlapSamples: 40, snapRadiusSamples: 40, snapStepSamples: 1, energyAt,
+    });
+    assert.equal(plan[0].end, 190, 'chunk 0 snaps to its own dip');
+    assert.equal(plan[1].start, 150, 'chunk 1 starts overlap before chunk 0 end');
+    assert.equal(plan[1].end, 320, 'chunk 1 snaps to its own dip (nominal end 350)');
+    assert.notEqual(plan[0].end - plan[0].start, plan[1].end - plan[1].start, 'lengths ragged without alignment');
+  });
+
+  test('with slack, a nearly-as-quiet aligned point wins so the two chunks are exactly equal-length', () => {
+    // Chunk 0: quietest at 190 (pullback 10, length 190). Chunk 1 nominal end 350;
+    // its outright quietest is a slightly-quieter dip at 320 (pullback 30) BUT the
+    // length-matching point 340 (pullback 10, same as chunk 0) is nearly as quiet.
+    // energies: window [310,350]. min at 320 (=0.0), aligned point 340 = 0.1,
+    // loudest = 1.0 => tolerance bestE + 0.15*(maxE-bestE) = 0.15 >= 0.1, accept.
+    const energyAt = (i) => {
+      if (i === 190) return 0;      // chunk 0 dip
+      if (i === 320) return 0;      // chunk 1 outright quietest
+      if (i === 340) return 0.1;    // chunk 1 length-aligned point, nearly as quiet
+      return 1;
+    };
+    const plan = planChunks(2000, {
+      maxChunkSamples: 200, overlapSamples: 40, snapRadiusSamples: 40, snapStepSamples: 1,
+      energyAt, lengthAlignSlack: 0.15,
+    });
+    assert.equal(plan[0].end, 190, 'chunk 0 unchanged (no prior pullback to align to)');
+    assert.equal(plan[1].end, 340, 'chunk 1 snaps to the length-aligned point, not its outright quietest');
+    assert.equal(plan[0].end - plan[0].start, plan[1].end - plan[1].start, 'the two chunks are exactly equal-length');
+  });
+
+  test('a loud aligned point is rejected; quality (the real pause) wins and the run breaks', () => {
+    // Same as above but the length-aligned point 340 is LOUD (0.5 > tolerance
+    // 0.15). Alignment must be refused: chunk 1 keeps its real pause at 320.
+    const energyAt = (i) => {
+      if (i === 190) return 0;
+      if (i === 320) return 0;
+      if (i === 340) return 0.5;    // aligned point too loud (mid-word)
+      return 1;
+    };
+    const plan = planChunks(2000, {
+      maxChunkSamples: 200, overlapSamples: 40, snapRadiusSamples: 40, snapStepSamples: 1,
+      energyAt, lengthAlignSlack: 0.15,
+    });
+    assert.equal(plan[1].end, 320, 'loud aligned point rejected, real pause kept');
+    assert.notEqual(plan[0].end - plan[0].start, plan[1].end - plan[1].start, 'run breaks rather than cut mid-word');
+  });
+
+  test('alignment produces a run of >2 equal-length chunks when each has a quiet aligned point', () => {
+    // Every chunk has a genuinely quiet point at pullback 20 (length 180). With
+    // alignment on, all interior chunks lock to length 180 and become one batchable
+    // run (encodeBatch would group them up to maxEncoderBatch).
+    // Deterministic dips at each interior chunk's pullback-20 point.
+    const eat = (i) => {
+      // chunk0: start0 nominalEnd200 -> quiet at 180 (pullback20,len180)
+      // subsequent starts = prevEnd-40 = 180-40=140 -> nominalEnd340 -> quiet 320 (pullback20)
+      // 320-40=280 -> nominalEnd480 -> quiet 460 ...
+      const quiet = new Set([180, 320, 460, 600]);
+      return quiet.has(i) ? 0 : 1;
+    };
+    const plan = planChunks(2000, {
+      maxChunkSamples: 200, overlapSamples: 40, snapRadiusSamples: 40, snapStepSamples: 1,
+      energyAt: eat, lengthAlignSlack: 0.15,
+    });
+    const interior = plan.slice(0, 4);
+    for (const c of interior) {
+      assert.equal(c.end - c.start, 180, 'every interior chunk locks to the same length');
+    }
+  });
+});

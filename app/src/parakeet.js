@@ -348,6 +348,20 @@ export function mergeOverlapWords(leftOverlap, rightOverlap, { seamSec, wordMid 
 export const DEFAULT_SNAP_TO_SILENCE_SEC = 1.0;
 
 /**
+ * Default length-alignment slack (see planChunks `lengthAlignSlack`). Silence
+ * snapping moves each interior seam by a data-dependent amount, so on its own it
+ * makes chunk lengths RAGGED, which defeats the WebGPU encoder-batching path
+ * (encodeBatch groups only EXACTLY equal-length chunks). This slack lets the
+ * snapper prefer a seam that reproduces the previous chunk's length when a point
+ * there is nearly as quiet, so consecutive chunks come out equal-length and
+ * batchable. 0.15 = "accept an aligned seam whose energy is within 15% of the
+ * window's quiet-to-loud range above the outright quietest point". Only applied
+ * on backends that actually batch (WebGPU); WASM passes 0 so its seams (and thus
+ * its transcripts) are byte-identical to before. Not a user setting.
+ */
+export const DEFAULT_LENGTH_ALIGN_SLACK = 0.15;
+
+/**
  * Plan the [start, end) sample windows for long-audio chunking. Each chunk spans
  * at most `maxChunkSamples` and overlaps the previous one by `overlapSamples`.
  *
@@ -364,12 +378,28 @@ export const DEFAULT_SNAP_TO_SILENCE_SEC = 1.0;
  * cut. With snapping off (no `energyAt` / zero radius) this reproduces the plain
  * fixed-stride layout exactly.
  *
+ * Length-alignment (`lengthAlignSlack` > 0): plain silence snapping moves each
+ * seam back by a data-dependent pullback, so chunk lengths come out RAGGED. But
+ * an interior chunk's length is exactly `maxChunkSamples - pullback` (its start
+ * tracks the previous snapped end at a fixed overlap), so two chunks that share
+ * the same pullback are EXACTLY equal-length, which is the precondition for the
+ * WebGPU encoder to batch them (see encodeBatch / transcribeChunked). When this
+ * slack is > 0, each interior seam first looks at the point that reproduces the
+ * previous chunk's pullback (== its length); if that point is nearly as quiet as
+ * the outright quietest (its energy within `lengthAlignSlack` of the window's
+ * quiet-to-loud range above the minimum) the seam snaps THERE instead, extending
+ * a run of equal-length chunks. When no aligned point is quiet enough the run
+ * simply breaks and the best pause wins, so quality is never traded for more than
+ * `lengthAlignSlack` of the local energy range. slack 0 disables it (ragged, old
+ * behaviour); it is strictly a Pareto win for batching (never fewer equal-length
+ * runs than slack 0).
+ *
  * Pure and deterministic: `energyAt(i)` returns a short-window energy for the
  * candidate boundary sample i (lower = quieter); it is probed every
  * `snapStepSamples`. Returns [{start, end}, ...] covering [0, length).
  *
  * @param {number} length  total sample count.
- * @param {{maxChunkSamples:number, overlapSamples?:number, snapRadiusSamples?:number, snapStepSamples?:number, energyAt?:((i:number)=>number)|null}} opts
+ * @param {{maxChunkSamples:number, overlapSamples?:number, snapRadiusSamples?:number, snapStepSamples?:number, energyAt?:((i:number)=>number)|null, lengthAlignSlack?:number}} opts
  * @returns {Array<{start:number, end:number}>}
  */
 export function planChunks(length, {
@@ -378,15 +408,23 @@ export function planChunks(length, {
   snapRadiusSamples = 0,
   snapStepSamples = 1,
   energyAt = null,
+  lengthAlignSlack = 0,
 }) {
   const chunks = [];
   if (length <= 0 || maxChunkSamples <= 0) return chunks;
   let start = 0;
+  // Pullback (nominalEnd - snappedEnd) of the PREVIOUS interior chunk. An interior
+  // chunk's length is exactly maxChunkSamples - pullback, so reusing the same
+  // pullback makes two chunks EXACTLY equal-length (batchable). null until the
+  // first interior chunk is placed. Only consulted when lengthAlignSlack > 0.
+  let prevDelta = null;
+  const align = !!energyAt && lengthAlignSlack > 0;
   // guard: start strictly advances each iteration, so length+1 iterations is an
   // impossible upper bound; it only exists to make a degenerate-params infinite
   // loop structurally impossible.
   for (let guard = 0; start < length && guard <= length; guard += 1) {
-    let end = Math.min(start + maxChunkSamples, length);
+    const nominalEnd = Math.min(start + maxChunkSamples, length);
+    let end = nominalEnd;
     if (energyAt && snapRadiusSamples > 0 && end < length) {
       const lo = Math.max(start + 1, end - snapRadiusSamples);
       const step = Math.max(1, snapStepSamples);
@@ -394,16 +432,39 @@ export function planChunks(length, {
       // STRICTLY quieter point, so a flat/rising window (no real pause, e.g. pure
       // silence or continuous speech) stays at `end` and the chunk is not
       // needlessly shortened. Scan backward so ties resolve to the LATEST (i.e.
-      // closest-to-nominal) minimum, again minimizing how much we shorten.
+      // closest-to-nominal) minimum, again minimizing how much we shorten. Also
+      // track the window's LOUDEST point so the length-alignment tolerance below
+      // can be scaled to this window's own quiet-to-loud range (scale-free).
       let bestI = end;
       let bestE = energyAt(end);
+      let maxE = bestE;
       for (let i = end - step; i >= lo; i -= step) {
         const e = energyAt(i);
-        if (e != null && e < bestE) { bestE = e; bestI = i; }
+        if (e != null) {
+          if (e < bestE) { bestE = e; bestI = i; }
+          if (e > maxE) maxE = e;
+        }
+      }
+      // Length-alignment bonus: prefer the seam that reproduces the previous
+      // chunk's length (cut at nominalEnd - prevDelta) when a point there is
+      // nearly as quiet as the outright quietest, so the encoder can batch the
+      // two. Gated by lengthAlignSlack of the window's energy range, so a loud
+      // (mid-word) aligned point is never accepted; then the run breaks and the
+      // best pause wins.
+      if (align && prevDelta != null) {
+        const target = end - prevDelta;
+        if (target >= lo && target < end) {
+          const te = energyAt(target);
+          if (te != null && te <= bestE + lengthAlignSlack * (maxE - bestE)) {
+            bestI = target;
+          }
+        }
       }
       if (bestI > start) end = bestI;
     }
     chunks.push({ start, end });
+    // Record this interior chunk's pullback so the next chunk can align to it.
+    if (end < length) prevDelta = nominalEnd - end;
     if (end >= length) break;
     // Next chunk starts `overlapSamples` before this end; clamp so it always
     // advances even if degenerate params would otherwise stall.
@@ -1955,8 +2016,10 @@ export class ParakeetModel {
    * the conformer's subsampling/normalization layers leak the zero-padding
    * despite the `length` mask (`length` only masks attention, not the convs). So
    * the caller (transcribeChunked) groups only runs of equal-length chunks and
-   * encodes the odd final remainder alone. Never pass mixed lengths: it would
-   * silently degrade quality.
+   * encodes any ragged remainder alone. Silence snapping makes raw chunk lengths
+   * ragged, so on batching backends planChunks aligns seams to equal lengths
+   * (see its `lengthAlignSlack`) precisely so these runs form. Never pass mixed
+   * lengths: it would silently degrade quality.
    *
    * @param {Float32Array[]} chunksPcm  Mono 16-kHz PCM per chunk, all same length.
    * @param {number} sampleRate
@@ -2664,6 +2727,11 @@ export class ParakeetModel {
       snapRadiusSamples,
       snapStepSamples,
       energyAt: snapRadiusSamples > 0 ? energyAt : null,
+      // Length-alignment only helps backends that actually batch the encoder
+      // (WebGPU, maxEncoderBatch > 1): it nudges silence-snapped seams toward
+      // equal chunk lengths so encodeBatch can group them. On WASM (batch == 1)
+      // pass 0 so seams (and transcripts) stay byte-identical to before.
+      lengthAlignSlack: this.maxEncoderBatch > 1 ? DEFAULT_LENGTH_ALIGN_SLACK : 0,
     });
     const totalChunks = chunkPlan.length;
 
@@ -2704,9 +2772,12 @@ export class ParakeetModel {
     // feed each chunk's precomputed encoder output to transcribe() via
     // opts.encoded so the decode/stitch path below is byte-for-byte the same.
     // Only equal-length chunks are grouped (unequal padding leaks, see
-    // encodeBatch): planChunks emits fixed-length chunks except the final
-    // remainder, which just forms its own group of 1. On WASM (maxEncoderBatch
-    // == 1) this is fully disabled and transcribe() encodes each chunk itself,
+    // encodeBatch). Silence snapping makes raw chunk lengths ragged, so on
+    // batching backends planChunks runs with lengthAlignSlack > 0 (see its doc):
+    // it nudges seams toward equal lengths so consecutive chunks share a length
+    // and this greedy run groups them; a ragged remainder just forms a group of
+    // 1. On WASM (maxEncoderBatch == 1, lengthAlignSlack 0) this is fully
+    // disabled and transcribe() encodes each chunk itself,
     // exactly as before. The encoder's own preprocess_ms/encode_ms ride through
     // encoded.* into transcribe()'s metrics, so the totals below are unchanged.
     const batchEncode = this.maxEncoderBatch > 1;
