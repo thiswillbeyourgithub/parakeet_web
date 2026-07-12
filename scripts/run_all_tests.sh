@@ -17,10 +17,11 @@
 # tests an OLD UI). This wraps the canonical sequence with a fail-fast exit.
 #
 # Deliberately NOT run here (they are diagnostics/benchmarks, not pass/fail
-# tests, and need a real GPU + WebGPU-capable Chromium that headless lacks):
+# tests, and need a real, FREE GPU -- which this suite's headless Chromium has
+# no access to, though webgpu-check itself runs fine headless ON a GPU box):
 #   - npm run webgpu:check / webgpu:memcheck   (WebGPU adapter probe)
 #   - node scripts/wer-bench.mjs               (transcription quality WER)
-# Run those by hand when you specifically need them.
+# Run those by hand, or via the .githooks/pre-push WebGPU opt-in.
 #
 # Run from anywhere; the script cd's to the repo root itself.
 
