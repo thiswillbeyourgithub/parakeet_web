@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
+import { requireWeightsOrSkip } from './strict-weights.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
@@ -35,7 +36,7 @@ const SHARD_PROBE = '/models/encoder-model.onnx.data.000';
 
 test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async ({ page, request, baseURL }) => {
   const head = await request.head(SHARD_PROBE).catch(() => null);
-  test.skip(!head || !head.ok(),
+  requireWeightsOrSkip(test, !head || !head.ok(),
     `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py for local fp32 coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');

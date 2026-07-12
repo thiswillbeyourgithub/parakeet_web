@@ -15,12 +15,15 @@
 #   - tier 3 (npm run test:e2e): the WASM/int8 happy path PLUS the backend/case
 #     matrix -- sharded fp32-on-WASM, fp32 auto-upgrade + no-downgrade, int8
 #     lite + its no-downgrade, diarization (+ failure UX + speaker match),
-#     chunking, and the FLEURS regression. Several of those SELF-SKIP when their
-#     weights/shards are not served locally (upstream ships none): fetch them
-#     with `npm run e2e:models`, and for the fp32 shards run
-#     `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py`.
-#     Playwright prints a "skipped" count, so a spec that quietly opted out is
-#     visible in the summary rather than passing as a false green.
+#     chunking, and the FLEURS regression. The specs that need OPTIONAL weights
+#     (fp32 shards, int8-lite, diarization models) FAIL here when those weights
+#     are not served: this hook sets PARAKEET_E2E_STRICT_WEIGHTS=1 so a
+#     maintainer checkout that is meant to have everything cannot pass by
+#     silently skipping (CI, which only fetches the int8 + diarization set,
+#     keeps skipping them instead). Serve the weights with `npm run e2e:models`,
+#     and the fp32 shards with
+#     `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py`; or
+#     export PARAKEET_E2E_STRICT_WEIGHTS=0 before pushing to fall back to skips.
 #   - WebGPU: the ONLY way to exercise the real GPU path (encoder batching +
 #     the encode/decode worker pipeline). It cannot run in CI or in headless-CI
 #     (no GPU); it needs a real, FREE GPU here. The default args force fp32
@@ -88,7 +91,13 @@ fi
 
 # --- Tier 3 E2E (opt-in) --------------------------------------------------
 if [ "$run_e2e" = y ]; then
-  echo "[pre-push] Running tier 3 E2E (watch the summary for a 'skipped' count)..."
+  # Strict-weights: on a maintainer checkout (no CI env), a spec whose OPTIONAL
+  # weights are not served FAILS instead of self-skipping, so a "meant to have
+  # everything" push cannot green on a silent skip. Default it on here; a
+  # contributor who genuinely lacks some weights can `export
+  # PARAKEET_E2E_STRICT_WEIGHTS=0` before pushing to fall back to skips.
+  export PARAKEET_E2E_STRICT_WEIGHTS=${PARAKEET_E2E_STRICT_WEIGHTS:-1}
+  echo "[pre-push] Running tier 3 E2E (strict weights=$PARAKEET_E2E_STRICT_WEIGHTS: missing OPTIONAL weights fail here, not skip)..."
   if ! npm run test:e2e; then
     echo "[pre-push] Tier 3 failed, push aborted. (override with --no-verify)" >&2
     exit 1

@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
+import { requireWeightsOrSkip } from './strict-weights.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
@@ -31,7 +32,7 @@ const LITE_PROBE = '/models/encoder-model.int8.lite.onnx';
 
 test('transcribes JFK English (MP3) with the WASM int8 lite encoder', async ({ page, request, baseURL }) => {
   const head = await request.head(LITE_PROBE).catch(() => null);
-  test.skip(!head || !head.ok(),
+  requireWeightsOrSkip(test, !head || !head.ok(),
     `no lite encoder at ${baseURL}${LITE_PROBE} (the Olicorne model repo ships encoder-model.int8.lite.onnx for local coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');

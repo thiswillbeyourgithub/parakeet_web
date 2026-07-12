@@ -25,6 +25,7 @@ import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings } from './seed.mjs';
+import { requireWeightsOrSkip } from './strict-weights.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
@@ -33,7 +34,7 @@ const MODEL_PROBE = '/models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advan
 
 test('reuses a renamed speaker label across recordings by voice match (WASM)', async ({ page, request, baseURL }) => {
   const head = await request.head(MODEL_PROBE).catch(() => null);
-  test.skip(!head || !head.ok(),
+  requireWeightsOrSkip(test, !head || !head.ok(),
     `no diarization models at ${baseURL}${MODEL_PROBE} (run \`npm run e2e:models\` to fetch them)`);
 
   const FIXTURE_AUDIO = fixture('two-speakers.wav');
