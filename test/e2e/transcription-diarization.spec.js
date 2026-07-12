@@ -181,8 +181,13 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   // fields plus the opt-in diarization payload, never per-word timings, raw
   // segments, pcm, or the filename.
   const persistedRec = (await readPersisted())[0];
+  // rtf (a scalar transcribe-time/audio-duration ratio) is F-130-safe and is
+  // deliberately persisted so the reloaded kebab menu can still show it (see
+  // slimTranscriptForPersist in App.jsx). It carries no content/timing/filename,
+  // so the guard keeps it in the allow-list while still rejecting any OTHER key
+  // (per-word timings, raw segments, pcm, filename) that would leak.
   expect(Object.keys(persistedRec).sort(), 'persisted record keys')
-    .toEqual(['diarTurns', 'id', 'speakerNames', 'text', 'timestamp', 'wordCount']);
+    .toEqual(['diarTurns', 'id', 'rtf', 'speakerNames', 'text', 'timestamp', 'wordCount']);
   for (const turn of persistedRec.diarTurns) {
     expect(Object.keys(turn).sort(), 'persisted turn keys').toEqual(['speaker', 'text']);
   }
