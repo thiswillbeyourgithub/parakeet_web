@@ -1,50 +1,120 @@
 #!/usr/bin/env bash
-# Pre-push hook: run the fast tiers (tier 1 unit + tier 2 http integration),
-# then interactively offer to also run tier 3 (Playwright full-transcription
-# E2E). Tier 3 loads a ~600 MB model and is slow, so it is opt-in per push.
-# Bypass this hook entirely with `git push --no-verify` if you must.
+# Pre-push hook. Goal: one place that can exercise as much of the app as a
+# machine can, while letting you answer a couple of questions and then WALK AWAY
+# for an unattended run.
+#
+# Flow (questions are asked UP FRONT, before any slow step, so nothing blocks
+# waiting on you halfway through):
+#   1. Ask (if a terminal is attached): run tier 3? run the WebGPU check?
+#   2. Always: tier 1 (unit) + tier 2 (http)               -- fast, no model.
+#   3. If asked: rebuild app/ui/dist, then tier 3 (Playwright WASM E2E).
+#   4. If asked: scripts/webgpu-check.mjs on a REAL GPU.
+#
+# What each tier actually covers:
+#   - tier 1/2: pure logic + the real signaling server.
+#   - tier 3 (npm run test:e2e): the WASM/int8 happy path PLUS the backend/case
+#     matrix -- sharded fp32-on-WASM, fp32 auto-upgrade + no-downgrade, int8
+#     lite + its no-downgrade, diarization (+ failure UX + speaker match),
+#     chunking, and the FLEURS regression. Several of those SELF-SKIP when their
+#     weights/shards are not served locally (upstream ships none): fetch them
+#     with `npm run e2e:models`, and for the fp32 shards run
+#     `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py`.
+#     Playwright prints a "skipped" count, so a spec that quietly opted out is
+#     visible in the summary rather than passing as a false green.
+#   - WebGPU: the ONLY way to exercise the real GPU path (encoder batching +
+#     the encode/decode worker pipeline). It cannot run in CI or in headless-CI
+#     (no GPU); it needs a real, FREE GPU here. The default args force fp32
+#     (`--fp32`), which is the WebGPU path that needs no `shader-f16` and so is
+#     the one that actually validates on this box; override with the
+#     PREPUSH_WEBGPU_ARGS env var (e.g. PREPUSH_WEBGPU_ARGS='--channel=chromium'
+#     to try fp16 on a GPU that exposes shader-f16, or add --full for the
+#     ~17 min memory-leak run). fp32 needs the local fp32 shards served.
+#     NOTE: a BUSY GPU (e.g. VRAM held by another process) makes this
+#     false-fail via OOM-fallback, so only opt in when the GPU is free.
+#
+# Bypass the whole hook with `git push --no-verify`.
 #
 # Activated automatically by the root package.json `prepare` script, which runs
 # `git config core.hooksPath .githooks` on `npm install`.
+#
+# Built with Claude Code.
 set -e
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-echo "[pre-push] Running npm test (tier 1 unit + tier 2 http)..."
-if ! npm test --silent; then
-  echo "[pre-push] Tests failed, push aborted. (override with --no-verify)" >&2
-  exit 1
-fi
-echo "[pre-push] All fast-tier tests passed."
+# --- Gather the interactive choices UP FRONT ------------------------------
+# git feeds the ref list on the hook's stdin, so read answers from the
+# controlling terminal instead. Asking everything now (before the slow tiers)
+# is what lets you kick off an unattended run. With no terminal (a
+# non-interactive push, e.g. CI) both heavy steps are skipped.
+run_e2e=n
+run_webgpu=n
 
-# Offer the heavy tier-3 E2E. git feeds the ref list on the hook's stdin, so
-# read the answer from the controlling terminal instead. With no terminal
-# (non-interactive push, e.g. CI), skip tier 3 rather than block the push.
-if [ -e /dev/tty ]; then
-  printf "[pre-push] Run tier 3 (Playwright E2E) too? [y/n] " >&2
+ask_yn() { # prompt -> echoes y or n, aborts the push on anything else
+  local prompt="$1" answer
+  printf "%s" "$prompt" >&2
   read -r answer < /dev/tty
   case "$answer" in
-    y|Y)
-      # Tier 3 runs against the BUILT app at app/ui/dist; a stale dist silently
-      # tests an old UI, so rebuild first (see CLAUDE.md).
-      echo "[pre-push] Building UI (app/ui) before tier 3..."
-      ( cd app/ui && npm run build )
-      echo "[pre-push] Running tier 3 E2E..."
-      if ! npm run test:e2e; then
-        echo "[pre-push] Tier 3 failed, push aborted. (override with --no-verify)" >&2
-        exit 1
-      fi
-      echo "[pre-push] Tier 3 E2E passed."
-      ;;
-    n|N)
-      echo "[pre-push] Skipping tier 3."
-      ;;
-    *)
-      echo "[pre-push] Unrecognised answer '$answer' (expected y or n), push aborted." >&2
-      exit 1
-      ;;
+    y|Y) echo y ;;
+    n|N) echo n ;;
+    *) echo >&2 "[pre-push] Unrecognised answer '$answer' (expected y or n), push aborted."; exit 1 ;;
   esac
+}
+
+if [ -e /dev/tty ]; then
+  echo "[pre-push] Answer these now, then you can leave it unattended:" >&2
+  run_e2e=$(ask_yn "[pre-push]   Run tier 3 (Playwright WASM E2E: int8 + fp32/lite/diarization/chunking/fleurs)? [y/n] ")
+  run_webgpu=$(ask_yn "[pre-push]   Run the WebGPU check too? (needs a real, FREE GPU; a busy GPU false-fails) [y/n] ")
 else
-  echo "[pre-push] No terminal available, skipping tier 3."
+  echo "[pre-push] No terminal available; skipping tier 3 and the WebGPU check." >&2
 fi
+
+# --- Tier 1 + tier 2 (always) ---------------------------------------------
+echo "[pre-push] Running npm test (tier 1 unit + tier 2 http)..."
+if ! npm test --silent; then
+  echo "[pre-push] Fast-tier tests failed, push aborted. (override with --no-verify)" >&2
+  exit 1
+fi
+echo "[pre-push] Fast-tier tests passed."
+
+# --- Build once if any browser-backed tier was requested ------------------
+# Both tier 3 and the WebGPU check run against the BUILT app at app/ui/dist; a
+# stale dist silently tests an old UI (see CLAUDE.md), so rebuild first.
+if [ "$run_e2e" = y ] || [ "$run_webgpu" = y ]; then
+  echo "[pre-push] Building UI (app/ui) for the browser tiers..."
+  ( cd app/ui && npm run build )
+fi
+
+# --- Tier 3 E2E (opt-in) --------------------------------------------------
+if [ "$run_e2e" = y ]; then
+  echo "[pre-push] Running tier 3 E2E (watch the summary for a 'skipped' count)..."
+  if ! npm run test:e2e; then
+    echo "[pre-push] Tier 3 failed, push aborted. (override with --no-verify)" >&2
+    exit 1
+  fi
+  echo "[pre-push] Tier 3 E2E passed."
+fi
+
+# --- WebGPU check (opt-in; real GPU) --------------------------------------
+if [ "$run_webgpu" = y ]; then
+  webgpu_args=${PREPUSH_WEBGPU_ARGS:---fp32 --channel=chromium}
+  echo "[pre-push] Running WebGPU check (node scripts/webgpu-check.mjs $webgpu_args)..."
+  # webgpu-check exits 2 when there is no usable GPU adapter (SKIP, not a
+  # failure), 0 on pass, anything else on a real failure. Don't let `set -e`
+  # abort before we can tell those apart.
+  set +e
+  node scripts/webgpu-check.mjs $webgpu_args
+  webgpu_rc=$?
+  set -e
+  if [ "$webgpu_rc" -eq 2 ]; then
+    echo "[pre-push] WebGPU check SKIPPED (no usable GPU adapter); not blocking the push." >&2
+  elif [ "$webgpu_rc" -ne 0 ]; then
+    echo "[pre-push] WebGPU check failed (exit $webgpu_rc), push aborted. (override with --no-verify)" >&2
+    exit 1
+  else
+    echo "[pre-push] WebGPU check passed."
+  fi
+fi
+
+echo "[pre-push] All requested checks passed."
