@@ -1803,6 +1803,15 @@ export class ParakeetModel {
    * duration index equals the frame advance throughout (the model's TDT duration
    * head is an identity-indexed skip count).
    *
+   * The default `maesExpansionBeta` of 2 is kept deliberately (NeMo parity).
+   * Measured decode cost of lowering it (real int8, min-of-3; this box is noisy,
+   * ~20% run-to-run): jfk 11 s, beta 2/1/0 = 371/341/321 ms; jfk-moon 3 min /
+   * 11 chunks, beta 2/1/0 = 5275/5588/5293 ms. Transcripts are byte-identical
+   * across beta on both clips, and the 450-utterance real-audio sweep found
+   * beta/gamma are not accuracy levers. There is NO consistent decode win from a
+   * smaller beta: beta 1 beats the default on jfk but LOSES on the 3-min clip, and
+   * the gap is within the measurement noise, so the default stays at 2.
+   *
    * `beamPrefetch` (default on) is speculative cross-frame batching: a future
    * hypothesis' next joiner feed (t, lastTok, state) is frozen at creation, so
    * its step-0 output is computed by the current frame's batched call and

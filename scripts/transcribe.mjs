@@ -275,7 +275,7 @@ Options:
                            >= 0). For a shorter hypothesis that is a prefix of a
                            longer one within N tokens, the longer one's score
                            absorbs the prefix's continuation probability. 0
-                           disables it. Default 1. Only used when --beam-width > 1.
+                           disables it. Default 0. Only used when --beam-width > 1.
       --no-beam-prefetch   Disable the beam decoder's speculative cross-frame
                            batching (on by default; results identical, it only
                            reduces joiner session calls). A/B lever for
