@@ -108,7 +108,7 @@ function ensureWorker() {
  * @param {number} [opts.threshold=0.5] clustering distance threshold (auto mode only)
  * @param {number} [opts.minDurationOn=0.3] drop speech turns shorter than this (s)
  * @param {number} [opts.minDurationOff=0.5] bridge silences shorter than this (s)
- * @param {number} [opts.numThreads] worker threads (default: ~half the cores)
+ * @param {number} [opts.numThreads] worker threads (default: cores - 1)
  * @returns {Promise<Array<{start:number,end:number,speaker:number}>>} segments
  *   sorted by start time; `speaker` is a 0-based integer label. Rejects with an
  *   error carrying `cancelled === true` when {@link cancelDiarization} aborts it.

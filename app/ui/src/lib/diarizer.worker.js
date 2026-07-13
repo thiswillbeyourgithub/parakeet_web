@@ -106,7 +106,11 @@ function runOne(pcm, { segBytes, embBytes, opts }) {
     numSpeakers = -1, threshold = 0.5,
     minDurationOn = 0.3, minDurationOff = 0.5, numThreads,
   } = opts || {};
-  const threads = numThreads ?? Math.max(1, Math.min((self.navigator?.hardwareConcurrency || 2) - 1, 4));
+  // Default to (cores - 1): sherpa's segmentation + embedding are the dominant
+  // cost on long audio, and the old min(.., 4) cap left most cores idle on a
+  // beefy box. The `numThreads` override still wins (the piecewise pool passes an
+  // explicit divided count so K workers never oversubscribe the machine).
+  const threads = numThreads ?? Math.max(1, (self.navigator?.hardwareConcurrency || 2) - 1);
   const clustering = numSpeakers && numSpeakers > 0
     ? { numClusters: numSpeakers, threshold: 0.5 }
     : { numClusters: -1, threshold };
