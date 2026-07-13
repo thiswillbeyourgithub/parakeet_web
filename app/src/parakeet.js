@@ -1102,31 +1102,54 @@ export class ParakeetModel {
   _frameConfidence(tokenLogits, maxLogit, temperature) {
     let confVal;
     if (temperature > 1e-8) {
-      const invTemp = 1.0 / temperature;
-      let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0;
-      let i = 0;
-      const len = tokenLogits.length;
-      for (; i <= len - 8; i += 8) {
-        s0 += Math.exp((tokenLogits[i]     - maxLogit) * invTemp);
-        s1 += Math.exp((tokenLogits[i + 1] - maxLogit) * invTemp);
-        s2 += Math.exp((tokenLogits[i + 2] - maxLogit) * invTemp);
-        s3 += Math.exp((tokenLogits[i + 3] - maxLogit) * invTemp);
-        s4 += Math.exp((tokenLogits[i + 4] - maxLogit) * invTemp);
-        s5 += Math.exp((tokenLogits[i + 5] - maxLogit) * invTemp);
-        s6 += Math.exp((tokenLogits[i + 6] - maxLogit) * invTemp);
-        s7 += Math.exp((tokenLogits[i + 7] - maxLogit) * invTemp);
-      }
-      let sumExp = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7;
-      for (; i < len; i++) {
-        sumExp += Math.exp((tokenLogits[i] - maxLogit) * invTemp);
-      }
-      confVal = 1 / sumExp;
+      confVal = 1 / this._expSumAround(tokenLogits, maxLogit, 1.0 / temperature);
     } else {
       // At temperature=0, the model is fully greedy, confidence is 1.0.
       confVal = 1.0;
     }
     if (!Number.isFinite(confVal) || confVal <= 0) confVal = 1e-10;
     return confVal;
+  }
+
+  /**
+   * Sum of exp((logit - refLogit) * invTemp) over the whole logit array: the
+   * softmax partition function expressed relative to a reference logit. With
+   * refLogit = the chosen token's logit this is exactly _frameConfidence's
+   * denominator (numerator 1); the beam path instead computes it ONCE per
+   * hypothesis-step relative to the best candidate's logit and prices every
+   * candidate from the same sum (see _expandHyp), because the per-candidate
+   * denominators only differ by the factor exp((ref - candidate) * invTemp).
+   * That replaces one full-vocab exp sweep PER CANDIDATE with one per step.
+   *
+   * The loop is unrolled 8x with eight independent accumulators for ILP, and
+   * (logit/T - ref/T) is folded into (logit - ref) * invTemp so the inner loop
+   * has one multiply instead of one divide per element (see upstream commit
+   * 501cef3; this is the exact loop _frameConfidence historically inlined, so
+   * the greedy path's arithmetic is unchanged).
+   * @param {Float32Array} tokenLogits
+   * @param {number} refLogit Reference logit the sum is centred on.
+   * @param {number} invTemp 1 / temperature (caller guards temperature > 0).
+   * @returns {number}
+   */
+  _expSumAround(tokenLogits, refLogit, invTemp) {
+    let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0;
+    let i = 0;
+    const len = tokenLogits.length;
+    for (; i <= len - 8; i += 8) {
+      s0 += Math.exp((tokenLogits[i]     - refLogit) * invTemp);
+      s1 += Math.exp((tokenLogits[i + 1] - refLogit) * invTemp);
+      s2 += Math.exp((tokenLogits[i + 2] - refLogit) * invTemp);
+      s3 += Math.exp((tokenLogits[i + 3] - refLogit) * invTemp);
+      s4 += Math.exp((tokenLogits[i + 4] - refLogit) * invTemp);
+      s5 += Math.exp((tokenLogits[i + 5] - refLogit) * invTemp);
+      s6 += Math.exp((tokenLogits[i + 6] - refLogit) * invTemp);
+      s7 += Math.exp((tokenLogits[i + 7] - refLogit) * invTemp);
+    }
+    let sumExp = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7;
+    for (; i < len; i++) {
+      sumExp += Math.exp((tokenLogits[i] - refLogit) * invTemp);
+    }
+    return sumExp;
   }
 
   /**
@@ -1340,12 +1363,16 @@ export class ParakeetModel {
     const minNonZeroDur = nDur > 1 ? 1 : 0;
 
     // Per-token boosted log-prob (rankDelta's token term), computed once and
-    // reused across every duration that token is crossed with.
+    // reused across every duration that token is crossed with. `refLogit` (the
+    // best TRUE logit among the candidates) anchors the shared confidence
+    // partition below so its numerators never overflow.
     const tokenLP = new Map();
+    let refLogit = -Infinity;
     for (const id of topIds) {
       const trueLogit = tokenLogits[id];
       const boostBonus = boostedVal.get(id) - trueLogit;
       tokenLP.set(id, { trueLogit, logp: (trueLogit - logZ) + boostBonus });
+      if (trueLogit > refLogit) refLogit = trueLogit;
     }
 
     // Decode-debug: one shared alternatives list per expansion (true logit,
@@ -1393,18 +1420,28 @@ export class ParakeetModel {
 
     // Adaptive (MAES) prune: drop non-blank pairs more than `gamma` log-prob
     // below the best pair. Blank pairs always survive (advance guarantee).
-    // Confidence + trie advance are token-only, so cache them per token id.
+    // Confidence is priced for EVERY candidate off one shared temperature
+    // partition (`confDenom`, see _expSumAround): the per-candidate softmax
+    // denominators only differ by exp((refLogit - candidate) * invTemp), so
+    // conf(id) = exp((logit_id - refLogit) * invTemp) / confDenom. This is
+    // mathematically identical to the per-candidate _frameConfidence form the
+    // greedy loop uses (for the best candidate refLogit == its logit and it IS
+    // the same arithmetic) but costs one full-vocab exp sweep per
+    // hypothesis-step instead of one per candidate; only the reported
+    // confidences can move by float-rounding noise, ranking (rankDelta) never
+    // reads confVal. Trie advance stays token-only, so cache it per token id.
     const threshold = maxTotal - maesExpansionGamma;
     const cands = [];
-    const confCache = new Map();
+    const tempered = temperature > 1e-8;
+    const invTemp = tempered ? 1.0 / temperature : 0;
+    const confDenom = tempered ? this._expSumAround(tokenLogits, refLogit, invTemp) : 1;
     const activeCache = new Map();
     for (const { id, isBlank, trueLogit, rankDelta, step } of kept) {
       if (!isBlank && rankDelta < threshold) continue;
-      let confVal = confCache.get(id);
-      if (confVal === undefined) {
-        confVal = this._frameConfidence(tokenLogits, trueLogit, temperature);
-        confCache.set(id, confVal);
-      }
+      // Same degenerate-output clamp as _frameConfidence: an underflowed
+      // numerator (0) or a non-finite sum both land on the 1e-10 floor.
+      let confVal = tempered ? Math.exp((trueLogit - refLogit) * invTemp) / confDenom : 1.0;
+      if (!Number.isFinite(confVal) || confVal <= 0) confVal = 1e-10;
       let active = hyp.active;
       if (!isBlank) {
         active = activeCache.get(id);

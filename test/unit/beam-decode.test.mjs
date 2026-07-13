@@ -75,6 +75,7 @@ function makeModel(script) {
     _combState2: fakeState(),
     _pickArgmax: proto._pickArgmax,
     _frameConfidence: proto._frameConfidence,
+    _expSumAround: proto._expSumAround,
     _advanceDecision: proto._advanceDecision,
     _logSumExp: proto._logSumExp,
     _logAddExp: proto._logAddExp,
@@ -1070,5 +1071,79 @@ describe('nBest (oracle) list (_decodeBeam)', () => {
     const base = await run(1);
     const withN = await run(5);
     assert.ok(eqArr(base.ids, withN.ids), 'the winning path is identical with or without n-best');
+  });
+});
+
+describe('shared-partition confidence (_expandHyp)', () => {
+  // _expandHyp prices every candidate's confidence off ONE _expSumAround
+  // partition per hypothesis-step (anchored on the best candidate logit)
+  // instead of running the full-vocab _frameConfidence sweep per candidate.
+  // These tests pin the refactor to the old per-candidate semantics: the
+  // values must agree to float-rounding noise at any temperature, and the
+  // sweep count must stay at one per expansion.
+
+  // Deterministic LCG so the logits are stable across runs (no Math.random).
+  const seededLogits = (n, seed) => {
+    let s = seed >>> 0;
+    const a = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      a[i] = (s / 0xffffffff) * 16 - 8; // spread over [-8, 8) like real logits
+    }
+    return a;
+  };
+
+  const VOC = 64;
+  function mkExpandModel(counters) {
+    return {
+      blankId: VOC - 1,
+      _topK: proto._topK,
+      _logSumExp: proto._logSumExp,
+      _frameConfidence: proto._frameConfidence,
+      _expSumAround(...args) {
+        counters.sweeps++;
+        return proto._expSumAround.apply(this, args);
+      },
+      _expandHyp: proto._expandHyp,
+    };
+  }
+  const DUR = Float32Array.from([0.1, -0.2, -1.0, -2.0, -0.5]);
+
+  for (const temperature of [1.2, 1.0, 0.35]) {
+    test(`candidate confidences match the per-candidate form at T=${temperature}`, () => {
+      const counters = { sweeps: 0 };
+      const model = mkExpandModel(counters);
+      for (let seed = 1; seed <= 5; seed++) {
+        const logits = seededLogits(VOC, seed * 2654435761);
+        counters.sweeps = 0;
+        const { cands } = model._expandHyp(
+          { active: null },
+          { tokenLogits: logits.slice(), durLogits: DUR.slice(), newState: {}, _logitsTensor: null },
+          { temperature, expandK: 4, maesExpansionGamma: 2.3, phraseBoost: null },
+        );
+        assert.ok(cands.length > 0, 'expansion produced candidates');
+        assert.equal(counters.sweeps, 1, 'exactly one partition sweep per expansion');
+        for (const c of cands) {
+          const want = model._frameConfidence(logits, logits[c.id], temperature);
+          const rel = Math.abs(c.confVal - want) / want;
+          assert.ok(rel <= 1e-9,
+            `conf(id=${c.id}) ${c.confVal} vs per-candidate ${want} (rel ${rel})`);
+        }
+      }
+    });
+  }
+
+  test('temperature 0 short-circuits: confidence 1.0, no partition sweep', () => {
+    const counters = { sweeps: 0 };
+    const model = mkExpandModel(counters);
+    const logits = seededLogits(VOC, 42);
+    const { cands } = model._expandHyp(
+      { active: null },
+      { tokenLogits: logits.slice(), durLogits: DUR.slice(), newState: {}, _logitsTensor: null },
+      { temperature: 0, expandK: 4, maesExpansionGamma: 2.3, phraseBoost: null },
+    );
+    assert.ok(cands.length > 0, 'expansion produced candidates');
+    assert.equal(counters.sweeps, 0, 'no partition sweep at temperature 0');
+    for (const c of cands) assert.equal(c.confVal, 1.0);
   });
 });

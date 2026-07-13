@@ -66,6 +66,7 @@ function makeModel(script) {
     _debugEmitRecord: proto._debugEmitRecord,
     _pickArgmax: proto._pickArgmax,
     _frameConfidence: proto._frameConfidence,
+    _expSumAround: proto._expSumAround,
     _advanceDecision: proto._advanceDecision,
     _logSumExp: proto._logSumExp,
     _logAddExp: proto._logAddExp,
