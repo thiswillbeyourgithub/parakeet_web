@@ -910,22 +910,29 @@ export class ParakeetModel {
    * land at offset (layer*B + b)*hidden. A null state falls back to the shared
    * zero state, exactly like `_runCombinedStep`.
    *
-   * Scatter: the batched logits and output states are copied back out
-   * per-hypothesis (the row copy lets the batched ORT tensors be disposed
-   * before returning, so no caller ever holds a view into a freed buffer).
-   * Each result entry matches the `_runCombinedStep` contract `_expandHyp`
-   * consumes ({tokenLogits, durLogits, newState}); the minted states are plain
-   * CPU tensors, owned by the caller via the usual `_disposeDecoderState`
-   * sweep.
+   * Scatter: the output STATES are copied back out per-hypothesis (they
+   * persist on hypotheses across steps), but the per-row tokenLogits and
+   * durLogits are zero-copy VIEWS into the one batched logits buffer. The
+   * batched logits tensor is therefore returned alive as `sharedLogits` on
+   * the result array; the caller must dispose it once every row has been
+   * consumed (all three callers do so in a try/finally around their
+   * consumption loop). Each result entry otherwise matches the
+   * `_runCombinedStep` contract `_expandHyp` consumes ({tokenLogits,
+   * durLogits, newState}); the minted states are plain CPU tensors, owned by
+   * the caller via the usual `_disposeDecoderState` sweep.
    *
    * A single hypothesis delegates to `_runCombinedStep` so the batch-1 path
-   * (and its pre-allocated input tensors) stays shared with the greedy loop.
+   * (and its pre-allocated input tensors) stays shared with the greedy loop;
+   * that path attaches the per-row `_logitsTensor` handle instead of
+   * `sharedLogits`, so callers dispose per-row handles as they consume rows
+   * AND the shared handle at the end.
    *
    * @param {Array<object>} hyps - Hypotheses to expand ({t, lastTok, state}).
    * @param {Float32Array} transposed - Encoder output, [Tenc, D] row-major.
    * @param {number} D - Encoder feature dim.
    * @returns {Promise<Array<{tokenLogits: Float32Array, durLogits: Float32Array, newState: object}>>}
-   *   Index-aligned with `hyps`.
+   *   Index-aligned with `hyps`; carries a `sharedLogits` property on the
+   *   array when the rows view a shared batched buffer.
    */
   async _runCombinedStepBatch(hyps, transposed, D) {
     if (hyps.length === 1) {
@@ -941,10 +948,30 @@ export class ParakeetModel {
     const L = this.predLayers, H = this.predHidden;
     const vocab = this.tokenizer.id2token.length;
 
-    const encData = new Float32Array(B * D);
-    const targetIds = new Int32Array(B);
-    const s1 = new Float32Array(L * B * H);
-    const s2 = new Float32Array(L * B * H);
+    // Grow-only per-instance gather scratch: the beam calls this every
+    // expansion step with small, similar batch sizes, so re-allocating the
+    // gather buffers each call is pure GC churn. The ORT wasm EP copies feed
+    // data into its own heap during run(), so the backing arrays are free for
+    // reuse as soon as run() resolves; transcribe() calls on one instance are
+    // serialized (same non-reentrancy contract as _runCombinedStep's
+    // preallocated batch-1 feeds), so no two in-flight runs share the scratch.
+    let sc = this._batchScratch;
+    if (!sc || sc.cap < B) {
+      sc = this._batchScratch = {
+        cap: B,
+        encData: new Float32Array(B * D),
+        targetIds: new Int32Array(B),
+        // target_length is always a column of 1s (one token per row): filled
+        // once at (re)allocation, only ever read afterwards.
+        targetLen: new Int32Array(B).fill(1),
+        s1: new Float32Array(L * B * H),
+        s2: new Float32Array(L * B * H),
+      };
+    }
+    const encData = sc.encData.subarray(0, B * D);
+    const targetIds = sc.targetIds.subarray(0, B);
+    const s1 = sc.s1.subarray(0, L * B * H);
+    const s2 = sc.s2.subarray(0, L * B * H);
     for (let b = 0; b < B; b++) {
       const h = hyps[b];
       encData.set(transposed.subarray(h.t * D, (h.t + 1) * D), b * D);
@@ -960,7 +987,7 @@ export class ParakeetModel {
     const feeds = {
       encoder_outputs: new this.ort.Tensor('float32', encData, [B, D, 1]),
       targets: new this.ort.Tensor('int32', targetIds, [B, 1]),
-      target_length: new this.ort.Tensor('int32', new Int32Array(B).fill(1), [B]),
+      target_length: new this.ort.Tensor('int32', sc.targetLen.subarray(0, B), [B]),
       input_states_1: new this.ort.Tensor('float32', s1, [L, B, H]),
       input_states_2: new this.ort.Tensor('float32', s2, [L, B, H]),
     };
@@ -1004,9 +1031,13 @@ export class ParakeetModel {
 
     const results = [];
     for (let b = 0; b < B; b++) {
-      // slice() copies the row out of the batched buffer; the token/duration
-      // split then views the copy (same zero-copy split as _runCombinedStep).
-      const row = data.slice(b * total, (b + 1) * total);
+      // tokenLogits/durLogits are zero-copy views straight into the batched
+      // output buffer (same split as _runCombinedStep); the old per-row
+      // slice() copied ~vocab floats per hypothesis per step. The buffer must
+      // therefore outlive this call: callers dispose it via the
+      // `sharedLogits` handle attached to the returned array once every row
+      // has been consumed. Output STATES are still copied per row because
+      // they persist on hypotheses across steps.
       const n1 = new Float32Array(L * H);
       const n2 = new Float32Array(L * H);
       for (let l = 0; l < L; l++) {
@@ -1014,15 +1045,22 @@ export class ParakeetModel {
         n2.set(sd2.subarray((l * B + b) * H, (l * B + b + 1) * H), l * H);
       }
       results.push({
-        tokenLogits: row.subarray(0, vocab),
-        durLogits: row.subarray(vocab, total),
+        tokenLogits: data.subarray(b * total, b * total + vocab),
+        durLogits: data.subarray(b * total + vocab, (b + 1) * total),
         newState: {
           state1: new this.ort.Tensor('float32', n1, [L, 1, H]),
           state2: new this.ort.Tensor('float32', n2, [L, 1, H]),
         },
       });
     }
-    disposeOutputs();
+    // States were copied out above; only the logits tensor still backs live
+    // views. The batch-1 delegation path instead attaches a per-row
+    // `_logitsTensor` (disposed by the row's consumer), so callers handle
+    // both shapes: dispose per-row handles as they consume, then
+    // `outs.sharedLogits?.dispose?.()` when done with the whole batch.
+    outputState1.dispose?.();
+    outputState2.dispose?.();
+    results.sharedLogits = logits;
     return results;
   }
 
@@ -1503,27 +1541,33 @@ export class ParakeetModel {
   async _applyBlankClosureBatch(children, parentT, transposed, D) {
     const entries = children.map((ch) => ({ t: parentT, lastTok: ch.lastTok, state: ch.state }));
     const outs = await this._runCombinedStepBatch(entries, transposed, D);
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i];
-      const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
+    try {
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
 
-      const blankLogp = tokenLogits[this.blankId] - this._logSumExp(tokenLogits);
+        const blankLogp = tokenLogits[this.blankId] - this._logSumExp(tokenLogits);
 
-      // Argmax duration, forced to the smallest non-zero index so the closing
-      // blank always advances the frame (NeMo's min_non_zero_duration_idx == 1
-      // under this model's identity-indexed duration head).
-      let bestIdx = 0, bestVal = -Infinity;
-      for (let d = 0; d < durLogits.length; d++) {
-        if (durLogits[d] > bestVal) { bestVal = durLogits[d]; bestIdx = d; }
+        // Argmax duration, forced to the smallest non-zero index so the closing
+        // blank always advances the frame (NeMo's min_non_zero_duration_idx == 1
+        // under this model's identity-indexed duration head).
+        let bestIdx = 0, bestVal = -Infinity;
+        for (let d = 0; d < durLogits.length; d++) {
+          if (durLogits[d] > bestVal) { bestVal = durLogits[d]; bestIdx = d; }
+        }
+        if (bestIdx === 0) bestIdx = durLogits.length > 1 ? 1 : 0;
+        const durLogp = durLogits[bestIdx] - this._logSumExp(durLogits);
+
+        child.score += blankLogp + durLogp;
+        child.t = parentT + bestIdx;
+
+        _logitsTensor?.dispose?.();
+        if (newState) this._disposeDecoderState(newState);
       }
-      if (bestIdx === 0) bestIdx = durLogits.length > 1 ? 1 : 0;
-      const durLogp = durLogits[bestIdx] - this._logSumExp(durLogits);
-
-      child.score += blankLogp + durLogp;
-      child.t = parentT + bestIdx;
-
-      _logitsTensor?.dispose?.();
-      if (newState) this._disposeDecoderState(newState);
+    } finally {
+      // Batched rows are views into one shared logits buffer (see
+      // _runCombinedStepBatch); free it now that every row was consumed.
+      outs.sharedLogits?.dispose?.();
     }
   }
 
@@ -1623,21 +1667,27 @@ export class ParakeetModel {
       const outs = await this._runCombinedStepBatch(
         active.map((job) => ({ t: job.t, lastTok: job.prevTok, state: job.state })), transposed, D);
       const next = [];
-      for (let i = 0; i < active.length; i++) {
-        const job = active[i];
-        const tok = job.extension[job.k];
-        const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
-        job.extLogp += (tokenLogits[tok] - this._logSumExp(tokenLogits))
-          + (durLogits[0] - this._logSumExp(durLogits));
-        _logitsTensor?.dispose?.();
-        if (job.state !== job.short.state) this._disposeDecoderState(job.state);
-        job.state = newState;
-        job.prevTok = tok;
-        if (++job.k < job.extension.length) {
-          next.push(job);
-        } else if (job.state !== job.short.state) {
-          this._disposeDecoderState(job.state);
+      try {
+        for (let i = 0; i < active.length; i++) {
+          const job = active[i];
+          const tok = job.extension[job.k];
+          const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
+          job.extLogp += (tokenLogits[tok] - this._logSumExp(tokenLogits))
+            + (durLogits[0] - this._logSumExp(durLogits));
+          _logitsTensor?.dispose?.();
+          if (job.state !== job.short.state) this._disposeDecoderState(job.state);
+          job.state = newState;
+          job.prevTok = tok;
+          if (++job.k < job.extension.length) {
+            next.push(job);
+          } else if (job.state !== job.short.state) {
+            this._disposeDecoderState(job.state);
+          }
         }
+      } finally {
+        // Batched rows are views into one shared logits buffer (see
+        // _runCombinedStepBatch); free it now that every row was consumed.
+        outs.sharedLogits?.dispose?.();
       }
       active = next;
     }
@@ -1814,26 +1864,34 @@ export class ParakeetModel {
           const stepOuts = await this._runCombinedStepBatch(working, transposed, D);
           const children = [];       // this step's children, in expansion order
           const pendingClosure = []; // children owed the last-mAES-step blank closure
-          for (let i = 0; i < working.length; i++) {
-            const hyp = working[i];
-            const { cands, newState } = this._expandHyp(hyp, stepOuts[i], expandOpts);
-            if (newState) disposable.add(newState);
-            for (const c of cands) {
-              const child = makeChild(hyp, c, newState);
-              // Last-mAES-step blank closure (NeMo): a non-blank zero-duration
-              // emission that hits the per-frame symbol cap is closed with an
-              // implicit best-duration blank instead of a bare one-frame advance,
-              // so its score and landing frame match
-              // modified_adaptive_expansion_search. The cap condition mirrors
-              // _advanceDecision's forced-advance branch exactly. Closures are
-              // deferred so the whole step shares one batched joiner call (every
-              // working hypothesis sits on timeIdx, so they all share the
-              // closure frame); routing below waits for the closed `t`/`score`.
-              if (c.emit && c.step === 0 && hyp.emittedAtFrame + 1 >= maesNumSteps) {
-                pendingClosure.push(child);
+          try {
+            for (let i = 0; i < working.length; i++) {
+              const hyp = working[i];
+              const { cands, newState } = this._expandHyp(hyp, stepOuts[i], expandOpts);
+              if (newState) disposable.add(newState);
+              for (const c of cands) {
+                const child = makeChild(hyp, c, newState);
+                // Last-mAES-step blank closure (NeMo): a non-blank zero-duration
+                // emission that hits the per-frame symbol cap is closed with an
+                // implicit best-duration blank instead of a bare one-frame advance,
+                // so its score and landing frame match
+                // modified_adaptive_expansion_search. The cap condition mirrors
+                // _advanceDecision's forced-advance branch exactly. Closures are
+                // deferred so the whole step shares one batched joiner call (every
+                // working hypothesis sits on timeIdx, so they all share the
+                // closure frame); routing below waits for the closed `t`/`score`.
+                if (c.emit && c.step === 0 && hyp.emittedAtFrame + 1 >= maesNumSteps) {
+                  pendingClosure.push(child);
+                }
+                children.push(child);
               }
-              children.push(child);
             }
+          } finally {
+            // Batched rows are views into one shared logits buffer (see
+            // _runCombinedStepBatch); _expandHyp extracted scalars from every
+            // row above (and disposed any per-row batch-1 handle), so the
+            // shared buffer can be freed before the closure/merge phases.
+            stepOuts.sharedLogits?.dispose?.();
           }
           if (pendingClosure.length) {
             await this._applyBlankClosureBatch(pendingClosure, timeIdx, transposed, D);
