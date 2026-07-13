@@ -27,8 +27,9 @@ import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, e
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
-import { runDiarization, cancelDiarization } from './lib/diarizer.js';
+import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
 import { findSilenceCuts, excisePcm, remapSegments } from './lib/silenceCut.js';
+import { shouldPiecewise, runPiecewiseDiarization } from './lib/diarizePiecewise.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText, canonicalizeTurns } from './lib/speakerAssign.js';
 import { createSerialQueue } from './lib/writeQueue.js';
@@ -4566,12 +4567,49 @@ export default function App() {
       if (worthExcising) {
         console.log(`[Diarize] excised ${(totalExcised / DIAR_SR).toFixed(1)}s of silence (${cuts.length} runs); diarizing ${(diarPcm.length / DIAR_SR).toFixed(1)}s of ${(trans.pcm.length / DIAR_SR).toFixed(1)}s`);
       }
-      const rawSegments = await runDiarization(diarPcm, {
+      // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
+      const numSpk = requested > 0 ? requested : -1;
+      const singleRun = () => runDiarization(diarPcm, {
         segmentationBytes: models.segmentationBytes,
         embeddingBytes: models.embeddingBytes,
-        // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
-        numSpeakers: requested > 0 ? requested : -1,
+        numSpeakers: numSpk,
       });
+      let rawSegments;
+      if (!shouldPiecewise(diarPcm.length / DIAR_SR, numSpk)) {
+        rawSegments = await singleRun();
+      } else {
+        // Long, auto-detect clip: diarize silence-aligned pieces on a small pool of
+        // workers concurrently, then reconcile speaker labels across pieces. Pool is
+        // capped so K workers never oversubscribe the box (each runs its own ORT
+        // threads), and the raised per-worker thread default (2a: cores-1) is DIVIDED
+        // across the pool. Any non-cancel failure falls back to one full run (the
+        // single path stays ground truth); a user cancel unwinds without a fallback.
+        const hc = navigator.hardwareConcurrency || 4;
+        const poolSize = Math.max(1, Math.min(3, Math.floor((hc - 1) / 4)));
+        const perWorkerThreads = Math.max(1, Math.floor((hc - 1) / poolSize));
+        const clients = Array.from({ length: poolSize }, () => createDiarizerClient());
+        try {
+          console.log(`[Diarize] piecewise: ${poolSize} workers x ${perWorkerThreads} threads over ${(diarPcm.length / DIAR_SR).toFixed(0)}s`);
+          rawSegments = await runPiecewiseDiarization({
+            pcm: diarPcm,
+            sampleRate: DIAR_SR,
+            clients,
+            embed: embedSpeakers,
+            embeddingBytes: models.embeddingBytes,
+            diarOpts: {
+              segmentationBytes: models.segmentationBytes,
+              embeddingBytes: models.embeddingBytes,
+              numThreads: perWorkerThreads,
+            },
+          });
+        } catch (err) {
+          if (err && err.cancelled) throw err; // user cancelled: do NOT fall back
+          console.warn('[Diarize] piecewise failed, falling back to single run:', err);
+          rawSegments = await singleRun();
+        } finally {
+          for (const c of clients) c.dispose();
+        }
+      }
       // Remap condensed-timeline segments back to the original timeline (identity
       // when nothing was excised). remapSegments splits any segment that bridges an
       // excised gap so it never inflates across the removed silence.
