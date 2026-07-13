@@ -32,6 +32,8 @@ const D = 2;        // fake encoder feature dim
 let statesCreated = 0;
 let statesDisposed = 0;
 let joinerCalls = 0;   // scripted joiner evaluations (one per hypothesis row)
+let sessionRuns = 0;   // joiner session invocations (batch-1 + batched), the
+                       // per-call-overhead metric beamPrefetch exists to reduce
 let maxBatch = 0;      // largest batch the fake batched session received
 
 const fakeOrt = {
@@ -89,6 +91,7 @@ function makeModel(script) {
     _disposeDecoderState: () => { statesDisposed++; },
     _runCombinedStep: async (encTensor) => {
       joinerCalls++;
+      sessionRuns++;
       const t = Math.round(encTensor.data[0]); // frame index encoded in feature 0
       const spec = script[t];
       statesCreated++;
@@ -106,6 +109,7 @@ function makeModel(script) {
     joinerSession: {
       run: async (feeds) => {
         const B = feeds.targets.dims[0];
+        sessionRuns++;
         maxBatch = Math.max(maxBatch, B);
         const total = V + nDur;
         const out = new Float32Array(B * total).fill(-Infinity);
@@ -1145,5 +1149,74 @@ describe('shared-partition confidence (_expandHyp)', () => {
     assert.ok(cands.length > 0, 'expansion produced candidates');
     assert.equal(counters.sweeps, 0, 'no partition sweep at temperature 0');
     for (const c of cands) assert.equal(c.confVal, 1.0);
+  });
+});
+
+describe('speculative cross-frame prefetch (beamPrefetch)', () => {
+  // beamPrefetch piggybacks future hypotheses' step-0 joiner rows onto the
+  // current frame's batched call and caches the outputs until their frame
+  // arrives. Feeds are frozen at hypothesis creation, so with the
+  // deterministic scripted joiner the decode must be EXACTLY identical with
+  // prefetch on or off; the only observable difference is fewer joiner
+  // session invocations when the beam's hypotheses sit on different frames.
+  const NEG = -20;
+  // Same construction as the duplicate-merging suite: frame 0 branches the
+  // beam to frames 1 AND 2 (equal-probability TDT durations), which is
+  // precisely the diverged-beam shape where prefetch saves calls.
+  const splitScript = [
+    { logits: [0, NEG, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, 0] },
+    { logits: [NEG, -1.0, -0.5, NEG, NEG, NEG], step: 2, durLogits: [-Infinity, NEG, 0] },
+    { logits: [NEG, -1.0, NEG, -0.5, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },
+    { logits: [NEG, 0, NEG, NEG, NEG, NEG], step: 1, durLogits: [-Infinity, 0, NEG] },
+  ];
+
+  async function runSplit(beamPrefetch, width = 6) {
+    statesCreated = statesDisposed = joinerCalls = sessionRuns = 0;
+    const model = makeModel(splitScript);
+    const out = await model._decodeBeam(makeTransposed(4), D, 4, {
+      beamWidth: width, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: true, returnConfidences: true, timeStride: 0.08,
+      ...MAES, beamPrefetch,
+    });
+    return { out, runs: sessionRuns, created: statesCreated, disposed: statesDisposed };
+  }
+
+  test('identical decode with strictly fewer session runs on a diverged beam', async () => {
+    const off = await runSplit(false);
+    const on = await runSplit(true);
+    assert.ok(eqArr(on.out.ids, off.out.ids), 'ids identical');
+    assert.ok(eqFloatArr(on.out.frameConfs, off.out.frameConfs, 0), 'frameConfs exactly identical');
+    assert.ok(eqFloatArr(on.out.tokenConfs, off.out.tokenConfs, 0), 'tokenConfs exactly identical');
+    assert.equal(on.out.overallLogProb, off.out.overallLogProb, 'overallLogProb exactly identical');
+    for (let i = 0; i < off.out.tokenTimes.length; i++) {
+      assert.ok(eqFloatArr(on.out.tokenTimes[i], off.out.tokenTimes[i], 0), `tokenTimes[${i}] identical`);
+    }
+    assert.ok(on.runs < off.runs,
+      `prefetch reduces session invocations (${on.runs} vs ${off.runs})`);
+    assert.ok(on.created > 0 && on.created === on.disposed,
+      'no decoder-state leak with prefetch (including cached specs)');
+  });
+
+  test('beam == greedy equivalence holds with prefetch at every width', async () => {
+    const ref = refGreedy(makeModel(script), script, 1.0);
+    for (const width of [2, 4]) {
+      statesCreated = statesDisposed = joinerCalls = sessionRuns = 0;
+      const model = makeModel(script);
+      const out = await runBeam(model, width); // beamPrefetch defaults ON
+      assert.ok(eqArr(out.ids, ref.ids), `width ${width}: ids match greedy`);
+      assert.ok(eqFloatArr(out.frameConfs, ref.frames), `width ${width}: frameConfs match greedy`);
+      assert.ok(close(out.overallLogProb, ref.overall), `width ${width}: overallLogProb matches greedy`);
+      assert.ok(statesCreated > 0 && statesCreated === statesDisposed,
+        `width ${width}: no decoder-state leak`);
+    }
+  });
+
+  test('a pruned hypothesis with a cached spec does not leak its state', async () => {
+    // Narrow beam (width 2) over the split script: candidates routinely get
+    // pruned after their spec was prefetched, so created == disposed proves
+    // the mark-and-sweep also frees cached spec states of dead hypotheses.
+    const { out, created, disposed } = await runSplit(true, 2);
+    assert.ok(out.ids.length > 0, 'decode produced tokens');
+    assert.ok(created > 0 && created === disposed, 'no leak at width 2');
   });
 });

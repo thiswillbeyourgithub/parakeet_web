@@ -1732,6 +1732,15 @@ export class ParakeetModel {
    * bounds prefix-search recombination (see `_prefixSearch`; 0 disables it). The
    * duration index equals the frame advance throughout (the model's TDT duration
    * head is an identity-indexed skip count).
+   *
+   * `beamPrefetch` (default on) is speculative cross-frame batching: a future
+   * hypothesis' next joiner feed (t, lastTok, state) is frozen at creation, so
+   * its step-0 output is computed by the current frame's batched call and
+   * cached on the hypothesis (`h._spec`) until its frame arrives, instead of
+   * costing that frame its own tiny call (per-call overhead dominates at
+   * beam-sized batches, and TDT durations frequently split the beam across
+   * frames). Search behaviour, scores and results are unchanged; only when
+   * outputs are computed and which rows co-occupy a batch moves.
    * @returns {{ids: number[], tokenTimes: Array, tokenConfs: number[], frameConfs: number[], overallLogProb: number}}
    */
   async _decodeBeam(transposed, D, Tenc, opts) {
@@ -1742,6 +1751,9 @@ export class ParakeetModel {
             // lengthNormPrune=false ranks the per-frame survival prune by raw
             // score (NeMo), nBest=1 emits only the single best path.
             mergeDuplicates = true, lengthNormPrune = false, nBest = 1,
+            // Speculative cross-frame batching (see the step loop): default on;
+            // off is the A/B lever for benchmarks and the equivalence ablation.
+            beamPrefetch = true,
             collectDecodeDebug = false } = opts;
 
     // Opt-in instrumentation (default OFF): when on, record the per-step
@@ -1847,27 +1859,59 @@ export class ParakeetModel {
         // Anything not referenced by the post-frame keptHyps (or best) is freed
         // at the end. Set semantics make shared states (blank children reuse the
         // parent's state; emit siblings share one newState) safe without refcounts.
+        // Prefetched step outputs (`h._spec`, see below) carry a minted decoder
+        // state too, so they ride the same sweep: seeded here, kept below only
+        // while their hypothesis survives.
         const disposable = new Set();
-        for (const h of keptHyps) disposable.add(h.state);
+        for (const h of keptHyps) {
+          disposable.add(h.state);
+          if (h._spec) disposable.add(h._spec.newState);
+        }
 
         const produced = []; // duration>0 children, advancing to a future frame
         let working = current; // hypotheses still emitting at this frame
         for (let n = 0; n < maesNumSteps && working.length; n++) {
           const stayed = []; // zero-duration emissions, re-expanded on this frame
-          // One batched joiner call covers every hypothesis still on this frame
-          // (results index-aligned with `working`); scoring and child-building
-          // stay per-hypothesis below, in the same order as the old serial
-          // loop, so the decode is unchanged. `working.length` is the batch size
-          // B fed to the joint network this step: the per-step CPU cost driver
-          // the opt-in stats track (the headline expansion-width metric).
+          // `working.length` is the number of hypotheses expanded this step
+          // (the headline expansion-width metric the opt-in stats track). With
+          // prefetch it is no longer exactly the joint-network batch size:
+          // cached rows subtract from it, speculative rows add to it.
           if (stats) stats.expansionSizes.push(working.length);
-          const stepOuts = await this._runCombinedStepBatch(working, transposed, D);
+          // Speculative cross-frame batching: a hypothesis' next joiner feed
+          // (t, lastTok, state) is FROZEN the moment it is created, so future
+          // hypotheses (waiting for a later frame) can have their step-0
+          // output computed by THIS frame's batched call and cached on the
+          // hypothesis (`h._spec`). When their frame arrives the cached row is
+          // consumed with no joiner call at all; with TDT durations the beam's
+          // hypotheses frequently sit on different frames, so without this
+          // every diverged frame costs its own tiny call (per-call overhead
+          // dominates at beam-sized batches). The outputs are identical
+          // either way (same feeds, same math): only WHEN they are computed
+          // and WHICH rows co-occupy a batch changes, which the real-model
+          // equivalence test pins. Speculative rows are only appended to
+          // calls that must happen anyway (never a call purely to prefetch),
+          // so waste is bounded by the beam width when a prefetched
+          // hypothesis is pruned before its frame.
+          const uncached = beamPrefetch ? working.filter((h) => !h._spec) : working;
+          const prefetch = (beamPrefetch && n === 0 && uncached.length)
+            ? futures.filter((h) => !h._spec)
+            : [];
+          const batchEntries = prefetch.length ? uncached.concat(prefetch) : uncached;
+          const stepOuts = batchEntries.length
+            ? await this._runCombinedStepBatch(batchEntries, transposed, D)
+            : [];
           const children = [];       // this step's children, in expansion order
           const pendingClosure = []; // children owed the last-mAES-step blank closure
           try {
-            for (let i = 0; i < working.length; i++) {
-              const hyp = working[i];
-              const { cands, newState } = this._expandHyp(hyp, stepOuts[i], expandOpts);
+            let row = 0; // next un-consumed stepOuts entry (uncached order == working order)
+            for (const hyp of working) {
+              let stepOut = hyp._spec;
+              if (stepOut) {
+                hyp._spec = null; // consumed exactly once; drop for GC
+              } else {
+                stepOut = stepOuts[row++];
+              }
+              const { cands, newState } = this._expandHyp(hyp, stepOut, expandOpts);
               if (newState) disposable.add(newState);
               for (const c of cands) {
                 const child = makeChild(hyp, c, newState);
@@ -1885,6 +1929,22 @@ export class ParakeetModel {
                 }
                 children.push(child);
               }
+            }
+            // Cache the speculative rows on their future hypotheses. Logits are
+            // copied out (the shared batch buffer is disposed below); the
+            // minted decoder state is kept as-is and swept with the usual
+            // mark-and-sweep should the hypothesis die before its frame.
+            for (let j = 0; j < prefetch.length; j++) {
+              const out = stepOuts[uncached.length + j];
+              const spec = {
+                tokenLogits: out.tokenLogits.slice(),
+                durLogits: out.durLogits.slice(),
+                newState: out.newState,
+                _logitsTensor: null,
+              };
+              out._logitsTensor?.dispose?.(); // batch-1 delegation shape only
+              prefetch[j]._spec = spec;
+              disposable.add(spec.newState);
             }
           } finally {
             // Batched rows are views into one shared logits buffer (see
@@ -1955,18 +2015,28 @@ export class ParakeetModel {
         }
 
         // Sweep: free every in-play state no surviving hypothesis (or best) points at.
+        // A surviving hypothesis' prefetched spec state is live too (it will be
+        // consumed when its frame arrives); a pruned hypothesis' spec state is
+        // in `disposable` (seeded/added above) and gets freed here.
         const keep = new Set();
-        for (const h of keptHyps) keep.add(h.state);
+        for (const h of keptHyps) {
+          keep.add(h.state);
+          if (h._spec) keep.add(h._spec.newState);
+        }
         if (best) keep.add(best.state);
         for (const s of disposable) if (s && !keep.has(s)) this._disposeDecoderState(s);
       }
     } finally {
       // Dispose whatever is still live (the decoder never returns a state). On
       // the normal path keptHyps empties as hypotheses finish, so this just frees
-      // best; on an error mid-decode it frees the live pool too. Deduped so a
-      // shared state is never double-disposed.
+      // best; on an error mid-decode it frees the live pool too (including any
+      // un-consumed prefetched step outputs). Deduped so a shared state is
+      // never double-disposed.
       const live = new Set();
-      for (const h of keptHyps) if (h.state) live.add(h.state);
+      for (const h of keptHyps) {
+        if (h.state) live.add(h.state);
+        if (h._spec?.newState) live.add(h._spec.newState);
+      }
       if (best && best.state) live.add(best.state);
       for (const s of live) this._disposeDecoderState(s);
     }
@@ -2283,6 +2353,13 @@ export class ParakeetModel {
       maesExpansionBeta = 2,
       maesExpansionGamma = 2.3,
       maesPrefixAlpha = 0,
+      // Speculative cross-frame batching in the beam decoder (default ON):
+      // future hypotheses ride the current frame's batched joiner call and
+      // their outputs are cached until their frame arrives, cutting the
+      // session-call count when TDT durations make the beam's hypotheses sit
+      // on different frames. Same feeds, same math; `false` is the A/B lever
+      // for benchmarks and the real-model equivalence ablation.
+      beamPrefetch = true,
       // Opt-in beam-search instrumentation (default OFF): when true and a beam
       // (width > 1) runs, the result carries a `beamStats` object with the
       // per-step joint-network batch sizes. Off by default so production, e2e
@@ -2511,6 +2588,7 @@ export class ParakeetModel {
         mergeDuplicates,
         lengthNormPrune,
         nBest: Math.max(1, Math.floor(nBest) || 1),
+        beamPrefetch: beamPrefetch !== false,
       });
       ids = out.ids;
       tokenTimes = out.tokenTimes;

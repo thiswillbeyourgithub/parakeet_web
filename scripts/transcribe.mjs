@@ -116,6 +116,9 @@ function parseArgs(argv) {
     maesPrefixAlpha: 0,    // MAES: prefix-search length gap (0 = off). Off by default:
                            // benchmarked equal WER/CER to alpha=1 at ~15-20% less
                            // decode time (beam 5, int8, CPU+GPU). See parakeet.js.
+    beamPrefetch: true,    // speculative cross-frame batching in the beam decoder
+                           // (parakeet.js `beamPrefetch`); --no-beam-prefetch is the
+                           // A/B lever for benchmarks/equivalence ablations
     frameStride: 1,        // sidebar: decimate encoder frames (1 = none)
     chunking: true,        // sidebar: split long audio into chunks
     chunkDuration: DEFAULT_CHUNK_DURATION_SEC, // sidebar: max chunk length, seconds
@@ -153,6 +156,7 @@ function parseArgs(argv) {
       case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
       case '--maes-expansion-gamma': a.maesExpansionGamma = Number(val(flag)); break;
       case '--maes-prefix-alpha': a.maesPrefixAlpha = parseInt(val(flag), 10); break;
+      case '--no-beam-prefetch': a.beamPrefetch = false; break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--chunk-duration': a.chunkDuration = Number(val(flag)); break;
       case '--overlap': a.overlap = Number(val(flag)); break;
@@ -272,6 +276,10 @@ Options:
                            longer one within N tokens, the longer one's score
                            absorbs the prefix's continuation probability. 0
                            disables it. Default 1. Only used when --beam-width > 1.
+      --no-beam-prefetch   Disable the beam decoder's speculative cross-frame
+                           batching (on by default; results identical, it only
+                           reduces joiner session calls). A/B lever for
+                           benchmarks and equivalence ablations.
       --frame-stride N     Decimate encoder frames before decoding (integer in
                            [1, 4]). 1 = use every frame (default). Sidebar knob.
       --chunk-duration N   Max chunk length in seconds for long audio. Default
@@ -768,6 +776,7 @@ async function main() {
     maesExpansionBeta: args.maesExpansionBeta,
     maesExpansionGamma: args.maesExpansionGamma,
     maesPrefixAlpha: args.maesPrefixAlpha,
+    beamPrefetch: args.beamPrefetch,
     frameStride: args.frameStride,
     // Hardcoded 0 to mirror the web UI, where the temperature slider is
     // intentionally hidden and the state pinned at 0.0: temperature never
