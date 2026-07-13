@@ -362,6 +362,76 @@ export const DEFAULT_SNAP_TO_SILENCE_SEC = 1.0;
 export const DEFAULT_LENGTH_ALIGN_SLACK = 0.15;
 
 /**
+ * Factory for the short-window (mean-square) energy machinery used to locate
+ * quiet points in audio. It exists so the "~150 ms mean-square" definition lives
+ * in exactly ONE place, shared by its two consumers:
+ *   - transcribeChunked snaps chunk seams into pauses via `energyAt` at arbitrary
+ *     sample offsets (see planChunks);
+ *   - the diarization silence-excision pass (app/ui/src/lib/silenceCut.js) needs a
+ *     DENSE energy reading across the whole clip to find silence runs.
+ *
+ * `energyAt(i)` is byte-identical to the old inline closure, so the chunk-seam
+ * placement (and thus every WASM transcript) is unchanged.
+ *
+ * `hopProfile(hopSamples)` is the dense path. A naive scan calling `energyAt` at
+ * every hop would be O(hops * windowSamples) (~0.9 GFLOP for 1 h at 16 kHz, on
+ * the main thread); hopProfile computes the same windowed mean-square in ONE O(N)
+ * pass via block prefix sums (Float64, ~2.9 MB for 1 h), never the ~460 MB a
+ * sample-level prefix sum would cost. The window is quantised to whole hops, so a
+ * reading is a correct 150 ms mean-square, just block-aligned rather than
+ * sample-exact (which the silence percentile/threshold does not need).
+ *
+ * @param {Float32Array} audio  mono PCM samples.
+ * @param {number} sampleRate   samples per second.
+ * @returns {{energyWindow:number, energyHalf:number, energyAt:(i:number)=>number, hopProfile:(hopSamples:number)=>{energies:Float64Array, hopSamples:number, count:number}}}
+ */
+export function createEnergySampler(audio, sampleRate) {
+  // ~150 ms window, probed narrowly: a real inter-word/sentence pause is that
+  // long, whereas a stop-consonant closure inside a word is only ~20-50 ms, so a
+  // window this wide averages the closure back up and only a genuine pause reads
+  // as a minimum. A narrower window would let a seam snap mid-word.
+  const energyWindow = Math.max(1, Math.round(0.15 * sampleRate));
+  const energyHalf = energyWindow >> 1;
+  const energyAt = (i) => {
+    const a = Math.max(0, i - energyHalf);
+    const b = Math.min(audio.length, a + energyWindow);
+    let s = 0;
+    for (let k = a; k < b; k += 1) { const v = audio[k]; s += v * v; }
+    return s / Math.max(1, b - a);
+  };
+  const hopProfile = (hopSamples) => {
+    const hop = Math.max(1, Math.floor(hopSamples));
+    const nHops = Math.max(1, Math.ceil(audio.length / hop));
+    // blockSumSq[b] = sum of squares in the hop-block [b*hop, (b+1)*hop). One
+    // O(N) pass over the whole clip; every sample is touched exactly once.
+    const blockSumSq = new Float64Array(nHops);
+    for (let b = 0; b < nHops; b += 1) {
+      const a = b * hop;
+      const e = Math.min(audio.length, a + hop);
+      let s = 0;
+      for (let k = a; k < e; k += 1) { const v = audio[k]; s += v * v; }
+      blockSumSq[b] = s;
+    }
+    // prefix[b] = sum of blockSumSq[0..b-1]; prefix[nHops] = grand total. A
+    // windowed sum is then prefix[hi] - prefix[lo] in O(1).
+    const prefix = new Float64Array(nHops + 1);
+    for (let b = 0; b < nHops; b += 1) prefix[b + 1] = prefix[b] + blockSumSq[b];
+    const windowHops = Math.max(1, Math.round(energyWindow / hop));  // ~15 at 16 kHz/10 ms
+    const half = windowHops >> 1;
+    const energies = new Float64Array(nHops);
+    for (let h = 0; h < nHops; h += 1) {
+      const lo = Math.max(0, h - half);
+      const hi = Math.min(nHops, lo + windowHops);
+      const sumSq = prefix[hi] - prefix[lo];
+      const samples = Math.min(audio.length, hi * hop) - lo * hop;
+      energies[h] = sumSq / Math.max(1, samples);
+    }
+    return { energies, hopSamples: hop, count: nHops };
+  };
+  return { energyWindow, energyHalf, energyAt, hopProfile };
+}
+
+/**
  * Plan the [start, end) sample windows for long-audio chunking. Each chunk spans
  * at most `maxChunkSamples` and overlaps the previous one by `overlapSamples`.
  *
@@ -2874,20 +2944,10 @@ export class ParakeetModel {
     const overlapSamples = Math.max(0, Math.round(overlapSec * sampleRate));
 
     // Short-window energy (mean square) around a candidate boundary sample, used
-    // to snap seams into pauses. The window is ~150 ms (probed every ~5 ms): a
-    // real inter-word/sentence pause is that long, whereas a stop-consonant
-    // closure inside a word is only ~20-50 ms, so a window this wide averages the
-    // closure back up and only a genuine pause reads as a minimum. A narrower
-    // window would let the seam snap into the middle of a word at its closure.
-    const energyWindow = Math.max(1, Math.round(0.15 * sampleRate));
-    const energyHalf = energyWindow >> 1;
-    const energyAt = (i) => {
-      const a = Math.max(0, i - energyHalf);
-      const b = Math.min(audio.length, a + energyWindow);
-      let s = 0;
-      for (let k = a; k < b; k += 1) { const v = audio[k]; s += v * v; }
-      return s / Math.max(1, b - a);
-    };
+    // to snap seams into pauses (probed every ~5 ms). The ~150 ms window rationale
+    // lives on createEnergySampler; energyAt here is byte-identical to the old
+    // inline closure, so seam placement (and every WASM transcript) is unchanged.
+    const { energyAt } = createEnergySampler(audio, sampleRate);
     const snapRadiusSamples = Math.max(0, Math.round(snapToSilenceSec * sampleRate));
     const snapStepSamples = Math.max(1, Math.round(0.005 * sampleRate));
 

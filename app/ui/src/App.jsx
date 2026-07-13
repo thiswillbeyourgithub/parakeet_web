@@ -28,6 +28,7 @@ import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
 import { runDiarization, cancelDiarization } from './lib/diarizer.js';
+import { findSilenceCuts, excisePcm, remapSegments } from './lib/silenceCut.js';
 import { getDiarizationModels, diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText, canonicalizeTurns } from './lib/speakerAssign.js';
 import { createSerialQueue } from './lib/writeQueue.js';
@@ -1220,6 +1221,10 @@ export default function App() {
   // closures in the async diarizeEntry).
   const speakerEmbeddingsRef = useRef({});
   const speakerNamesRef = useRef({});
+  // Silence-cut runs per entry (id -> Array<{start,end}> in samples). pcm is
+  // immutable, so a numSpeakers-change re-run of diarizeEntry reuses these instead
+  // of rescanning the whole clip's energy (the scan is O(N) over every sample).
+  const silenceCutsRef = useRef({});
   // Lazily-created object URLs for the inline players (id -> url). Kept in a ref
   // so we can revoke them on close/delete/unmount without re-rendering.
   const entryAudioUrlsRef = useRef(new Map());
@@ -4541,12 +4546,36 @@ export default function App() {
       return;
     }
     try {
-      const segments = await runDiarization(trans.pcm, {
+      // trans.pcm is a mono 16 kHz Float32Array (see the transcribeChunked call,
+      // which hardcodes 16000). Excise long silences so the diarizer sees a
+      // shorter clip; segments come back on the CONDENSED timeline and are remapped
+      // to the original before anything downstream (embeddings, word assignment,
+      // persistence) sees them. Only bother when there is a meaningful amount to
+      // remove, so short/dense clips take exactly the old path.
+      const DIAR_SR = 16000;
+      let cuts = silenceCutsRef.current[trans.id];
+      if (!cuts) {
+        cuts = findSilenceCuts(trans.pcm, DIAR_SR);
+        silenceCutsRef.current[trans.id] = cuts;
+      }
+      const totalExcised = cuts.reduce((s, c) => s + (c.end - c.start), 0);
+      const worthExcising = totalExcised >= Math.max(5 * DIAR_SR, 0.10 * trans.pcm.length);
+      const { pcm: diarPcm, map } = worthExcising
+        ? excisePcm(trans.pcm, cuts, DIAR_SR)
+        : { pcm: trans.pcm, map: null };
+      if (worthExcising) {
+        console.log(`[Diarize] excised ${(totalExcised / DIAR_SR).toFixed(1)}s of silence (${cuts.length} runs); diarizing ${(diarPcm.length / DIAR_SR).toFixed(1)}s of ${(trans.pcm.length / DIAR_SR).toFixed(1)}s`);
+      }
+      const rawSegments = await runDiarization(diarPcm, {
         segmentationBytes: models.segmentationBytes,
         embeddingBytes: models.embeddingBytes,
         // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
         numSpeakers: requested > 0 ? requested : -1,
       });
+      // Remap condensed-timeline segments back to the original timeline (identity
+      // when nothing was excised). remapSegments splits any segment that bridges an
+      // excised gap so it never inflates across the removed silence.
+      const segments = map ? remapSegments(rawSegments, map, DIAR_SR) : rawSegments;
       setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
       setEntryBase(trans.id, 'diarized');
 
