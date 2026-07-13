@@ -19,6 +19,11 @@ import { chromium } from '@playwright/test';
 
 import { seedSettings } from '../../test/e2e/seed.mjs';
 
+// Re-export so harnesses can re-seed settings between reloads (e.g. to undo a
+// backend the app persisted after a WebGPU->WASM fallback) without each one
+// reaching into test/e2e/seed.mjs directly.
+export { seedSettings };
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(__dirname, '../..');
 const SERVE = resolve(ROOT, 'test/e2e/serve.mjs');

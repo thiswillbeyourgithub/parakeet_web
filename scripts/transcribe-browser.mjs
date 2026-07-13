@@ -39,8 +39,13 @@ import { resolve, basename, extname } from 'node:path';
 
 import {
   ROOT, sleep, waitForServer, spawnAppServer, launchWebGpuBrowser,
-  bootApp, loadModelAndWaitReady, probeRealWebGpu,
+  bootApp, loadModelAndWaitReady, probeRealWebGpu, seedSettings,
 } from './lib/browser-app.mjs';
+
+// The app's on-mount WebGPU probe (navigator.gpu.requestAdapter) resolves in
+// well under a second; give it a comfortable margin to settle so it never races
+// our gate probe or the model load into a false negative.
+const WEBGPU_SETTLE_MS = 1500;
 
 const DIST = resolve(ROOT, 'app/ui/dist');
 
@@ -208,7 +213,15 @@ async function main() {
 
   // Console plumbing: capture the session mode (to prove WebGPU, not a silent
   // WASM fallback), the completion marker, chunk progress, and real errors.
+  // NOTE: on webgpu-hybrid the app builds MORE than one ONNX session and each
+  // logs its own mode: the encoder on 'webgpu-hybrid', then (right after the
+  // model is ready) initDecodeWorker builds a decode-only session on 'wasm'.
+  // So the LAST "Creating ONNX sessions" line is legitimately 'wasm' and must
+  // NOT be read as a fallback. We latch `sawWebGpuSession` on ANY webgpu-mode
+  // session (i.e. the encoder ran on the GPU); a genuine silent fallback builds
+  // the encoder itself on wasm and never latches it.
   let sessionMode = null;
+  let sawWebGpuSession = false;
   let transcribeDone = false;
   let crashed = false;
   let lastChunk = 0, chunkTotal = 0;
@@ -234,7 +247,7 @@ async function main() {
       if (debug) console.error(`  [page:${m.type()}] ${txt}`);
       if (m.type() === 'error' && !benign(txt)) errors.push(txt);
       const sm = /Creating ONNX sessions with execution mode '([^']+)'/.exec(txt);
-      if (sm) sessionMode = sm[1];
+      if (sm) { sessionMode = sm[1]; if (sm[1].startsWith('webgpu')) sawWebGpuSession = true; }
       const ch = /chunk (\d+)\/(\d+)/.exec(txt);
       if (ch) { lastChunk = Number(ch[1]); chunkTotal = Number(ch[2]); }
       if (txt.includes('[Transcribe] Total time for entire audio')) transcribeDone = true;
@@ -243,18 +256,27 @@ async function main() {
     page.on('crash', () => { crashed = true; });
 
     // Boot the app on the requested backend/quant, beam width, and language.
-    await bootApp(page, {
-      baseURL,
-      settings: {
-        backend: args.backend,
-        webgpuEncoderQuant: args.quant,
-        beamWidth: args.beamWidth,
-        lang: args.lang,
-      },
-    });
+    const settings = {
+      backend: args.backend,
+      webgpuEncoderQuant: args.quant,
+      beamWidth: args.beamWidth,
+      lang: args.lang,
+    };
+    const wantWebgpu = args.backend.startsWith('webgpu');
+    await bootApp(page, { baseURL, settings });
 
-    // Hard gate: for a WebGPU backend, require a REAL GPU adapter.
-    if (args.backend.startsWith('webgpu')) {
+    // Let the app's OWN on-mount WebGPU probe (navigator.gpu.requestAdapter)
+    // resolve BEFORE we touch WebGPU. This ordering matters: if our gate probe
+    // (or the model load) fires a concurrent requestAdapter, under
+    // --enable-unsafe-webgpu the app's probe can transiently come back null ->
+    // webgpuAvailable=false -> App.jsx flips the seeded webgpu-hybrid backend to
+    // a WASM fallback. Settling first lets it resolve true, alone, so it never
+    // flips.
+    if (wantWebgpu) await sleep(WEBGPU_SETTLE_MS);
+
+    // Hard gate: for a WebGPU backend, require a REAL GPU adapter (fail fast on
+    // a GPU-less box). Runs after the settle above, so it can't race the app.
+    if (wantWebgpu) {
       const gpu = await probeRealWebGpu(page);
       if (!gpu.ok) {
         throw new Error(
@@ -264,11 +286,38 @@ async function main() {
       console.error(`[transcribe-browser] WebGPU adapter: ${gpu.adapter}`);
     }
 
-    console.error(`[transcribe-browser] loading model (${args.backend}, ${args.quant}) ...`);
-    await loadModelAndWaitReady(page, { timeoutMs: 8 * 60 * 1000 });
-    if (crashed) throw new Error('tab crashed during model load (OOM / GPU device lost?)');
-    if (args.backend.startsWith('webgpu') && !(sessionMode || '').startsWith('webgpu')) {
-      throw new Error(`expected a WebGPU session but the app built '${sessionMode}' (silent WASM fallback?)`);
+    // Load the model, retrying if the app still built a WASM session for a
+    // WebGPU request. Two things defeat a naive retry, so each attempt handles
+    // both: (1) a WebGPU->WASM fallback is PERSISTED to IndexedDB (App.jsx
+    // saveSetting('backend', ...)), so we RE-SEED the requested backend before
+    // reloading, else every retry rebuilds WASM; (2) the fresh reload must
+    // re-probe the GPU with no concurrent probe, so we settle again before
+    // loading. We gate on `sawWebGpuSession` (the ENCODER built on the GPU), NOT
+    // the last session log: webgpu-hybrid also builds a WASM joiner + WASM
+    // decode worker, so the final "Creating ONNX sessions" line is legitimately
+    // 'wasm'.
+    const MAX_LOAD_ATTEMPTS = 4;
+    for (let attempt = 1; ; attempt += 1) {
+      if (attempt > 1) {
+        // Undo the persisted WASM fallback and re-probe cleanly.
+        await seedSettings(page, settings);
+        await page.reload();
+        if (wantWebgpu) await sleep(WEBGPU_SETTLE_MS);
+      }
+      sessionMode = null;
+      sawWebGpuSession = false;
+      const tag = attempt > 1 ? ` (attempt ${attempt}/${MAX_LOAD_ATTEMPTS})` : '';
+      console.error(`[transcribe-browser] loading model (${args.backend}, ${args.quant})${tag} ...`);
+      await loadModelAndWaitReady(page, { timeoutMs: 8 * 60 * 1000 });
+      if (crashed) throw new Error('tab crashed during model load (OOM / GPU device lost?)');
+      // A WASM run (as requested) or a satisfied WebGPU request is done.
+      if (!wantWebgpu || sawWebGpuSession) break;
+      if (attempt >= MAX_LOAD_ATTEMPTS) {
+        throw new Error(`app kept building a '${sessionMode}' session instead of WebGPU after `
+          + `${attempt} attempts (WebGPU adapter probe flake). The GPU probed OK, so re-run, `
+          + `or pass --backend wasm to run on CPU.`);
+      }
+      console.error(`[transcribe-browser] app fell back to '${sessionMode}'; re-seeding webgpu backend and retrying ...`);
     }
     console.error(`[transcribe-browser] session mode: ${sessionMode}`);
 
