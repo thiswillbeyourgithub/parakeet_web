@@ -15,7 +15,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { seedSettings, expandSettingsSection } from './seed.mjs';
+import { seedSettings } from './seed.mjs';
 
 // The real istupakov file set: single-file fp32 encoder, int8 variants, vocab.
 // Crucially NO encoder-model.onnx.data.NNN shards, so WASM fp32 cannot load.
@@ -57,19 +57,13 @@ test('WASM fp32 fails loudly (no silent int8 downgrade) when no source ships the
   await page.route('**/models/**', (route) =>
     route.fulfill({ status: 404, body: 'not found' }));
 
+  // fp32 on WASM is no longer user-selectable (greyed out; the WebGPU backend
+  // that fronts fp16/fp32 is disabled app-wide), so seed the setting directly to
+  // exercise the still-supported programmatic fp32-on-WASM request that must
+  // fail cleanly (no silent int8 downgrade) when no source can serve it.
   await page.goto('/');
-  await seedSettings(page);
+  await seedSettings(page, { wasmEncoderQuant: 'fp32' });
   await page.reload();
-
-  // Opt into fp32 via the real encoder-precision radio (offered on WASM and WebGPU; here on WASM).
-  await page.locator('.settings-toggle').click();
-  // The encoder-precision radios live in the (collapsed) Engine section.
-  await expandSettingsSection(page, 'Model and performance');
-  const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
-  await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
-  await fp32Radio.check();
-  await expect(fp32Radio).toBeChecked();
-  await page.locator('.settings-sidebar-close').click();
 
   await page.locator('[data-umami-event="load_model_button"]').click();
 

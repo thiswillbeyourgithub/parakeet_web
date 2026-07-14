@@ -21,7 +21,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { seedSettings, expandSettingsSection } from './seed.mjs';
+import { seedSettings } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
 
@@ -62,27 +62,13 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   // reload below.
   await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
-  // Seed the WASM backend (so the fp32 encoder-precision control renders, it is
-  // wasm-only) and reload so the app boots with it.
+  // fp32 on WASM is no longer user-selectable: the UI greys it out (only int8 /
+  // int8-lite are offered on WASM, and the WebGPU backend that fronts fp16/fp32
+  // is disabled app-wide). The sharded-fp32-on-WASM capability still exists for
+  // programmatic use, so we seed the setting directly to exercise that path.
   await page.goto('/');
-  await seedSettings(page);
+  await seedSettings(page, { wasmEncoderQuant: 'fp32' });
   await page.reload();
-
-  // Opt into the fp32 encoder through the real control rather than a seeded
-  // value: the encoder-precision radios live in Settings (fp32 is offered on
-  // both WASM and WebGPU; here we are on WASM). Driving it directly is both
-  // race-free (synchronous React
-  // state, unlike the async settings restore) and a faithful test of the actual
-  // UI path a user takes.
-  await page.locator('.settings-toggle').click();
-  // The encoder-precision radios live in the (collapsed) Engine section.
-  await expandSettingsSection(page, 'Model and performance');
-  const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
-  await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
-  await fp32Radio.check();
-  await expect(fp32Radio).toBeChecked();
-  // Close the settings sidebar so its overlay doesn't intercept the load click.
-  await page.locator('.settings-sidebar-close').click();
 
   await page.locator('[data-umami-event="load_model_button"]').click();
 

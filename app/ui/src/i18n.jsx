@@ -106,9 +106,12 @@ const translations = {
     precisionFp32: 'fp32 (good quality, ~2.4GB, 2x slower)',
     precisionUnavailableWasm: '(unavailable on WASM)',
     precisionUnavailableWebgpu: '(unavailable on WebGPU)',
+    precisionUnavailableWebgpuDisabled: '(disabled, WASM uses int8)',
     precisionUnavailableNoF16: '(your GPU lacks shader-f16; fp32 will be used)',
     webgpu: 'WebGPU',
     webgpuUnavailable: 'WebGPU (unavailable)',
+    webgpuDisabled: 'WebGPU (disabled)',
+    tooltipWebgpuDisabled: 'WebGPU is disabled on purpose. For this model, the browser WebGPU runtime (onnxruntime-web) has no GPU code for the encoder\'s shape operators, so the graph runs mostly on the CPU anyway, and slower than the WASM (CPU) int8 path (about 15x slower measured on an RTX 3090 Ti, because it runs at full fp32 precision). Until a WebGPU-friendly encoder is shipped, transcription runs on WASM (CPU) with the int8 encoder everywhere. See the README ("Why is WebGPU disabled?").',
     webgpuReason_insecure: 'WebGPU needs a secure context. You are likely on a plain http:// address (e.g. a LAN IP); reopen the app over https:// or http://localhost to enable it.',
     webgpuReason_unsupported: 'Your browser does not expose WebGPU. Firefox does not support it reliably yet, so prefer a Chromium-based browser (Chrome, Edge) for now.',
     webgpuReason_noAdapter: 'WebGPU is exposed but no GPU adapter could be obtained. Check that hardware acceleration is on and your GPU is not blocklisted: open chrome://gpu to inspect the status. On Linux you may also need to enable Vulkan (chrome://flags/#enable-vulkan). Avoid Firefox for now; prefer a Chromium-based browser.',
@@ -193,7 +196,7 @@ const translations = {
     boostCuratedEditHint: 'Switch to Custom to type and edit your own phrases.',
 
     // Tooltips
-    tooltipBackend: 'WASM (CPU) is more compatible. WebGPU uses GPU for faster processing but requires modern browsers. Default: WASM (CPU).',
+    tooltipBackend: 'Transcription runs on WASM (CPU) with the int8 encoder, everywhere. WebGPU is currently disabled (see its tooltip): for this model the browser WebGPU runtime falls back to the CPU for the encoder and ends up slower than WASM int8.',
     tooltipEncoderPrecision: 'This sets the ENCODER precision only, not the whole model: the fused decoder/joiner always runs int8 (as accurate as fp32 here, but smaller and faster). int8 (WASM only): small, fast, and (with the SmoothQuant encoder) good quality on long audio. int8 lite (WASM only): a slightly smaller int8 build (~757 MB) that keeps more layers in fp32; a lighter download for a small accuracy trade-off. fp16 (WebGPU only): near-lossless, ~1.2 GB, fast. fp32: good quality on either backend, but ~2.4 GB (shipped as <2GB shards) and ~2x slower. Each applies only if the model repo provides it, otherwise it falls back (or, for the opt-in fp32/lite builds, the load stops with a clear message rather than silently downgrading).',
     tooltipFrameStride: 'Number of frames to skip during decoding. Higher values are faster but may reduce accuracy. Recommended: 1-2 for best quality, 3-4 for speed. Default: 1.',
     tooltipBeamWidth: 'Beam search width. 1 = greedy (fastest). Above 1 runs MAES (Modified Adaptive Expansion Search): this is the global beam cap, but the effective width adapts per token (see the gamma setting), so confident tokens stay near-greedy speed and only ambiguous ones widen the search. Higher values let phrase boosting recover words greedy would discard. Applies to file transcription only (live transcription always uses width 1). Default: depends on your device (1 on phones, 2 on low-memory computers, 5 otherwise).',
@@ -489,9 +492,12 @@ const translations = {
     precisionFp32: 'fp32 (bonne qualité, ~2,4 Go, 2x plus lent)',
     precisionUnavailableWasm: '(indisponible sur WASM)',
     precisionUnavailableWebgpu: '(indisponible sur WebGPU)',
+    precisionUnavailableWebgpuDisabled: '(désactivé, WASM utilise int8)',
     precisionUnavailableNoF16: '(votre GPU ne gère pas shader-f16 ; fp32 sera utilisé)',
     webgpu: 'WebGPU',
     webgpuUnavailable: 'WebGPU (indisponible)',
+    webgpuDisabled: 'WebGPU (désactivé)',
+    tooltipWebgpuDisabled: "WebGPU est désactivé volontairement. Pour ce modèle, le moteur WebGPU du navigateur (onnxruntime-web) n'a pas de code GPU pour les opérateurs de forme de l'encodeur : le graphe s'exécute donc surtout sur le CPU, et plus lentement que la voie WASM (CPU) int8 (environ 15x plus lent, mesuré sur une RTX 3090 Ti, car il tourne en pleine précision fp32). Tant qu'un encodeur compatible WebGPU n'est pas fourni, la transcription utilise WASM (CPU) avec l'encodeur int8 partout. Voir le README (« Pourquoi WebGPU est-il désactivé ? »).",
     webgpuReason_insecure: "WebGPU nécessite un contexte sécurisé. Vous êtes probablement sur une adresse http:// simple (par ex. une IP de réseau local) ; rouvrez l'application via https:// ou http://localhost pour l'activer.",
     webgpuReason_unsupported: "Votre navigateur n'expose pas WebGPU. Firefox ne le prend pas encore en charge de manière fiable, préférez donc un navigateur basé sur Chromium (Chrome, Edge) pour l'instant.",
     webgpuReason_noAdapter: "WebGPU est exposé mais aucun adaptateur GPU n'a pu être obtenu. Vérifiez que l'accélération matérielle est activée et que votre GPU n'est pas sur liste noire : ouvrez chrome://gpu pour inspecter l'état. Sous Linux, vous devrez peut-être aussi activer Vulkan (chrome://flags/#enable-vulkan). Évitez Firefox pour l'instant ; préférez un navigateur basé sur Chromium.",
@@ -576,7 +582,7 @@ const translations = {
     boostCuratedEditHint: 'Passez en mode Personnalis\u00e9 pour saisir et modifier vos propres phrases.',
 
     // Tooltips
-    tooltipBackend: "WASM (CPU) est plus compatible. WebGPU utilise le GPU pour un traitement plus rapide mais n\u00e9cessite un navigateur r\u00e9cent. D\u00e9faut\u00a0: WASM (CPU).",
+    tooltipBackend: "La transcription utilise WASM (CPU) avec l'encodeur int8, partout. WebGPU est actuellement d\u00e9sactiv\u00e9 (voir son infobulle)\u00a0: pour ce mod\u00e8le, le moteur WebGPU du navigateur bascule sur le CPU pour l'encodeur et finit plus lent que WASM int8.",
     tooltipEncoderPrecision: "Ceci d\u00e9finit uniquement la pr\u00e9cision de l'ENCODEUR, pas le mod\u00e8le entier\u00a0: le d\u00e9codeur/joiner fusionn\u00e9 tourne toujours en int8 (aussi pr\u00e9cis que fp32 ici, mais plus l\u00e9ger et plus rapide). int8 (WASM uniquement)\u00a0: petit, rapide, et (avec l'encodeur SmoothQuant) de bonne qualit\u00e9 sur les longs audios. int8 lite (WASM uniquement)\u00a0: une variante int8 un peu plus petite (~757\u00a0Mo) qui garde davantage de couches en fp32\u00a0; t\u00e9l\u00e9chargement plus l\u00e9ger pour un l\u00e9ger compromis de pr\u00e9cision. fp16 (WebGPU uniquement)\u00a0: quasi sans perte, ~1,2\u00a0Go, rapide. fp32\u00a0: bonne qualit\u00e9 sur les deux backends, mais ~2,4\u00a0Go (livr\u00e9 en fragments de moins de 2\u00a0Go) et ~2x plus lent. Chaque option ne s'applique que si le d\u00e9p\u00f4t du mod\u00e8le la fournit\u00a0; sinon elle bascule sur une autre (ou, pour les options fp32/lite, le chargement s'arr\u00eate avec un message clair plut\u00f4t qu'une r\u00e9trogradation silencieuse).",
     tooltipFrameStride: "Nombre de trames \u00e0 sauter pendant le d\u00e9codage. Des valeurs plus \u00e9lev\u00e9es sont plus rapides mais peuvent r\u00e9duire la pr\u00e9cision. Recommand\u00e9\u00a0: 1-2 pour la qualit\u00e9, 3-4 pour la vitesse. Défaut : 1.",
     tooltipBeamWidth: "Largeur de la recherche en faisceau. 1 = glouton (le plus rapide). Au-dessus de 1, utilise MAES (recherche par expansion adaptative modifiée) : c'est le plafond global du faisceau, mais la largeur effective s'adapte à chaque jeton (voir le réglage gamma), de sorte que les jetons sûrs restent proches de la vitesse gloutonne et que seuls les jetons ambigus élargissent la recherche. Des valeurs plus élevées permettent au renforcement de phrases de récupérer des mots que le mode glouton écarterait. S'applique uniquement à la transcription de fichiers (la transcription en direct utilise toujours une largeur de 1). Défaut : selon votre appareil (1 sur téléphone, 2 sur ordinateur à faible mémoire, 5 sinon).",

@@ -450,6 +450,19 @@ const BOOST_SOURCE_CUSTOM = '__custom__';
 // so switching to it from a very large curated list is instant.
 const BOOST_SOURCE_DISABLED = '__disabled__';
 
+// WebGPU is disabled app-wide. onnxruntime-web's WebGPU backend has no kernels
+// for this encoder's shape operators (Shape/ConstantOfShape/...), so the graph
+// fragments and runs mostly on the CPU anyway, SLOWER than the plain WASM int8
+// path (measured ~15x on an RTX 3090 Ti). Until a WebGPU-friendly encoder ships,
+// every user is pinned to WASM int8. The `?webgpu=1` query param re-enables the
+// backend for diagnostics (scripts/webgpu-check.mjs) and power users.
+const WEBGPU_DISABLED = !(typeof location !== 'undefined'
+  && /[?&]webgpu=1(?:&|$)/.test(location.search || ''));
+
+// Map any WebGPU backend id to 'wasm' while WebGPU is disabled, so a persisted
+// or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
+const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') ? 'wasm' : b);
+
 // Normalise a curated-list name to a manifest entry: manifest entries all end
 // in `.txt`, so a bare name (e.g. "medical", as supplied via the
 // ?phrase_boost= query param or the VITE_PHRASE_BOOST_DEFAULT env default) gets
@@ -672,7 +685,7 @@ export default function App() {
   const backendChosenByUserRef = useRef(false);
   const chooseBackend = (value) => {
     backendChosenByUserRef.current = true;
-    setBackend(value);
+    setBackend(coerceBackend(value));
   };
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [, startTransition] = useTransition();
@@ -1434,7 +1447,9 @@ export default function App() {
         // heuristic can choose once the WebGPU probe resolves.
         if (savedBackend !== null) {
           backendChosenByUserRef.current = true;
-          setBackend(savedBackend);
+          // Coerce a persisted 'webgpu-hybrid' to WASM: WebGPU is disabled
+          // app-wide, so an old saved choice must not resurrect the GPU path.
+          setBackend(coerceBackend(savedBackend));
         }
         setWasmEncoderQuant(['fp32', 'int8-lite'].includes(savedWasmEncoderQuant) ? savedWasmEncoderQuant : 'int8');
         setWebgpuEncoderQuant(savedWebgpuEncoderQuant === 'fp32' ? 'fp32' : 'fp16');
@@ -5105,6 +5120,9 @@ export default function App() {
 
   // Resolve the effective backend once both the WebGPU probe and settings load
   // have completed.
+  //   - WebGPU disabled app-wide (WEBGPU_DISABLED): always force WASM, coercing
+  //     any persisted/seeded webgpu backend. Checked BEFORE the probe guard so
+  //     it holds even if the (now-skippable) probe never resolves.
   //   - WebGPU unavailable: force WASM, overriding any persisted choice (a
   //     saved 'webgpu-hybrid' would otherwise fail at load).
   //   - No explicit user choice yet: always default to WASM (int8 encoder,
@@ -5113,7 +5131,12 @@ export default function App() {
   //     (persisted setting or a UI pick, both of which set
   //     backendChosenByUserRef) is honoured and never overridden here.
   useEffect(() => {
-    if (!settingsLoaded || webgpuAvailable === null) return;
+    if (!settingsLoaded) return;
+    if (WEBGPU_DISABLED) {
+      setBackend((prev) => coerceBackend(prev));
+      return;
+    }
+    if (webgpuAvailable === null) return;
     if (webgpuAvailable === false) {
       setBackend((prev) => (prev.startsWith('webgpu') ? 'wasm' : prev));
       return;
@@ -5728,12 +5751,14 @@ export default function App() {
                   <input type="radio" name="backend" value="wasm" checked={backend === 'wasm'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked} />
                   {t('wasmCpu')}
                 </label>
-                <label className={modelSwapBlocked || webgpuAvailable === false ? 'disabled-option' : ''}>
-                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked || webgpuAvailable === false} />
-                  {webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu')}
-                  {webgpuAvailable === false && (
+                <label className={modelSwapBlocked || WEBGPU_DISABLED || webgpuAvailable === false ? 'disabled-option' : ''}>
+                  <input type="radio" name="backend" value="webgpu-hybrid" checked={backend === 'webgpu-hybrid'} onChange={e => { armModelReloadIfLoaded(); chooseBackend(e.target.value); }} disabled={modelSwapBlocked || WEBGPU_DISABLED || webgpuAvailable === false} />
+                  {WEBGPU_DISABLED ? t('webgpuDisabled') : (webgpuAvailable === false ? t('webgpuUnavailable') : t('webgpu'))}
+                  {WEBGPU_DISABLED ? (
+                    <InfoTooltip text={t('tooltipWebgpuDisabled')} />
+                  ) : (webgpuAvailable === false && (
                     <InfoTooltip text={t(`webgpuReason_${webgpuUnavailableReason || 'noAdapter'}`)} />
-                  )}
+                  ))}
                 </label>
               </div>
             </div>
@@ -5755,14 +5780,22 @@ export default function App() {
               // Show the precision that will ACTUALLY load: fp32 when fp16 is
               // blocked, so the radio doesn't sit on a disabled fp16 option.
               const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
+              // fp16/fp32 are the WebGPU-tier precisions. WebGPU is disabled
+              // app-wide (WEBGPU_DISABLED), so on the WASM path we now offer ONLY
+              // int8 / int8-lite and grey fp16/fp32 out. (fp32 CAN run on WASM via
+              // shards, but that slow path is no longer offered in the UI; it
+              // stays reachable programmatically, exercised by the fp32-wasm e2e
+              // specs.) With ?webgpu=1 the backend is selectable again and these
+              // become available on WebGPU as before.
+              const webgpuDisabledNote = t('precisionUnavailableWebgpuDisabled');
               const rows = [
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
                 // The lite int8 encoder is a WASM-only build (no GPU int8 kernel);
                 // opt-in, and hub.js throws QuantUnavailableError if the repo
                 // doesn't ship encoder-model.int8.lite.onnx (no silent downgrade).
                 { value: 'int8-lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : t('precisionUnavailableWasm') },
-                { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
+                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : (WEBGPU_DISABLED ? webgpuDisabledNote : t('precisionUnavailableWasm')) },
+                { value: 'fp32', label: t('precisionFp32'), available: isWebgpu, note: WEBGPU_DISABLED ? webgpuDisabledNote : t('precisionUnavailableWasm') },
               ];
               return (
                 <div className="setting-row">
