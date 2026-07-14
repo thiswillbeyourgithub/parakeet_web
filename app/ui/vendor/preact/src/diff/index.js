@@ -77,6 +77,7 @@ export function diff(
 	if ((tmp = options._diff)) tmp(newVNode);
 
 	outer: if (typeof newType == 'function') {
+		let oldCommitQueueLength = commitQueue.length;
 		try {
 			let c, isNew, oldProps, oldState, snapshot, clearProcessingException;
 			let newProps = newVNode.props;
@@ -282,6 +283,10 @@ export function diff(
 				c._pendingError = c._processingException = NULL;
 			}
 		} catch (e) {
+			// We remove any componentDidMount, ...
+			// that have been invalidated by us
+			// intercepting the error.
+			commitQueue.length = oldCommitQueueLength;
 			newVNode._original = NULL;
 			// if hydrating or creating initial tree, bailout preserves DOM:
 			if (isHydrating || excessDomChildren != NULL) {
@@ -294,19 +299,24 @@ export function diff(
 						oldDom = oldDom.nextSibling;
 					}
 
-					excessDomChildren[excessDomChildren.indexOf(oldDom)] = NULL;
+					if (excessDomChildren != NULL) {
+						excessDomChildren[excessDomChildren.indexOf(oldDom)] = NULL;
+					}
 					newVNode._dom = oldDom;
-				} else {
+				} else if (excessDomChildren != NULL) {
 					for (let i = excessDomChildren.length; i--; ) {
 						removeNode(excessDomChildren[i]);
 					}
-					markAsForce(newVNode);
 				}
 			} else {
 				newVNode._dom = oldVNode._dom;
-				newVNode._children = oldVNode._children;
-				if (!e.then) markAsForce(newVNode);
 			}
+
+			if (newVNode._children == NULL) {
+				newVNode._children = oldVNode._children || [];
+			}
+
+			if (!e.then) markAsForce(newVNode);
 			options._catchError(e, newVNode, oldVNode);
 		}
 	} else if (
@@ -376,6 +386,8 @@ function cloneNode(node) {
 	if (isArray(node)) {
 		return node.map(cloneNode);
 	}
+
+	if (node.constructor !== UNDEFINED) return null;
 
 	return assign({}, node);
 }
@@ -474,7 +486,10 @@ function diffElementNodes(
 		}
 	} else {
 		// If excessDomChildren was not null, repopulate it with the current element's children:
-		excessDomChildren = excessDomChildren && slice.call(dom.childNodes);
+		excessDomChildren =
+			nodeType == 'textarea' && newProps.defaultValue != NULL
+				? NULL
+				: excessDomChildren && slice.call(dom.childNodes);
 
 		// If we are in a situation where we are not hydrating but are using
 		// existing DOM (e.g. replaceNode) we should read the existing DOM
@@ -562,7 +577,7 @@ function diffElementNodes(
 		}
 
 		// As above, don't diff props during hydration
-		if (!isHydrating) {
+		if (!isHydrating || nodeType == 'textarea') {
 			i = 'value';
 			if (nodeType == 'progress' && inputValue == NULL) {
 				dom.removeAttribute('value');
@@ -645,7 +660,7 @@ export function unmount(vnode, parentVNode, skipRemove) {
 			}
 		}
 
-		r.base = r._parentDom = NULL;
+		r.base = r._parentDom = r._globalContext = NULL;
 	}
 
 	if ((r = vnode._children)) {

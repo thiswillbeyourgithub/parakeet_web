@@ -47,4 +47,5 @@ export interface SuspenseComponent extends PreactComponent<
 	_pendingSuspensionCount: number;
 	_suspenders: Component[];
 	_detachOnNextRender: null | VNode<any>;
+	_mask?: [number, number];
 }

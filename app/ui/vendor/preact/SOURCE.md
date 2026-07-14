@@ -1,9 +1,9 @@
 # Vendored Preact
 
 - Package: `preact`
-- Version: `10.29.1`
-- Source: https://registry.npmjs.org/preact/-/preact-10.29.1.tgz
-- Tarball SHA-256: `7a9143129486379cb8340c66c68a9cedad7762730fda7286f96befa1028cce80`
+- Version: `10.29.7`
+- Source: https://registry.npmjs.org/preact/-/preact-10.29.7.tgz
+- Tarball SHA-256: `7c0ad67ef994592a5da286b01a0a5d977951ad7ec5ddba85c67c0b7f523de66e`
 - License: MIT (see `LICENSE`)
 
 Vendored to keep the UI's runtime supply chain auditable: no install-time fetch,
