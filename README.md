@@ -18,6 +18,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 - [Features](#features)
 - [Quick Start](#quick-start)
+- [Why is WebGPU disabled?](#why-is-webgpu-disabled)
 - [Dictation Mode](#dictation-mode)
 - [Speaker Diarization](#speaker-diarization)
 - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
@@ -34,7 +35,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 ---
 
-Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) and re-quantized for this app as [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) via WebGPU/WASM.
+Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) and re-quantized for this app as [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) on the WASM (CPU) backend.
 
 ![](./image.png)
 
@@ -43,7 +44,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | Feature | Details |
 |---|---|
 | 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
-| ⚡ **WebGPU Accelerated** | Runs on the WASM backend (int8) by default so it works everywhere; opt into WebGPU for faster GPU inference |
+| ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)): for this model the browser WebGPU runtime falls back to the CPU for the encoder and ends up slower than WASM int8 |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
 | ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
 | 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
@@ -54,7 +55,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone. Uploaded files are decoded to PCM by a locally-vendored **ffmpeg.wasm** (lazy-loaded on first upload), so the browser reproduces the command-line tool's decode byte-for-byte, including the AAC encoder-delay/priming trim the browser's native decoder skips (which otherwise mis-heard e.g. "Venlafaxine"). Falls back to the Web Audio decoder if ffmpeg cannot load |
 | 🎚️ **Capture Controls** | Per-recording toggles for noise suppression and auto gain control |
 | 🌐 **Bilingual UI** | Interface available in English and French, auto-selected from your browser language (the underlying model itself is multilingual) |
-| 📦 **Automatic Quantization** | Encoder precision follows the backend automatically: on WebGPU it uses fp16 (~1.2 GB, near-lossless, and lighter to serve; on a backend without fp16 compute kernels it is upcast to fp32 at identical accuracy), only falling back to a full fp32 encoder (~2.4 GB) when the model repo ships no fp16 file; on WASM it uses a SmoothQuant int8 encoder (smaller, the only one that fits the browser's 32-bit heap / blob-fetch limit, and recalibrated so its accuracy now tracks fp32 even on long audio, unlike a stock int8 cast that degrades badly past ~30 s). On WASM you can also opt into a lighter `int8 lite` encoder (~757 MB vs the default ~841 MB: it keeps more layers in fp32) from the encoder-precision picker, trading a touch of accuracy for a smaller download; opt-in precisions stop with a clear message rather than silently downgrading when the model repo doesn't ship them. The decoder always runs int8 (on this model the int8 joiner is as accurate as fp32, while being smaller and faster). fp16 files are built by the `scripts/quantize-fp16.py` script that ships in the [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) model repo (see also the [grikdotnet fp16 model card](https://huggingface.co/grikdotnet/parakeet-tdt-0.6b-fp16) documenting the same conversion) |
+| 📦 **SmoothQuant int8 Encoder** | The encoder runs as a SmoothQuant int8 model, recalibrated so its accuracy tracks fp32 even on long audio (unlike a stock int8 cast that degrades badly past ~30 s), and the only precision that fits the browser's 32-bit heap / blob-fetch limit on the WASM backend. You can also opt into a lighter `int8 lite` encoder (~757 MB vs the default ~841 MB: it keeps more layers in fp32) from the encoder-precision picker, trading a touch of accuracy for a smaller download; opt-in precisions stop with a clear message rather than silently downgrading when the model repo doesn't ship them. The decoder always runs int8 (on this model the int8 joiner is as accurate as fp32, while being smaller and faster). The model repo also ships fp16 (~1.2 GB) and sharded fp32 (~2.4 GB) encoders for the WebGPU backend, built by `scripts/quantize-fp16.py` / `scripts/shard-fp32.py` in the [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) model repo, but WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)) so they are not used |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
 
 > **Planned:** as it matures, I want to eventually add support for [WEBCAT](https://github.com/freedomofpress/webcat/) (Web-based Code Assurance and Transparency) for even stronger security guarantees, so you can cryptographically verify that the code running in your browser is the code that was actually published.
@@ -70,6 +71,14 @@ sudo docker compose -f docker/docker-compose.yml up
 ```
 
 3. Then visit `http://localhost:5173`
+
+## Why is WebGPU disabled?
+
+Picking a GPU backend sounds like it should be faster, but for this model it is not, so the app pins every user to the WASM (CPU) backend with the int8 encoder. The WebGPU option in the settings is greyed out (and any old saved WebGPU choice is coerced back to WASM on load).
+
+The encoder (a Conformer) emits hundreds of dynamic-shape operators (`Shape`, `ConstantOfShape`, and the gather/concat/slice plumbing around them). The browser WebGPU runtime ([onnxruntime-web](https://onnxruntime.ai/)) has no GPU kernels for those operators, so it runs them on the CPU and splits the encoder into GPU/CPU islands. Every island boundary is a device synchronization, so the GPU mostly waits instead of computing: the weights do upload to VRAM, but GPU utilization stays near 0% and the end-to-end run comes out roughly 15x slower than the plain WASM int8 path (measured on an RTX 3090 Ti, running at full fp32 precision). This is a limitation of the runtime's operator coverage, not of your GPU.
+
+WASM int8 already runs comfortably faster than real time on a typical machine, so it is the better default regardless. The path back to GPU acceleration is a static-shape re-export of the encoder that removes those dynamic-shape operators entirely; if that lands, the GPU backend can be re-enabled. For diagnostics you can still force WebGPU with the `?webgpu=1` URL parameter. (This analysis, and the app, were done with the help of [Claude Code](https://claude.com/claude-code).)
 
 ## Dictation Mode
 

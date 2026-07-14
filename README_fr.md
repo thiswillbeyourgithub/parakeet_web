@@ -18,6 +18,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
+- [Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)
 - [Mode dictée](#mode-dictée)
 - [Identification des locuteurs](#identification-des-locuteurs)
 - [Appareils de dictée (SpeechMike)](#appareils-de-dictée-speechmike)
@@ -34,7 +35,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 
 ---
 
-Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) puis re-quantizé pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) via WebGPU/WASM.
+Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) puis re-quantizé pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) sur le backend WASM (CPU).
 
 ![](./image.png)
 
@@ -43,7 +44,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | Fonctionnalité | Détails |
 |---|---|
 | 🔒 **100% privé** | Fonctionne entièrement dans votre navigateur — aucun audio ne quitte jamais votre appareil |
-| ⚡ **Accéléré par WebGPU** | Fonctionne par défaut sur le backend WASM (int8) pour marcher partout ; activez WebGPU pour une inférence GPU plus rapide |
+| ⚡ **Fonctionne partout (WASM int8)** | La transcription s'exécute sur le backend WASM (CPU) avec un encodeur int8 SmoothQuant, donc elle marche dans tout navigateur moderne sans GPU, confortablement plus vite que le temps réel sur une machine courante. WebGPU est actuellement désactivé ([Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)) : pour ce modèle, le moteur WebGPU du navigateur bascule sur le CPU pour l'encodeur et finit plus lent que WASM int8 |
 | 🎙️ **Téléphone comme micro** | Utilisez votre téléphone comme microphone sans fil via WebRTC chiffré de bout en bout |
 | ⏱️ **Transcription en direct** | Mode streaming optionnel : le texte apparaît au fur et à mesure que vous parlez, les regex de dictée étant appliquées en temps réel |
 | 🎯 **Renforcement de phrases** | Oriente le décodeur vers votre propre liste de phrases (noms, jargon, noms de médicaments, acronymes), avec des poids optionnels par phrase. Fonctionne entièrement côté client |
@@ -54,7 +55,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | 📁 **Fichier ou micro** | Transcrivez des fichiers audio téléversés ou enregistrez directement depuis votre microphone. Les fichiers téléversés sont décodés en PCM par un **ffmpeg.wasm** intégré localement (chargé à la demande au premier téléversement), afin que le navigateur reproduise à l'octet près le décodage de l'outil en ligne de commande, y compris le rognage du délai/amorçage d'encodeur AAC que le décodeur natif du navigateur ignore (ce qui faisait autrement mal entendre p. ex. « Venlafaxine »). Repli sur le décodeur Web Audio si ffmpeg ne peut pas se charger |
 | 🎚️ **Contrôles de capture** | Bascules par enregistrement pour la suppression de bruit et le contrôle automatique du gain |
 | 🌐 **Interface bilingue** | Interface disponible en anglais et en français, sélectionnée automatiquement selon la langue de votre navigateur (le modèle sous-jacent est lui-même multilingue) |
-| 📦 **Quantization automatique** | La précision de l'encodeur suit automatiquement le backend : sur WebGPU, il utilise fp16 (~1,2 Go, quasi sans perte, et plus léger à servir ; sur un backend sans noyaux de calcul fp16, il est converti en fp32 à précision identique), ne basculant vers un encodeur fp32 complet (~2,4 Go) que lorsque le dépôt du modèle ne fournit pas de fichier fp16 ; sur WASM, il utilise un encodeur int8 SmoothQuant (plus léger, le seul qui tienne dans le tas 32 bits du navigateur / la limite de récupération de blob, et recalibré pour que sa précision suive désormais celle de fp32 même sur de l'audio long, contrairement à une conversion int8 standard qui se dégrade fortement au-delà d'environ 30 s). Sur WASM, vous pouvez aussi opter pour un encodeur `int8 lite` plus léger (~757 Mo contre ~841 Mo par défaut : il garde davantage de couches en fp32) depuis le sélecteur de précision de l'encodeur, échangeant un peu de précision contre un téléchargement plus réduit ; les précisions optionnelles s'arrêtent avec un message clair plutôt qu'une rétrogradation silencieuse lorsque le dépôt du modèle ne les fournit pas. Le décodeur tourne toujours en int8 (sur ce modèle, le joiner int8 est aussi précis que fp32, tout en étant plus léger et plus rapide). Les fichiers fp16 sont générés par le script `scripts/quantize-fp16.py` fourni dans le dépôt du modèle [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) (voir aussi la [fiche du modèle fp16 de grikdotnet](https://huggingface.co/grikdotnet/parakeet-tdt-0.6b-fp16) qui documente la même conversion) |
+| 📦 **Encodeur int8 SmoothQuant** | L'encodeur tourne en int8 SmoothQuant, recalibré pour que sa précision suive celle de fp32 même sur de l'audio long (contrairement à une conversion int8 standard qui se dégrade fortement au-delà d'environ 30 s), et c'est la seule précision qui tienne dans le tas 32 bits du navigateur / la limite de récupération de blob sur le backend WASM. Vous pouvez aussi opter pour un encodeur `int8 lite` plus léger (~757 Mo contre ~841 Mo par défaut : il garde davantage de couches en fp32) depuis le sélecteur de précision de l'encodeur, échangeant un peu de précision contre un téléchargement plus réduit ; les précisions optionnelles s'arrêtent avec un message clair plutôt qu'une rétrogradation silencieuse lorsque le dépôt du modèle ne les fournit pas. Le décodeur tourne toujours en int8 (sur ce modèle, le joiner int8 est aussi précis que fp32, tout en étant plus léger et plus rapide). Le dépôt du modèle fournit aussi des encodeurs fp16 (~1,2 Go) et fp32 fragmenté (~2,4 Go) pour le backend WebGPU, générés par `scripts/quantize-fp16.py` / `scripts/shard-fp32.py` dans le dépôt [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx), mais WebGPU est actuellement désactivé ([Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)) donc ils ne sont pas utilisés |
 | 🐳 **Prêt pour Docker** | Déploiement auto-hébergé en une seule commande |
 
 > **Prévu :** au fur et à mesure de la maturation du projet, je souhaite à terme ajouter la prise en charge de [WEBCAT](https://github.com/freedomofpress/webcat/) (Web-based Code Assurance and Transparency) pour des garanties de sécurité encore plus fortes, afin que vous puissiez vérifier cryptographiquement que le code exécuté dans votre navigateur est bien celui qui a été réellement publié.
@@ -70,6 +71,14 @@ sudo docker compose -f docker/docker-compose.yml up
 ```
 
 3. Rendez-vous ensuite sur `http://localhost:5173`
+
+## Pourquoi WebGPU est-il désactivé ?
+
+Choisir un backend GPU semble devoir être plus rapide, mais pour ce modèle ce n'est pas le cas, donc l'application fixe chaque utilisateur sur le backend WASM (CPU) avec l'encodeur int8. L'option WebGPU dans les paramètres est grisée (et tout ancien choix WebGPU enregistré est ramené vers WASM au chargement).
+
+L'encodeur (un Conformer) émet des centaines d'opérateurs à forme dynamique (`Shape`, `ConstantOfShape`, et la tuyauterie de gather/concat/slice autour). Le moteur WebGPU du navigateur ([onnxruntime-web](https://onnxruntime.ai/)) n'a pas de noyaux GPU pour ces opérateurs : il les exécute donc sur le CPU et découpe l'encodeur en îlots GPU/CPU. Chaque frontière d'îlot est une synchronisation de périphérique, si bien que le GPU attend au lieu de calculer : les poids montent bien en VRAM, mais l'utilisation du GPU reste proche de 0 % et l'exécution de bout en bout finit environ 15x plus lente que la voie WASM int8 (mesuré sur une RTX 3090 Ti, en pleine précision fp32). C'est une limite de la couverture d'opérateurs du moteur, pas de votre GPU.
+
+WASM int8 tourne déjà confortablement plus vite que le temps réel sur une machine courante, c'est donc de toute façon le meilleur choix par défaut. La voie de retour vers l'accélération GPU est un ré-export de l'encodeur à forme statique qui supprime entièrement ces opérateurs à forme dynamique ; s'il voit le jour, le backend GPU pourra être réactivé. Pour le diagnostic, vous pouvez encore forcer WebGPU avec le paramètre d'URL `?webgpu=1`. (Cette analyse, ainsi que l'application, ont été réalisées avec l'aide de [Claude Code](https://claude.com/claude-code).)
 
 ## Mode dictée
 
