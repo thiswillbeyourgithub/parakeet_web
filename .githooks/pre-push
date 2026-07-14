@@ -3,12 +3,16 @@
 # machine can, while letting you answer a couple of questions and then WALK AWAY
 # for an unattended run.
 #
-# Flow (questions are asked UP FRONT, before any slow step, so nothing blocks
-# waiting on you halfway through):
-#   1. Ask (if a terminal is attached): run tier 3? run the WebGPU check?
+# Flow (the tier-3 question is asked UP FRONT, before any slow step, so nothing
+# blocks waiting on you halfway through):
+#   1. Ask (if a terminal is attached): run tier 3?
 #   2. Always: tier 1 (unit) + tier 2 (http)               -- fast, no model.
 #   3. If asked: rebuild app/ui/dist, then tier 3 (Playwright WASM E2E).
-#   4. If asked: scripts/webgpu-check.mjs on a REAL GPU.
+#   4. If PREPUSH_WEBGPU=1 is exported: scripts/webgpu-check.mjs on a REAL GPU.
+#      This is NEVER prompted: WebGPU is disabled app-wide (see App.jsx
+#      WEBGPU_DISABLED / the "Why is WebGPU disabled?" README section), so the
+#      GPU path is opt-in diagnostics only. The check forces `?webgpu=1` to
+#      re-enable the backend for the run.
 #
 # What each tier actually covers:
 #   - tier 1/2: pure logic + the real signaling server.
@@ -25,8 +29,10 @@
 #     `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py`; or
 #     export PARAKEET_E2E_STRICT_WEIGHTS=0 before pushing to fall back to skips.
 #   - WebGPU: the ONLY way to exercise the real GPU path (encoder batching +
-#     the encode/decode worker pipeline). It cannot run in CI or in headless-CI
-#     (no GPU); it needs a real, FREE GPU here. The default args force fp32
+#     the encode/decode worker pipeline). WebGPU is disabled app-wide, so this
+#     is NOT prompted and NOT a release gate; opt in with PREPUSH_WEBGPU=1. It
+#     cannot run in CI or in headless-CI (no GPU); it needs a real, FREE GPU
+#     here. The default args force fp32
 #     (`--fp32`), which is the WebGPU path that needs no `shader-f16` and so is
 #     the one that actually validates on this box; override with the
 #     PREPUSH_WEBGPU_ARGS env var (e.g. PREPUSH_WEBGPU_ARGS='--channel=chromium'
@@ -47,12 +53,15 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 # --- Gather the interactive choices UP FRONT ------------------------------
-# git feeds the ref list on the hook's stdin, so read answers from the
-# controlling terminal instead. Asking everything now (before the slow tiers)
-# is what lets you kick off an unattended run. With no terminal (a
-# non-interactive push, e.g. CI) both heavy steps are skipped.
+# git feeds the ref list on the hook's stdin, so read the answer from the
+# controlling terminal instead. Asking now (before the slow tiers) is what lets
+# you kick off an unattended run. With no terminal (a non-interactive push, e.g.
+# CI) tier 3 is skipped. The WebGPU check is env-gated, never prompted.
 run_e2e=n
-run_webgpu=n
+# The WebGPU check is opt-in via env var only (never prompted): WebGPU is
+# disabled app-wide, so the GPU path is diagnostics, not a release gate. Export
+# PREPUSH_WEBGPU=1 to run it (needs a real, FREE GPU; a busy GPU false-fails).
+case "${PREPUSH_WEBGPU:-}" in 1|y|Y) run_webgpu=y ;; *) run_webgpu=n ;; esac
 
 ask_yn() { # prompt -> echoes y or n, aborts the push on anything else
   local prompt="$1" answer
@@ -66,12 +75,12 @@ ask_yn() { # prompt -> echoes y or n, aborts the push on anything else
 }
 
 if [ -e /dev/tty ]; then
-  echo "[pre-push] Answer these now, then you can leave it unattended:" >&2
+  echo "[pre-push] Answer this now, then you can leave it unattended:" >&2
   run_e2e=$(ask_yn "[pre-push]   Run tier 3 (Playwright WASM E2E: int8 + fp32/lite/diarization/chunking/fleurs)? [y/n] ")
-  run_webgpu=$(ask_yn "[pre-push]   Run the WebGPU check too? (needs a real, FREE GPU; a busy GPU false-fails) [y/n] ")
 else
-  echo "[pre-push] No terminal available; skipping tier 3 and the WebGPU check." >&2
+  echo "[pre-push] No terminal available; skipping tier 3." >&2
 fi
+[ "$run_webgpu" = y ] && echo "[pre-push] PREPUSH_WEBGPU set; the WebGPU check will run after the fast tiers." >&2
 
 # --- Tier 1 + tier 2 (always) ---------------------------------------------
 echo "[pre-push] Running npm test (tier 1 unit + tier 2 http)..."
