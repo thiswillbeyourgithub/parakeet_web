@@ -57,9 +57,8 @@ test('WASM fp32 fails loudly (no silent int8 downgrade) when no source ships the
   await page.route('**/models/**', (route) =>
     route.fulfill({ status: 404, body: 'not found' }));
 
-  // fp32 on WASM is no longer user-selectable (greyed out; the WebGPU backend
-  // that fronts fp16/fp32 is disabled app-wide), so seed the setting directly to
-  // exercise the still-supported programmatic fp32-on-WASM request that must
+  // int8 is the default; fp32 is an opt-in on WASM. Seed it directly (rather
+  // than driving the settings UI) to exercise the fp32-on-WASM request that must
   // fail cleanly (no silent int8 downgrade) when no source can serve it.
   await page.goto('/');
   await seedSettings(page, { wasmEncoderQuant: 'fp32' });

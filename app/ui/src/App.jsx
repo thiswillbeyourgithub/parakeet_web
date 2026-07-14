@@ -5780,13 +5780,11 @@ export default function App() {
               // Show the precision that will ACTUALLY load: fp32 when fp16 is
               // blocked, so the radio doesn't sit on a disabled fp16 option.
               const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
-              // fp16/fp32 are the WebGPU-tier precisions. WebGPU is disabled
-              // app-wide (WEBGPU_DISABLED), so on the WASM path we now offer ONLY
-              // int8 / int8-lite and grey fp16/fp32 out. (fp32 CAN run on WASM via
-              // shards, but that slow path is no longer offered in the UI; it
-              // stays reachable programmatically, exercised by the fp32-wasm e2e
-              // specs.) With ?webgpu=1 the backend is selectable again and these
-              // become available on WebGPU as before.
+              // int8 is the default everywhere. fp32 is an opt-in on BOTH paths:
+              // on WASM via <2 GB shards (~2.4 GB, ~2x slower), and on WebGPU.
+              // fp16 is WebGPU-only, so with WebGPU disabled app-wide
+              // (WEBGPU_DISABLED) it is greyed out; with ?webgpu=1 the backend is
+              // selectable again and fp16 becomes available on WebGPU as before.
               const webgpuDisabledNote = t('precisionUnavailableWebgpuDisabled');
               const rows = [
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
@@ -5795,7 +5793,7 @@ export default function App() {
                 // doesn't ship encoder-model.int8.lite.onnx (no silent downgrade).
                 { value: 'int8-lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
                 { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : (WEBGPU_DISABLED ? webgpuDisabledNote : t('precisionUnavailableWasm')) },
-                { value: 'fp32', label: t('precisionFp32'), available: isWebgpu, note: WEBGPU_DISABLED ? webgpuDisabledNote : t('precisionUnavailableWasm') },
+                { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
               ];
               return (
                 <div className="setting-row">

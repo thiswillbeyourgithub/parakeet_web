@@ -62,10 +62,9 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   // reload below.
   await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
-  // fp32 on WASM is no longer user-selectable: the UI greys it out (only int8 /
-  // int8-lite are offered on WASM, and the WebGPU backend that fronts fp16/fp32
-  // is disabled app-wide). The sharded-fp32-on-WASM capability still exists for
-  // programmatic use, so we seed the setting directly to exercise that path.
+  // int8 is the default encoder precision; fp32 is an opt-in sharded encoder on
+  // WASM. Seed it directly (rather than driving the settings UI) for a
+  // deterministic, fast test of the sharded-fp32-on-WASM load path.
   await page.goto('/');
   await seedSettings(page, { wasmEncoderQuant: 'fp32' });
   await page.reload();

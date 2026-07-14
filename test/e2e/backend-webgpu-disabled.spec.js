@@ -1,10 +1,12 @@
 // Tier-3 E2E for the app-wide WebGPU kill switch (App.jsx WEBGPU_DISABLED).
 // WebGPU's browser runtime has no GPU kernels for this encoder's shape ops, so
 // it runs mostly on CPU and slower than the WASM int8 path; the app therefore
-// pins everyone to WASM int8. This spec asserts the UI consequences:
+// disables WebGPU and defaults everyone to WASM int8. This spec asserts the UI
+// consequences:
 //   1. the WebGPU backend radio is greyed out (disabled),
-//   2. the fp16 and fp32 encoder-precision radios are greyed out,
-//   3. int8 (and int8-lite) stay selectable, with int8 the active choice,
+//   2. the fp16 encoder-precision radio is greyed out (fp16 is WebGPU-only),
+//   3. int8 is the active default, and int8-lite / fp32 stay selectable on WASM
+//      (fp32 is an opt-in sharded encoder, still allowed on the WASM backend),
 //   4. a PERSISTED 'webgpu-hybrid' backend is coerced to WASM on boot, so an old
 //      saved setting can never resurrect the GPU path.
 // It touches no model weights (nothing is loaded), so it never skips and is fast.
@@ -19,7 +21,7 @@ async function openPrecisionControls(page) {
   await expandSettingsSection(page, 'Model and performance');
 }
 
-test('WebGPU backend and fp16/fp32 precisions are greyed out; WASM int8 is the only path', async ({ page }) => {
+test('WebGPU + fp16 are greyed out; int8 is the WASM default with fp32 opt-in still allowed', async ({ page }) => {
   await page.goto('/');
   await seedSettings(page);
   await page.reload();
@@ -36,11 +38,14 @@ test('WebGPU backend and fp16/fp32 precisions are greyed out; WASM int8 is the o
   const int8Lite = page.locator('input[name="encoderQuant"][value="int8-lite"]');
   const fp16 = page.locator('input[name="encoderQuant"][value="fp16"]');
   const fp32 = page.locator('input[name="encoderQuant"][value="fp32"]');
+  // int8 is the default; int8-lite and fp32 are opt-in on WASM; fp16 is
+  // WebGPU-only and therefore greyed out while WebGPU is disabled.
   await expect(int8).toBeEnabled();
   await expect(int8).toBeChecked();
   await expect(int8Lite).toBeEnabled();
+  await expect(fp32).toBeEnabled();
+  await expect(fp32).not.toBeChecked();
   await expect(fp16).toBeDisabled();
-  await expect(fp32).toBeDisabled();
 });
 
 test('a persisted webgpu-hybrid backend is coerced to WASM on boot', async ({ page }) => {

@@ -84,9 +84,8 @@ test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirr
     return route.abort();
   });
 
-  // fp32 on WASM is no longer user-selectable (greyed out; the WebGPU backend
-  // that fronts fp16/fp32 is disabled app-wide), so seed the setting directly to
-  // exercise the still-supported programmatic fp32-on-WASM auto-upgrade path.
+  // int8 is the default; fp32 is an opt-in on WASM. Seed it directly (rather
+  // than driving the settings UI) to exercise the fp32-on-WASM auto-upgrade path.
   await page.goto('/');
   await seedSettings(page, { wasmEncoderQuant: 'fp32' });
   await page.reload();
