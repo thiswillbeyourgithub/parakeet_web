@@ -2,7 +2,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.resolveOperator = void 0;
+exports.resolveOperator = resolveOperator;
 function resolveOperator(node, opsets, rules) {
   for (const rule of rules) {
     const opType = rule[0];
@@ -29,7 +29,6 @@ function resolveOperator(node, opsets, rules) {
       .join(', ')}`,
   );
 }
-exports.resolveOperator = resolveOperator;
 function matchSelector(version, selector) {
   if (selector.endsWith('+')) {
     // minimum version match ('7+' expects version>=7)

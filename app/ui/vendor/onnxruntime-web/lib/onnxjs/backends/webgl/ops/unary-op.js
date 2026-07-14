@@ -27,28 +27,28 @@ exports.tanh =
   exports.asin =
   exports.acos =
   exports.abs =
-  exports.glslTanh =
-  exports.glslTan =
-  exports.glslSqrt =
-  exports.glslSigmoid =
-  exports.glslRelu =
-  exports.glslSin =
-  exports.glslNot =
-  exports.glslNeg =
-  exports.glslLog =
-  exports.glslLeakyRelu =
-  exports.glslIdentity =
-  exports.glslClip =
-  exports.glslFloor =
-  exports.glslExp =
-  exports.glslElu =
-  exports.glslCos =
-  exports.glslCeil =
-  exports.glslAtan =
-  exports.glslAsin =
-  exports.glslAcos =
-  exports.glslAbs =
     void 0;
+exports.glslAbs = glslAbs;
+exports.glslAcos = glslAcos;
+exports.glslAsin = glslAsin;
+exports.glslAtan = glslAtan;
+exports.glslCeil = glslCeil;
+exports.glslCos = glslCos;
+exports.glslElu = glslElu;
+exports.glslExp = glslExp;
+exports.glslFloor = glslFloor;
+exports.glslClip = glslClip;
+exports.glslIdentity = glslIdentity;
+exports.glslLeakyRelu = glslLeakyRelu;
+exports.glslLog = glslLog;
+exports.glslNeg = glslNeg;
+exports.glslNot = glslNot;
+exports.glslSin = glslSin;
+exports.glslRelu = glslRelu;
+exports.glslSigmoid = glslSigmoid;
+exports.glslSqrt = glslSqrt;
+exports.glslTan = glslTan;
+exports.glslTanh = glslTanh;
 const attribute_with_cache_key_1 = require('../../../attribute-with-cache-key');
 const util_1 = require('../../../util');
 const glsl_definitions_1 = require('../glsl-definitions');
@@ -57,27 +57,21 @@ const types_1 = require('../types');
 function glslAbs() {
   return glslBuiltinUnary('abs');
 }
-exports.glslAbs = glslAbs;
 function glslAcos() {
   return glslBuiltinUnary('acos');
 }
-exports.glslAcos = glslAcos;
 function glslAsin() {
   return glslBuiltinUnary('asin');
 }
-exports.glslAsin = glslAsin;
 function glslAtan() {
   return glslBuiltinUnary('atan');
 }
-exports.glslAtan = glslAtan;
 function glslCeil() {
   return glslBuiltinUnary('ceil');
 }
-exports.glslCeil = glslCeil;
 function glslCos() {
   return glslBuiltinUnary('cos');
 }
-exports.glslCos = glslCos;
 function glslElu(alpha) {
   const name = 'elu';
   const body = `
@@ -92,15 +86,12 @@ function glslElu(alpha) {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslElu = glslElu;
 function glslExp() {
   return glslBuiltinUnary('exp');
 }
-exports.glslExp = glslExp;
 function glslFloor() {
   return glslBuiltinUnary('floor');
 }
-exports.glslFloor = glslFloor;
 function glslClip(min, max) {
   const name = 'clip';
   const body = `
@@ -116,7 +107,6 @@ function glslClip(min, max) {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslClip = glslClip;
 function glslIdentity() {
   const name = 'indentity';
   const body = `
@@ -129,7 +119,6 @@ function glslIdentity() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslIdentity = glslIdentity;
 function glslLeakyRelu(alpha) {
   const name = 'leakyRelu';
   const body = `
@@ -144,11 +133,9 @@ function glslLeakyRelu(alpha) {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslLeakyRelu = glslLeakyRelu;
 function glslLog() {
   return glslBuiltinUnary('log');
 }
-exports.glslLog = glslLog;
 function glslNeg() {
   const name = 'neg';
   const body = `
@@ -161,7 +148,6 @@ function glslNeg() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslNeg = glslNeg;
 function glslNot() {
   const name = 'not';
   const body = `
@@ -180,11 +166,9 @@ function glslNot() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslNot = glslNot;
 function glslSin() {
   return glslBuiltinUnary('sin');
 }
-exports.glslSin = glslSin;
 function glslRelu() {
   const name = 'relu';
   const body = `
@@ -197,7 +181,6 @@ function glslRelu() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslRelu = glslRelu;
 function glslSigmoid() {
   const name = 'sigmoid';
   const body = `
@@ -210,15 +193,12 @@ function glslSigmoid() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslSigmoid = glslSigmoid;
 function glslSqrt() {
   return glslBuiltinUnary('sqrt');
 }
-exports.glslSqrt = glslSqrt;
 function glslTan() {
   return glslBuiltinUnary('tan');
 }
-exports.glslTan = glslTan;
 function glslTanh() {
   const name = 'tanh';
   const body = `
@@ -235,7 +215,6 @@ function glslTanh() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslTanh = glslTanh;
 function glslBuiltinUnary(name) {
   const body = `
   float ${name}_(float a) {

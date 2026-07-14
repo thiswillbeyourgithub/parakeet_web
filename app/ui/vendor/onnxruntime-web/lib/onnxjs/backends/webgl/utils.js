@@ -2,15 +2,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.getGlChannels =
-  exports.getCoordsDataType =
-  exports.getSqueezedParams =
-  exports.squeezeInputShape =
-  exports.generateShaderFuncNameFromInputSamplerNameAtOutCoords =
-  exports.generateShaderFuncNameFromInputSamplerName =
-  exports.repeatedTry =
-  exports.getPackedShape =
-    void 0;
+exports.getPackedShape = getPackedShape;
+exports.repeatedTry = repeatedTry;
+exports.generateShaderFuncNameFromInputSamplerName = generateShaderFuncNameFromInputSamplerName;
+exports.generateShaderFuncNameFromInputSamplerNameAtOutCoords = generateShaderFuncNameFromInputSamplerNameAtOutCoords;
+exports.squeezeInputShape = squeezeInputShape;
+exports.getSqueezedParams = getSqueezedParams;
+exports.getCoordsDataType = getCoordsDataType;
+exports.getGlChannels = getGlChannels;
 const util_1 = require('../../util');
 /**
  * Given a non RGBA shape calculate the R version
@@ -22,7 +21,6 @@ function getPackedShape(unpackedShape) {
   const len = unpackedShape.length;
   return unpackedShape.slice(0, len - 1).concat(unpackedShape[len - 1] / 4);
 }
-exports.getPackedShape = getPackedShape;
 async function repeatedTry(checkFn, delayFn = (_counter) => 0, maxCounter) {
   return new Promise((resolve, reject) => {
     let tryCount = 0;
@@ -42,7 +40,6 @@ async function repeatedTry(checkFn, delayFn = (_counter) => 0, maxCounter) {
     tryFn();
   });
 }
-exports.repeatedTry = repeatedTry;
 /**
  * Generates the function name from an input sampler name.
  * @param samplerName Name of the sampler.
@@ -54,7 +51,6 @@ function generateShaderFuncNameFromInputSamplerName(samplerName) {
   );
   return 'get' + samplerName.charAt(0).toUpperCase() + samplerName.slice(1);
 }
-exports.generateShaderFuncNameFromInputSamplerName = generateShaderFuncNameFromInputSamplerName;
 /**
  * Generates the function name from an input sampler name at output coordinates.
  * @param samplerName Name of the sampler.
@@ -66,7 +62,6 @@ function generateShaderFuncNameFromInputSamplerNameAtOutCoords(samplerName) {
   );
   return 'get' + samplerName.charAt(0).toUpperCase() + samplerName.slice(1) + 'AtOutCoords';
 }
-exports.generateShaderFuncNameFromInputSamplerNameAtOutCoords = generateShaderFuncNameFromInputSamplerNameAtOutCoords;
 /** Returns a new input shape (a copy) that has a squeezed logical shape. */
 function squeezeInputShape(inputShape, squeezedShape) {
   // Deep copy.
@@ -74,12 +69,10 @@ function squeezeInputShape(inputShape, squeezedShape) {
   newInputShape = squeezedShape;
   return newInputShape;
 }
-exports.squeezeInputShape = squeezeInputShape;
 /** Returns a list of squeezed parameters for shader functions */
 function getSqueezedParams(params, keptDims) {
   return keptDims.map((d) => params[d]).join(', ');
 }
-exports.getSqueezedParams = getSqueezedParams;
 /** Returns the data type for different ranks. */
 function getCoordsDataType(rank) {
   if (rank <= 1) {
@@ -98,9 +91,7 @@ function getCoordsDataType(rank) {
     throw Error(`GPU for rank ${rank} is not yet supported`);
   }
 }
-exports.getCoordsDataType = getCoordsDataType;
 function getGlChannels(rank = 6) {
   return ['x', 'y', 'z', 'w', 'u', 'v'].slice(0, rank);
 }
-exports.getGlChannels = getGlChannels;
 //# sourceMappingURL=utils.js.map

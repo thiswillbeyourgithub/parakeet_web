@@ -2,16 +2,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.getBatchDim =
-  exports.sizeToSquarishShape =
-  exports.getRowsCols =
-  exports.sizeFromShape =
-  exports.isInt =
-  exports.parseAxisParam =
-  exports.squeezeShape =
-  exports.PreferLogicalStrategy =
-  exports.AlwaysKeepOriginalSizeStrategy =
-    void 0;
+exports.PreferLogicalStrategy = exports.AlwaysKeepOriginalSizeStrategy = void 0;
+exports.squeezeShape = squeezeShape;
+exports.parseAxisParam = parseAxisParam;
+exports.isInt = isInt;
+exports.sizeFromShape = sizeFromShape;
+exports.getRowsCols = getRowsCols;
+exports.sizeToSquarishShape = sizeToSquarishShape;
+exports.getBatchDim = getBatchDim;
 const instrument_1 = require('../../instrument');
 const util_1 = require('../../util');
 /**
@@ -176,7 +174,6 @@ function squeezeShape(shape, axis) {
   }
   return { newShape, keptDims };
 }
-exports.squeezeShape = squeezeShape;
 function parseAxisParam(axis, shape) {
   const rank = shape.length;
   // Normalize input
@@ -191,11 +188,9 @@ function parseAxisParam(axis, shape) {
   // Handle negative axis.
   return axis.map((a) => (a < 0 ? rank + a : a));
 }
-exports.parseAxisParam = parseAxisParam;
 function isInt(a) {
   return a % 1 === 0;
 }
-exports.isInt = isInt;
 function sizeFromShape(shape) {
   if (shape.length === 0) {
     // Scalar.
@@ -207,21 +202,17 @@ function sizeFromShape(shape) {
   }
   return size;
 }
-exports.sizeFromShape = sizeFromShape;
 function getRowsCols(shape) {
   if (shape.length === 0) {
     throw Error('Cannot get rows and columns of an empty shape array.');
   }
   return [shape.length > 1 ? shape[shape.length - 2] : 1, shape[shape.length - 1]];
 }
-exports.getRowsCols = getRowsCols;
 function sizeToSquarishShape(size) {
   const width = Math.ceil(Math.sqrt(size));
   return [width, Math.ceil(size / width)];
 }
-exports.sizeToSquarishShape = sizeToSquarishShape;
 function getBatchDim(shape, dimsToSkip = 2) {
   return sizeFromShape(shape.slice(0, shape.length - dimsToSkip));
 }
-exports.getBatchDim = getBatchDim;
 //# sourceMappingURL=texture-layout-strategy.js.map

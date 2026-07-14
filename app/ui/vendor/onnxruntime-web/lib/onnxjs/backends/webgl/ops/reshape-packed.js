@@ -2,7 +2,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.isReshapeCheap = exports.processDims3D = exports.createPackedReshape3DProgramInfoLoader = void 0;
+exports.createPackedReshape3DProgramInfoLoader = void 0;
+exports.processDims3D = processDims3D;
+exports.isReshapeCheap = isReshapeCheap;
 const util_1 = require('../../../util');
 const glsl_source_1 = require('../glsl-source');
 const types_1 = require('../types');
@@ -90,7 +92,6 @@ function processDims3D(shape) {
   }
   return [batch, shape.length > 1 ? shape[shape.length - 2] : 1, shape[shape.length - 1]];
 }
-exports.processDims3D = processDims3D;
 // For packed reshape, we need to re-arrange texel data for output shape.
 // Our pack is designed to pack a 2x2 tile in last h and w dimension, so
 // for the reshaped new tensor, we just need to re-arrange the last h and
@@ -118,7 +119,6 @@ function isReshapeCheap(dims, reshapedDims) {
   }
   return isCheapReshape;
 }
-exports.isReshapeCheap = isReshapeCheap;
 function getReshapedInputCoords(shape) {
   const strides = util_1.ShapeUtil.computeStrides(shape);
   const coords = ['b', 'r', 'c'];

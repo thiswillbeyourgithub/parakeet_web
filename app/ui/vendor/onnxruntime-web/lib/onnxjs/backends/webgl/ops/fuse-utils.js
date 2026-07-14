@@ -2,7 +2,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.parseInternalActivationAttributes = exports.getActivationSnippet = void 0;
+exports.parseInternalActivationAttributes = void 0;
+exports.getActivationSnippet = getActivationSnippet;
 const util_1 = require('../../../util');
 const unary_op_1 = require('./unary-op');
 function getActivationSnippet(attributes) {
@@ -26,7 +27,6 @@ function getActivationSnippet(attributes) {
   const applyActivation = `value = ${activationName}_(value);`;
   return { activationFunction, applyActivation };
 }
-exports.getActivationSnippet = getActivationSnippet;
 const parseInternalActivationAttributes = (attributes) => {
   const activation = attributes.getString('activation', '');
   if (activation === 'Clip') {

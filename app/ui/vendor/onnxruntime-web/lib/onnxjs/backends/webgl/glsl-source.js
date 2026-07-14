@@ -2,11 +2,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.getDefaultFragShaderMain =
-  exports.getFragShaderPreamble =
-  exports.getVertexShaderSource =
-  exports.getGlsl =
-    void 0;
+exports.getGlsl = getGlsl;
+exports.getVertexShaderSource = getVertexShaderSource;
+exports.getFragShaderPreamble = getFragShaderPreamble;
+exports.getDefaultFragShaderMain = getDefaultFragShaderMain;
 const GLSL_ES_2_0 = {
   version: '',
   attribute: 'attribute',
@@ -28,7 +27,6 @@ const GLSL_ES_3_0 = {
 function getGlsl(version) {
   return version === 1 ? GLSL_ES_2_0 : GLSL_ES_3_0;
 }
-exports.getGlsl = getGlsl;
 function getVertexShaderSource(version) {
   const glsl = getGlsl(version);
   return `${glsl.version}
@@ -44,7 +42,6 @@ function getVertexShaderSource(version) {
           TexCoords = textureCoord;
       }`;
 }
-exports.getVertexShaderSource = getVertexShaderSource;
 function getFragShaderPreamble(version) {
   const glsl = getGlsl(version);
   return `${glsl.version}
@@ -81,7 +78,6 @@ function getFragShaderPreamble(version) {
 
     `;
 }
-exports.getFragShaderPreamble = getFragShaderPreamble;
 function getDefaultFragShaderMain(version, outputShapeLength) {
   const glsl = getGlsl(version);
   return `
@@ -93,5 +89,4 @@ function getDefaultFragShaderMain(version, outputShapeLength) {
   }
   `;
 }
-exports.getDefaultFragShaderMain = getDefaultFragShaderMain;
 //# sourceMappingURL=glsl-source.js.map

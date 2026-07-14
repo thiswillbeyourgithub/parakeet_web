@@ -2,7 +2,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.resolveBackend = exports.backend = void 0;
+exports.backend = void 0;
+exports.resolveBackend = resolveBackend;
 const backend_webgl_1 = require('./backends/backend-webgl');
 // caches all initialized backend instances
 const backendsCache = new Map();
@@ -31,7 +32,6 @@ async function resolveBackend(hint) {
   }
   throw new Error('no available backend to use');
 }
-exports.resolveBackend = resolveBackend;
 async function tryLoadBackend(backendHint) {
   const backendObj = exports.backend;
   if (typeof backendObj[backendHint] !== 'undefined' && isBackend(backendObj[backendHint])) {

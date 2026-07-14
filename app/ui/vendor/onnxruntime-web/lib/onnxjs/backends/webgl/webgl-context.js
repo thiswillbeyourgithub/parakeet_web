@@ -32,17 +32,29 @@ var __setModuleDefault =
       });
 var __importStar =
   (this && this.__importStar) ||
-  function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null)
-      for (var k in mod)
-        if (k !== 'default' && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-  };
+  (function () {
+    var ownKeys = function (o) {
+      ownKeys =
+        Object.getOwnPropertyNames ||
+        function (o) {
+          var ar = [];
+          for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+          return ar;
+        };
+      return ownKeys(o);
+    };
+    return function (mod) {
+      if (mod && mod.__esModule) return mod;
+      var result = {};
+      if (mod != null)
+        for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== 'default') __createBinding(result, mod, k[i]);
+      __setModuleDefault(result, mod);
+      return result;
+    };
+  })();
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.WebGLContext = exports.linearSearchLastTrue = void 0;
+exports.WebGLContext = void 0;
+exports.linearSearchLastTrue = linearSearchLastTrue;
 const onnxruntime_common_1 = require('onnxruntime-common');
 const DataEncoders = __importStar(require('./texture-data-encoder'));
 const utils_1 = require('./utils');
@@ -56,7 +68,6 @@ function linearSearchLastTrue(arr) {
   }
   return i - 1;
 }
-exports.linearSearchLastTrue = linearSearchLastTrue;
 /**
  * Abstraction and wrapper around WebGLRenderingContext and its operations
  */
@@ -295,17 +306,17 @@ ${shaderSource}`);
       1.0,
       0.0,
       0.0,
-      1.0,
+      1.0, // upper left
       -1.0,
       -1.0,
       0.0,
       0.0,
-      0.0,
+      0.0, // lower left
       1.0,
       1.0,
       0.0,
       1.0,
-      1.0,
+      1.0, // upper right
       1.0,
       -1.0,
       0.0,

@@ -7,8 +7,7 @@ var __importDefault =
     return mod && mod.__esModule ? mod : { default: mod };
   };
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.decodeUtf8String =
-  exports.MAX_CLIP =
+exports.MAX_CLIP =
   exports.MIN_CLIP =
   exports.PoolConvUtil =
   exports.ReduceUtil =
@@ -18,13 +17,14 @@ exports.decodeUtf8String =
   exports.LongUtil =
   exports.ProtoUtil =
   exports.GemmUtil =
-  exports.arrayCopyHelper =
   exports.BroadcastUtil =
   exports.MatMulUtil =
   exports.ArrayUtil =
-  exports.assert =
-  exports.checkInputsShape =
     void 0;
+exports.checkInputsShape = checkInputsShape;
+exports.assert = assert;
+exports.arrayCopyHelper = arrayCopyHelper;
+exports.decodeUtf8String = decodeUtf8String;
 const long_1 = __importDefault(require('long'));
 const onnx_1 = require('./ort-schema/protobuf/onnx');
 const tensor_1 = require('./tensor');
@@ -43,14 +43,12 @@ function checkInputsShape(inputs, ...expectedDimensions) {
   }
   return true;
 }
-exports.checkInputsShape = checkInputsShape;
 // Evaluates the given expression and asserts error message if condition is unmet.
 function assert(expr, msg) {
   if (!expr) {
     throw new Error(typeof msg === 'string' ? msg : msg());
   }
 }
-exports.assert = assert;
 class ArrayUtil {
   /**
    * Verifies if 2 input arrays contain the same elements.
@@ -313,7 +311,6 @@ function arrayCopyHelper(target, source, targetIndex, sourceIndex, blockSize) {
     target[targetIndex + offset] = source[sourceIndex + offset];
   }
 }
-exports.arrayCopyHelper = arrayCopyHelper;
 class GemmUtil {
   // will make sure input shapes are compatible for this op
   // and return back the shape of the output in the form of a tuple
@@ -1173,5 +1170,4 @@ exports.MAX_CLIP = 3.4028234663852886e38;
 function decodeUtf8String(buffer) {
   return new TextDecoder().decode(buffer);
 }
-exports.decodeUtf8String = decodeUtf8String;
 //# sourceMappingURL=util.js.map

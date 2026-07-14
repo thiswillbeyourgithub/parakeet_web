@@ -2,7 +2,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.createLrnProgramInfoLoader = exports.parseLrnAttributes = exports.lrn = void 0;
+exports.parseLrnAttributes = exports.lrn = void 0;
+exports.createLrnProgramInfoLoader = createLrnProgramInfoLoader;
 const attribute_with_cache_key_1 = require('../../../attribute-with-cache-key');
 const types_1 = require('../types');
 const lrn = (inferenceHandler, inputs, attributes) => {
@@ -62,7 +63,6 @@ function createLrnProgramInfo(inputs, attributes) {
 function createLrnProgramInfoLoader(inputs, attributes) {
   return { ...lrnProgramMetadata, cacheHint: attributes.cacheKey, get: () => createLrnProgramInfo(inputs, attributes) };
 }
-exports.createLrnProgramInfoLoader = createLrnProgramInfoLoader;
 const validateInputs = (inputs) => {
   if (!inputs || inputs.length !== 1) {
     throw new Error('LRN requires 1 input.');

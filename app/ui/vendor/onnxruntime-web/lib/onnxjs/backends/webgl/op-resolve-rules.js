@@ -32,15 +32,26 @@ var __setModuleDefault =
       });
 var __importStar =
   (this && this.__importStar) ||
-  function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null)
-      for (var k in mod)
-        if (k !== 'default' && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-  };
+  (function () {
+    var ownKeys = function (o) {
+      ownKeys =
+        Object.getOwnPropertyNames ||
+        function (o) {
+          var ar = [];
+          for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+          return ar;
+        };
+      return ownKeys(o);
+    };
+    return function (mod) {
+      if (mod && mod.__esModule) return mod;
+      var result = {};
+      if (mod != null)
+        for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== 'default') __createBinding(result, mod, k[i]);
+      __setModuleDefault(result, mod);
+      return result;
+    };
+  })();
 Object.defineProperty(exports, '__esModule', { value: true });
 exports.WEBGL_OP_RESOLVE_RULES = void 0;
 const batch_normalization_1 = require('./ops/batch-normalization');
@@ -150,7 +161,7 @@ exports.WEBGL_OP_RESOLVE_RULES = [
   ['Shape', '', '1+', shape_1.shape],
   ['Sigmoid', '', '6+', unaryOps.sigmoid],
   ['Sin', '', '7+', unaryOps.sin],
-  ['Slice', '', '10+', slice_1.sliceV10],
+  ['Slice', '', '10+', slice_1.sliceV10], // TODO: support 'steps' for Slice-10
   ['Slice', '', '1-9', slice_1.slice, slice_1.parseSliceAttributes],
   // The "semantic" meaning of axis has changed in opset-13.
   ['Softmax', '', '1-12', softmax_1.softmax, softmax_1.parseSoftmaxAttributes],

@@ -2,11 +2,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.getBiasForMatmul =
-  exports.createMatmulProgramInfoLoader =
-  exports.parseMatMulAttributes =
-  exports.matMul =
-    void 0;
+exports.parseMatMulAttributes = exports.matMul = void 0;
+exports.createMatmulProgramInfoLoader = createMatmulProgramInfoLoader;
+exports.getBiasForMatmul = getBiasForMatmul;
 const util_1 = require('../../../util');
 const types_1 = require('../types');
 const utils_1 = require('../utils');
@@ -84,7 +82,6 @@ function createMatmulProgramInfoLoader(inputs, activationAttributes) {
   const metadata = createMatmulProgramMetadata(inputs.length > 2, activationAttributes.activationCacheKey);
   return { ...metadata, get: () => createMatmulProgramInfo(metadata, inputs, activationAttributes) };
 }
-exports.createMatmulProgramInfoLoader = createMatmulProgramInfoLoader;
 const validateInputs = (inputs) => {
   if (!inputs || inputs.length !== 2) {
     throw new Error('MatMul requires 2 inputs.');
@@ -136,5 +133,4 @@ float getBiasForMatmul() {
 }`;
   return getBiasForMatmulSource;
 }
-exports.getBiasForMatmul = getBiasForMatmul;
 //# sourceMappingURL=matmul.js.map

@@ -2,7 +2,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 Object.defineProperty(exports, '__esModule', { value: true });
-exports.createNewWebGLContext = exports.createWebGLContext = void 0;
+exports.createWebGLContext = createWebGLContext;
+exports.createNewWebGLContext = createNewWebGLContext;
 const instrument_1 = require('../../instrument');
 const webgl_context_1 = require('./webgl-context');
 const cache = {};
@@ -47,7 +48,6 @@ function createWebGLContext(contextId) {
   gl.cullFace(gl.BACK);
   return context;
 }
-exports.createWebGLContext = createWebGLContext;
 function createNewWebGLContext(canvas, contextId) {
   const contextAttributes = {
     alpha: false,
@@ -88,7 +88,6 @@ function createNewWebGLContext(canvas, contextId) {
   }
   throw new Error('WebGL is not supported');
 }
-exports.createNewWebGLContext = createNewWebGLContext;
 function createCanvas() {
   if (typeof document === 'undefined') {
     throw new TypeError('failed to create canvas: document is not supported');

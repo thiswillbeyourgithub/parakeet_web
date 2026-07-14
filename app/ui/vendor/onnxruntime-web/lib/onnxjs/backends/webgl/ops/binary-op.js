@@ -14,19 +14,19 @@ exports.xor =
   exports.div =
   exports.and =
   exports.add =
-  exports.glslPRelu =
-  exports.glslPow =
-  exports.glslXor =
-  exports.glslOr =
-  exports.glslAnd =
-  exports.glslLess =
-  exports.glslGreater =
-  exports.glslEqual =
-  exports.glslSub =
-  exports.glslMul =
-  exports.glslDiv =
-  exports.glslAdd =
     void 0;
+exports.glslAdd = glslAdd;
+exports.glslDiv = glslDiv;
+exports.glslMul = glslMul;
+exports.glslSub = glslSub;
+exports.glslEqual = glslEqual;
+exports.glslGreater = glslGreater;
+exports.glslLess = glslLess;
+exports.glslAnd = glslAnd;
+exports.glslOr = glslOr;
+exports.glslXor = glslXor;
+exports.glslPow = glslPow;
+exports.glslPRelu = glslPRelu;
 const util_1 = require('../../../util');
 const glsl_definitions_1 = require('../glsl-definitions');
 const glsl_source_1 = require('../glsl-source');
@@ -43,7 +43,6 @@ function glslAdd() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslAdd = glslAdd;
 function glslDiv() {
   const name = 'div_';
   const body = `
@@ -56,7 +55,6 @@ function glslDiv() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslDiv = glslDiv;
 function glslMul() {
   const name = 'mul_';
   const body = `
@@ -69,7 +67,6 @@ function glslMul() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslMul = glslMul;
 function glslSub() {
   const name = 'sub_';
   const body = `
@@ -82,7 +79,6 @@ function glslSub() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslSub = glslSub;
 function glslEqual() {
   const name = 'equal_';
   const body = `
@@ -95,7 +91,6 @@ function glslEqual() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslEqual = glslEqual;
 function glslGreater() {
   const name = 'greater_';
   const body = `
@@ -111,7 +106,6 @@ function glslGreater() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslGreater = glslGreater;
 function glslLess() {
   const name = 'less_';
   const body = `
@@ -127,7 +121,6 @@ function glslLess() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslLess = glslLess;
 function glslAnd() {
   const name = 'and_';
   const body = `
@@ -145,7 +138,6 @@ function glslAnd() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslAnd = glslAnd;
 function glslOr() {
   const name = 'or_';
   const body = `
@@ -163,7 +155,6 @@ function glslOr() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslOr = glslOr;
 function glslXor() {
   const name = 'xor_';
   const body = `
@@ -181,11 +172,9 @@ function glslXor() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslXor = glslXor;
 function glslPow() {
   return glslBuiltinBinary('pow');
 }
-exports.glslPow = glslPow;
 function glslPRelu() {
   const name = 'prelu_';
   const body = `
@@ -203,7 +192,6 @@ function glslPRelu() {
   `;
   return { body, name, type: glsl_definitions_1.FunctionType.ValueBased };
 }
-exports.glslPRelu = glslPRelu;
 function glslBuiltinBinary(fname) {
   const name = `${fname}_`;
   const body = `
