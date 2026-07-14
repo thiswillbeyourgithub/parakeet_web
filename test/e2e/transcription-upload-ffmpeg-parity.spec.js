@@ -2,16 +2,31 @@
 // (src/lib/audioDecode.js), giving byte-for-byte parity with the CLI
 // (scripts/transcribe.mjs `ffmpeg -i <file> -ac 1 -ar 16000 -f f32le`). The clip
 // is venlaf.aac (== test/fixtures/sample.aac): a raw ADTS AAC whose encoder
-// delay/priming the browser's decodeAudioData does NOT trim, which used to make
-// the WebUI mishear "Venlafaxine" as "Velnafacine". ffmpeg trims it, so the drug
-// name now decodes correctly, matching the CLI.
+// delay/priming the browser's decodeAudioData does NOT trim but ffmpeg does. The
+// PRIMARY contract this spec proves is that ffmpeg's module worker + ESM core +
+// wasm all load and RUN under the strict production CSP (see below), decoding the
+// upload to a coherent transcript that stays in parity with the native-ffmpeg CLI.
+//
+// HISTORY, and why the drug-name spelling is no longer asserted: this fixture was
+// originally chosen because the untrimmed priming made the WebUI mishear
+// "Venlafaxine" as "Velnafacine" while ffmpeg's trim decoded it correctly like the
+// CLI. That discriminator only held on higher-precision encoders. Now that WebGPU
+// is disabled app-wide and every backend runs the WASM int8 encoder, int8
+// mishears the word EITHER way (it emits "Velnafaccine" on the cleanly-trimmed
+// ffmpeg audio too), so the rare-word spelling is no longer a reliable signal.
+// fp16 still spells it correctly, but fp16 is WebGPU-only and cannot run in
+// headless CI. The int8 flip was bisected to the vendored onnxruntime-web
+// 1.26.0 -> 1.27.0 bump (commit e319783), which shifted the WASM int8 numerics
+// enough to change the greedy token. So this spec asserts the ffmpeg-under-CSP
+// load plus CLI parity on the STABLE sentence stem (which int8 transcribes
+// identically on both paths), not the fragile trailing drug name.
 //
 // This spec also enforces the production Content-Security-Policy (which serve.mjs
 // omits) by injecting it on the document response, so it proves ffmpeg's module
 // worker + ESM core + wasm all load under `script-src 'self' 'wasm-unsafe-eval'
 // blob:` / `worker-src 'self' blob:` / `connect-src 'self' blob:` + COEP
 // require-corp. If CSP blocked ffmpeg, the decoder would silently fall back to
-// Web Audio (logging `via web-audio`) and mishear the word, failing the asserts.
+// Web Audio (logging `via web-audio`); assertion #1 below catches that directly.
 //
 // beamWidth is pinned to 1 (greedy) so the run is deterministic and directly
 // comparable to the CLI golden generated at the same width.
@@ -122,11 +137,16 @@ test('uploaded venlaf.aac decodes via ffmpeg.wasm under CSP and matches the CLI 
   const sameOriginCspErrors = cspErrors.filter((e) => !isHfConnect(e));
   expect(sameOriginCspErrors, `same-origin CSP violations:\n${sameOriginCspErrors.join('\n')}`).toHaveLength(0);
 
-  // 3) CLI parity on the drug name: the whole point of the ffmpeg decode.
-  //    The clean, priming-trimmed audio decodes to "Venlafaxine" like the CLI,
-  //    not the browser-front-end artefacts "Velnafacine" / "Venafacine".
-  expect(got.toLowerCase(), `transcript "${got}"`).toContain('venlafaxine');
-  expect(got.toLowerCase(), `transcript "${got}"`).not.toMatch(/velnafac|venafac/);
+  // 3) CLI parity on the STABLE sentence stem. The ffmpeg-decoded upload must
+  //    transcribe to the same coherent French the CLI produces on this clip,
+  //    proving the decode delivered real speech (not a silent/garbage fallback)
+  //    and stayed in parity with native ffmpeg on everything the int8 encoder
+  //    transcribes reliably. The trailing rare word (the drug name) is
+  //    intentionally NOT asserted: on the shipped WASM int8 encoder it mishears
+  //    it EITHER way (see the HISTORY note at the top of this file), so pinning
+  //    its spelling would track onnxruntime-web numeric drift, not a real signal.
+  const STABLE_STEM = "j'ai décidé d'introduire chez cette patiente de la";
+  expect(got.toLowerCase(), `transcript "${got}"`).toContain(STABLE_STEM);
 
   // NB: we deliberately do NOT assert app-wide `errors.length === 0` here. The
   // strict CSP intentionally blocks the app's HuggingFace probes (a HubDownloadError
