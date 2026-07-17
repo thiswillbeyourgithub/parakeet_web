@@ -1182,6 +1182,11 @@ export default function App() {
   // diarization run is currently in flight for (spinner + one-at-a-time guard).
   const [diarizationCache, setDiarizationCache] = useState({});
   const [diarizingId, setDiarizingId] = useState(null);
+  // Progress of the in-flight diarization (the one on diarizingId), or null.
+  // Only the long "piecewise" path can report progress (a single sherpa
+  // process() is one synchronous WASM call with no intra-run signal); short
+  // clips stay a bare spinner. Shape: {phase:'diarize'|'embed', done, total}.
+  const [diarProgress, setDiarProgress] = useState(null);
   // Set to a human-readable reason when the diarization MODELS fail to download
   // (background prefetch or an on-demand run). Non-null greys out the Speakers
   // button + the sidebar's "Speakers" default-display option, with the reason
@@ -4545,6 +4550,7 @@ export default function App() {
       ? numSpeakersOverride
       : (diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers);
     setDiarizingId(trans.id);
+    setDiarProgress(null);
     // Load the models first, in their own guard: a download failure here is not
     // a transcript-level error, so instead of a browser alert we record the
     // reason (greys out the Speakers controls with a hover tooltip) and bail.
@@ -4561,6 +4567,7 @@ export default function App() {
       setDiarizingId(null);
       return;
     }
+    const t0 = performance.now();
     try {
       // trans.pcm is a mono 16 kHz Float32Array (see the transcribeChunked call,
       // which hardcodes 16000). Excise long silences so the diarizer sees a
@@ -4584,13 +4591,16 @@ export default function App() {
       }
       // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
       const numSpk = requested > 0 ? requested : -1;
+      const durSec = diarPcm.length / DIAR_SR;
+      const piecewise = shouldPiecewise(durSec, numSpk);
+      console.log(`[Diarize] start: ${durSec.toFixed(1)}s audio, ${numSpk > 0 ? `${numSpk} speakers (fixed)` : 'auto speaker count'}, ${piecewise ? 'piecewise' : 'single'} path`);
       const singleRun = () => runDiarization(diarPcm, {
         segmentationBytes: models.segmentationBytes,
         embeddingBytes: models.embeddingBytes,
         numSpeakers: numSpk,
       });
       let rawSegments;
-      if (!shouldPiecewise(diarPcm.length / DIAR_SR, numSpk)) {
+      if (!piecewise) {
         rawSegments = await singleRun();
       } else {
         // Long, auto-detect clip: diarize silence-aligned pieces on a small pool of
@@ -4616,6 +4626,14 @@ export default function App() {
               embeddingBytes: models.embeddingBytes,
               numThreads: perWorkerThreads,
             },
+            onProgress: ({ phase, done, total }) => {
+              setDiarProgress({ phase, done, total });
+              if (phase === 'diarize' && done > 0) {
+                console.log(`[Diarize] piece ${done}/${total} diarized`);
+              } else if (phase === 'embed' && done === 0) {
+                console.log(`[Diarize] reconciling speakers across ${total} pieces`);
+              }
+            },
           });
         } catch (err) {
           if (err && err.cancelled) throw err; // user cancelled: do NOT fall back
@@ -4629,6 +4647,8 @@ export default function App() {
       // when nothing was excised). remapSegments splits any segment that bridges an
       // excised gap so it never inflates across the removed silence.
       const segments = map ? remapSegments(rawSegments, map, DIAR_SR) : rawSegments;
+      const speakerCount = new Set(segments.map(s => s.speaker)).size;
+      console.log(`[Diarize] done in ${((performance.now() - t0) / 1000).toFixed(1)}s: ${speakerCount} speaker(s), ${segments.length} segments`);
       setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
       setEntryBase(trans.id, 'diarized');
 
@@ -4662,6 +4682,7 @@ export default function App() {
       }
     } finally {
       setDiarizingId(null);
+      setDiarProgress(null);
     }
   }
 
@@ -4673,6 +4694,7 @@ export default function App() {
   function cancelDiarizeEntry(trans) {
     cancelDiarization();
     setDiarizingId(null);
+    setDiarProgress(null);
     if (!hasDiarization(trans)) setEntryBase(trans.id, 'raw');
   }
 
@@ -6528,6 +6550,18 @@ export default function App() {
                         >
                           {diarizingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
                           {t('speakers')}
+                          {/* Piecewise diarization reports progress; fold its two
+                              phases into one monotonic 0-100% (diarize 0-90%,
+                              embed 90-100%) so the number never appears to
+                              restart. Short single-run clips report nothing, so
+                              this stays hidden and only the spinner shows. */}
+                          {diarizingId === trans.id && diarProgress && diarProgress.total > 0 && (
+                            <span className="diar-progress">
+                              {' '}{diarProgress.phase === 'embed'
+                                ? Math.round(90 + (diarProgress.done / diarProgress.total) * 10)
+                                : Math.round((diarProgress.done / diarProgress.total) * 90)}%
+                            </span>
+                          )}
                         </button>
                         );
                       })()}
