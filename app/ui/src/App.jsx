@@ -4638,6 +4638,7 @@ export default function App() {
         } catch (err) {
           if (err && err.cancelled) throw err; // user cancelled: do NOT fall back
           console.warn('[Diarize] piecewise failed, falling back to single run:', err);
+          setDiarProgress(null); // single run reports no progress; drop the stale %
           rawSegments = await singleRun();
         } finally {
           for (const c of clients) c.dispose();
