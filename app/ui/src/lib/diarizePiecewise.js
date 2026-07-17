@@ -182,13 +182,21 @@ export function reconcilePieces(pieces, opts = {}) {
  * @param {(pcm:Float32Array, segments:Array, embeddingBytes:Uint8Array)=>Promise<Object>} args.embed
  * @param {Uint8Array} args.embeddingBytes
  * @param {object} [args.diarOpts]  extra options forwarded to each client.run.
+ * @param {(evt:{phase:'diarize'|'embed', done:number, total:number})=>void} [args.onProgress]
+ *   Called once with done=0 when a phase begins, then after every piece it
+ *   completes (diarize phase: as pool workers finish, so out of piece order;
+ *   embed phase: sequentially). `total` is the piece count for both phases.
  * @returns {Promise<Array<{start:number,end:number,speaker:number}>>}
  */
-export async function runPiecewiseDiarization({ pcm, sampleRate, clients, embed, embeddingBytes, diarOpts = {} }) {
+export async function runPiecewiseDiarization({ pcm, sampleRate, clients, embed, embeddingBytes, diarOpts = {}, onProgress }) {
   const ranges = planPieceRanges(pcm, sampleRate);
   const segResults = new Array(ranges.length);
+  const total = ranges.length;
+  const report = typeof onProgress === 'function' ? onProgress : () => {};
 
+  report({ phase: 'diarize', done: 0, total });
   let next = 0;
+  let diarized = 0;
   const clientLoop = async (client) => {
     for (;;) {
       const i = next;
@@ -199,15 +207,21 @@ export async function runPiecewiseDiarization({ pcm, sampleRate, clients, embed,
       // so passing a subarray never detaches the shared pcm for the other pieces.
       const segments = await client.run(pcm.subarray(r.start, r.end), { numSpeakers: -1, ...diarOpts });
       segResults[i] = { startSec: r.start / sampleRate, range: r, segments };
+      diarized += 1;
+      report({ phase: 'diarize', done: diarized, total });
     }
   };
   await Promise.all(clients.map((c) => clientLoop(c)));
 
   // Embeddings on the main thread, after every piece has come back.
+  report({ phase: 'embed', done: 0, total });
   const pieces = [];
+  let embedded = 0;
   for (const sr of segResults) {
     const embeddings = await embed(pcm.subarray(sr.range.start, sr.range.end), sr.segments, embeddingBytes);
     pieces.push({ startSec: sr.startSec, segments: sr.segments, embeddings });
+    embedded += 1;
+    report({ phase: 'embed', done: embedded, total });
   }
   return reconcilePieces(pieces);
 }
