@@ -1292,6 +1292,14 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   margin-right: 0.45em;
 }
 
+/* Inline diarization progress percentage shown inside the Speakers button
+   while a piecewise run is in flight. Tabular numerals keep the button width
+   steady as the value climbs. */
+.diar-progress {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
 @keyframes spinner-spin {
   to { transform: rotate(360deg); }
 }
