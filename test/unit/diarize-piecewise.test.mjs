@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import {
   reconcilePieces,
   shouldPiecewise,
+  runPiecewiseDiarization,
+  planPieceRanges,
   PIECEWISE_MIN_SEC,
   SEAM_MERGE_GAP_SEC,
 } from '../../app/ui/src/lib/diarizePiecewise.js';
@@ -141,3 +143,65 @@ describe('reconcilePieces stitching', () => {
 
 test('SEAM_MERGE_GAP_SEC mirrors sherpa minDurationOff (0.5 s)', () =>
   assert.equal(SEAM_MERGE_GAP_SEC, 0.5));
+
+describe('runPiecewiseDiarization onProgress', () => {
+  // A tiny sampleRate keeps DEFAULT_PIECE_SEC (600 s) worth of samples small, so a
+  // short PCM still splits into several pieces (real content is never needed: the
+  // stub clients/embed ignore the samples, only the piece COUNT matters here).
+  const SR = 4;
+
+  test('reports both phases climbing to done === total (piece count)', async () => {
+    const pcm = new Float32Array(8000); // ~4 pieces at maxChunkSamples = 600*SR
+    const total = planPieceRanges(pcm, SR).length;
+    assert.ok(total >= 2, `need multiple pieces to exercise progress, got ${total}`);
+
+    // Pool of 2 stub clients; each run resolves a lone segment. A microtask
+    // delay lets the pool interleave so diarize completions land out of order.
+    let runs = 0;
+    const makeClient = () => ({
+      run: async () => { runs += 1; await Promise.resolve(); return [seg(0, 1, 0)]; },
+    });
+    const clients = [makeClient(), makeClient()];
+    const embed = async () => ({ 0: A });
+
+    const events = [];
+    const out = await runPiecewiseDiarization({
+      pcm, sampleRate: SR, clients, embed, embeddingBytes: new Uint8Array(),
+      onProgress: (e) => events.push({ ...e }),
+    });
+
+    assert.equal(runs, total); // every piece was diarized exactly once
+    assert.ok(Array.isArray(out));
+
+    // Every event carries the same, correct total and an in-range done.
+    assert.ok(events.every(e => e.total === total), 'total constant across events');
+    assert.ok(events.every(e => e.done >= 0 && e.done <= total), 'done stays in [0, total]');
+
+    const diar = events.filter(e => e.phase === 'diarize');
+    const emb = events.filter(e => e.phase === 'embed');
+
+    // Each phase opens with a done=0 tick and climbs to done=total.
+    assert.equal(diar[0].done, 0, 'diarize phase opens at 0');
+    assert.equal(emb[0].done, 0, 'embed phase opens at 0');
+    assert.equal(Math.max(...diar.map(e => e.done)), total, 'diarize reaches total');
+    assert.equal(Math.max(...emb.map(e => e.done)), total, 'embed reaches total');
+
+    // done is monotonic non-decreasing within each phase (a plain completion
+    // counter, so it never regresses even when the pool finishes out of order).
+    for (const phase of [diar, emb]) {
+      for (let i = 1; i < phase.length; i += 1) {
+        assert.ok(phase[i].done >= phase[i - 1].done, 'done never regresses');
+      }
+    }
+  });
+
+  test('is optional: runs fine with no onProgress callback', async () => {
+    const pcm = new Float32Array(8000);
+    const clients = [{ run: async () => [seg(0, 1, 0)] }];
+    const embed = async () => ({ 0: A });
+    const out = await runPiecewiseDiarization({
+      pcm, sampleRate: SR, clients, embed, embeddingBytes: new Uint8Array(),
+    });
+    assert.ok(Array.isArray(out));
+  });
+});
