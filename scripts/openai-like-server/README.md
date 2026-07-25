@@ -100,7 +100,7 @@ The audio part may be named `file` (OpenAI, whisper.cpp), `audio_file` (whisper-
 Errors use the OpenAI envelope, always:
 
 ```json
-{"error":{"message":"unknown wordlist \"nope\". Available: french_medical, lorn","type":"invalid_request_error","param":"phrase_boost","code":null}}
+{"error":{"message":"unknown wordlist \"nope\"; available: french_medical, lorn","type":"invalid_request_error","param":"phrase_boost","code":null}}
 ```
 
 | Status | When |
