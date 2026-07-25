@@ -19,9 +19,14 @@ dist/
 **/dist/
 !app/ui/vendor/**/dist/
 
-# Local secrets and TLS keys (vite dev server, docker compose)
+# Local secrets and TLS keys (vite dev server, docker compose). The `**/`
+# variants matter: each compose stack keeps its own .env next to its
+# docker-compose.yml (docker/, scripts/openai-like-server/), and a bare `.env`
+# pattern only matches the one at the context root.
 .env
 .env.*
+**/.env
+**/.env.*
 docker/.env
 *.pem
 *.key
@@ -45,8 +50,17 @@ npm-debug.log*
 .claude/
 CLAUDE.md
 
-# Local-only tooling (scripts/ is already gitignored)
-scripts/
+# Local-only tooling. (scripts/ is tracked, not gitignored -- the old comment
+# here claimed otherwise; almost none of it belongs in a build context, but the
+# OpenAI-like API server does: its Dockerfile builds from the REPO ROOT so it can
+# copy app/src, and it needs both its own directory and scripts/transcribe.mjs,
+# the model/ffmpeg glue it imports so the API and the CLI cannot drift apart.)
+scripts/*
+!scripts/openai-like-server
+!scripts/transcribe.mjs
+# ...but never a host node_modules inside it: the builder stage runs `npm ci`
+# from the lockfile, and copying a host tree in would defeat that.
+scripts/openai-like-server/node_modules/
 data/
 deploy.sh
 TODO.md
