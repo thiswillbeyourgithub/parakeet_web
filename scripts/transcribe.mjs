@@ -323,7 +323,8 @@ Options:
                            LD_LIBRARY_PATH at them if the system default is a
                            different CUDA major); the load FAILS loudly if the
                            CUDA provider library cannot be loaded.
-      --threads N          WASM thread count (default: ORT chooses).
+      --threads N          Inference threads: WASM thread count, or the native EP's
+                           intra-op threads with --ort node|cuda (default: ORT chooses).
       --timestamps         Include word timestamps and confidences in output.
       --json               Print the full result object as JSON.
       --ffmpeg PATH        ffmpeg binary to use (else auto-detected).
@@ -578,6 +579,22 @@ export function decodePcm(ffmpeg, file) {
 // trie the CLI uses, without duplicating the glue. The CLI's main() below is a
 // thin caller over them.
 
+// Build the ORT session options for one backend.
+//
+// The thread count needs backend-specific plumbing: WASM has its own global
+// `env.wasm.numThreads`, while the NATIVE EPs (node/cuda) size their intra-op
+// pool from the HOST core count. Inside a cgroup-limited container that
+// oversubscribes badly (12 threads sharing 4 CPUs of quota is slower than 4
+// threads), and the process cannot see the quota, so --threads has to bound it
+// explicitly. Left at 0 the ORT default is kept, which is right on bare metal.
+//
+// Exported so the mapping is unit-testable without loading a model.
+export function sessionOptionsFor({ executionProviders, verbose = false, threads = 0, ortBackend = 'wasm' } = {}) {
+  const opts = { executionProviders, logSeverityLevel: verbose ? 0 : 3 };
+  if (threads > 0 && ortBackend !== 'wasm') opts.intraOpNumThreads = threads;
+  return opts;
+}
+
 // Construct a ParakeetModel from a model key / local dir, mirroring the CLI's
 // resolution and ORT-WASM configuration. Returns the model plus the resolved
 // tokenizer, config and directory so callers can log or reuse them. The
@@ -607,7 +624,7 @@ export async function loadParakeetModel({
   }
   ortMod.env.logLevel = verbose ? 'verbose' : 'error';
 
-  const sessOpts = { executionProviders, logSeverityLevel: verbose ? 0 : 3 };
+  const sessOpts = sessionOptionsFor({ executionProviders, verbose, threads, ortBackend });
   const [encoderSession, joinerSession, tokenizer] = await Promise.all([
     createSession(encoderPath, sessOpts, { ortMod, fromPath }),
     createSession(decoderPath, sessOpts, { ortMod, fromPath }),

@@ -157,7 +157,10 @@ export const OPTIONS = [
   {
     key: 'threads', cli: ['--threads', '-t'], env: 'PARAKEET_THREADS', type: 'int', def: 0,
     min: 0, max: 256, section: 'Model',
-    help: 'Inference thread count (0 = let ORT decide). Applies to the WASM backend.',
+    help: 'Inference thread count (0 = let ORT decide). Sets the WASM thread count, or the '
+        + 'native EP\'s intra-op threads with --ort node|cuda. SET IT in a container: ORT sizes '
+        + 'its pool from the HOST core count, which a CPU quota does not change, so an unset '
+        + 'value oversubscribes (12 threads sharing 4 CPUs is slower than 4).',
   },
   {
     key: 'ffmpeg', cli: ['--ffmpeg'], env: 'PARAKEET_FFMPEG', type: 'string', def: '',

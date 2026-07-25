@@ -16,7 +16,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ortRuntimeConfig } from '../../scripts/transcribe.mjs';
+import { ortRuntimeConfig, sessionOptionsFor } from '../../scripts/transcribe.mjs';
 
 describe('ortRuntimeConfig: ORT backend -> EP / from-path mapping', () => {
   test('wasm uses the WASM EP and loads from a Buffer (not a path)', () => {
@@ -47,5 +47,32 @@ describe('ortRuntimeConfig: ORT backend -> EP / from-path mapping', () => {
       assert.match(e.message, /wasm, node or cuda/);
       return true;
     });
+  });
+});
+
+describe('sessionOptionsFor: --threads reaches the right knob per backend', () => {
+  // WASM threads are a GLOBAL (ort.env.wasm.numThreads), set by the caller;
+  // putting intraOpNumThreads in the session options there would be noise.
+  test('wasm never gets intraOpNumThreads', () => {
+    const opts = sessionOptionsFor({ executionProviders: ['wasm'], threads: 4, ortBackend: 'wasm' });
+    assert.equal('intraOpNumThreads' in opts, false);
+    assert.deepEqual(opts.executionProviders, ['wasm']);
+  });
+
+  // The native EPs size their pool from the HOST core count, which a container
+  // CPU quota does not change: 12 threads sharing 4 CPUs is slower than 4.
+  test('node/cuda bound their intra-op pool to --threads', () => {
+    assert.equal(sessionOptionsFor({ executionProviders: ['cpu'], threads: 4, ortBackend: 'node' }).intraOpNumThreads, 4);
+    assert.equal(sessionOptionsFor({ executionProviders: ['cuda', 'cpu'], threads: 2, ortBackend: 'cuda' }).intraOpNumThreads, 2);
+  });
+
+  test('threads 0 keeps the ORT default (right on bare metal)', () => {
+    assert.equal('intraOpNumThreads' in sessionOptionsFor({ executionProviders: ['cpu'], threads: 0, ortBackend: 'node' }), false);
+    assert.equal('intraOpNumThreads' in sessionOptionsFor({ executionProviders: ['cpu'], ortBackend: 'node' }), false);
+  });
+
+  test('verbose picks the noisy log severity, quiet the terse one', () => {
+    assert.equal(sessionOptionsFor({ executionProviders: ['cpu'], verbose: true }).logSeverityLevel, 0);
+    assert.equal(sessionOptionsFor({ executionProviders: ['cpu'] }).logSeverityLevel, 3);
   });
 });
