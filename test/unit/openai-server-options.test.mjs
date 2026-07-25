@@ -244,6 +244,20 @@ test('the Dockerfile pins its base image by digest and installs deps safely', ()
   assert.match(dockerfile, /USER parakeet/);
 });
 
+test('node_modules lands where the ORT import can actually resolve it', () => {
+  // onnxruntime-node is imported by scripts/transcribe.mjs, and Node resolves a
+  // bare specifier by walking UP from the importing file. Installing it beside
+  // the server's package.json (scripts/openai-like-server/node_modules) is one
+  // directory too deep, so PARAKEET_ORT=node|cuda dies with
+  // ERR_MODULE_NOT_FOUND at model load -- reproduced, then fixed by hoisting it
+  // to the image root, which is an ancestor of every importer.
+  const dockerfile = read('Dockerfile');
+  const copy = dockerfile.split('\n').find((l) => /COPY --from=deps/.test(l));
+  assert.ok(copy, 'the runtime stage must copy the installed dependencies');
+  assert.match(copy, /\s\.\/node_modules$/,
+    `node_modules must be copied to the image root, got: ${copy}`);
+});
+
 test('every per-request field maps to a real option', () => {
   for (const [field, spec] of REQUEST_OVERRIDES) {
     assert.equal(typeof field, 'string');

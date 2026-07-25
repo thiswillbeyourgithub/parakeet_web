@@ -142,7 +142,15 @@ COPY --chown=parakeet:parakeet app/ui/public/sherpa-onnx ./app/ui/public/sherpa-
 # building and ffmpeg decoding for the server (see lib/engine.mjs).
 COPY --chown=parakeet:parakeet scripts/transcribe.mjs ./scripts/transcribe.mjs
 COPY --chown=parakeet:parakeet scripts/openai-like-server ./scripts/openai-like-server
-COPY --from=deps --chown=parakeet:parakeet /build/node_modules ./scripts/openai-like-server/node_modules
+# node_modules goes at the IMAGE ROOT, not next to the server's package.json.
+# `onnxruntime-node` is imported by scripts/transcribe.mjs (getOrt), and Node
+# resolves a bare specifier by walking UP from the IMPORTING file: from
+# /opt/parakeet/scripts/ it would check /opt/parakeet/scripts/node_modules then
+# /opt/parakeet/node_modules, and never look inside
+# scripts/openai-like-server/node_modules. Installing it there gives
+# ERR_MODULE_NOT_FOUND the moment PARAKEET_ORT=node|cuda is used (verified).
+# /opt/parakeet is an ancestor of both importers, so this resolves for each.
+COPY --from=deps --chown=parakeet:parakeet /build/node_modules ./node_modules
 
 # Defaults that make the container work as shipped. PARAKEET_HOST must be
 # 0.0.0.0: a published port cannot reach a process bound to the container's own
