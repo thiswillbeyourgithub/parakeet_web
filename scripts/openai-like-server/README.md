@@ -201,7 +201,7 @@ Why fp16/fp32 cannot use `wasm`: a single ArrayBuffer caps at ~2 GB in 32-bit WA
 
 `--api-key` / `PARAKEET_API_KEY` is a bearer token checked on every route except `/health`, in constant time, and accepted as either `Authorization: Bearer <key>` or `api-key: <key>`.
 
-**An empty key disables auth entirely**, which is the sane default for a personal instance on `127.0.0.1`. To keep that from becoming an accident, the server **refuses to start keyless on a non-loopback address**:
+**An empty key disables auth entirely**, which is the sane default for a personal instance on `127.0.0.1`. A keyless instance also accepts any key a client insists on sending (most OpenAI SDKs refuse to start without an `api_key`, so they send a placeholder like `"unused"`): with no secret configured there is nothing to compare it against, so it is ignored rather than rejected. Once a key IS set, it is enforced on every route but `/health`, whatever the bind address. To keep that from becoming an accident, the server **refuses to start keyless on a non-loopback address**:
 
 ```
 refusing to listen on the non-loopback address 0.0.0.0 without an API key. Pick one:

@@ -201,7 +201,12 @@ export function createApiServer({ engine, options, logger = console }) {
 
   // ── auth ────────────────────────────────────────────────────────────────
   function isAuthorised(req) {
-    if (!keyDigest) return true;                       // no key configured
+    // No key configured: accept every request, INCLUDING one carrying a key.
+    // Most OpenAI clients refuse to run without an api_key and send a
+    // placeholder ("unused", "sk-...", "EMPTY"); with no secret to compare it
+    // against, that value carries no information, so rejecting it would only
+    // break clients that cannot be told to send nothing.
+    if (!keyDigest) return true;
     const header = req.headers.authorization || '';
     const m = /^Bearer\s+(.+)$/i.exec(header.trim());
     // `api-key` is what Azure-flavoured clients send; accepting it costs nothing.
