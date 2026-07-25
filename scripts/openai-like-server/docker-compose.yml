@@ -1,7 +1,7 @@
 # OpenAI/whisper-compatible transcription API for the parakeet_web ONNX pipeline.
 #
 #   cd scripts/openai-like-server
-#   cp env.example .env      # then edit: PARAKEET_MODEL_DIR is mandatory
+#   cp env.example .env      # then edit: MODEL_DIR (the HOST path) is mandatory
 #   docker compose up -d --build
 #   curl -H "Authorization: Bearer $PARAKEET_API_KEY" \
 #        -F file=@clip.mp3 http://127.0.0.1:8002/v1/audio/transcriptions
