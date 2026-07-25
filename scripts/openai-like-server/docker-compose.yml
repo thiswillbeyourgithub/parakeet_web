@@ -1,0 +1,217 @@
+# OpenAI/whisper-compatible transcription API for the parakeet_web ONNX pipeline.
+#
+#   cd scripts/openai-like-server
+#   cp env.example .env      # then edit: PARAKEET_MODEL_DIR is mandatory
+#   docker compose up -d --build
+#   curl -H "Authorization: Bearer $PARAKEET_API_KEY" \
+#        -F file=@clip.mp3 http://127.0.0.1:8002/v1/audio/transcriptions
+#
+# Hardening mirrors docker/docker-compose.yml (the browser app's compose): non-root
+# UID 1000, cap_drop ALL, no-new-privileges, read-only rootfs with every writable
+# path an explicit tmpfs, resource limits, and the port published to loopback only.
+# Every env var below is documented in env.example.
+#
+# Built with Claude Code.
+
+services:
+  parakeet-openai-api:
+    build:
+      # The repository ROOT: the server imports app/src, scripts/transcribe.mjs and
+      # the vendored ORT + sherpa-onnx engines instead of duplicating them.
+      context: ../..
+      dockerfile: scripts/openai-like-server/Dockerfile
+      args:
+        # Which onnxruntime-node backends to bake in. none = wasm-only (smallest,
+        # zero npm deps), cpu = also PARAKEET_ORT=node (default, ~21 MB),
+        # cuda = also PARAKEET_ORT=cuda (+273 MB, and needs a CUDA base image;
+        # see the GPU block at the bottom of this file).
+        ORT_NODE_VARIANT: ${ORT_NODE_VARIANT:-cpu}
+        # Fails the build on any high-severity npm advisory. Set false in .env to
+        # opt out (e.g. a triaged CVE with no upstream fix yet).
+        RUN_NPM_AUDIT: ${RUN_NPM_AUDIT:-true}
+        # Pinned by digest in the Dockerfile; override only for a CUDA base.
+        RUNTIME_BASE: ${RUNTIME_BASE:-node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3}
+    image: parakeet-openai-api:local
+    container_name: parakeet-openai-api
+    restart: unless-stopped
+
+    # ── hardening ─────────────────────────────────────────────────────────────
+    # Non-root (the user is created in the Dockerfile). UID 1000 also matches the
+    # default host user on most Linux distros, so the bind-mounted model directory
+    # is readable without a chown.
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Nothing in the image needs to be written to at runtime.
+    read_only: true
+    tmpfs:
+      # Uploads land here before ffmpeg reads them (a random name per request,
+      # deleted immediately after), and the diarization engine writes its one
+      # CommonJS bootstrap copy here. Sized for the largest upload you allow:
+      # PARAKEET_MAX_UPLOAD_MB plus ~64 MB of headroom.
+      # noexec/nosuid/nodev: this holds attacker-supplied bytes, so make sure they
+      # can never be executed even if something else goes wrong.
+      - /tmp:uid=1000,gid=1000,mode=0700,size=${TMPFS_SIZE:-256m},noexec,nosuid,nodev
+    # Bound the blast radius of a decode loop or a huge upload. The int8 model needs
+    # ~1.5-2 GB resident; fp16/fp32 (PARAKEET_ORT=node) need much more, so raise
+    # MEMORY_LIMIT accordingly (fp32 encoder alone is ~2.4 GB of weights).
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-2.0}"
+          memory: ${MEMORY_LIMIT:-4G}
+    # Reap the ffmpeg children the decode step spawns, so a long-running container
+    # cannot accumulate zombies.
+    init: true
+    # A transcription server is a natural DoS target: cap the process table too.
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # ── network ───────────────────────────────────────────────────────────────
+    # Published to LOOPBACK ONLY. The container itself binds 0.0.0.0 (a published
+    # port cannot reach a process listening on the container's own loopback), which
+    # is why PARAKEET_ALLOW_KEYLESS_NON_LOOPBACK exists below.
+    #
+    # To expose this on a real interface: set PARAKEET_API_KEY, drop
+    # PARAKEET_ALLOW_KEYLESS_NON_LOOPBACK, and put TLS in front of it (this server
+    # speaks plain HTTP, so a bearer token on the open internet without TLS is
+    # sent in clear text).
+    ports:
+      - "127.0.0.1:${PARAKEET_PORT:-8002}:8002"
+
+    volumes:
+      # ── REQUIRED: the ONNX weights ─────────────────────────────────────────
+      # MODEL_DIR is a HOST path (the in-container one is PARAKEET_MODEL_DIR=/models
+      # below); it must hold encoder-model.*.onnx, decoder_joint-model.*.onnx and
+      # vocab.txt. Populate one with:
+      #   hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx --local-dir ./models
+      # Read-only: the server only ever reads weights, and a compromised process
+      # must not be able to swap the model under you.
+      - ${MODEL_DIR:?set MODEL_DIR in .env to the host directory holding the ONNX weights}:/models:ro
+      # ── optional: phrase-boost wordlists (HOST path) ───────────────────────
+      # Any .txt (one phrase per line) or .pwc (precompiled by
+      # scripts/compile-boost.mjs) file here becomes selectable by basename via the
+      # `phrase_boost` request field. Defaults to the repo's curated lists.
+      - ${WORDLIST_DIR:-../../phrase_boosting}:/wordlists:ro
+
+    environment:
+      # ── server ──────────────────────────────────────────────────────────────
+      # 0.0.0.0 inside the container; the host publish above is what limits reach.
+      - PARAKEET_HOST=0.0.0.0
+      - PARAKEET_PORT=8002
+      # Bearer token. Empty = no auth, which is why the keyless acknowledgement
+      # below is required. Generate one with: openssl rand -hex 32
+      - PARAKEET_API_KEY=${PARAKEET_API_KEY:-}
+      # Acknowledges "keyless, but bound to 0.0.0.0 with the port published to
+      # 127.0.0.1 only". Set PARAKEET_API_KEY and remove this the moment the port
+      # is published anywhere else.
+      - PARAKEET_ALLOW_KEYLESS_NON_LOOPBACK=${PARAKEET_ALLOW_KEYLESS_NON_LOOPBACK:-false}
+      # Browsers may call the API only from these exact Origins. Empty = no CORS
+      # headers at all (server-to-server use), which is the safe default.
+      - PARAKEET_ALLOWED_ORIGINS=${PARAKEET_ALLOWED_ORIGINS:-}
+      - PARAKEET_REQUEST_PATH=${PARAKEET_REQUEST_PATH:-}
+      - PARAKEET_INFERENCE_PATH=${PARAKEET_INFERENCE_PATH:-/inference}
+      - PARAKEET_MAX_UPLOAD_MB=${PARAKEET_MAX_UPLOAD_MB:-100}
+      - PARAKEET_MAX_QUEUE=${PARAKEET_MAX_QUEUE:-8}
+      - PARAKEET_REQUEST_TIMEOUT_SEC=${PARAKEET_REQUEST_TIMEOUT_SEC:-1800}
+
+      # ── model ───────────────────────────────────────────────────────────────
+      # In-container path; must match the volume mount above.
+      - PARAKEET_MODEL_DIR=/models
+      - PARAKEET_MODEL=${PARAKEET_MODEL:-parakeet-tdt-0.6b-v3}
+      - PARAKEET_MODEL_ID=${PARAKEET_MODEL_ID:-}
+      # int8 is the only precision the wasm backend can load. fp16/fp32 need
+      # PARAKEET_ORT=node (and ORT_NODE_VARIANT=cpu or cuda at build time).
+      - PARAKEET_QUANT=${PARAKEET_QUANT:-int8}
+      - PARAKEET_DECODER_QUANT=${PARAKEET_DECODER_QUANT:-int8}
+      # wasm (default, vendored onnxruntime-web, byte-identical to the browser app)
+      # | node (native CPU EP) | cuda (native CUDA EP, see the GPU block below)
+      - PARAKEET_ORT=${PARAKEET_ORT:-wasm}
+      - PARAKEET_THREADS=${PARAKEET_THREADS:-0}
+      # ffmpeg binary; empty = auto-detect (the image installs it at /usr/bin/ffmpeg).
+      - PARAKEET_FFMPEG=${PARAKEET_FFMPEG:-}
+
+      # ── decoding (also overridable per request unless PARAKEET_LOCK_PARAMS) ──
+      - PARAKEET_BEAM_WIDTH=${PARAKEET_BEAM_WIDTH:-1}
+      - PARAKEET_MAES_NUM_STEPS=${PARAKEET_MAES_NUM_STEPS:-2}
+      - PARAKEET_MAES_EXPANSION_BETA=${PARAKEET_MAES_EXPANSION_BETA:-2}
+      - PARAKEET_MAES_EXPANSION_GAMMA=${PARAKEET_MAES_EXPANSION_GAMMA:-2.3}
+      - PARAKEET_MAES_PREFIX_ALPHA=${PARAKEET_MAES_PREFIX_ALPHA:-0}
+      - PARAKEET_BEAM_PREFETCH=${PARAKEET_BEAM_PREFETCH:-true}
+      - PARAKEET_FRAME_STRIDE=${PARAKEET_FRAME_STRIDE:-1}
+      - PARAKEET_TEMPERATURE=${PARAKEET_TEMPERATURE:-0}
+      - PARAKEET_CHUNKING=${PARAKEET_CHUNKING:-true}
+      - PARAKEET_CHUNK_DURATION=${PARAKEET_CHUNK_DURATION:-20}
+      - PARAKEET_OVERLAP=${PARAKEET_OVERLAP:-2}
+      - PARAKEET_SNAP_TO_SILENCE=${PARAKEET_SNAP_TO_SILENCE:-1}
+
+      # ── phrase boosting ─────────────────────────────────────────────────────
+      # In-container path; must match the wordlist volume above.
+      - PARAKEET_WORDLIST_DIR=/wordlists
+      # Wordlist used when a request names none (basename, no extension).
+      - PARAKEET_WORDLIST=${PARAKEET_WORDLIST:-}
+      - PARAKEET_PROMPT=${PARAKEET_PROMPT:-}
+      - PARAKEET_BOOST_STRENGTH=${PARAKEET_BOOST_STRENGTH:-1}
+      - PARAKEET_BOOST_MINP=${PARAKEET_BOOST_MINP:-}
+      - PARAKEET_DEPTH_SCALING=${PARAKEET_DEPTH_SCALING:-}
+
+      # ── diarization (needs model.onnx + *campplus*.onnx in the model dir) ────
+      - PARAKEET_DIARIZE=${PARAKEET_DIARIZE:-false}
+      - PARAKEET_DIARIZE_SEG_MODEL=${PARAKEET_DIARIZE_SEG_MODEL:-}
+      - PARAKEET_DIARIZE_EMB_MODEL=${PARAKEET_DIARIZE_EMB_MODEL:-}
+      - PARAKEET_DIARIZE_THREADS=${PARAKEET_DIARIZE_THREADS:-1}
+      - PARAKEET_NUM_SPEAKERS=${PARAKEET_NUM_SPEAKERS:--1}
+      - PARAKEET_DIARIZE_THRESHOLD=${PARAKEET_DIARIZE_THRESHOLD:-0.5}
+      - PARAKEET_MIN_DURATION_ON=${PARAKEET_MIN_DURATION_ON:-0.3}
+      - PARAKEET_MIN_DURATION_OFF=${PARAKEET_MIN_DURATION_OFF:-0.5}
+
+      # ── output ──────────────────────────────────────────────────────────────
+      - PARAKEET_RESPONSE_FORMAT=${PARAKEET_RESPONSE_FORMAT:-json}
+      # Echoed in verbose_json; it does NOT force a language (parakeet v3 detects it).
+      - PARAKEET_LANGUAGE=${PARAKEET_LANGUAGE:-}
+      - PARAKEET_MAX_SEGMENT_CHARS=${PARAKEET_MAX_SEGMENT_CHARS:-180}
+      - PARAKEET_SEGMENT_GAP_SEC=${PARAKEET_SEGMENT_GAP_SEC:-0.8}
+
+      # ── behaviour ───────────────────────────────────────────────────────────
+      # true = refuse any request that tries to change a decoding knob, so every
+      # transcript out of this instance used identical settings.
+      - PARAKEET_LOCK_PARAMS=${PARAKEET_LOCK_PARAMS:-false}
+      # true = downgrade unsupported whisper fields (translate, best_of, ...) from
+      # an error to a warning, for drop-in use with clients that always send them.
+      - PARAKEET_IGNORE_UNSUPPORTED=${PARAKEET_IGNORE_UNSUPPORTED:-false}
+      - PARAKEET_VERBOSE=${PARAKEET_VERBOSE:-false}
+
+    # Extra CLI arguments, appended to the entrypoint. Everything above is also a
+    # flag (see --help), and a flag WINS over its env var -- handy for a one-off:
+    #   command: ["--beam-width", "8", "--lock-params"]
+    command: []
+
+# ── GPU (PARAKEET_ORT=cuda) ───────────────────────────────────────────────────
+# NOT enabled by default and NOT validated in this repo's harness. It needs three
+# things, all at once:
+#   1. an image built with ORT_NODE_VARIANT=cuda AND a RUNTIME_BASE that already
+#      carries Node 22 + CUDA 12 + cuDNN 9 (onnxruntime-node's CUDA EP links
+#      against libcudart.so.12 / libcudnn.so.9, which nvidia-container-toolkit
+#      does NOT inject -- only the driver is injected),
+#   2. nvidia-container-toolkit on the host,
+#   3. the device reservation below.
+# Then add to the service:
+#
+#   deploy:
+#     resources:
+#       reservations:
+#         devices:
+#           - driver: nvidia
+#             count: 1
+#             capabilities: [gpu]
+#
+# and set PARAKEET_ORT=cuda (plus PARAKEET_QUANT=fp16 or fp32 to get the benefit).
+# Note that read_only: true and cap_drop: ALL are kept; the NVIDIA runtime needs
+# neither dropped. If the CUDA EP cannot initialise, the server fails fast at boot
+# with ORT's own error rather than silently falling back to CPU.
