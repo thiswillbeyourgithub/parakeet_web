@@ -249,7 +249,13 @@ test('the Dockerfile pins its base image by digest and installs deps safely', ()
     'base image must be pinned to an immutable digest');
   assert.match(dockerfile, /npm ci --ignore-scripts/, 'install scripts are the malware delivery channel');
   assert.match(dockerfile, /integrity/, 'the lockfile integrity guard must stay');
-  assert.match(dockerfile, /USER parakeet/);
+  // By NUMBER, not by name: the node base images already own UID/GID 1000 (as
+  // `node`), so the image cannot count on having created an account called
+  // parakeet -- an unconditional groupadd -g 1000 there fails the build with
+  // exit 4. compose pins user: "1000:1000" for the same reason.
+  assert.match(dockerfile, /^USER 1000:1000$/m, 'the runtime user must be numeric');
+  assert.doesNotMatch(dockerfile, /--chown=parakeet/,
+    'chown by name breaks on a base image that already owns UID 1000');
 });
 
 test('node_modules lands where the ORT import can actually resolve it', () => {
