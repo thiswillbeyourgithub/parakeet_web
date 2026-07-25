@@ -1,0 +1,20 @@
+{
+  "name": "parakeet-openai-like-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI/whisper-compatible HTTP API in front of the parakeet_web ONNX pipeline.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "//engines": "Node 20 is the floor for the globals this server relies on with no polyfill: File, and Request.formData() for multipart parsing (which is why there is no multipart dependency). The image and CI both run 22.",
+  "engines": {
+    "node": ">=20"
+  },
+  "//": "The default (PARAKEET_ORT=wasm) path has NO npm dependency at all: it uses the vendored app/ui/vendor/onnxruntime-web Node build. onnxruntime-node is needed ONLY for PARAKEET_ORT=node|cuda and is pinned to the same ORT generation as that vendored build (1.27.0) so both backends run the same engine version.",
+  "dependencies": {
+    "onnxruntime-node": "1.27.0"
+  },
+  "license": "AGPL-3.0"
+}
