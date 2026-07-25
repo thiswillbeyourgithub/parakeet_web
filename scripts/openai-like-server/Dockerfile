@@ -112,36 +112,47 @@ RUN apt-get update && \
       echo "ort-node-variant: ${ORT_NODE_VARIANT}"; \
       dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort; } > /etc/parakeet-api-build.txt
 
-# Non-root runtime user. UID 1000 matches the default host user on most Linux
-# distros, so a bind-mounted model directory is readable without a chown, and
-# docker-compose.yml pins user: "1000:1000".
-RUN groupadd -g 1000 -r parakeet && useradd -u 1000 -r -g parakeet -s /usr/sbin/nologin parakeet && \
+# Non-root runtime user, identified by NUMBER rather than by name. UID/GID 1000
+# matches the default host user on most Linux distros, so a bind-mounted model
+# directory is readable without a chown, and docker-compose.yml pins
+# user: "1000:1000".
+#
+# It is created only if 1000 is free: the node images already ship a `node`
+# account at 1000, and an unconditional `groupadd -g 1000` fails the build there
+# with exit 4 ("GID not unique"). A CUDA base (the documented GPU recipe) may
+# leave 1000 free instead, hence the conditional rather than a plain reuse.
+RUN set -eux; \
+    if ! getent group 1000 >/dev/null; then groupadd -g 1000 -r parakeet; fi; \
+    if ! getent passwd 1000 >/dev/null; then \
+      useradd -u 1000 -r -g 1000 -s /usr/sbin/nologin parakeet; \
+    fi; \
     # Both mount points exist even when nothing is bind-mounted over them: the
     # rootfs is read-only at runtime, so they cannot be created later. An empty
     # /wordlists simply means "no wordlists"; a missing /models is a fatal boot
     # error with a download hint, which is the intended behaviour.
-    mkdir -p /models /wordlists && chown parakeet:parakeet /models /wordlists
+    mkdir -p /models /wordlists; \
+    chown 1000:1000 /models /wordlists
 
 WORKDIR /opt/parakeet
 
 # The pipeline and the shared helpers. Layout matters: the server's imports are
 # relative (../../app/src/..., ../transcribe.mjs), so the repo's directory
 # structure has to be preserved inside the image.
-COPY --chown=parakeet:parakeet app/src ./app/src
+COPY --chown=1000:1000 app/src ./app/src
 # Pure, DOM-free helper that maps diarization segments onto words. Shared with the
 # browser app so both label speakers identically.
-COPY --chown=parakeet:parakeet app/ui/src/lib/speakerAssign.js ./app/ui/src/lib/speakerAssign.js
+COPY --chown=1000:1000 app/ui/src/lib/speakerAssign.js ./app/ui/src/lib/speakerAssign.js
 # Vendored onnxruntime-web (Node build): the default PARAKEET_ORT=wasm backend.
-COPY --chown=parakeet:parakeet app/ui/vendor/onnxruntime-web/dist ./app/ui/vendor/onnxruntime-web/dist
+COPY --chown=1000:1000 app/ui/vendor/onnxruntime-web/dist ./app/ui/vendor/onnxruntime-web/dist
 # BPE merges, needed to encode phrase-boost text into token ids.
-COPY --chown=parakeet:parakeet app/ui/public/tokenizer/bpe-merges.json ./app/ui/public/tokenizer/bpe-merges.json
+COPY --chown=1000:1000 app/ui/public/tokenizer/bpe-merges.json ./app/ui/public/tokenizer/bpe-merges.json
 # Vendored sherpa-onnx speaker-diarization engine (~11 MB wasm), used only when a
 # request asks for diarize=true.
-COPY --chown=parakeet:parakeet app/ui/public/sherpa-onnx ./app/ui/public/sherpa-onnx
+COPY --chown=1000:1000 app/ui/public/sherpa-onnx ./app/ui/public/sherpa-onnx
 # The CLI harness whose exported helpers do the model loading, phrase-boost trie
 # building and ffmpeg decoding for the server (see lib/engine.mjs).
-COPY --chown=parakeet:parakeet scripts/transcribe.mjs ./scripts/transcribe.mjs
-COPY --chown=parakeet:parakeet scripts/openai-like-server ./scripts/openai-like-server
+COPY --chown=1000:1000 scripts/transcribe.mjs ./scripts/transcribe.mjs
+COPY --chown=1000:1000 scripts/openai-like-server ./scripts/openai-like-server
 # node_modules goes at the IMAGE ROOT, not next to the server's package.json.
 # `onnxruntime-node` is imported by scripts/transcribe.mjs (getOrt), and Node
 # resolves a bare specifier by walking UP from the IMPORTING file: from
@@ -150,7 +161,7 @@ COPY --chown=parakeet:parakeet scripts/openai-like-server ./scripts/openai-like-
 # scripts/openai-like-server/node_modules. Installing it there gives
 # ERR_MODULE_NOT_FOUND the moment PARAKEET_ORT=node|cuda is used (verified).
 # /opt/parakeet is an ancestor of both importers, so this resolves for each.
-COPY --from=deps --chown=parakeet:parakeet /build/node_modules ./node_modules
+COPY --from=deps --chown=1000:1000 /build/node_modules ./node_modules
 
 # Defaults that make the container work as shipped. PARAKEET_HOST must be
 # 0.0.0.0: a published port cannot reach a process bound to the container's own
@@ -163,7 +174,9 @@ ENV PARAKEET_HOST=0.0.0.0 \
     PARAKEET_WORDLIST_DIR=/wordlists \
     NODE_ENV=production
 
-USER parakeet
+# By NUMBER, so the image works whether the account at 1000 is the one created
+# above or one the base image already had (node images ship `node` at 1000).
+USER 1000:1000
 EXPOSE 8002
 
 # Liveness only (/health needs no auth so a probe never holds the secret). It
