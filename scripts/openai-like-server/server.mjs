@@ -77,7 +77,12 @@ async function main() {
     for (const [name, path] of Object.entries(routes)) {
       if (path) console.error(`[parakeet-api]   ${name.padEnd(15)} ${path}`);
     }
-    console.error(`[parakeet-api] auth: ${options.apiKey ? 'Bearer token required' : 'NONE (loopback only)'}`);
+    // Spell out the keyless contract: clients that cannot be configured without
+    // an api_key (most OpenAI SDKs insist on one) can send any placeholder and
+    // it is accepted, because there is no secret to compare it against.
+    console.error(`[parakeet-api] auth: ${options.apiKey
+      ? 'Bearer token required'
+      : 'NONE (any key a client sends is accepted and ignored)'}`);
     console.error(`[parakeet-api] limits: ${options.maxUploadMb} MiB upload, `
       + `${options.maxQueue} queued, ${options.requestTimeoutSec}s timeout`);
     if (!options.apiKey) {

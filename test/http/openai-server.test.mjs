@@ -417,8 +417,44 @@ test('an empty key means no auth at all (the documented single-user mode)', asyn
   await withApi({ argv: ['--api-key', ''] }, async (api) => {
     assert.equal((await post(api)).status, 200);
     assert.equal((await fetch(api.url('/v1/models'))).status, 200);
-    // A key sent to a keyless server is ignored, not rejected.
-    assert.equal((await post(api, {}, { headers: { Authorization: 'Bearer whatever' } })).status, 200);
+  });
+});
+
+test('a keyless server accepts ANY key a client insists on sending', async () => {
+  // Most OpenAI clients refuse to start without an api_key, so they send a
+  // placeholder ("unused", "sk-...", "EMPTY"). A keyless instance must take
+  // whatever arrives rather than 401 it: there is no secret to compare against,
+  // so the presented value carries no information and rejecting it would only
+  // break clients that cannot be configured to send nothing.
+  await withApi({ argv: ['--api-key', ''] }, async (api) => {
+    const headerSets = [
+      { Authorization: 'Bearer whatever' },
+      { Authorization: 'Bearer sk-0000000000000000000000000000000000000000' },
+      { Authorization: 'bearer lowercase-scheme' },
+      { Authorization: 'Basic dXNlcjpwYXNz' },          // wrong scheme entirely
+      { Authorization: 'not-even-a-scheme' },           // malformed
+      { 'api-key': 'azure-style-key' },
+      { Authorization: 'Bearer one', 'api-key': 'two' }, // both, disagreeing
+    ];
+    for (const headers of headerSets) {
+      const res = await post(api, {}, { headers });
+      assert.equal(res.status, 200, `keyless server rejected ${JSON.stringify(headers)}`);
+    }
+    // /v1/models is the other authenticated route; same rule.
+    assert.equal((await fetch(api.url('/v1/models'), { headers: { Authorization: 'Bearer junk' } })).status, 200);
+    // /health returns the model block too, since with no key configured every
+    // caller is as authorised as any other.
+    const health = await (await fetch(api.url('/health'), { headers: { Authorization: 'Bearer junk' } })).json();
+    assert.equal(health.model.quant, 'int8');
+  });
+});
+
+test('a configured key is still enforced, loopback or not', async () => {
+  // The counterpart to the rule above: once a key EXISTS, accepting any key
+  // would make setting one pointless. The bind address does not soften it.
+  await withApi({ argv: ['--api-key', 'sekret', '--host', '127.0.0.1'] }, async (api) => {
+    assert.equal((await post(api, {}, { headers: { Authorization: 'Bearer wrong' } })).status, 401);
+    assert.equal((await post(api, {}, { headers: { Authorization: 'Bearer sekret' } })).status, 200);
   });
 });
 
