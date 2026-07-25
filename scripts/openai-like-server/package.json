@@ -16,5 +16,9 @@
   "dependencies": {
     "onnxruntime-node": "1.27.0"
   },
+  "//overrides": "adm-zip is a transitive dependency of onnxruntime-node's INSTALL script (it unzips the downloaded binaries) and is never executed here: we install with --ignore-scripts and the runtime only loads the native .node binding. Its <0.6.0 advisory (GHSA-xcpc-8h2w-3j85, a crafted ZIP allocating 4 GB) is therefore unreachable, but it is HIGH severity and would fail the Dockerfile's `npm audit --audit-level=high` gate. Forcing the patched 0.6.0 keeps that gate strict instead of turning it off.",
+  "overrides": {
+    "adm-zip": "^0.6.0"
+  },
   "license": "AGPL-3.0"
 }
