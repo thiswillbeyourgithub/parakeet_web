@@ -26,6 +26,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Phrase Boosting](#phrase-boosting)
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
+- [OpenAI-Compatible API Server](#openai-compatible-api-server)
 - [Resetting the app](#resetting-the-app)
 - [Mobile debugging](#mobile-debugging)
 - [Architecture](#architecture)
@@ -57,6 +58,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 🌐 **Bilingual UI** | Interface available in English and French, auto-selected from your browser language (the underlying model itself is multilingual) |
 | 📦 **SmoothQuant int8 Encoder** | The encoder runs as a SmoothQuant int8 model by default, recalibrated so its accuracy tracks fp32 even on long audio (unlike a stock int8 cast that degrades badly past ~30 s). From the encoder-precision picker you can opt into a lighter `int8 lite` encoder (~757 MB vs the default ~841 MB: it keeps more layers in fp32), or the full **sharded fp32** encoder (~2.4 GB, ~2x slower, split into <2 GB pieces by `scripts/shard-fp32.py` so it fits the browser) for maximum quality; opt-in precisions stop with a clear message rather than silently downgrading when the model repo doesn't ship them. The decoder always runs int8 (on this model the int8 joiner is as accurate as fp32, while being smaller and faster). The model repo also ships an **fp16** encoder (~1.2 GB, built by `scripts/quantize-fp16.py` in the [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) model repo) for the WebGPU backend, but WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)) so fp16 is not used |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
+| 🔌 **OpenAI-Compatible API** | Optional headless mode: serve the same pipeline over the OpenAI audio-transcription API (plus the whisper.cpp and whisper-asr-webservice dialects) so existing clients can transcribe locally, with phrase boosting and diarization exposed per request. See [OpenAI-Compatible API Server](#openai-compatible-api-server) |
 
 > **Planned:** as it matures, I want to eventually add support for [WEBCAT](https://github.com/freedomofpress/webcat/) (Web-based Code Assurance and Transparency) for even stronger security guarantees, so you can cryptographically verify that the code running in your browser is the code that was actually published.
 
@@ -318,6 +320,31 @@ is auto-promoted to `both`.
 The container runs as UID 1000. If your files end up unreadable to UID
 1000, run `chmod -R a+rX /host/path/to/onnx-files` (or
 `chown -R 1000:1000 /host/path/to/onnx-files`).
+
+Built with [Claude Code](https://claude.com/claude-code).
+
+## OpenAI-Compatible API Server
+
+The browser app is the product; but the same pipeline can also be served headlessly over HTTP, for a client that already speaks the **OpenAI audio-transcription API** (the OpenAI SDKs, Open WebUI, note-taking plugins, `whisper.cpp`'s client, a curl script). That server lives in [`scripts/openai-like-server/`](./scripts/openai-like-server/README.md) and ships its own hardened `Dockerfile` + `docker-compose.yml`.
+
+```bash
+cd scripts/openai-like-server
+cp env.example .env                 # MODEL_DIR is the only mandatory value
+docker compose up -d --build
+
+curl -sS -F file=@meeting.ogg http://127.0.0.1:8002/v1/audio/transcriptions
+# {"text":"..."}
+```
+
+What it gives you beyond a plain wrapper:
+
+- `POST /v1/audio/transcriptions` with `json` / `text` / `srt` / `vtt` / `verbose_json`, plus the whisper.cpp (`POST /inference`) and whisper-asr-webservice (`audio_file`, `output`, `initial_prompt`, `hotwords`, ...) spellings.
+- **Phrase boosting over HTTP**: pick a wordlist per request with `phrase_boost=<name>`, or send terms inline. OpenAI's `prompt` field lands here, since parakeet has no text conditioning to bias with.
+- **Speaker diarization** as an opt-in `diarize=true`, using the same engine the browser app uses, so labels match.
+- Whisper flags/fields it cannot honour are **rejected with an explanation**, never silently ignored, so a transcript is always what was asked for.
+- Bearer auth (empty key = no auth, and it refuses to start keyless on a non-loopback address), a strict FIFO queue with 429/504, an upload cap, non-root read-only container, and a log that never contains your transcripts.
+
+It **imports** this repo's pipeline rather than reimplementing it, so its output is byte-identical to the `scripts/transcribe.mjs` CLI for the same options. See its [README](./scripts/openai-like-server/README.md) for the full API reference.
 
 Built with [Claude Code](https://claude.com/claude-code).
 

@@ -26,6 +26,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Renforcement de phrases](#renforcement-de-phrases)
 - [Microphone distant (téléphone comme micro)](#microphone-distant-téléphone-comme-micro)
 - [Modèle local de secours](#modèle-local-de-secours)
+- [Serveur d'API compatible OpenAI](#serveur-dapi-compatible-openai)
 - [Réinitialiser l'application](#réinitialiser-lapplication)
 - [Débogage mobile](#débogage-mobile)
 - [Architecture](#architecture)
@@ -57,6 +58,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | 🌐 **Interface bilingue** | Interface disponible en anglais et en français, sélectionnée automatiquement selon la langue de votre navigateur (le modèle sous-jacent est lui-même multilingue) |
 | 📦 **Encodeur int8 SmoothQuant** | L'encodeur tourne en int8 SmoothQuant par défaut, recalibré pour que sa précision suive celle de fp32 même sur de l'audio long (contrairement à une conversion int8 standard qui se dégrade fortement au-delà d'environ 30 s). Depuis le sélecteur de précision de l'encodeur, vous pouvez opter pour un encodeur `int8 lite` plus léger (~757 Mo contre ~841 Mo par défaut : il garde davantage de couches en fp32), ou pour l'encodeur **fp32 fragmenté** complet (~2,4 Go, environ 2x plus lent, découpé en morceaux de moins de 2 Go par `scripts/shard-fp32.py` pour qu'il tienne dans le navigateur) pour une qualité maximale ; les précisions optionnelles s'arrêtent avec un message clair plutôt qu'une rétrogradation silencieuse lorsque le dépôt du modèle ne les fournit pas. Le décodeur tourne toujours en int8 (sur ce modèle, le joiner int8 est aussi précis que fp32, tout en étant plus léger et plus rapide). Le dépôt du modèle fournit aussi un encodeur **fp16** (~1,2 Go, généré par `scripts/quantize-fp16.py` dans le dépôt [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) pour le backend WebGPU, mais WebGPU est actuellement désactivé ([Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)) donc fp16 n'est pas utilisé |
 | 🐳 **Prêt pour Docker** | Déploiement auto-hébergé en une seule commande |
+| 🔌 **API compatible OpenAI** | Mode sans interface optionnel : servez le même pipeline via l'API de transcription audio d'OpenAI (ainsi que les dialectes whisper.cpp et whisper-asr-webservice) pour que des clients existants transcrivent en local, avec le renforcement de phrases et l'identification des locuteurs pilotables par requête. Voir [Serveur d'API compatible OpenAI](#serveur-dapi-compatible-openai) |
 
 > **Prévu :** au fur et à mesure de la maturation du projet, je souhaite à terme ajouter la prise en charge de [WEBCAT](https://github.com/freedomofpress/webcat/) (Web-based Code Assurance and Transparency) pour des garanties de sécurité encore plus fortes, afin que vous puissiez vérifier cryptographiquement que le code exécuté dans votre navigateur est bien celui qui a été réellement publié.
 
@@ -324,6 +326,31 @@ est automatiquement promu en `both`.
 Le conteneur s'exécute sous l'UID 1000. Si vos fichiers finissent par être illisibles pour l'UID
 1000, exécutez `chmod -R a+rX /host/path/to/onnx-files` (ou
 `chown -R 1000:1000 /host/path/to/onnx-files`).
+
+Construit avec [Claude Code](https://claude.com/claude-code).
+
+## Serveur d'API compatible OpenAI
+
+L'application navigateur reste le produit ; mais le même pipeline peut aussi être servi sans interface, en HTTP, pour un client qui parle déjà l'**API de transcription audio d'OpenAI** (les SDK OpenAI, Open WebUI, des greffons de prise de notes, le client de `whisper.cpp`, un script curl). Ce serveur se trouve dans [`scripts/openai-like-server/`](./scripts/openai-like-server/README.md) et fournit son propre `Dockerfile` durci et son `docker-compose.yml`.
+
+```bash
+cd scripts/openai-like-server
+cp env.example .env                 # MODEL_DIR est la seule valeur obligatoire
+docker compose up -d --build
+
+curl -sS -F file=@reunion.ogg http://127.0.0.1:8002/v1/audio/transcriptions
+# {"text":"..."}
+```
+
+Ce qu'il apporte de plus qu'une simple encapsulation :
+
+- `POST /v1/audio/transcriptions` avec `json` / `text` / `srt` / `vtt` / `verbose_json`, ainsi que les orthographes de whisper.cpp (`POST /inference`) et de whisper-asr-webservice (`audio_file`, `output`, `initial_prompt`, `hotwords`, ...).
+- **Le renforcement de phrases en HTTP** : choisissez une liste par requête avec `phrase_boost=<nom>`, ou envoyez des termes en ligne. Le champ `prompt` d'OpenAI atterrit ici, parakeet n'ayant aucun conditionnement textuel par lequel l'orienter.
+- **L'identification des locuteurs** en option via `diarize=true`, avec le moteur utilisé par l'application navigateur, donc des étiquettes identiques.
+- Les options et champs whisper qu'il ne peut pas honorer sont **refusés avec une explication**, jamais ignorés en silence : une transcription correspond toujours à ce qui a été demandé.
+- Authentification Bearer (clé vide = aucune authentification, et il refuse de démarrer sans clé sur une adresse non locale), file d'attente FIFO stricte avec 429/504, plafond de téléversement, conteneur non-root en lecture seule, et un journal qui ne contient jamais vos transcriptions.
+
+Il **importe** le pipeline de ce dépôt au lieu de le réimplémenter : sa sortie est donc identique octet pour octet à celle de la CLI `scripts/transcribe.mjs` à options égales. Voir son [README](./scripts/openai-like-server/README.md) pour la référence complète de l'API.
 
 Construit avec [Claude Code](https://claude.com/claude-code).
 
