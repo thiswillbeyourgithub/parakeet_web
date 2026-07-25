@@ -62,11 +62,16 @@ services:
         limits:
           cpus: "${CPU_LIMIT:-2.0}"
           memory: ${MEMORY_LIMIT:-4G}
+          # A transcription server is a natural DoS target: cap the process table
+          # too. This lives HERE rather than in the top-level `pids_limit`: recent
+          # compose normalises that key into this one and then refuses the project
+          # ("can't set distinct values on 'pids_limit' and
+          # 'deploy.resources.limits.pids'") when the deploy block exists without
+          # it. One spelling, next to the cpu/memory limits it belongs with.
+          pids: 256
     # Reap the ffmpeg children the decode step spawns, so a long-running container
     # cannot accumulate zombies.
     init: true
-    # A transcription server is a natural DoS target: cap the process table too.
-    pids_limit: 256
     logging:
       driver: json-file
       options:

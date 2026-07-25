@@ -225,7 +225,15 @@ test('the compose file keeps the hardening posture', () => {
   assert.match(compose, /no-new-privileges:true/);
   assert.match(compose, /cap_drop:\s*\n\s*- ALL/);
   assert.match(compose, /read_only:\s*true/);
-  assert.match(compose, /pids_limit:/);
+  // The process-table cap must exist, and must be spelled ONLY as
+  // deploy.resources.limits.pids: recent compose normalises the top-level
+  // `pids_limit` into that same field and then rejects the whole project
+  // ("can't set distinct values on 'pids_limit' and
+  // 'deploy.resources.limits.pids'") when both appear, which is a boot failure,
+  // not a warning.
+  assert.match(compose, /^\s+pids:\s*\d+/m);
+  assert.doesNotMatch(compose, /^\s*pids_limit:/m,
+    'use deploy.resources.limits.pids only; the two spellings together are an invalid project');
   assert.match(compose, /init:\s*true/);
   // Uploads are attacker-supplied bytes on a tmpfs: never executable.
   assert.match(compose, /\/tmp:.*noexec/);
