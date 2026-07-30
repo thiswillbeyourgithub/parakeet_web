@@ -23,7 +23,7 @@ import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, compileBoostList, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
+import { BoostingTrie, compileBoostList, packEncoded, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
@@ -2122,7 +2122,12 @@ export default function App() {
             vocabSig: parsed.vocabSig,
             // The global augmentation-default the prebuild expanded at.
             augmentDefault: parsed.augmentDefault,
-            encoded: parsed.encoded,
+            // Packed once, here, rather than on every rebuild: the artifact
+            // parses to one object per surface form (~330k of them for a large
+            // clinical list), and that shape costs ~450 ms to structured-clone
+            // every time the decode worker's trie is re-synced. Packing is ~17 ms
+            // and happens next to the JSON.parse that already dominates this step.
+            encoded: packEncoded(parsed.encoded),
             skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
           };
         }
@@ -2133,7 +2138,7 @@ export default function App() {
     prebuiltBoostRef.current = pre;
     if (verboseLogRef.current) {
       if (pre) {
-        console.log(`[Boost] prebuilt encoding ready for "${src}": ${pre.encoded.length} entries, `
+        console.log(`[Boost] prebuilt encoding ready for "${src}": ${encodedCount(pre.encoded)} entries, `
           + `${pre.skipped.length} skipped, vocabSig=${pre.vocabSig}, augmentDefault="${pre.augmentDefault}". `
           + `The trie rebuild will reuse this and skip the BPE encode (provided vocab + augment toggle match).`);
       } else {
@@ -2491,7 +2496,7 @@ export default function App() {
         const { encoded, skipped } = needEncode
           ? { encoded: res.encoded, skipped: res.skipped }
           : { encoded: pre.encoded, skipped: pre.skipped };
-        const count = encoded.length;
+        const count = encodedCount(encoded);
         const trie = BoostingTrie.buildFromEncoded(encoded, {
           strength: boostStrengthRef.current,
           depthScaling: boostDepthScaling,
