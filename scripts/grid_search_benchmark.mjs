@@ -102,6 +102,10 @@ function parseArgs(argv) {
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
     minps: [null],          // swept dimension: min-p gate override (null = each phrase's baked min-p)
     depthScalings: [null],  // swept dimension: trie depth-scaling (null = trie's built-in default)
+    commitmentScaling: null, // NOT swept: one value for the whole run (null = trie's default, 1).
+                            // Partial-match discount strength (see BoostingTrie.insert). It is a
+                            // ship/don't-ship A/B lever rather than a tuning knob, so the honest
+                            // comparison is two whole runs, not an extra column in one table.
     boosts: [],             // --phrase-boost specs (repeatable); inline / .txt / .pwc
     noBaseline: false,      // drop the no-boost row from the sweep
     maesNumSteps: [2],       // swept dimension: MAES max symbols emitted per frame
@@ -164,6 +168,7 @@ function parseArgs(argv) {
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
       case '--boost-minp': a.minps = numList(val(flag)); break;
       case '--depth-scaling': a.depthScalings = numList(val(flag)); break;
+      case '--commitment-scaling': a.commitmentScaling = Number(val(flag)); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '--no-baseline': a.noBaseline = true; break;
       case '--maes-num-steps': a.maesNumSteps = numList(val(flag)); break;
@@ -232,6 +237,10 @@ function parseArgs(argv) {
   }
   if (!a.depthScalings.length || a.depthScalings.some((d) => d !== null && (!Number.isFinite(d) || d < 0))) {
     throw new Error('--depth-scaling must be a comma-separated list of numbers >= 0 (0 = flat, no per-depth growth)');
+  }
+  if (a.commitmentScaling !== null
+    && (!Number.isFinite(a.commitmentScaling) || a.commitmentScaling < 0 || a.commitmentScaling > 1)) {
+    throw new Error('--commitment-scaling must be a number in [0, 1] (0 = no partial-match discount, 1 = full)');
   }
   if (!a.maesNumSteps.length || a.maesNumSteps.some((n) => !Number.isInteger(n) || n < 1)) {
     throw new Error('--maes-num-steps must be a comma-separated list of integers >= 1');
@@ -362,15 +371,24 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
                            baked min-p (no override).
       --depth-scaling LIST  Trie depth-scaling factors to sweep, e.g. "0,0.5,1".
                            The per-token boost at trie depth d is
-                           weight*(1 + depth-scaling*(d-1)), so this controls how
-                           much deeper (more committed) matches are rewarded:
-                           0 = flat (every depth gets the base weight, least
-                           "inertia"), higher = stronger pull to complete a
+                           weight*(d/L)*(1 + depth-scaling*(d-1)) for a phrase of
+                           L tokens, so this controls how much deeper (more
+                           committed) matches are rewarded: 0 = only the d/L ramp
+                           (least "inertia"), higher = stronger pull to complete a
                            started phrase. Unlike min-p this is baked into the
                            trie at build time, so each value rebuilds the trie
                            (one per strength x depth-scaling). Only used when
                            --phrase-boost is set. Default: the trie's built-in
                            default (no override).
+      --commitment-scaling N
+                           Strength of the d/L partial-match discount above, for
+                           the WHOLE run (a single number, not a swept list, in
+                           [0, 1]). 1 = full discount (the default), 0 = none, so
+                           a phrase's first token already earns its full weight
+                           (the behaviour before that ramp was introduced). It is
+                           a ship/don't-ship lever, so A/B it as two whole runs
+                           and compare their overall WER/CER. Only used when
+                           --phrase-boost is set.
       --no-baseline        Drop the auto-added no-boost baseline row from the
                            sweep (the row labelled boost=none, equivalent to a
                            strength of 0). Without it every boosted run keeps a
@@ -1084,8 +1102,9 @@ async function main() {
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
+  const commitNote = hasBoost && args.commitmentScaling !== null ? ` (commitment-scaling ${args.commitmentScaling})` : '';
   const maesNote = maesConfigs.length > 1 ? ` x ${maesConfigs.length} MAES config(s)` : '';
-  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s)${maesNote} = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}\n`);
+  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s)${maesNote} = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}${commitNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -1384,6 +1403,7 @@ async function main() {
             boosts: args.boosts,
             strength,
             depthScaling: depthScaling ?? undefined, // null => trie's built-in default
+            commitmentScaling: args.commitmentScaling ?? undefined, // null => trie's built-in default
             tokenizer,
             quiet: !args.verbose,
             verbose: args.verbose,
@@ -1461,6 +1481,9 @@ async function main() {
           type: 'utterance', run: tag,
           beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
           depthScaling: row.depthScaling ?? null,
+          // Constant for the whole run, but recorded per row so two A/B runs'
+          // jsonl files can be concatenated and still be told apart.
+          commitmentScaling: args.commitmentScaling ?? null,
           dataset: e.dataset,
           audio: e.audioPath, duration: e.duration, audioSec: +audioSec.toFixed(3),
           ref: e.text, hyp, refNorm, hypNorm,
@@ -1493,6 +1516,7 @@ async function main() {
       const datasets = buildDatasets(perDs, datasetNames);
       const r = { beamWidth: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
+        commitmentScaling: args.commitmentScaling ?? null,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         beamCell: summarizeCellBeam(beamStatsSamples),
@@ -1524,6 +1548,7 @@ async function main() {
         type: 'summary', run: tag,
         beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, backend: ortForQuant(row.quant), boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
+        commitmentScaling: args.commitmentScaling ?? null,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         utterances: entries.length,

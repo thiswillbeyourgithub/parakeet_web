@@ -270,6 +270,22 @@ describe('augmentVariants / expandAugmentations', () => {
 });
 
 const ids = encoder.encode('acetaminophen');
+// Pins the fixture tokenization the expected bonuses below are computed from: a
+// different split would silently change every commitment fraction (depth / L).
+test('the fixture encodes acetaminophen to 6 tokens', () => assert.equal(ids.length, 6));
+
+// Float-tolerant compare for the reward-schedule assertions: the schedule
+// multiplies by depth/L, so exact values like 2 * (2/6) * 1.5 land a few ulps
+// off their real-number counterpart.
+const close = (actual, expected, msg) =>
+  assert.ok(Math.abs(actual - expected) < 1e-12, `${msg ?? ''} expected ~${expected}, got ${actual}`);
+
+// A single-token phrase built straight from ids. Its only node sits at depth 1
+// of a length-1 phrase, so committed = 1/1 and the bonus is exactly the weight:
+// that keeps the gate/argmax tests below about the gate rather than about the
+// depth schedule, which has its own tests here and in the describe above.
+const singleTokenTrie = (weight, minp, opts = {}) =>
+  BoostingTrie.buildFromEncoded([{ ids: [ids[0]], weight, minp }], { strength: 1, ...opts });
 
 describe('BoostingTrie build + advance + bonus map', () => {
   const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 2 }], encoder, { strength: 1, depthScaling: 0.5 });
@@ -277,18 +293,74 @@ describe('BoostingTrie build + advance + bonus map', () => {
 
   trie.reset();
   test('root boosts only first token', () => assert.ok(trie.childBoostFor(ids[0]) !== null && trie.childBoostFor(ids[1]) === null));
-  test('depth-1 bonus = weight*(1+0.5*0) = 2', () => assert.equal(trie.childBoostFor(ids[0]).bonus, 2));
+  // The reward is scaled by how much of the phrase the node commits to. One of
+  // six tokens is thin evidence, so it earns a sixth of the weight; matching the
+  // whole phrase still earns the full depth-scaled weight (last test below).
+  test('depth-1 bonus = weight*(1/6)*(1+0.5*0)', () => close(trie.childBoostFor(ids[0]).bonus, 2 / 6));
   test('default minp carried on the bonus', () => assert.equal(trie.childBoostFor(ids[0]).minp, DEFAULT_BOOST_MIN_P));
 
   test('after advance: second token boosted, root still active', () => {
     trie.advance(ids[0]);
     assert.ok(trie.childBoostFor(ids[1]) !== null);
-    assert.equal(trie.childBoostFor(ids[1]).bonus, 3); // weight*(1+0.5*1)
-    assert.equal(trie.childBoostFor(ids[0]).bonus, 2); // root still active
+    close(trie.childBoostFor(ids[1]).bonus, 2 * (2 / 6) * 1.5, 'weight*(2/6)*(1+0.5*1)');
+    close(trie.childBoostFor(ids[0]).bonus, 2 / 6, 'root still active');
   });
   test('mismatch drops to root only', () => {
     trie.advance(999999);
-    assert.ok(trie.childBoostFor(ids[1]) === null && trie.childBoostFor(ids[0]).bonus === 2);
+    assert.ok(trie.childBoostFor(ids[1]) === null);
+    close(trie.childBoostFor(ids[0]).bonus, 2 / 6);
+  });
+
+  test('a completed phrase still earns the full depth-scaled weight', () => {
+    // The endpoint the commitment scaling must not move: at the last token,
+    // committed = L/L = 1, so the bonus is weight*(1+depthScaling*(L-1)) exactly
+    // as before. Only the speculative middle is discounted.
+    const t = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 2 }], encoder, { strength: 1, depthScaling: 0.5 });
+    t.reset();
+    for (let i = 0; i < ids.length - 1; i++) t.advance(ids[i]);
+    close(t.childBoostFor(ids[ids.length - 1]).bonus, 2 * (1 + 0.5 * (ids.length - 1)));
+  });
+
+  test('a single-token phrase is untouched by the commitment scaling', () => {
+    // The other endpoint: one token IS the whole phrase, so committed = 1.
+    const t = BoostingTrie.buildFromEncoded([{ ids: [ids[0]], weight: 2 }], { strength: 1, depthScaling: 0.5 });
+    t.reset();
+    assert.equal(t.childBoostFor(ids[0]).bonus, 2);
+  });
+
+  test('commitmentScaling 0 restores the pre-ramp schedule exactly', () => {
+    // The A/B lever for the WER/CER sweep (scripts/transcribe.mjs
+    // --commitment-scaling): 0 must reproduce the old weight*(1+ds*(d-1)) bonus
+    // at every depth, bit for bit, or the sweep is not comparing what it claims.
+    const t = BoostingTrie.buildFromEncoded(
+      [{ ids }], { strength: 1, depthScaling: 0.5, commitmentScaling: 0 },
+    );
+    let node = t.root;
+    for (let d = 1; d <= ids.length; d++) {
+      node = node.children.get(ids[d - 1]);
+      assert.equal(node.bonus, 1 * (1 + 0.5 * (d - 1)), `depth ${d}`);
+    }
+  });
+
+  test('commitmentScaling 0.5 interpolates between the two schedules', () => {
+    const at = (cs) => BoostingTrie.buildFromEncoded(
+      [{ ids, weight: 2 }], { strength: 1, depthScaling: 0, commitmentScaling: cs },
+    ).root.children.get(ids[0]).bonus;
+    close(at(0), 2);           // full weight on one of six tokens
+    close(at(1), 2 / 6);       // discounted to what it actually commits
+    close(at(0.5), 2 * (1 - 0.5 * (1 - 1 / 6)));
+  });
+
+  test('a longer phrase speculates less on the same first token', () => {
+    // The property the whole change exists for: "The" must not earn as much for
+    // starting "Theileria microti" as it would for being a phrase in its own
+    // right. Same weight, same first token, longer phrase => smaller depth-1 bonus.
+    const short = BoostingTrie.buildFromEncoded([{ ids: [ids[0], ids[1]] }], { strength: 1, depthScaling: 0.5 });
+    const long = BoostingTrie.buildFromEncoded([{ ids }], { strength: 1, depthScaling: 0.5 });
+    short.reset(); long.reset();
+    close(short.childBoostFor(ids[0]).bonus, 1 / 2);
+    close(long.childBoostFor(ids[0]).bonus, 1 / 6);
+    assert.ok(long.childBoostFor(ids[0]).bonus < short.childBoostFor(ids[0]).bonus);
   });
 });
 
@@ -297,7 +369,7 @@ describe('BoostingTrie build + advance + bonus map', () => {
 // body at registration time, so body-level mutations would run before any
 // test callback).
 test('applyBoost / restore flips argmax, then restores', () => {
-  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 2 }], encoder, { strength: 1, depthScaling: 0.5 });
+  const trie = singleTokenTrie(2, undefined, { depthScaling: 0.5 });
   const V = fixture.id2token.length;
   const logits = new Float32Array(V);
   logits[5] = 1.0;        // some other token is the unboosted winner
@@ -317,7 +389,7 @@ test('applyBoost / restore flips argmax, then restores', () => {
 });
 
 test('penalise (negative weight) flips the argmax away, then restores', () => {
-  const penTrie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: -2 }], encoder, { strength: 1, depthScaling: 0.5 });
+  const penTrie = singleTokenTrie(-2, undefined, { depthScaling: 0.5 });
   penTrie.reset();
   assert.equal(penTrie.childBoostFor(ids[0]).bonus, -2, 'negative bonus is stored, not lost against 0');
   const penLogits = new Float32Array(fixture.id2token.length);
@@ -336,12 +408,12 @@ test('min-p gating only boosts tokens the model finds plausible enough', () => {
   // ids[0] sits 4 logits below the top token, i.e. exp(-4) ~= 1.83% as likely.
   gateLogits[100] = 5; gateLogits[ids[0]] = 1;
   // min-p 0.05 = "at least 5% as likely as the top": 1.83% < 5%, gated out.
-  const strict = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.05 }], encoder, { strength: 1 });
+  const strict = singleTokenTrie(5, 0.05);
   strict.reset();
   assert.equal(strict.applyBoost(gateLogits), null, 'candidate below the min-p ratio is gated out');
   assert.equal(gateLogits[ids[0]], 1, 'gated-out logit is untouched');
   // min-p 0.01 = "at least 1% as likely": 1.83% > 1%, boosted (by weight*1 = 5).
-  const loose = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.01 }], encoder, { strength: 1 });
+  const loose = singleTokenTrie(5, 0.01);
   loose.reset();
   const gateSaved = loose.applyBoost(gateLogits);
   assert.ok(Array.isArray(gateSaved) && gateLogits[ids[0]] === 6, 'candidate above the min-p ratio is boosted');
@@ -354,7 +426,7 @@ test('min-p adapts to the per-frame max (entropy-aware): same logit, different g
   // gated out on a confident (peaked) frame but boosted on a flat (uncertain)
   // one. log(0.05) ~= -3.0, so the gate admits ids[0] iff maxLogit - logit <= 3.
   const V = fixture.id2token.length;
-  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.05 }], encoder, { strength: 1 });
+  const trie = singleTokenTrie(5, 0.05);
 
   const peaked = new Float32Array(V);
   peaked[100] = 10; peaked[ids[0]] = 1; // gap 9 >> 3: the model is confident elsewhere
@@ -372,7 +444,7 @@ test('minpOverride supersedes every per-phrase min-p (the grid-search sweep knob
   const V = fixture.id2token.length;
   // The phrase bakes a strict gate (0.5 = "at least 50% as likely as the top"),
   // which would reject ids[0] at exp(-4) ~= 1.83% of the max.
-  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.5 }], encoder, { strength: 1 });
+  const trie = singleTokenTrie(5, 0.5);
   const logits = new Float32Array(V);
   logits[100] = 5; logits[ids[0]] = 1;
   trie.reset();
@@ -385,7 +457,7 @@ test('minpOverride supersedes every per-phrase min-p (the grid-search sweep knob
   assert.ok(Array.isArray(saved) && logits[ids[0]] === 6, 'override loosens the gate and boosts');
   trie.restore(logits, saved);
   // And a stricter override can gate out a candidate the baked min-p would pass.
-  const loose = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.01 }], encoder, { strength: 1 });
+  const loose = singleTokenTrie(5, 0.01);
   loose.minpOverride = 0.5;
   loose.reset();
   assert.equal(loose.applyBoost(logits), null, 'a stricter override gates out what the baked min-p would pass');
@@ -395,7 +467,7 @@ test('minpOverride extremes: 0 = boost all, 1 = only the model top token', () =>
   const V = fixture.id2token.length;
   // A strict baked gate (0.5) that would reject any non-top candidate; the
   // override must win in both directions regardless of it.
-  const trie = BoostingTrie.buildFromPhrases([{ phrase: 'acetaminophen', weight: 5, minp: 0.5 }], encoder, { strength: 1 });
+  const trie = singleTokenTrie(5, 0.5);
 
   // override 0 => floor = maxLogit + Math.log(0) = -Infinity => EVERY candidate
   // clears the gate, even one the model barely considered (20 logits down).
@@ -471,20 +543,24 @@ describe('a penalty is never swallowed by a boost on a shared prefix', () => {
   test('a weaker penalty still offsets a stronger boost on the shared token', () => {
     const t = build([
       { ids: [1, 2, 3], weight: 1.5, minp: 0.025 }, // the long phrase
-      { ids: [1], weight: -1, minp: 0.025 },        // the user's penalty
+      { ids: [1], weight: -0.25, minp: 0.025 },     // the user's penalty
     ]);
-    assert.equal(nodeFor(t, [1]).bonus, 0.5, '1.5 boost + (-1) penalty');
-    // Deeper nodes, which the penalty does not reach, keep the full boost.
-    assert.equal(nodeFor(t, [1, 2]).bonus, 1.5);
+    // The 3-token phrase commits 1/3 of itself at the shared token, so its boost
+    // there is 1.5/3 = 0.5. The penalty is a phrase in its own right (1 of 1
+    // committed), so it applies in full: 0.5 - 0.25.
+    close(nodeFor(t, [1]).bonus, 0.25, '1.5*(1/3) boost + (-0.25) penalty');
+    // Deeper nodes, which the penalty does not reach, keep their own boost.
+    close(nodeFor(t, [1, 2]).bonus, 1.5 * (2 / 3));
   });
 
   test('a penalty at least as strong as the boost neutralises or flips it', () => {
-    assert.equal(nodeFor(build([
-      { ids: [1, 2], weight: 1.5 }, { ids: [1], weight: -1.5 },
+    // {1,2} at weight 1.5 boosts the shared token by 1.5*(1/2) = 0.75.
+    close(nodeFor(build([
+      { ids: [1, 2], weight: 1.5 }, { ids: [1], weight: -0.75 },
     ]), [1]).bonus, 0);
-    assert.equal(nodeFor(build([
+    close(nodeFor(build([
       { ids: [1, 2], weight: 1.5 }, { ids: [1], weight: -3 },
-    ]), [1]).bonus, -1.5);
+    ]), [1]).bonus, -2.25);
   });
 
   test('insertion order does not matter', () => {
@@ -494,48 +570,59 @@ describe('a penalty is never swallowed by a boost on a shared prefix', () => {
   });
 
   test('only the STRONGEST boost and the STRONGEST penalty count, not their sum', () => {
-    // Three phrases through the same token must not stack into 4.5.
+    // Three phrases through the same token each contribute 1.5*(1/2) = 0.75
+    // there; they must not stack into 2.25.
     const t = build([
       { ids: [1, 2], weight: 1.5 }, { ids: [1, 3], weight: 1.5 }, { ids: [1, 4], weight: 1.5 },
       { ids: [1], weight: -0.5 }, { ids: [1], weight: -0.25 },
     ]);
-    assert.equal(nodeFor(t, [1]).bonus, 1);
+    close(nodeFor(t, [1]).bonus, 0.25); // 0.75 - 0.5
   });
 
-  test('single-sign lists are bit-identical to the old strongest-magnitude rule', () => {
-    // Every curated list is boosts-only, so nothing about it may change.
+  test('single-sign lists keep only the strongest phrase, with no stacking', () => {
+    // Every curated list is boosts-only, so the pos/neg split must be inert for
+    // them: each node keeps exactly the largest applicable bonus, as before.
     const boosts = [
       { ids: [1, 2], weight: 1.5 }, { ids: [1, 3], weight: 4 }, { ids: [1, 3, 5], weight: 2 },
     ];
     const t = build(boosts, { depthScaling: 0.5 });
-    assert.equal(nodeFor(t, [1]).bonus, 4);            // strongest boost wins
-    assert.equal(nodeFor(t, [1, 3]).bonus, 4 * 1.5);   // depth scaling still applies
+    close(nodeFor(t, [1]).bonus, 2);              // 4*(1/2) beats 1.5*(1/2) and 2*(1/3)
+    close(nodeFor(t, [1, 3]).bonus, 4 * 1.5);     // completed phrase, full depth scaling
     const penalties = [{ ids: [1, 2], weight: -1.5 }, { ids: [1], weight: -4 }];
-    assert.equal(nodeFor(build(penalties), [1]).bonus, -4); // strongest penalty wins
+    close(nodeFor(build(penalties), [1]).bonus, -4); // strongest penalty wins
   });
 
   test('the min-p gate still comes from the strongest-magnitude phrase', () => {
+    // Magnitudes are compared AFTER the commitment scaling, so {1,2} at weight 4
+    // owns the shared token at 4*(1/2) = 2, which outweighs the -1 penalty.
     const t = build([
-      { ids: [1, 2], weight: 1.5, minp: 0.4 },
+      { ids: [1, 2], weight: 4, minp: 0.4 },
       { ids: [1], weight: -1, minp: 0.1 },
     ]);
-    assert.equal(nodeFor(t, [1]).minp, 0.4, 'the 1.5 phrase owns the gate');
+    assert.equal(nodeFor(t, [1]).minp, 0.4, 'the weight-4 phrase owns the gate');
     const t2 = build([
-      { ids: [1, 2], weight: 1.5, minp: 0.4 },
+      { ids: [1, 2], weight: 4, minp: 0.4 },
       { ids: [1], weight: -3, minp: 0.1 },
     ]);
     assert.equal(nodeFor(t2, [1]).minp, 0.1, 'now the -3 phrase does');
   });
 
   test('end to end through the real encoder: `the:-1::f` finally bites', () => {
-    const list = '*:1.5::f\nTheileria microti\nthe:-1::f';
-    const { encoded } = compileBoostList(list, encoder);
-    const trie = BoostingTrie.buildFromEncoded(encoded, { strength: 1, depthScaling: 0.5 });
+    const build2 = (list) => BoostingTrie.buildFromEncoded(
+      compileBoostList(list, encoder).encoded, { strength: 1, depthScaling: 0.5 },
+    );
     const firstId = encoder.encode('Theileria microti')[0];
-    const node = trie.root.children.get(firstId);
-    assert.ok(node, 'the shared first token is in the trie');
-    assert.ok(node.bonus < 1.5, `penalty applied (bonus ${node.bonus})`);
-    assert.equal(node.bonus, 0.5);
+    const bonusOf = (trie) => trie.root.children.get(firstId)?.bonus;
+
+    // Without the penalty line, "▁The" is boosted purely for starting an 8-token
+    // phrase: 1.5*(1/8) = 0.1875. That small residue is the commitment scaling
+    // already doing most of the work on the real list.
+    close(bonusOf(build2('*:1.5::f\nTheileria microti')), 1.5 / 8);
+    // With it, the user's -1 lands in full (a 1-token phrase commits itself
+    // entirely) and drives the shared token negative.
+    const withPenalty = bonusOf(build2('*:1.5::f\nTheileria microti\nthe:-1::f'));
+    close(withPenalty, 1.5 / 8 - 1);
+    assert.ok(withPenalty < 0, `the penalty flips the token negative (${withPenalty})`);
   });
 });
 
