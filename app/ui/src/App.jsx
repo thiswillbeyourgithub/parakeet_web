@@ -1531,7 +1531,14 @@ export default function App() {
           // Migration: pre-feature profiles have no boostCustomText but may
           // hold a boostPhrases the user typed. Seed custom text from it so
           // selecting "Custom" later restores their words rather than blank.
-          const seedCustom = customText || (typeof savedBoostPhrases === 'string' ? savedBoostPhrases : '');
+          // Gated on the saved source actually being Custom: `boostPhrases` used
+          // to be persisted for curated sources too, so an ungated seed pasted
+          // the whole curated lexicon (75k lines for french_medical) into the
+          // user's editable Custom slot, which then froze the sidebar for
+          // seconds every time they selected Custom or reopened the section.
+          const seedCustom = customText
+            || (restoredSource === BOOST_SOURCE_CUSTOM && typeof savedBoostPhrases === 'string'
+              ? savedBoostPhrases : '');
           setBoostCustomText(seedCustom);
           boostCustomTextRef.current = seedCustom;
           setBoostSource(restoredSource);
@@ -1945,7 +1952,18 @@ export default function App() {
   usePersistedSetting('diarizationNumSpeakers', diarizationNumSpeakers, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
-  usePersistedSetting('boostPhrases', boostPhrases, settingsLoaded);
+  // Only the user's OWN text is persisted under `boostPhrases`; a curated list's
+  // text is not. It would be dead weight (the list is re-fetched from
+  // /boost-phrases/ on every load, and the restore deliberately ignores the
+  // saved text for a curated source, see the settings restore above), it wrote
+  // ~2 MB to IndexedDB on every selection of a large clinical lexicon, and the
+  // Custom-slot migration below used to seed the user's Custom text from it,
+  // silently pasting a 75k-line list into their editable box.
+  usePersistedSetting(
+    'boostPhrases',
+    boostSource === BOOST_SOURCE_CUSTOM ? boostPhrases : '',
+    settingsLoaded,
+  );
   usePersistedSetting('boostStrength', boostStrength, settingsLoaded);
   usePersistedSetting('boostMinp', boostMinp, settingsLoaded);
   usePersistedSetting('boostDepthScaling', boostDepthScaling, settingsLoaded);
