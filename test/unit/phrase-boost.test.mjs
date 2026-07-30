@@ -14,6 +14,7 @@ import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
   isDefaultsLine, resolveBoostLines, findBoostConflicts, formatBoostConflict,
+  countPhraseLines,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -23,6 +24,33 @@ const encoder = new BpeEncoder(asset, buildVocabToId(fixture.id2token));
 
 const eqArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const argmaxOf = (arr) => { let m = -Infinity, mi = 0; for (let i = 0; i < arr.length; i++) if (arr[i] > m) { m = arr[i]; mi = i; } return mi; };
+
+describe('countPhraseLines (cheap render-time size probe)', () => {
+  test('counts non-blank lines only', () => {
+    assert.equal(countPhraseLines(''), 0);
+    assert.equal(countPhraseLines('   \n\t\n \r\n'), 0);
+    assert.equal(countPhraseLines('a'), 1);
+    assert.equal(countPhraseLines('a\nb'), 2);
+    // No trailing-newline off-by-one, and CR (CRLF input) is whitespace.
+    assert.equal(countPhraseLines('a\nb\n'), 2);
+    assert.equal(countPhraseLines('a\r\nb\r\n'), 2);
+    assert.equal(countPhraseLines('a\n\n\nb'), 2);
+  });
+
+  test('counts directive/defaults/comment lines too (it is a size probe, not a phrase count)', () => {
+    // The UI gate only needs "would rendering this stall?", so it deliberately
+    // over-counts rather than paying for a parse during render.
+    const raw = '*:1.5::fhp\n#!prefixes l\',d\'\nvenlafaxine\n';
+    assert.equal(countPhraseLines(raw), 3);
+    assert.equal(parseBoostPhrases(raw).filter(p => p.phrase).length, 1);
+  });
+
+  test('agrees with the parsed phrase count on a plain list', () => {
+    const raw = 'venlafaxine\nacetaminophen:2\nmetoprolol:1:0.1\n';
+    assert.equal(countPhraseLines(raw), 3);
+    assert.equal(parseBoostPhrases(raw).filter(p => p.phrase).length, 3);
+  });
+});
 
 describe('parseBoostPhrases', () => {
   const parsed = parseBoostPhrases(

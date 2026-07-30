@@ -23,7 +23,7 @@ import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
+import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
@@ -513,14 +513,24 @@ const boostBuildKey = (text, depthScaling, vocabSig) =>
 // its source text; oversize just falls back to encoding the .txt in-browser.
 const BOOST_PREBUILT_MAX_BYTES = 64 * 1024 * 1024;
 
-// Phrase count past which a *served* (non-Custom) list is collapsed to a
+// Line count past which a *served* (non-Custom) list is collapsed to a
 // read-only summary instead of being dumped into the editable textarea. A
 // curated list this large (e.g. a 60k-line medical lexicon) is never hand
 // edited, and rendering it in a controlled textarea makes the field scroll and
-// the whole sidebar lag (every re-render re-passes the giant string). The text
+// the whole sidebar lag (mounting one costs ~1 s for a 75k-line list). The text
 // still lives in `boostPhrases` for the rebuild/prebuilt path; we just don't
-// render it. Custom text is always editable regardless of size.
-const BOOST_COLLAPSE_MIN_PHRASES = 100;
+// render it.
+const BOOST_COLLAPSE_MIN_LINES = 100;
+
+// Line count past which the user's OWN (Custom) text is collapsed the same way,
+// behind an explicit "edit anyway" button. Custom text used to be rendered at
+// any size on the grounds that the user must be able to edit what they typed,
+// but a list this large is pasted, not typed, and mounting the textarea for it
+// blocked the main thread for ~1 s on every source switch and every reopen of
+// the sidebar section. The threshold is an order of magnitude above the curated
+// one so an ordinary hand-written list is never hidden; past it the editor
+// becomes lazy (mounted only when asked for), which is the whole point.
+const BOOST_CUSTOM_COLLAPSE_MIN_LINES = 1000;
 
 // RAM cutoff (in GB) below which a device is treated as low-memory. The model
 // needs ~100-200 MB plus runtime overhead; below 3 GB the tab is at risk.
@@ -832,6 +842,11 @@ export default function App() {
   const [boostSource, setBoostSource] = useState(BOOST_SOURCE_CUSTOM);
   const [boostCustomText, setBoostCustomText] = useState('');
   const boostCustomTextRef = useRef('');
+  // Whether the user asked to edit an oversized Custom list inline. Deliberately
+  // NOT persisted and reset on every source switch: mounting that textarea is
+  // the ~1 s cost this gate exists to defer, so it must never be paid on a load
+  // or a switch, only on an explicit click.
+  const [boostEditorOpen, setBoostEditorOpen] = useState(false);
   // Server-prebuilt encoding for the currently selected bundled list, or null.
   // { text, vocabSig, encoded, skipped }: `text` is the exact list text it was
   // built from, so the rebuild effect only trusts it while the textarea is
@@ -2033,6 +2048,10 @@ export default function App() {
   // onChange and the one-shot init resolution below.
   async function applyBoostSource(src) {
     setBoostSource(src);
+    // Any switch closes an opened oversized-list editor: leaving it open would
+    // re-mount a huge textarea the moment the user comes back to Custom, which
+    // is exactly the stall the lazy gate exists to avoid.
+    setBoostEditorOpen(false);
     if (src === BOOST_SOURCE_DISABLED) {
       // Turn boosting off. Clearing the phrase text hits the empty-phrase fast
       // path in the rebuild effect (phraseBoostRef -> null, no encode/build) and
@@ -2318,12 +2337,37 @@ export default function App() {
     () => findBoostConflicts(boostParsed.filter(p => p.phrase)),
     [boostParsed],
   );
+  // Cheap synchronous size probe for the collapse gates below. It has to be
+  // synchronous (deciding whether to render the textarea at all happens during
+  // render, and a one-frame "render it, then hide it" would pay exactly the cost
+  // we are avoiding), so it counts non-blank lines instead of parsing: a few ms
+  // on a 2 MB list against ~90 ms for the real parse, which now runs in the
+  // boost worker. The exact phrase count comes back from there (boostPhraseCount).
+  const boostLineCount = useMemo(() => countPhraseLines(boostPhrases), [boostPhrases]);
+
   // A large *served* (non-Custom) list is collapsed to a read-only summary
   // rather than rendered in the editable textarea: a 60k-line lexicon is never
   // hand edited, and a controlled textarea that big makes the field scroll and
   // the sidebar lag. The text still lives in `boostPhrases` for boosting.
+  //
+  // The user's own text gets the same treatment past a much higher threshold,
+  // but behind an explicit "edit anyway" button (boostEditorOpen) rather than
+  // flatly refusing to show it: mounting a 75k-line textarea costs ~1 s, and
+  // paying that on every source switch and every reopen of this section is what
+  // made both feel frozen. Opening the editor is now the only thing that pays it.
+  const boostCustomOversize = boostSource === BOOST_SOURCE_CUSTOM
+    && boostLineCount >= BOOST_CUSTOM_COLLAPSE_MIN_LINES;
   const boostCollapsed = boostSource !== BOOST_SOURCE_CUSTOM
-    && boostPhraseCount >= BOOST_COLLAPSE_MIN_PHRASES;
+    && boostLineCount >= BOOST_COLLAPSE_MIN_LINES;
+
+  // Closing the Phrase boosting section also drops the "edit anyway" opt-in.
+  // The section body unmounts when collapsed, so without this the flag would
+  // survive and reopening the section would re-mount the huge textarea, which is
+  // the other half of what this gate exists to avoid.
+  const toggleBoostingSection = useCallback((id) => {
+    setBoostEditorOpen(false);
+    toggleSection(id);
+  }, [toggleSection]);
 
   // Phrase boosting: rebuild the trie when the phrase text changes or the model
   // becomes ready (the encoder needs the loaded tokenizer's vocab). The rebuild
@@ -5555,7 +5599,7 @@ export default function App() {
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection id="boosting" title={t('settingsGroupBoosting')} open={!!sectionsOpen.boosting} onToggle={toggleSection}>
+          <CollapsibleSection id="boosting" title={t('settingsGroupBoosting')} open={!!sectionsOpen.boosting} onToggle={toggleBoostingSection}>
             <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.4rem' }}>
               <span className="setting-label">
                 {t('boostPhrases')}:
@@ -5617,6 +5661,36 @@ export default function App() {
                     {t('boostCuratedLoaded').replace('{name}', boostSource.replace(/\.txt$/, ''))}
                   </div>
                   <div>{t('boostCuratedEditHint')}</div>
+                </div>
+              ) : (boostCustomOversize && !boostEditorOpen) ? (
+                <div
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    fontSize: '0.78rem', padding: '0.6rem 0.7rem',
+                    borderRadius: '4px', border: '1px dashed #d1d5db',
+                    background: 'var(--surface-muted, #f9fafb)', color: 'var(--text-muted, #6b7280)',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: '#b45309' }}>
+                    {t('boostCustomLarge').replace('{n}', boostLineCount)}
+                  </div>
+                  <div>{t('boostCustomLargeHint')}</div>
+                  <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem' }}>
+                    <button type="button" onClick={() => setBoostEditorOpen(true)}>
+                      {t('boostCustomEdit')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!window.confirm(t('boostCustomClearConfirm'))) return;
+                        setBoostPhrases('');
+                        setBoostCustomText('');
+                        setBoostEditorOpen(false);
+                      }}
+                    >
+                      {t('boostCustomClear')}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <textarea
