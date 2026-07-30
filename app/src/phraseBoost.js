@@ -406,6 +406,36 @@ export function parseBoostPhrases(raw) {
 }
 
 /**
+ * Count the non-blank lines of a boost-phrase blob, without parsing it. This is
+ * a deliberately crude *size* probe, not a phrase count: it also counts comment,
+ * directive and `*` defaults lines, and does no field peeling.
+ *
+ * It exists because the UI needs a synchronous answer to "is this list big
+ * enough that rendering it in a textarea would stall?" on every keystroke and
+ * every source switch, while the real parse (and everything downstream of it)
+ * runs off the main thread in the boost worker. Scanning char codes costs a few
+ * ms on a 2 MB list against ~90 ms for {@link parseBoostPhrases}, and never
+ * allocates, so it is safe to call from render.
+ * @param {string} raw
+ * @returns {number} Number of lines containing at least one non-whitespace char.
+ */
+export function countPhraseLines(raw) {
+  if (!raw) return 0;
+  let count = 0;
+  let lineHasContent = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw.charCodeAt(i);
+    if (c === 10 /* \n */) {
+      if (lineHasContent) count++;
+      lineHasContent = false;
+    } else if (c !== 32 /* space */ && c !== 9 /* \t */ && c !== 13 /* \r */) {
+      lineHasContent = true;
+    }
+  }
+  return lineHasContent ? count + 1 : count;
+}
+
+/**
  * Find phrases that appear more than once with *actively incompatible* boost
  * settings: the same phrase text mapped to two different effective boosts (a
  * different weight or a different min-p gate). This is deliberately NOT a plain

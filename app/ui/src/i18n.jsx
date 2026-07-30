@@ -194,6 +194,11 @@ const translations = {
     boostPhrasesLoaded: '{n} phrase(s) active',
     boostCuratedLoaded: 'Curated list "{name}" loaded',
     boostCuratedEditHint: 'Switch to Custom to type and edit your own phrases.',
+    boostCustomLarge: 'Large custom list ({n} lines)',
+    boostCustomLargeHint: 'It is fully applied to transcription. The text editor is not shown by default because opening a list this size freezes the page for about a second.',
+    boostCustomEdit: 'Edit as text',
+    boostCustomClear: 'Clear',
+    boostCustomClearConfirm: 'Delete your custom phrase list? This cannot be undone.',
 
     // Tooltips
     tooltipBackend: 'Transcription runs on WASM (CPU) with the int8 encoder, everywhere. WebGPU is currently disabled (see its tooltip): for this model the browser WebGPU runtime falls back to the CPU for the encoder and ends up slower than WASM int8.',
@@ -580,6 +585,11 @@ const translations = {
     boostPhrasesLoaded: '{n} phrase(s) active(s)',
     boostCuratedLoaded: 'Liste pr\u00e9d\u00e9finie \u00ab\u00a0{name}\u00a0\u00bb charg\u00e9e',
     boostCuratedEditHint: 'Passez en mode Personnalis\u00e9 pour saisir et modifier vos propres phrases.',
+    boostCustomLarge: 'Grande liste personnalis\u00e9e ({n} lignes)',
+    boostCustomLargeHint: 'Elle est bien appliqu\u00e9e \u00e0 la transcription. L\u2019\u00e9diteur de texte n\u2019est pas affich\u00e9 par d\u00e9faut car ouvrir une liste de cette taille fige la page pendant environ une seconde.',
+    boostCustomEdit: 'Modifier le texte',
+    boostCustomClear: 'Effacer',
+    boostCustomClearConfirm: 'Supprimer votre liste de phrases personnalis\u00e9e\u00a0? Cette action est irr\u00e9versible.',
 
     // Tooltips
     tooltipBackend: "La transcription utilise WASM (CPU) avec l'encodeur int8, partout. WebGPU est actuellement d\u00e9sactiv\u00e9 (voir son infobulle)\u00a0: pour ce mod\u00e8le, le moteur WebGPU du navigateur bascule sur le CPU pour l'encodeur et finit plus lent que WASM int8.",
