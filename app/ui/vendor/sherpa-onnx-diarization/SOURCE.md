@@ -7,9 +7,9 @@ that bundles its **own** ONNX Runtime (compiled C++), separate from the app's
 ~11 MB `.wasm` never touches the critical transcription path.
 
 - Project: `k2-fsa/sherpa-onnx`
-- Version: `v1.13.3`
-- Source tarball: https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.3/sherpa-onnx-wasm-simd-v1.13.3-speaker-diarization.tar.bz2
-- Tarball SHA-256: `bd9645354e5eb7d261dc5b8227e46937615a53571250f3e7ea11d2af4899e3ac`
+- Version: `v1.13.4`
+- Source tarball: https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-wasm-simd-v1.13.4-speaker-diarization.tar.bz2
+- Tarball SHA-256: `5633858f02611ef5b71b6976398304ed5153dcb67d70a092c4b1eb0c967802d9`
 - License: Apache-2.0 (see `LICENSE` in this folder).
 
 Vendored (not fetched at install/build time) to keep the runtime supply chain
@@ -33,7 +33,7 @@ verify-then-load treatment as the ORT wasm and the PCM worklet).
 |---|---|---|
 | `sherpa-onnx-speaker-diarization.js` | same name (high-level JS API: `OfflineSpeakerDiarization`, `createOfflineSpeakerDiarization`) | verbatim |
 | `sherpa-onnx-wasm-main-speaker-diarization.js` | same name (emscripten glue) | **patched** — see "The `.data` strip" below |
-| `sherpa-onnx-wasm-main-speaker-diarization.wasm` | same name (runtime binary) — SHA-256 `d3322ee667ed5fd8476cb0fb11419f648300149533e7119470ef07e24cc9b60e` | verbatim |
+| `sherpa-onnx-wasm-main-speaker-diarization.wasm` | same name (runtime binary) — SHA-256 `bc8473aed9ad56c0ee556b0bbde4d565699378653e59fc49dd608138d6862dc1` | verbatim |
 
 The upstream tarball's `index.html`, `app-speaker-diarization.js` (demo UI), and
 `sherpa-onnx-wasm-main-speaker-diarization.data` (44 MB of baked-in default
@@ -64,13 +64,21 @@ runtime code immediately after it (`var arguments_=[]...`) is untouched.
 
 1. Download the new `sherpa-onnx-wasm-simd-vX.Y.Z-speaker-diarization.tar.bz2`
    release asset and record its SHA-256 above.
-2. Copy `sherpa-onnx-speaker-diarization.js` and the `.wasm` verbatim (update the
-   wasm SHA-256 above and the integrity pin in `app/ui/src/lib/diarizer.js`).
+2. Copy `sherpa-onnx-speaker-diarization.js` and the `.wasm` verbatim into
+   `app/ui/public/sherpa-onnx/` and update the wasm SHA-256 above. There is
+   NOTHING to change in `app/ui/src/lib/diarizer.js`: the runtime integrity pin
+   is not hardcoded there, `app/ui/postbuild.mjs` hashes whatever sits in
+   `public/sherpa-onnx/` into `dist/.well-known/asset-integrity.json` at build
+   time, and `diarizer.js` verifies against that manifest.
 3. Re-apply the `.data` strip to the new glue: delete the
    `if(!Module["expectedDataFileDownloads"])...})();` IIFE. The exact byte
    offsets drift between builds, so paren-match the `(()=>{ ... })()` wrapper
    that begins right after the `expectedDataFileDownloads` guard rather than
-   trusting a fixed offset.
+   trusting a fixed offset. Verify the matched span ends at
+   `...remote_package_size:<N>})})();` and that the result passes
+   `node --check`. A good sanity check on the matcher: run it against the
+   PREVIOUS release's glue and confirm it reproduces the currently vendored
+   file byte-for-byte before trusting it on the new one.
 4. Rebuild and run the diarization path end-to-end; confirm no request for
    `*.data` is made and the FS-injected models load.
 
