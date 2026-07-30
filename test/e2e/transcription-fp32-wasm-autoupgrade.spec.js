@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings } from './seed.mjs';
+import { routeHfRepoListing } from './routes.mjs';
 import { words, overlap } from './text-overlap.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
 
@@ -77,8 +78,8 @@ test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirr
   // actually DOWNLOAD int8 over the network would have its download aborted and so
   // fail the load loudly (no ✔) instead of silently succeeding.
   const abortedHfUrls = [];
-  await page.route('**/huggingface.co/api/**', (route) =>
-    route.fulfill({ json: ISTUPAKOV_FILES.map((path) => ({ type: 'file', path })) }));
+  await routeHfRepoListing(page, ISTUPAKOV_FILES);
+  // Not abortHfDownloads(): this spec needs the aborted URLs recorded.
   await page.route(/https:\/\/(huggingface\.co|cdn-lfs[^/]*\.huggingface\.co)\/(?!api\/).*/, (route) => {
     abortedHfUrls.push(route.request().url());
     return route.abort();
