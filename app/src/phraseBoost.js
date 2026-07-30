@@ -793,10 +793,14 @@ export function packedTransferables(packed) {
  * Trie node. `children` is created lazily (null until the first child is
  * inserted) so the many leaf nodes of a large list do not each carry an empty
  * Map; readers must treat a null `children` as "no children".
- * @returns {{children: Map<number, object>|null, depth: number, bonus: number, minp: number}}
+ *
+ * `pos` and `neg` are the strongest boost and the strongest penalty of the
+ * phrases passing through the node, tracked separately; `bonus` (what the
+ * decoder reads) is their sum. See {@link BoostingTrie#insert} for why.
+ * @returns {{children: Map<number, object>|null, depth: number, bonus: number, pos: number, neg: number, minp: number}}
  */
 function makeNode(depth) {
-  return { children: null, depth, bonus: 0, minp: DEFAULT_BOOST_MIN_P };
+  return { children: null, depth, bonus: 0, pos: 0, neg: 0, minp: DEFAULT_BOOST_MIN_P };
 }
 
 /**
@@ -898,10 +902,24 @@ export class BoostingTrie {
 
   /**
    * Insert one token-id sequence with a per-phrase weight (negative to
-   * penalise). Each node keeps the strongest-magnitude bonus of the phrases
-   * passing through it, so shared prefixes get the most committed applicable
-   * bonus regardless of sign.
-   * @param {number[]} tokenIds
+   * penalise). Each node keeps the strongest BOOST and the strongest PENALTY of
+   * the phrases passing through it *separately*, and the bonus the decoder reads
+   * is their sum, so shared prefixes get the most committed applicable boost
+   * offset by any penalty the user put on the same tokens.
+   *
+   * Only mixed-sign nodes are affected: with boosts alone (every curated list)
+   * `neg` stays 0 and the node keeps the strongest boost exactly as before, and
+   * with penalties alone `pos` stays 0. The old rule was a single
+   * strongest-MAGNITUDE slot, which silently discarded the weaker sign — so a
+   * user penalising a word the model over-emits (`the:-1`) got no effect at all
+   * whenever some unrelated phrase in a curated list happened to share its first
+   * BPE token with a larger weight (in the shipped french_medical list, "▁The"
+   * is boosted at 1.5 solely because "Theileria microti" is in it). A penalty is
+   * an explicit instruction and must not be swallowed by a speculative boost.
+   *
+   * The min-p gate still comes from the single strongest-magnitude contributor,
+   * so a node's threshold always belongs to one real phrase.
+   * @param {number[]|Int32Array} tokenIds
    * @param {number} [weight=1]
    * @param {number} [minp=DEFAULT_BOOST_MIN_P] Min-p gate carried with the bonus.
    */
@@ -915,12 +933,14 @@ export class BoostingTrie {
         (node.children ??= new Map()).set(id, child);
       }
       const bonus = weight * (1 + this.depthScaling * (child.depth - 1));
-      // The winning (strongest-magnitude) phrase also owns the node's min-p gate,
-      // so the bonus and the threshold that gates it come from the same phrase.
-      if (Math.abs(bonus) > Math.abs(child.bonus)) {
-        child.bonus = bonus;
-        child.minp = minp;
+      const prevMag = Math.max(child.pos, -child.neg);
+      if (bonus >= 0) {
+        if (bonus > child.pos) child.pos = bonus;
+      } else if (bonus < child.neg) {
+        child.neg = bonus;
       }
+      if (Math.abs(bonus) > prevMag) child.minp = minp;
+      child.bonus = child.pos + child.neg;
       node = child;
     }
     this.size += 1;
