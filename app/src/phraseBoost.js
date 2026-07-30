@@ -638,6 +638,49 @@ export function encodePhrases(entries, encoder, opts = {}) {
 }
 
 /**
+ * Run the whole boost-list pipeline on a raw .txt blob: parse -> per-phrase
+ * warnings + conflict detection -> augmentation expansion -> BPE encode. This is
+ * the single source of truth for that chain, shared by
+ *  - the boost worker (app/ui/src/phraseBoost.worker.js), which runs it off the
+ *    main thread so a 75k-line clinical list never blocks the UI (the expansion
+ *    alone is ~1 s for such a list, and it used to run in a render effect),
+ *  - the main-thread fallback in App.jsx for environments without Workers, and
+ *  - the offline/boot compiler (boostCompile.js compileBoostText).
+ *
+ * Pass `encoder: null` for a parse-only pass: everything the UI needs to *show*
+ * (phrase count, warnings, conflicts) is computed, and the expensive expand +
+ * encode is skipped. That is what the caller wants whenever no model is loaded
+ * yet, or a server-prebuilt encoding is being reused.
+ *
+ * @param {string} raw The list text.
+ * @param {{encode: (text: string) => number[], unkId?: number}|null} encoder A BpeEncoder, or null for parse-only.
+ * @param {Object} [opts]
+ * @param {string} [opts.augmentDefault=''] Baseline augmentation flags (a phrase's own `:AUG` field or a `*` defaults line overrides it).
+ * @param {Map<string, number[]>} [opts.cache] Surface-form -> ids memo, forwarded to {@link encodePhrases}.
+ * @param {(done:number, total:number)=>void} [opts.onProgress] Forwarded to {@link encodePhrases}.
+ * @param {(conflicts: Array) => void} [opts.onConflicts] Called (before the
+ *   encode, so a caller that throws still fails fast) when the list has actively
+ *   incompatible duplicates. The web UI only warns and omits this; the offline
+ *   compiler throws from it, since a shipped artifact must not silently resolve
+ *   an inconsistency to whichever entry happened to win.
+ * @returns {{phraseCount: number, warnings: Array<{phrase: string, warning: string}>, conflicts: Array, expandedCount: number, encoded: Array|null, skipped: string[]}}
+ */
+export function compileBoostList(raw, encoder, opts = {}) {
+  const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
+  const warnings = parsed.filter((p) => p.warning).map((p) => ({ phrase: p.phrase, warning: p.warning }));
+  const conflicts = findBoostConflicts(parsed);
+  if (conflicts.length) opts.onConflicts?.(conflicts);
+  const base = { phraseCount: parsed.length, warnings, conflicts };
+  if (!encoder) return { ...base, expandedCount: 0, encoded: null, skipped: [] };
+  const { prefixes } = parseBoostDirectives(raw);
+  const entries = expandAugmentations(parsed, opts.augmentDefault ?? '', prefixes);
+  const { encoded, skipped } = encodePhrases(entries, encoder, {
+    cache: opts.cache, onProgress: opts.onProgress,
+  });
+  return { ...base, expandedCount: entries.length, encoded, skipped };
+}
+
+/**
  * Decide whether a server-prebuilt boost encoding can be reused as-is instead of
  * BPE-encoding the phrase list in the browser. This is the gate that lets the
  * reload/restore path skip both the encode (the slow BPE merge loop) *and* the

@@ -30,7 +30,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { parseVocabText } from './tokenizer.js';
 import { BpeEncoder, buildVocabToId, vocabSignature } from './bpeEncoder.js';
-import { parseBoostPhrases, parseBoostDirectives, expandAugmentations, encodePhrases, findBoostConflicts, formatBoostConflict } from './phraseBoost.js';
+import { compileBoostList, formatBoostConflict } from './phraseBoost.js';
 
 /**
  * Thrown by {@link compileBoostText} when the list contains actively
@@ -119,22 +119,22 @@ export function loadBoostEncoder(vocabPath, mergesPath) {
  *   here and throw above; `skipped` (the third) lives on the artifact.
  */
 export function compileBoostText(raw, encoder, vocabSig, opts = {}) {
-  const { prefixes } = parseBoostDirectives(raw);
   const augmentDefault = opts.augmentDefault ?? AUGMENT_DEFAULT;
-  const parsed = parseBoostPhrases(raw).filter((p) => p.phrase);
-  const conflicts = findBoostConflicts(parsed);
-  if (conflicts.length) throw new BoostConflictError(conflicts);
-  // Same selection the web UI does (App.jsx `setBoostWarnings`): a coerced
-  // weight/min-p is non-fatal but must not vanish at compile time. Computed on
-  // `parsed` (pre-expansion), so each typed phrase is reported once, not once
-  // per casing variant.
-  const warnings = parsed.filter((p) => p.warning).map((p) => ({ phrase: p.phrase, warning: p.warning }));
-  const entries = expandAugmentations(parsed, augmentDefault, prefixes);
-  const { encoded, skipped } = encodePhrases(entries, encoder, { onProgress: opts.onProgress });
+  // The parse -> expand -> encode chain is shared with the browser (the boost
+  // worker runs the exact same function), which is what guarantees the ids here
+  // are the ones the UI would have produced. `warnings` come back computed on
+  // the pre-expansion phrases, so each typed phrase is reported once rather than
+  // once per augmented surface form; conflicts are fatal here (the artifact is
+  // shipped) and only warned about in the UI, hence the throwing hook.
+  const { phraseCount, warnings, expandedCount, encoded, skipped } = compileBoostList(raw, encoder, {
+    augmentDefault,
+    onProgress: opts.onProgress,
+    onConflicts: (conflicts) => { throw new BoostConflictError(conflicts); },
+  });
   return {
     artifact: { version: BOOST_ARTIFACT_VERSION, vocabSig, augmentDefault, encoded, skipped },
-    parsedCount: parsed.length,
-    expandedCount: entries.length,
+    parsedCount: phraseCount,
+    expandedCount,
     warnings,
   };
 }
