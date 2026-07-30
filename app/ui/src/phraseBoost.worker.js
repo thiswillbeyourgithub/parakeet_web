@@ -1,21 +1,29 @@
-// Phrase-boost encode worker.
+// Phrase-boost compile worker.
 //
-// Encoding a boost-phrase list to token-id sequences is the CPU-heavy part of
-// building the BoostingTrie (the BPE merge loop in BpeEncoder runs once per
-// phrase, and large clinical lists can be 10k-100k phrases). Running it on the
-// main thread freezes the UI for the duration; this module-worker moves it off
-// the main thread. It only encodes: the cheap trie insert (and the tiny
-// per-decode-step boost) stays on the main thread, which is where the decoder
-// lives. See App.jsx (the build effect) and phraseBoost.js (encodePhrases /
+// Turning a boost-phrase list into token-id sequences is the CPU-heavy part of
+// building the BoostingTrie, and every step of it is heavy on a large clinical
+// list (75k lines): the parse ~90 ms, the conflict scan ~90 ms, the augmentation
+// expansion ~1 s (it fans 75k phrases out to ~330k surface forms), and the BPE
+// merge loop more still. Running any of that on the main thread freezes the UI;
+// this module-worker owns the whole chain (compileBoostList) so the main thread
+// only does the cheap trie insert, which is where the decoder lives.
+// See App.jsx (the rebuild effect) and phraseBoost.js (compileBoostList /
 // BoostingTrie.buildFromEncoded) for the two halves.
 //
-// Protocol: postMessage({ id, entries, id2token, assetUrl }) ->
-//   postMessage({ id, ok: true, encoded, skipped })  on success
+// Protocol: postMessage({ id, text, augmentDefault, encode, id2token, assetUrl }) ->
+//   postMessage({ id, ok: true, phraseCount, expandedCount, warnings, conflicts,
+//                 encoded, skipped })                on success
 //   postMessage({ id, ok: false, error })            on failure
 // `id` echoes the request so the caller can ignore stale (superseded) replies.
+// `encode: false` asks for a parse-only pass (phraseCount/warnings/conflicts,
+// with `encoded: null`): that is what the caller wants when no model is loaded
+// yet, or when a server-prebuilt encoding is being reused, and it skips both the
+// expansion and the BPE loop.
+//
+// Built with Claude Code.
 
 import { BpeEncoder, buildVocabToId, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { encodePhrases } from '../../src/phraseBoost.js';
+import { compileBoostList } from '../../src/phraseBoost.js';
 
 // The BPE asset is identical across requests, so fetch + parse it once. The
 // encoder is rebuilt only when the tokenizer vocabulary changes (model swap),
@@ -33,6 +41,13 @@ let cachedVocabSig = null;
 // working set (a fresh Map repopulates from this request's hits, no re-encode).
 let encodeCache = new Map();
 
+// Expanded-entry count of the last encode, used to size the cache prune. The
+// prune has to run BEFORE the encode (pruning after would drop the entries this
+// request just populated and force a full re-encode next time), and only the
+// expansion knows the real working-set size, so we go by the previous request's
+// count: consecutive rebuilds of the same list differ by an edit or two.
+let lastExpandedCount = 0;
+
 async function getEncoder(id2token, assetUrl) {
   if (!cachedAsset) {
     const resp = await fetch(assetUrl);
@@ -46,20 +61,26 @@ async function getEncoder(id2token, assetUrl) {
     cachedEncoder = new BpeEncoder(cachedAsset, buildVocabToId(id2token));
     cachedVocabSig = sig;
     encodeCache = new Map(); // ids index the old vocab; drop them
+    lastExpandedCount = 0;
   }
   return cachedEncoder;
 }
 
 self.onmessage = async (e) => {
-  const { id, entries, id2token, assetUrl = BPE_ASSET_URL } = e.data || {};
+  const {
+    id, text, augmentDefault = '', encode = true, id2token, assetUrl = BPE_ASSET_URL,
+  } = e.data || {};
   try {
-    const encoder = await getEncoder(id2token, assetUrl);
+    const encoder = encode ? await getEncoder(id2token, assetUrl) : null;
     // Cap accumulated stale (removed-line) entries: once the cache is more than
-    // 2x the current variant count, most of it is dead, so start fresh. This
+    // 2x the live variant count, most of it is dead, so start fresh. This
     // request then re-encodes once and the cache tracks the live set again.
-    if (encodeCache.size > (entries?.length || 0) * 2) encodeCache = new Map();
-    const { encoded, skipped } = encodePhrases(entries, encoder, { cache: encodeCache });
-    self.postMessage({ id, ok: true, encoded, skipped });
+    if (encoder && lastExpandedCount && encodeCache.size > lastExpandedCount * 2) {
+      encodeCache = new Map();
+    }
+    const result = compileBoostList(text, encoder, { augmentDefault, cache: encodeCache });
+    if (encoder) lastExpandedCount = result.expandedCount;
+    self.postMessage({ id, ok: true, ...result });
   } catch (err) {
     self.postMessage({ id, ok: false, error: String((err && err.message) || err) });
   }

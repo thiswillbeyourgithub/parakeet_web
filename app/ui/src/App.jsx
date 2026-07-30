@@ -23,7 +23,7 @@ import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases, expandAugmentations, selectPrebuilt, findBoostConflicts, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
+import { BoostingTrie, compileBoostList, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
@@ -796,6 +796,17 @@ export default function App() {
   // expandAugmentations.
   const [boostWarnings, setBoostWarnings] = useState([]); // [{phrase}] with out-of-range weight
   const [boostUnkWarnings, setBoostUnkWarnings] = useState([]); // phrases dropped: encode to <unk> (e.g. CJK)
+  // Actively-incompatible duplicate phrases (e.g. `venlafaxine:5` AND
+  // `venlafaxine:-5`): a hand-editing user is only warned (the offline compile
+  // step hard-fails instead, see boostCompile.js). A plain repeated line with the
+  // same weight is NOT a conflict and is ignored. See findBoostConflicts.
+  const [boostConflicts, setBoostConflicts] = useState([]);
+  // Phrases the list actually declares, as counted by the parse. It comes back
+  // from the boost worker with the warnings and conflicts above rather than
+  // being derived during render: parsing a 75k-line list costs ~90 ms, which is
+  // not affordable on the main thread. Render-time size decisions use the cheap
+  // countPhraseLines() probe instead.
+  const [boostPhraseCount, setBoostPhraseCount] = useState(0);
   // True while a long phrase list is (re)encoding+building so the header status
   // shows a spinner; only set for lists past BOOST_SPINNER_MIN_PHRASES so a
   // small edit never flashes it (small lists rebuild in a few ms).
@@ -2192,18 +2203,29 @@ export default function App() {
     return boostWorkerRef.current;
   }, []);
 
-  // Encode parsed phrase entries to token-id sequences, off the main thread via
+  // Run the phrase list through the whole compile chain (parse -> warnings +
+  // conflicts -> augmentation expansion -> BPE encode), off the main thread via
   // the worker when available, otherwise on a main-thread encoder cached per
-  // tokenizer (model swap rebuilds it). Resolves { encoded, skipped }.
-  const encodeBoostPhrases = useCallback((entries, tokenizer) => {
+  // tokenizer (model swap rebuilds it). Resolves compileBoostList's result:
+  // { phraseCount, warnings, conflicts, expandedCount, encoded, skipped }.
+  //
+  // `encode: false` asks for a parse-only pass (no tokenizer needed): the UI
+  // still gets the count and the inline warnings, and the expensive half is
+  // skipped. Everything here used to run inline in the rebuild effect below,
+  // where the expansion alone froze the tab for ~1 s per keystroke on a large
+  // list, un-debounced (only the encode was behind the debounce).
+  const compileBoostPhrases = useCallback((text, { encode, tokenizer, augmentDefault = '' }) => {
     const worker = getBoostWorker();
     if (!worker) {
       return (async () => {
-        if (!bpeEncoderRef.current || bpeEncoderRef.current.tokenizer !== tokenizer) {
-          const encoder = await loadBpeEncoder(tokenizer);
-          bpeEncoderRef.current = { tokenizer, encoder };
+        let encoder = null;
+        if (encode) {
+          if (!bpeEncoderRef.current || bpeEncoderRef.current.tokenizer !== tokenizer) {
+            bpeEncoderRef.current = { tokenizer, encoder: await loadBpeEncoder(tokenizer) };
+          }
+          encoder = bpeEncoderRef.current.encoder;
         }
-        return encodePhrases(entries, bpeEncoderRef.current.encoder);
+        return compileBoostList(text, encoder, { augmentDefault });
       })();
     }
     return new Promise((resolve, reject) => {
@@ -2211,14 +2233,16 @@ export default function App() {
       const onMsg = (ev) => {
         if (ev.data.id !== reqId) return; // a different (e.g. older) request's reply
         worker.removeEventListener('message', onMsg);
-        if (ev.data.ok) resolve({ encoded: ev.data.encoded, skipped: ev.data.skipped });
+        if (ev.data.ok) resolve(ev.data);
         else reject(new Error(ev.data.error));
       };
       worker.addEventListener('message', onMsg);
       worker.postMessage({
         id: reqId,
-        entries,
-        id2token: tokenizer.id2token,
+        text,
+        augmentDefault,
+        encode,
+        id2token: encode ? tokenizer.id2token : null,
         assetUrl: BPE_ASSET_URL,
       });
     });
@@ -2319,24 +2343,6 @@ export default function App() {
     if (decodeWorkerRef.current) { try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ } }
   }, []);
 
-  // Parse the phrase text once per change, not once per render. The full line
-  // scan is cheap per call but the App component re-renders on every unrelated
-  // state change (recording timer, status flips, ...); re-scanning a 60k-line
-  // curated list on each of those is what made the sidebar lag. Both the
-  // rebuild effect and the render (count + collapse gate) read this memo.
-  const boostParsed = useMemo(() => parseBoostPhrases(boostPhrases), [boostPhrases]);
-  const boostPhraseCount = useMemo(
-    () => boostParsed.filter(p => p.phrase).length,
-    [boostParsed],
-  );
-  // Actively-incompatible duplicate phrases (e.g. `venlafaxine:5` AND
-  // `venlafaxine:-5`): a hand-editing user is only warned here (the compile step
-  // hard-fails instead, see boostCompile.js). A plain repeated line with the
-  // same weight is NOT a conflict and is ignored. See findBoostConflicts.
-  const boostConflicts = useMemo(
-    () => findBoostConflicts(boostParsed.filter(p => p.phrase)),
-    [boostParsed],
-  );
   // Cheap synchronous size probe for the collapse gates below. It has to be
   // synchronous (deciding whether to render the textarea at all happens during
   // render, and a one-frame "render it, then hide it" would pay exactly the cost
@@ -2381,92 +2387,111 @@ export default function App() {
   // rebuild + warning-state writes on each of those froze the UI on a large
   // curated list (the textarea reconciled the whole list every time).
   useEffect(() => {
-    // The parse is memoized (boostParsed) so it runs once per text change, not
-    // per render. It feeds the inline warnings; the expensive step is
-    // expandAugmentations below, deferred until we know the prebuilt encoding
-    // can't be reused.
-    const parsed = boostParsed;
-    setBoostWarnings(parsed.filter(p => p.warning).map(p => ({ phrase: p.phrase })));
-    const phraseEntries = parsed.filter(p => p.phrase);
+    const text = boostPhrases;
     const tokenizer = modelRef.current?.tokenizer;
-    if (!phraseEntries.length || !tokenizer) {
+    const sig = tokenizer?.id2token ? vocabSignature(tokenizer.id2token) : null;
+    // A completed decision is a completed "build": stamp the key so
+    // waitForBoostReady() doesn't hold runs for a trie that can't or needn't
+    // exist (no phrases, or no tokenizer yet).
+    const stampBuilt = () => {
+      boostBuiltKeyRef.current = boostBuildKey(text, boostDepthScaling, sig);
+    };
+
+    // Empty list: nothing to parse, encode or build. Handled synchronously, and
+    // without waking the worker, so clearing the box (or picking Disabled) takes
+    // boosting off immediately.
+    if (!text.trim()) {
       phraseBoostRef.current = null;
-      // A completed decision is a completed "build": stamp the key so
-      // waitForBoostReady() doesn't hold runs for a trie that can't or
-      // needn't exist (no phrases, or no tokenizer yet).
-      boostBuiltKeyRef.current = boostBuildKey(
-        boostPhrases, boostDepthScaling,
-        tokenizer?.id2token ? vocabSignature(tokenizer.id2token) : null,
-      );
-      // No tokenizer yet (model not loaded), but a server-prebuilt artifact
-      // already ships its own `skipped` list (the phrases the model vocab can't
-      // represent, computed against that vocab at prebuild time) and is fetched
-      // into prebuiltBoostRef the moment the list is selected. Surface it now so
-      // the untokenizable-words warning appears on list-load rather than only
-      // once the model is ready; the full rebuild below recomputes it against
-      // the live tokenizer. Guard on text match so an edited list shows nothing
-      // stale (editing a curated list drops the prebuilt anyway).
-      const pre = prebuiltBoostRef.current;
-      const canPreview = phraseEntries.length && pre
-        && pre.text === boostPhrases && Array.isArray(pre.skipped);
-      setBoostUnkWarnings(canPreview ? pre.skipped : []);
+      boostEncodedRef.current = null;
+      setBoostWarnings([]);
+      setBoostConflicts([]);
+      setBoostUnkWarnings([]);
+      setBoostPhraseCount(0);
+      stampBuilt();
       return;
     }
+
     // Use the server-prebuilt encoding when it matches the current text exactly
     // (unedited) and the vocab it was built for matches the loaded tokenizer;
-    // that skips the BPE encode (the slow part) entirely. Decide this *before*
-    // augment-expanding the list: the prebuilt already baked in the expansion, so
-    // on the prebuilt path expandAugmentations would be pure wasted work, and
-    // it is heavy enough (hundreds of ms to seconds on a large augmented
-    // list) to freeze the UI on the main thread. Worse, this effect re-runs on
-    // every `status` change, so re-expanding here would re-freeze on each model
-    // load / recording transition, not just once.
+    // that skips the BPE encode AND the augmentation expansion (the prebuilt
+    // baked both in), which is the difference between an insert-only rebuild and
+    // a from-scratch one. Augmentation is opt-in from the list text itself (a
+    // per-phrase `:AUG` field or a `*:::AUG` defaults line), so the global
+    // baseline is empty.
     const pre = prebuiltBoostRef.current;
-    const sig = tokenizer.id2token ? vocabSignature(tokenizer.id2token) : null;
-    // Augmentation is opt-in from the list text itself: a per-phrase `:AUG` field
-    // (resolved in parseBoostPhrases) or a `*:::AUG` defaults line. There is no
-    // global default, so the baseline here is empty. Parse directives for the
-    // `#!prefixes` the `p` flag uses.
-    const directives = parseBoostDirectives(boostPhrases);
     const augmentDefault = '';
-    // The prebuilt encoding bakes in the augmentation expansion; selectPrebuilt()
-    // validates text + vocab + augment default and, when rejected, explains why
-    // (see its docstring).
     const { usePrebuilt, reasons: prebuiltRejectReasons } = selectPrebuilt(pre, {
-      text: boostPhrases, vocabSig: sig, augmentDefault,
+      text, vocabSig: sig, augmentDefault,
     });
-    // Augmentation expansion: turn each augmented phrase into one entry per
-    // surface form so the case-sensitive encoder gets a trie branch for each.
-    // Only needed on the encode path; a per-phrase `:AUG` flag opts a phrase in.
-    // The list's own `#!prefixes` directive drives the `p` flag.
-    const entries = usePrebuilt
-      ? null
-      : expandAugmentations(phraseEntries, augmentDefault, directives.prefixes);
-    // Phrase count for the spinner gate and logs: the prebuilt is already encoded.
-    const count = usePrebuilt ? pre.encoded.length : entries.length;
+    // Without a tokenizer there is no trie to build, but the list can still be
+    // parsed for the count and the inline warnings, so ask the worker for a
+    // parse-only pass rather than bailing out entirely.
+    const canBuild = !!tokenizer;
+    const needEncode = canBuild && !usePrebuilt;
+
+    if (!canBuild) {
+      phraseBoostRef.current = null;
+      boostEncodedRef.current = null;
+      stampBuilt();
+      // A server-prebuilt artifact ships its own `skipped` list (the phrases the
+      // model vocab can't represent, computed against that vocab at prebuild
+      // time) and is fetched into prebuiltBoostRef the moment the list is
+      // selected. Surface it now so the untokenizable-words warning appears on
+      // list-load rather than only once the model is ready; the full rebuild
+      // recomputes it against the live tokenizer. Guard on text match so an
+      // edited list shows nothing stale (editing a curated list drops the
+      // prebuilt anyway).
+      const canPreview = pre && pre.text === text && Array.isArray(pre.skipped);
+      setBoostUnkWarnings(canPreview ? pre.skipped : []);
+    }
+
     let cancelled = false;
     // When a prebuilt exists but is rejected, say why: this is the difference
     // between a fast (prebuilt) rebuild and a slow from-scratch BPE re-encode,
     // so it is the first thing to check if a curated list is unexpectedly slow.
-    if (verboseLogRef.current && pre && !usePrebuilt) {
+    if (verboseLogRef.current && pre && !usePrebuilt && canBuild) {
       console.log(`[Boost] prebuilt encoding present but NOT used; will BPE-encode in-browser. Reason: ${prebuiltRejectReasons.join('; ')}.`);
     }
     // Long lists take long enough to encode+build that the user should see the
     // app is busy; small ones (or prebuilt ones, which only insert) rebuild in
-    // a few ms, so a spinner would only flash.
-    const showSpinner = !usePrebuilt && count >= BOOST_SPINNER_MIN_PHRASES;
+    // a few ms, so a spinner would only flash. The exact phrase count is only
+    // known once the worker replies, so the gate goes by the raw line count:
+    // the two differ only by comment/defaults lines.
+    const showSpinner = needEncode && boostLineCount >= BOOST_SPINNER_MIN_PHRASES;
     const timer = setTimeout(async () => {
       if (showSpinner) setBoostRebuilding(true);
       const t0 = performance.now();
       if (verboseLogRef.current) {
-        console.log(`[Boost] rebuilding trie for ${count} phrase(s)`
-          + `${usePrebuilt ? ' (server-prebuilt encoding, skipping BPE)' : ''}...`);
+        // Keep "[Boost] rebuilding trie" as the one-per-actual-rebuild marker
+        // (boost-rebuild-on-status.spec.js counts it); a parse-only pass builds
+        // nothing, so it gets its own wording.
+        console.log(canBuild
+          ? `[Boost] rebuilding trie for ${boostLineCount} line(s)`
+            + `${usePrebuilt ? ' (server-prebuilt encoding, skipping BPE)' : ''}...`
+          : `[Boost] parsing ${boostLineCount} line(s) for warnings only (no model loaded, nothing to build)...`);
       }
       try {
-        const { encoded, skipped } = usePrebuilt
-          ? { encoded: pre.encoded, skipped: pre.skipped }
-          : await encodeBoostPhrases(entries, tokenizer);
+        const res = await compileBoostPhrases(text, { encode: needEncode, tokenizer, augmentDefault });
         if (cancelled) return;
+        // Display-only outputs, available on every path (including parse-only).
+        setBoostWarnings(res.warnings.map(w => ({ phrase: w.phrase })));
+        setBoostConflicts(res.conflicts);
+        setBoostPhraseCount(res.phraseCount);
+        // Parse-only pass: no model, so nothing to build. The key was already
+        // stamped synchronously above.
+        if (!canBuild) return;
+        // Text that is non-blank but holds no phrases (only comments/directives).
+        if (!res.phraseCount) {
+          phraseBoostRef.current = null;
+          boostEncodedRef.current = null;
+          setBoostUnkWarnings([]);
+          stampBuilt();
+          return;
+        }
+        const { encoded, skipped } = needEncode
+          ? { encoded: res.encoded, skipped: res.skipped }
+          : { encoded: pre.encoded, skipped: pre.skipped };
+        const count = encoded.length;
         const trie = BoostingTrie.buildFromEncoded(encoded, {
           strength: boostStrengthRef.current,
           depthScaling: boostDepthScaling,
@@ -2486,12 +2511,12 @@ export default function App() {
           depthScaling: boostDepthScaling,
           minpOverride: boostMinpRef.current,
         };
-        boostBuiltKeyRef.current = boostBuildKey(boostPhrases, boostDepthScaling, sig);
+        stampBuilt();
         if (verboseLogRef.current) {
           const ms = performance.now() - t0;
           const perLine = count ? ms / count : 0;
           console.log(
-            `[Boost] trie rebuilt in ${ms.toFixed(1)}ms for ${count} phrase(s) `
+            `[Boost] trie rebuilt in ${ms.toFixed(1)}ms for ${count} entr(ies) `
             + `(avg ${perLine.toFixed(3)}ms/line, ${trie.size} inserted, ${skipped.length} skipped`
             + `${usePrebuilt ? ', prebuilt' : ''}).`
           );
@@ -2502,7 +2527,7 @@ export default function App() {
         phraseBoostRef.current = null;
         // A failed build is complete too: waiting longer would not produce a
         // trie, so release any waiter (the run proceeds unboosted, as before).
-        boostBuiltKeyRef.current = boostBuildKey(boostPhrases, boostDepthScaling, sig);
+        stampBuilt();
       } finally {
         if (showSpinner) setBoostRebuilding(false);
       }
@@ -2511,8 +2536,10 @@ export default function App() {
     // boostDepthScaling is a dep (unlike strength/min-p, which mutate the live
     // trie) because insert() bakes it into every node bonus, so a change needs
     // a rebuild. The rebuild is debounced and, on the prebuilt/cached path,
-    // insert-only, so this stays cheap for curated lists.
-  }, [boostPhrases, boostParsed, tokenizerVocabSig, encodeBoostPhrases, boostDepthScaling]);
+    // insert-only, so this stays cheap for curated lists. boostLineCount is
+    // derived from boostPhrases (so it never fires on its own); it is listed
+    // because the spinner gate reads it.
+  }, [boostPhrases, boostLineCount, tokenizerVocabSig, compileBoostPhrases, boostDepthScaling]);
 
   // Apply the strength slider without rebuilding the trie.
   useEffect(() => {

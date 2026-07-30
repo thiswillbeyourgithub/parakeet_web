@@ -14,7 +14,7 @@ import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
   isDefaultsLine, resolveBoostLines, findBoostConflicts, formatBoostConflict,
-  countPhraseLines,
+  countPhraseLines, compileBoostList,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -451,6 +451,88 @@ describe('encodePhrases + buildFromEncoded (worker split)', () => {
   const fromEncoded = BoostingTrie.buildFromEncoded(encoded, { strength: 1 });
   test('buildFromEncoded yields the same size as buildFromPhrases', () => assert.equal(fromEncoded.size, mixedTrie.size));
   test('buildFromEncoded reaches the same first token', () => assert.ok(fromEncoded.root.children.has(ids[0])));
+});
+
+describe('compileBoostList (the whole chain, shared by the worker and the compiler)', () => {
+  // A list with: a `*` defaults line, a coerced (out-of-range) weight, an
+  // untokenizable phrase, and an augmented phrase, so every output field is
+  // exercised at once.
+  const raw = [
+    '*:1.5::f',
+    'acetaminophen',
+    'sœur:99',       // weight out of range -> coerced, warned
+    '東京',           // <unk> -> skipped at encode time
+  ].join('\n');
+
+  test('parse-only mode (no encoder) still reports count, warnings and conflicts', () => {
+    const r = compileBoostList(raw, null);
+    assert.equal(r.phraseCount, 3);
+    assert.deepEqual(r.warnings.map(w => w.phrase), ['sœur']);
+    assert.deepEqual(r.conflicts, []);
+    // The expensive half is genuinely skipped.
+    assert.equal(r.encoded, null);
+    assert.equal(r.expandedCount, 0);
+    assert.deepEqual(r.skipped, []);
+  });
+
+  test('encoding mode matches the hand-rolled parse -> expand -> encode chain', () => {
+    const parsed = parseBoostPhrases(raw).filter(p => p.phrase);
+    const { prefixes } = parseBoostDirectives(raw);
+    const entries = expandAugmentations(parsed, '', prefixes);
+    const expected = encodePhrases(entries, encoder);
+
+    const r = compileBoostList(raw, encoder);
+    assert.equal(r.expandedCount, entries.length);
+    assert.deepEqual(r.skipped, expected.skipped);
+    assert.equal(r.encoded.length, expected.encoded.length);
+    for (let i = 0; i < r.encoded.length; i++) {
+      assert.ok(eqArr(r.encoded[i].ids, expected.encoded[i].ids));
+      assert.equal(r.encoded[i].weight, expected.encoded[i].weight);
+      assert.equal(r.encoded[i].minp, expected.encoded[i].minp);
+    }
+  });
+
+  test('the `*` defaults line and per-phrase augmentation still apply', () => {
+    // `*:1.5::f` sets weight 1.5 and Title-Case augmentation for every phrase,
+    // so a lowercase phrase yields two surface forms, both at the list weight.
+    // 'sœur:99' is out of range, so it keeps the coerced default weight of 1
+    // (the same warning reported above) rather than the list's 1.5, and '東京'
+    // is dropped at encode time, so it contributes to expandedCount but not to
+    // `encoded`.
+    const r = compileBoostList(raw, encoder);
+    assert.ok(r.expandedCount > r.phraseCount, 'augmentation expanded the list');
+    assert.deepEqual(r.encoded.map(e => e.weight), [1.5, 1.5, 1, 1]);
+    assert.deepEqual(r.skipped, ['東京']);
+  });
+
+  test('onConflicts fires BEFORE the encode, so a throwing hook fails fast', () => {
+    const conflicting = 'venlafaxine:5\nvenlafaxine:-5';
+    let calls = 0;
+    const spy = { unkId: encoder.unkId, encode(t) { calls++; return encoder.encode(t); } };
+    const boom = new Error('conflict');
+    assert.throws(
+      () => compileBoostList(conflicting, spy, { onConflicts: () => { throw boom; } }),
+      /conflict/,
+    );
+    assert.equal(calls, 0, 'nothing was encoded before the hook threw');
+  });
+
+  test('conflicts are reported but non-fatal when no hook is given (the UI path)', () => {
+    const r = compileBoostList('venlafaxine:5\nvenlafaxine:-5', encoder);
+    assert.equal(r.conflicts.length, 1);
+    assert.ok(r.encoded.length > 0, 'the list is still compiled, just flagged');
+  });
+
+  test('opts.cache is threaded through to encodePhrases', () => {
+    const cache = new Map();
+    let calls = 0;
+    const spy = { unkId: encoder.unkId, encode(t) { calls++; return encoder.encode(t); } };
+    compileBoostList(raw, spy, { cache });
+    const cold = calls;
+    assert.ok(cold > 0);
+    compileBoostList(raw, spy, { cache });
+    assert.equal(calls, cold, 'a warm recompile re-encodes nothing');
+  });
 });
 
 describe('encodePhrases opts.cache (incremental re-encode)', () => {
