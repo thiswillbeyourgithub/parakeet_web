@@ -721,6 +721,75 @@ export function selectPrebuilt(prebuilt, current) {
 }
 
 /**
+ * Flatten an encoded list (one small object per surface form, each holding its
+ * own `ids` array) into four typed arrays sharing a CSR-style layout:
+ * `ids[offsets[i] .. offsets[i+1])` are entry i's token ids.
+ *
+ * This exists purely to make the encoding cheap to move between threads. A
+ * 75k-line clinical list expands to ~330k entries, and structured-cloning that
+ * many objects costs ~450 ms of main-thread time per postMessage (measured in
+ * Chromium); the packed form clones in ~19 ms, and can be transferred outright
+ * (see {@link packedTransferables}) for zero copy. Weights and gates are
+ * Float64Array, not Float32Array, so the values the decoder compares are
+ * bit-identical to the unpacked ones.
+ * @param {Array<{ids: number[], weight?: number, minp?: number}>} encoded
+ * @returns {{ids: Int32Array, offsets: Int32Array, weights: Float64Array, minps: Float64Array}}
+ */
+export function packEncoded(encoded) {
+  const n = encoded.length;
+  let total = 0;
+  for (let i = 0; i < n; i++) total += encoded[i].ids?.length || 0;
+  const ids = new Int32Array(total);
+  const offsets = new Int32Array(n + 1);
+  const weights = new Float64Array(n);
+  const minps = new Float64Array(n);
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    const e = encoded[i];
+    offsets[i] = k;
+    if (e.ids) for (let j = 0; j < e.ids.length; j++) ids[k++] = e.ids[j];
+    weights[i] = e.weight ?? 1;
+    minps[i] = e.minp ?? DEFAULT_BOOST_MIN_P;
+  }
+  offsets[n] = k;
+  return { ids, offsets, weights, minps };
+}
+
+/**
+ * Whether a value is the packed encoding produced by {@link packEncoded} (as
+ * opposed to the plain array of entry objects). Both are accepted everywhere an
+ * "encoding" is taken, since a server-prebuilt artifact arrives as JSON.
+ * @param {any} x
+ * @returns {boolean}
+ */
+export function isPackedEncoding(x) {
+  return !!x && !Array.isArray(x) && ArrayBuffer.isView(x.ids) && ArrayBuffer.isView(x.offsets);
+}
+
+/**
+ * Number of entries in either encoding shape.
+ * @param {Array|{offsets: Int32Array}|null} encoded
+ * @returns {number}
+ */
+export function encodedCount(encoded) {
+  if (!encoded) return 0;
+  return isPackedEncoding(encoded) ? encoded.offsets.length - 1 : encoded.length;
+}
+
+/**
+ * The buffers of a packed encoding, for a postMessage transfer list. Only pass
+ * these when the sender is done with the encoding: transferring neuters the
+ * arrays on the sending side. (The main thread keeps its copy to re-sync the
+ * decode worker, so it clones instead; the boost worker, which owns nothing
+ * after replying, transfers.)
+ * @param {{ids: Int32Array, offsets: Int32Array, weights: Float64Array, minps: Float64Array}} packed
+ * @returns {ArrayBuffer[]}
+ */
+export function packedTransferables(packed) {
+  return [packed.ids.buffer, packed.offsets.buffer, packed.weights.buffer, packed.minps.buffer];
+}
+
+/**
  * Trie node. `children` is created lazily (null until the first child is
  * inserted) so the many leaf nodes of a large list do not each carry an empty
  * Map; readers must treat a null `children` as "no children".
@@ -800,12 +869,26 @@ export class BoostingTrie {
    * so the expensive encode can run elsewhere (e.g. a worker) via
    * {@link encodePhrases} and the result handed here. The caller owns `skipped`
    * (set it on the returned trie if needed).
-   * @param {Array<{ids: number[], weight?: number, minp?: number}>} encoded
+   *
+   * Accepts either shape: the plain array of entry objects (what a server
+   * prebuilt .json parses to) or the packed typed arrays from
+   * {@link packEncoded} (what crosses a postMessage, since cloning 330k objects
+   * costs ~450 ms and the packed form ~19 ms). Both produce the same trie.
+   * @param {Array<{ids: number[], weight?: number, minp?: number}>|{ids: Int32Array, offsets: Int32Array, weights: Float64Array, minps: Float64Array}} encoded
    * @param {Object} [opts] Forwarded to the constructor.
    * @returns {BoostingTrie}
    */
   static buildFromEncoded(encoded, opts = {}) {
     const trie = new BoostingTrie(opts);
+    if (isPackedEncoding(encoded)) {
+      const { ids, offsets, weights, minps } = encoded;
+      for (let i = 0; i + 1 < offsets.length; i++) {
+        const start = offsets[i], end = offsets[i + 1];
+        if (end <= start) continue;
+        trie.insert(ids.subarray(start, end), weights[i], minps[i]);
+      }
+      return trie;
+    }
     for (const { ids, weight, minp } of encoded) {
       if (!ids || !ids.length) continue;
       trie.insert(ids, weight ?? 1, minp ?? DEFAULT_BOOST_MIN_P);

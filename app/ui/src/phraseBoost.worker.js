@@ -23,7 +23,7 @@
 // Built with Claude Code.
 
 import { BpeEncoder, buildVocabToId, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { compileBoostList } from '../../src/phraseBoost.js';
+import { compileBoostList, packEncoded, packedTransferables } from '../../src/phraseBoost.js';
 
 // The BPE asset is identical across requests, so fetch + parse it once. The
 // encoder is rebuilt only when the tokenizer vocabulary changes (model swap),
@@ -80,7 +80,17 @@ self.onmessage = async (e) => {
     }
     const result = compileBoostList(text, encoder, { augmentDefault, cache: encodeCache });
     if (encoder) lastExpandedCount = result.expandedCount;
-    self.postMessage({ id, ok: true, ...result });
+    // Hand the ids over as packed typed arrays, TRANSFERRED (zero copy): the
+    // encoding is ~330k entries for a large clinical list, and cloning that many
+    // objects costs the receiving main thread ~450 ms, which would undo much of
+    // what moving the work here bought. Nothing in this worker reads `encoded`
+    // after the reply (the cache is keyed by surface form, not by entry), so
+    // neutering the buffers is safe.
+    const packed = result.encoded ? packEncoded(result.encoded) : null;
+    self.postMessage(
+      { ...result, id, ok: true, encoded: packed },
+      packed ? packedTransferables(packed) : [],
+    );
   } catch (err) {
     self.postMessage({ id, ok: false, error: String((err && err.message) || err) });
   }

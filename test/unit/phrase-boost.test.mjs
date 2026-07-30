@@ -15,6 +15,7 @@ import {
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
   isDefaultsLine, resolveBoostLines, findBoostConflicts, formatBoostConflict,
   countPhraseLines, compileBoostList,
+  packEncoded, isPackedEncoding, encodedCount, packedTransferables,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -451,6 +452,80 @@ describe('encodePhrases + buildFromEncoded (worker split)', () => {
   const fromEncoded = BoostingTrie.buildFromEncoded(encoded, { strength: 1 });
   test('buildFromEncoded yields the same size as buildFromPhrases', () => assert.equal(fromEncoded.size, mixedTrie.size));
   test('buildFromEncoded reaches the same first token', () => assert.ok(fromEncoded.root.children.has(ids[0])));
+});
+
+describe('packEncoded (cross-thread encoding shape)', () => {
+  const entries = [
+    { phrase: 'acetaminophen', weight: 2.5, minp: 0.1 },
+    { phrase: 'venlafaxine', weight: -3, minp: 0.025 },
+    { phrase: 'metoprolol', weight: 1, minp: 0.5 },
+  ];
+  const { encoded } = encodePhrases(entries, encoder);
+
+  test('round-trips every id, weight and gate', () => {
+    const packed = packEncoded(encoded);
+    assert.ok(isPackedEncoding(packed));
+    assert.equal(encodedCount(packed), encoded.length);
+    assert.equal(encodedCount(encoded), encoded.length);
+    for (let i = 0; i < encoded.length; i++) {
+      const ids = Array.from(packed.ids.subarray(packed.offsets[i], packed.offsets[i + 1]));
+      assert.ok(eqArr(ids, encoded[i].ids), `entry ${i} ids`);
+      // Float64 storage, so the values the decoder compares are bit-identical.
+      assert.equal(packed.weights[i], encoded[i].weight);
+      assert.equal(packed.minps[i], encoded[i].minp);
+    }
+  });
+
+  test('buildFromEncoded gives an identical trie from either shape', () => {
+    const opts = { strength: 1.5, depthScaling: 0.5, minpOverride: null };
+    const fromObjects = BoostingTrie.buildFromEncoded(encoded, opts);
+    const fromPacked = BoostingTrie.buildFromEncoded(packEncoded(encoded), opts);
+    assert.equal(fromPacked.size, fromObjects.size);
+    assert.equal(fromPacked.minMinp, fromObjects.minMinp);
+    // Walk both tries over each phrase's ids and compare the node bonus/gate at
+    // every depth: this is exactly what the decoder reads.
+    for (const { ids } of encoded) {
+      let a = fromObjects.root, b = fromPacked.root;
+      for (const id of ids) {
+        a = a.children.get(id);
+        b = b.children.get(id);
+        assert.ok(a && b, 'both tries have the node');
+        assert.equal(b.bonus, a.bonus);
+        assert.equal(b.minp, a.minp);
+        assert.equal(b.depth, a.depth);
+      }
+    }
+  });
+
+  test('defaults are materialised, and empty-id entries are dropped by both shapes', () => {
+    const sparse = [{ ids: [1, 2] }, { ids: [] }, { ids: [3], weight: 4 }];
+    const packed = packEncoded(sparse);
+    assert.equal(packed.weights[0], 1);              // default weight
+    assert.equal(packed.minps[0], DEFAULT_BOOST_MIN_P); // default gate
+    assert.equal(packed.offsets[1], packed.offsets[2]); // the empty entry spans nothing
+    assert.equal(
+      BoostingTrie.buildFromEncoded(packed).size,
+      BoostingTrie.buildFromEncoded(sparse).size,
+    );
+  });
+
+  test('packedTransferables lists all four buffers', () => {
+    const packed = packEncoded(encoded);
+    const bufs = packedTransferables(packed);
+    assert.equal(bufs.length, 4);
+    assert.ok(bufs.every(b => b instanceof ArrayBuffer));
+    assert.equal(new Set(bufs).size, 4, 'four distinct buffers');
+  });
+
+  test('isPackedEncoding rejects the plain array shape and empties', () => {
+    assert.equal(isPackedEncoding(encoded), false);
+    assert.equal(isPackedEncoding(null), false);
+    assert.equal(isPackedEncoding({}), false);
+    assert.equal(encodedCount(null), 0);
+    // An empty list still packs to a valid (0-entry) encoding.
+    assert.equal(encodedCount(packEncoded([])), 0);
+    assert.equal(BoostingTrie.buildFromEncoded(packEncoded([])).isEmpty, true);
+  });
 });
 
 describe('compileBoostList (the whole chain, shared by the worker and the compiler)', () => {
