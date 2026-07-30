@@ -14,6 +14,7 @@
 
 import { test, expect } from '@playwright/test';
 import { seedSettings, expandSettingsSection } from './seed.mjs';
+import { routeHfRepoListing, abortHfDownloads, routeNoLocalMirror } from './routes.mjs';
 
 // The real istupakov file set: int8 + single-file fp32 + vocab, but crucially NO
 // encoder-model.int8.lite.onnx, so the lite request cannot be satisfied.
@@ -46,14 +47,11 @@ test('WASM int8 lite fails loudly (no silent default-int8 downgrade) when no sou
   });
 
   // HF lists the lite-less istupakov set; abort any HF file download.
-  await page.route('**/huggingface.co/api/**', (route) =>
-    route.fulfill({ json: ISTUPAKOV_FILES.map((path) => ({ type: 'file', path })) }));
-  await page.route(/https:\/\/(huggingface\.co|cdn-lfs[^/]*\.huggingface\.co)\/(?!api\/).*/, (route) =>
-    route.abort());
+  await routeHfRepoListing(page, ISTUPAKOV_FILES);
+  await abortHfDownloads(page);
   // The local mirror has NO lite file either: 404 every /models probe so the
   // auto-upgrade cannot rescue the lite request.
-  await page.route('**/models/**', (route) =>
-    route.fulfill({ status: 404, body: 'not found' }));
+  await routeNoLocalMirror(page);
 
   await page.goto('/');
   await seedSettings(page);

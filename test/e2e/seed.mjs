@@ -22,12 +22,29 @@ import { resolve, dirname } from 'node:path';
 // flaky `boost-rebuild-on-status` failure (no `[Boost] rebuilding trie` ever
 // logged because verbose was off and no phrases were loaded).
 //
-// We close the race by WAITING for the first boot to finish stamping `version`
-// before we write: once the version key exists, the first boot is past its
-// purge branch (a fresh DB always hits the mismatch path and saves the version
-// there), so no concurrent `clearAllSettings()` can clobber the seed, and the
-// reload reads a matching version and never purges. We also write a matching
-// `version` ourselves so the reload's check is unconditionally satisfied.
+// We first WAIT for the first boot to finish stamping `version`: once the
+// version key exists, the first boot is past its purge branch (a fresh DB
+// always hits the mismatch path and saves the version there), so no concurrent
+// `clearAllSettings()` can clobber the seed, and the reload reads a matching
+// version and never purges. We also write a matching `version` ourselves so the
+// reload's check is unconditionally satisfied.
+//
+// That version gate alone is NOT sufficient, though. `saveSetting('version')`
+// runs BEFORE `setSettingsLoaded(true)`, and every `usePersistedSetting` effect
+// writes its CURRENT (default) value the moment `settingsLoaded` flips. So the
+// version key appears, we write the seed, and the first boot's default-persist
+// storm then overwrites it key by key. Observed directly: a seeded
+// `wasmEncoderQuant: 'fp32'` read back as `int8` right after the reload, so the
+// spec silently ran on defaults (it loaded int8 weights and never reached the
+// unsatisfiable-quant guard it was written to assert). Under the loaded
+// full-suite run this surfaced as an intermittent
+// transcription-fp32-wasm-no-downgrade failure that passed in isolation.
+//
+// So after the version gate we write the seed and HOLD it: re-write and re-read
+// until the values stay put across several consecutive checks, which outlasts
+// the one-shot default-persist storm. This is also self-healing if a pending
+// `deleteDatabase` (logged as "blocked by another tab") lands late and drops
+// the store.
 const APP_VERSION = JSON.parse(
   readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../app/package.json'), 'utf-8'),
 ).version;
@@ -35,6 +52,14 @@ const APP_VERSION = JSON.parse(
 const SETTINGS_DB = 'parakeetweb-settings-db';
 const SETTINGS_STORE = 'settings-store';
 const SETTINGS_PREFIX = 'parakeetweb_';
+
+// A key written by a plain `usePersistedSetting` (App.jsx), i.e. one of the
+// values the first boot re-persists once `settingsLoaded` flips. Used purely as
+// evidence that the default-persist storm has begun. If App.jsx ever stops
+// persisting this key the wait below times out loudly, which is the intended
+// failure mode: a seeder that silently stops synchronising is what caused the
+// bug this guards against.
+const STORM_SENTINEL = 'wasmEncoderQuant';
 
 // Seed the app's settings DB. Every spec gets the base config it needs to boot:
 // load the int8 weights from the local /models route (serve.mjs) on the WASM
@@ -44,43 +69,92 @@ const SETTINGS_PREFIX = 'parakeetweb_';
 // `parakeetweb_` prefix is applied here), e.g.
 //   seedSettings(page, { verboseLog: true, chunkDuration: 5 }).
 export async function seedSettings(page, extra = {}) {
-  // Wait for the first boot to have stamped `version` (see the race note above).
-  // Polled in-page; opening the DB read-only each tick is cheap for a short wait.
+  // Wait for the first boot to have stamped `version` AND to have run its
+  // default-persist storm (see the race note above). `version` alone is written
+  // BEFORE `setSettingsLoaded(true)`, so it only proves the purge branch is
+  // done; STORM_SENTINEL is a plain `usePersistedSetting` key, so its presence
+  // proves the storm's effects have started flushing. They all flush in the same
+  // effect pass, so once one lands the rest are immediate, and the hold loop
+  // below absorbs the remainder. Polled in-page; opening the DB read-only each
+  // tick is cheap for a short wait.
   await page.waitForFunction(
-    ({ DB, STORE, PREFIX }) => new Promise((resolve) => {
+    ({ DB, STORE, PREFIX, SENTINEL }) => new Promise((resolve) => {
       const req = indexedDB.open(DB);
       req.onsuccess = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(false); return; }
-        const get = db.transaction([STORE], 'readonly').objectStore(STORE).get(PREFIX + 'version');
-        get.onsuccess = () => { db.close(); resolve(get.result !== undefined); };
-        get.onerror = () => { db.close(); resolve(false); };
+        const tx = db.transaction([STORE], 'readonly');
+        const os = tx.objectStore(STORE);
+        const version = os.get(PREFIX + 'version');
+        const sentinel = os.get(PREFIX + SENTINEL);
+        tx.oncomplete = () => {
+          db.close();
+          resolve(version.result !== undefined && sentinel.result !== undefined);
+        };
+        tx.onerror = () => { db.close(); resolve(false); };
       };
       req.onerror = () => resolve(false);
     }),
-    { DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX },
-    { timeout: 30 * 1000 },
+    {
+      DB: SETTINGS_DB,
+      STORE: SETTINGS_STORE,
+      PREFIX: SETTINGS_PREFIX,
+      SENTINEL: STORM_SENTINEL,
+    },
+    { polling: 100, timeout: 30 * 1000 },
   );
 
-  await page.evaluate(async ({ extra, version, DB, STORE, PREFIX }) => {
-    const settings = { version, modelSource: 'local', backend: 'wasm', ...extra };
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      for (const [k, v] of Object.entries(settings)) os.put(v, PREFIX + k);
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  }, { extra, version: APP_VERSION, DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX });
+  // Write the seed, then keep re-writing until a read-back confirms it survived
+  // STABLE_CHECKS consecutive polls (see the default-persist-storm note above).
+  await page.waitForFunction(
+    async ({ extra, version, DB, STORE, PREFIX, STABLE_CHECKS }) => {
+      const settings = { version, modelSource: 'local', backend: 'wasm', ...extra };
+      const db = await new Promise((res, rej) => {
+        const req = indexedDB.open(DB, 1);
+        req.onupgradeneeded = (e) => {
+          const d = e.target.result;
+          if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+        };
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => rej(req.error);
+      });
+      try {
+        await new Promise((res, rej) => {
+          const tx = db.transaction([STORE], 'readwrite');
+          const os = tx.objectStore(STORE);
+          for (const [k, v] of Object.entries(settings)) os.put(v, PREFIX + k);
+          tx.oncomplete = () => res();
+          tx.onerror = () => rej(tx.error);
+        });
+        const got = await new Promise((res, rej) => {
+          const tx = db.transaction([STORE], 'readonly');
+          const os = tx.objectStore(STORE);
+          const out = {};
+          for (const k of Object.keys(settings)) {
+            const get = os.get(PREFIX + k);
+            get.onsuccess = () => { out[k] = get.result; };
+          }
+          tx.oncomplete = () => res(out);
+          tx.onerror = () => rej(tx.error);
+        });
+        const held = Object.entries(settings)
+          .every(([k, v]) => JSON.stringify(got[k]) === JSON.stringify(v));
+        window.__seedStableCount = held ? (window.__seedStableCount || 0) + 1 : 0;
+        return window.__seedStableCount >= STABLE_CHECKS;
+      } finally {
+        db.close();
+      }
+    },
+    {
+      extra,
+      version: APP_VERSION,
+      DB: SETTINGS_DB,
+      STORE: SETTINGS_STORE,
+      PREFIX: SETTINGS_PREFIX,
+      STABLE_CHECKS: 3,
+    },
+    { polling: 150, timeout: 30 * 1000 },
+  );
 }
 
 // Expand a collapsible Settings group by clicking its header toggle, so a spec

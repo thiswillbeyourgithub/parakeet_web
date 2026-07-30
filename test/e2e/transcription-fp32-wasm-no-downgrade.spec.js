@@ -16,6 +16,7 @@
 
 import { test, expect } from '@playwright/test';
 import { seedSettings } from './seed.mjs';
+import { routeHfRepoListing, abortHfDownloads, routeNoLocalMirror } from './routes.mjs';
 
 // The real istupakov file set: single-file fp32 encoder, int8 variants, vocab.
 // Crucially NO encoder-model.onnx.data.NNN shards, so WASM fp32 cannot load.
@@ -48,14 +49,11 @@ test('WASM fp32 fails loudly (no silent int8 downgrade) when no source ships the
   });
 
   // HF lists the shard-less istupakov set; abort any HF file download.
-  await page.route('**/huggingface.co/api/**', (route) =>
-    route.fulfill({ json: ISTUPAKOV_FILES.map((path) => ({ type: 'file', path })) }));
-  await page.route(/https:\/\/(huggingface\.co|cdn-lfs[^/]*\.huggingface\.co)\/(?!api\/).*/, (route) =>
-    route.abort());
+  await routeHfRepoListing(page, ISTUPAKOV_FILES);
+  await abortHfDownloads(page);
   // The local mirror has NO shards either: 404 every /models probe so the
   // auto-upgrade cannot rescue the fp32 request.
-  await page.route('**/models/**', (route) =>
-    route.fulfill({ status: 404, body: 'not found' }));
+  await routeNoLocalMirror(page);
 
   // int8 is the default; fp32 is an opt-in on WASM. Seed it directly (rather
   // than driving the settings UI) to exercise the fp32-on-WASM request that must
