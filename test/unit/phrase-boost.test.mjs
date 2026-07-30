@@ -454,6 +454,91 @@ describe('encodePhrases + buildFromEncoded (worker split)', () => {
   test('buildFromEncoded reaches the same first token', () => assert.ok(fromEncoded.root.children.has(ids[0])));
 });
 
+describe('a penalty is never swallowed by a boost on a shared prefix', () => {
+  // The real-world case this comes from: the shipped french_medical list boosts
+  // "▁The" at 1.5 solely because "Theileria microti" is in it, so the decoder
+  // inserted spurious "The"s into French transcripts. Penalising `the:-1` had no
+  // effect at all, because the node kept a single strongest-MAGNITUDE bonus and
+  // |−1| < |1.5|.
+  const build = (encoded, opts = {}) =>
+    BoostingTrie.buildFromEncoded(encoded, { strength: 1, depthScaling: 0, ...opts });
+  const nodeFor = (trie, ids) => {
+    let n = trie.root;
+    for (const id of ids) n = n.children.get(id);
+    return n;
+  };
+
+  test('a weaker penalty still offsets a stronger boost on the shared token', () => {
+    const t = build([
+      { ids: [1, 2, 3], weight: 1.5, minp: 0.025 }, // the long phrase
+      { ids: [1], weight: -1, minp: 0.025 },        // the user's penalty
+    ]);
+    assert.equal(nodeFor(t, [1]).bonus, 0.5, '1.5 boost + (-1) penalty');
+    // Deeper nodes, which the penalty does not reach, keep the full boost.
+    assert.equal(nodeFor(t, [1, 2]).bonus, 1.5);
+  });
+
+  test('a penalty at least as strong as the boost neutralises or flips it', () => {
+    assert.equal(nodeFor(build([
+      { ids: [1, 2], weight: 1.5 }, { ids: [1], weight: -1.5 },
+    ]), [1]).bonus, 0);
+    assert.equal(nodeFor(build([
+      { ids: [1, 2], weight: 1.5 }, { ids: [1], weight: -3 },
+    ]), [1]).bonus, -1.5);
+  });
+
+  test('insertion order does not matter', () => {
+    const a = build([{ ids: [1, 2], weight: 1.5 }, { ids: [1], weight: -1 }]);
+    const b = build([{ ids: [1], weight: -1 }, { ids: [1, 2], weight: 1.5 }]);
+    assert.equal(nodeFor(a, [1]).bonus, nodeFor(b, [1]).bonus);
+  });
+
+  test('only the STRONGEST boost and the STRONGEST penalty count, not their sum', () => {
+    // Three phrases through the same token must not stack into 4.5.
+    const t = build([
+      { ids: [1, 2], weight: 1.5 }, { ids: [1, 3], weight: 1.5 }, { ids: [1, 4], weight: 1.5 },
+      { ids: [1], weight: -0.5 }, { ids: [1], weight: -0.25 },
+    ]);
+    assert.equal(nodeFor(t, [1]).bonus, 1);
+  });
+
+  test('single-sign lists are bit-identical to the old strongest-magnitude rule', () => {
+    // Every curated list is boosts-only, so nothing about it may change.
+    const boosts = [
+      { ids: [1, 2], weight: 1.5 }, { ids: [1, 3], weight: 4 }, { ids: [1, 3, 5], weight: 2 },
+    ];
+    const t = build(boosts, { depthScaling: 0.5 });
+    assert.equal(nodeFor(t, [1]).bonus, 4);            // strongest boost wins
+    assert.equal(nodeFor(t, [1, 3]).bonus, 4 * 1.5);   // depth scaling still applies
+    const penalties = [{ ids: [1, 2], weight: -1.5 }, { ids: [1], weight: -4 }];
+    assert.equal(nodeFor(build(penalties), [1]).bonus, -4); // strongest penalty wins
+  });
+
+  test('the min-p gate still comes from the strongest-magnitude phrase', () => {
+    const t = build([
+      { ids: [1, 2], weight: 1.5, minp: 0.4 },
+      { ids: [1], weight: -1, minp: 0.1 },
+    ]);
+    assert.equal(nodeFor(t, [1]).minp, 0.4, 'the 1.5 phrase owns the gate');
+    const t2 = build([
+      { ids: [1, 2], weight: 1.5, minp: 0.4 },
+      { ids: [1], weight: -3, minp: 0.1 },
+    ]);
+    assert.equal(nodeFor(t2, [1]).minp, 0.1, 'now the -3 phrase does');
+  });
+
+  test('end to end through the real encoder: `the:-1::f` finally bites', () => {
+    const list = '*:1.5::f\nTheileria microti\nthe:-1::f';
+    const { encoded } = compileBoostList(list, encoder);
+    const trie = BoostingTrie.buildFromEncoded(encoded, { strength: 1, depthScaling: 0.5 });
+    const firstId = encoder.encode('Theileria microti')[0];
+    const node = trie.root.children.get(firstId);
+    assert.ok(node, 'the shared first token is in the trie');
+    assert.ok(node.bonus < 1.5, `penalty applied (bonus ${node.bonus})`);
+    assert.equal(node.bonus, 0.5);
+  });
+});
+
 describe('packEncoded (cross-thread encoding shape)', () => {
   const entries = [
     { phrase: 'acetaminophen', weight: 2.5, minp: 0.1 },
