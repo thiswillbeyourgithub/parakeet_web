@@ -30252,6 +30252,8 @@ graisse brune
 graisse pararénale de Gerota
 graisse périrénale
 graminées
+gramme
+grammes
 grand appareillage
 grand bassin
 grand cartilage alaire
@@ -41571,6 +41573,8 @@ microglie
 microglossie
 micrognathie
 micrognatisme
+microgramme
+microgrammes
 microgravité
 microgreffe
 microhystéroscope
@@ -41766,7 +41770,11 @@ milieux oculaires
 milium
 milium colloïde
 millicurie détruit
+milligramme
 milligramme-heure
+milligrammes
+millilitre
+millilitres
 milliosmole
 milnacipran:::fph
 miltefosine:::fph
