@@ -109,6 +109,7 @@ function parseArgs(argv) {
     strength: 1,
     boostMinp: null,       // global min-p override (null = each phrase's baked min-p)
     depthScaling: null,    // trie depth-scaling override (null = trie's built-in default)
+    commitmentScaling: null, // partial-match discount strength (null = trie's default, 1)
     beamWidth: 1,          // 1 = greedy; >1 = MAES beam search
     maesNumSteps: 2,       // MAES: max symbols emitted per frame
     maesExpansionBeta: 2,  // MAES: over-generate top-(beamWidth+beta) tokens
@@ -151,6 +152,7 @@ function parseArgs(argv) {
       case '-s': case '--boost-strength': a.strength = Number(val(flag)); break;
       case '--boost-minp': a.boostMinp = Number(val(flag)); break;
       case '--depth-scaling': a.depthScaling = Number(val(flag)); break;
+      case '--commitment-scaling': a.commitmentScaling = Number(val(flag)); break;
       case '-w': case '--beam-width': a.beamWidth = parseInt(val(flag), 10); break;
       case '--maes-num-steps': a.maesNumSteps = parseInt(val(flag), 10); break;
       case '--maes-expansion-beta': a.maesExpansionBeta = parseInt(val(flag), 10); break;
@@ -188,6 +190,10 @@ function parseArgs(argv) {
   }
   if (a.depthScaling !== null && (!Number.isFinite(a.depthScaling) || a.depthScaling < 0)) {
     throw new Error('--depth-scaling must be a number >= 0 (0 = flat, no per-depth growth)');
+  }
+  if (a.commitmentScaling !== null
+    && (!Number.isFinite(a.commitmentScaling) || a.commitmentScaling < 0 || a.commitmentScaling > 1)) {
+    throw new Error('--commitment-scaling must be a number in [0, 1] (0 = no partial-match discount, 1 = full)');
   }
   if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 25) throw new Error('--beam-width must be an integer in [1, 25]');
   if (!Number.isInteger(a.maesNumSteps) || a.maesNumSteps < 1) throw new Error('--maes-num-steps must be an integer >= 1');
@@ -246,12 +252,20 @@ Options:
                            the model's own top token). Default: omitted, i.e. each
                            phrase's own baked min-p (no override).
       --depth-scaling N    Trie depth-scaling factor (number >= 0), overriding the
-                           built-in default. The per-token boost at trie depth d is
-                           weight*(1 + N*(d-1)), so this controls how much deeper
-                           (more committed) matches are rewarded: 0 = flat (every
-                           depth gets the base weight, least "inertia" toward
-                           completing a started phrase), higher = stronger pull to
-                           finish it. Default: the trie's built-in default.
+                           built-in default. The per-token boost at trie depth d of
+                           a phrase of L tokens is weight*(d/L)*(1 + N*(d-1)), so
+                           this controls how much deeper (more committed) matches
+                           are rewarded: 0 = only the d/L ramp (least "inertia"
+                           toward completing a started phrase), higher = stronger
+                           pull to finish it. Default: the trie's built-in default.
+      --commitment-scaling N
+                           How strongly a PARTIAL match is discounted by how little
+                           of its phrase it commits to, i.e. the d/L factor above
+                           (number in [0, 1]). 1 (the default) applies it in full;
+                           0 removes it, so a phrase's very first token already
+                           earns its full weight (the behaviour before that ramp
+                           was introduced). Exists so the ramp can be A/B'd on a
+                           WER/CER sweep; a completed phrase is unaffected either way.
   -w, --beam-width N       Beam search width (integer in [1, 25]). 1 = greedy (default,
                            fastest). >1 runs MAES (Modified Adaptive Expansion
                            Search): width is the global beam cap, but the gamma
@@ -652,18 +666,20 @@ export async function loadParakeetModel({
 // returned trie is identical either way. Reused by both the CLI and benchmarks
 // so boosting behaviour can never diverge between them.
 //
-// `depthScaling` overrides the trie's linear per-depth reward growth (the bonus
-// at trie depth d is `weight * (1 + depthScaling * (d - 1))`); unlike the min-p
-// gate it is BAKED INTO each node's bonus at insert time, so changing it needs a
-// fresh trie (the grid benchmark rebuilds one per value). Leave undefined to use
-// the trie's built-in default.
+// `depthScaling` overrides the trie's linear per-depth reward growth: the bonus
+// at trie depth d of a phrase of L tokens is
+// `weight * (d / L) * (1 + depthScaling * (d - 1))`, where the `d / L` factor
+// discounts a partial match by how little of the phrase it commits to (see
+// BoostingTrie.insert). Unlike the min-p gate it is BAKED INTO each node's bonus
+// at insert time, so changing it needs a fresh trie (the grid benchmark rebuilds
+// one per value). Leave undefined to use the trie's built-in default.
 //
 // `minpOverride` is a global min-p gate (a decode-time property, NOT baked in)
 // applied to every phrase, superseding each phrase's own baked min-p. null = no
 // override (each phrase keeps its own). The grid benchmark sets this per cell on
 // a shared trie instead (so it can sweep it without rebuilding); the CLI passes
 // it here for a single run.
-export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling, minpOverride = null, tokenizer, quiet = false, verbose = false }) {
+export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling, commitmentScaling, minpOverride = null, tokenizer, quiet = false, verbose = false }) {
   const pwcSpecs = boosts.filter(isPwcPath);
   const textSpecs = boosts.filter((s) => !isPwcPath(s));
   // `typedBoosts` are the phrases exactly as written (for display); `entries` is
@@ -681,8 +697,8 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling
   // is a precompiled .pwc we skip loading it and start from an empty trie.
   const encoder = entries.length ? await loadBpeEncoder(tokenizer, BPE_MERGES) : null;
   const phraseBoost = entries.length
-    ? BoostingTrie.buildFromPhrases(entries, encoder, { strength, depthScaling })
-    : new BoostingTrie({ strength, depthScaling });
+    ? BoostingTrie.buildFromPhrases(entries, encoder, { strength, depthScaling, commitmentScaling })
+    : new BoostingTrie({ strength, depthScaling, commitmentScaling });
   phraseBoost.strength = strength;
   // A global min-p override supersedes every phrase's baked min-p (decode-time,
   // not baked into the bonus). null leaves each phrase's own gate untouched.
@@ -717,7 +733,7 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling
 
   if (!quiet) {
     const minpNote = phraseBoost.minpOverride != null ? `, min-p override ${phraseBoost.minpOverride}` : '';
-    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}, depth-scaling ${phraseBoost.depthScaling}${minpNote}`);
+    console.error(`[transcribe] phrase boost: ${phraseBoost.size} phrase(s), strength ${strength}, depth-scaling ${phraseBoost.depthScaling}, commitment-scaling ${phraseBoost.commitmentScaling}${minpNote}`);
     // List the phrases AS TYPED, not their generated casing variants, and cap
     // the listing: it is handy for a handful of inline probes but floods the
     // terminal for a list of thousands. --verbose lifts the cap. (.pwc ids are
@@ -766,6 +782,7 @@ async function main() {
     boosts: args.boosts,
     strength: args.strength,
     depthScaling: args.depthScaling ?? undefined, // null => trie's built-in default
+    commitmentScaling: args.commitmentScaling ?? undefined, // null => trie's built-in default
     minpOverride: args.boostMinp,                  // null => each phrase's baked min-p
     tokenizer,
     verbose: args.verbose,

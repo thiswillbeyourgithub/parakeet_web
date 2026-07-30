@@ -44,6 +44,18 @@
 export const DEFAULT_DEPTH_SCALING = 0.5;
 
 /**
+ * How strongly a partial match is discounted by how little of its phrase it
+ * commits to (see {@link BoostingTrie#insert}). 1 (the default) scales a node's
+ * reward by `depth / phraseLength`; 0 restores the older behaviour where a
+ * phrase's very first token already earned its full weight; values between
+ * interpolate. Exposed as a knob purely so the effect can be A/B'd on a WER/CER
+ * sweep (`scripts/transcribe.mjs --commitment-scaling`, swept by
+ * `scripts/grid_search_benchmark.mjs`) without rebuilding the app; the UI does
+ * not surface it.
+ */
+export const DEFAULT_COMMITMENT_SCALING = 1;
+
+/**
  * Per-phrase weight bounds (UI input is validated to this range). The accepted
  * range is the closed interval `[-MAX_PHRASE_WEIGHT, MAX_PHRASE_WEIGHT]` minus
  * zero: a positive weight boosts the phrase, a negative weight penalises it, and
@@ -811,11 +823,15 @@ export class BoostingTrie {
    * @param {Object} [opts]
    * @param {number} [opts.strength=1] Global boost strength multiplier (UI slider).
    * @param {number} [opts.depthScaling=0.5] Linear per-depth reward growth.
+   * @param {number} [opts.commitmentScaling=1] How strongly a partial match is
+   *   discounted by how little of its phrase it commits to; see
+   *   {@link DEFAULT_COMMITMENT_SCALING}.
    */
   constructor(opts = {}) {
     this.root = makeNode(0);
     this.strength = opts.strength ?? 1;
     this.depthScaling = opts.depthScaling ?? DEFAULT_DEPTH_SCALING;
+    this.commitmentScaling = opts.commitmentScaling ?? DEFAULT_COMMITMENT_SCALING;
     this.size = 0; // number of distinct phrases inserted (for UI/diagnostics)
     /**
      * Smallest (most permissive) per-phrase min-p gate inserted so far. No token
@@ -910,7 +926,7 @@ export class BoostingTrie {
    * Only mixed-sign nodes are affected: with boosts alone (every curated list)
    * `neg` stays 0 and the node keeps the strongest boost exactly as before, and
    * with penalties alone `pos` stays 0. The old rule was a single
-   * strongest-MAGNITUDE slot, which silently discarded the weaker sign — so a
+   * strongest-MAGNITUDE slot, which silently discarded the weaker sign, so a
    * user penalising a word the model over-emits (`the:-1`) got no effect at all
    * whenever some unrelated phrase in a curated list happened to share its first
    * BPE token with a larger weight (in the shipped french_medical list, "▁The"
@@ -919,12 +935,29 @@ export class BoostingTrie {
    *
    * The min-p gate still comes from the single strongest-magnitude contributor,
    * so a node's threshold always belongs to one real phrase.
+   *
+   * The reward is scaled by how much of the phrase the node commits to,
+   * `depth / tokenIds.length` (attenuated by `commitmentScaling`, 1 by default;
+   * 0 turns the factor off entirely), on top of the depth-scaling growth.
+   * Without it a
+   * phrase's FIRST token earned its full weight, i.e. matching 1 of the 5 tokens
+   * of "Theileria microti" was rewarded exactly as much as nearly completing it.
+   * On a 75k-phrase clinical list that put 1483 of the 8193 vocabulary tokens
+   * (18%) on a standing full-weight bonus at every decode step, while the blank
+   * token can never be boosted, and in a TDT decoder a standing anti-blank tilt
+   * is an insertion generator (spurious "The"/"and"/"for" in French output).
+   * The scaling leaves both endpoints untouched: a single-token phrase still
+   * earns its full weight at depth 1, and a completed phrase of any length still
+   * earns exactly `weight * (1 + depthScaling * (L - 1))` at its last token.
+   * Only the speculative middle, where little evidence has accumulated, is
+   * discounted in proportion to how little that is.
    * @param {number[]|Int32Array} tokenIds
    * @param {number} [weight=1]
    * @param {number} [minp=DEFAULT_BOOST_MIN_P] Min-p gate carried with the bonus.
    */
   insert(tokenIds, weight = 1, minp = DEFAULT_BOOST_MIN_P) {
     if (minp < this.minMinp) this.minMinp = minp;
+    const len = tokenIds.length;
     let node = this.root;
     for (const id of tokenIds) {
       let child = node.children?.get(id);
@@ -932,7 +965,11 @@ export class BoostingTrie {
         child = makeNode(node.depth + 1);
         (node.children ??= new Map()).set(id, child);
       }
-      const bonus = weight * (1 + this.depthScaling * (child.depth - 1));
+      // 1 at the last token of the phrase whatever `commitmentScaling` is, so
+      // only partial matches are ever discounted; commitmentScaling 0 makes this
+      // a flat 1 and restores the pre-ramp behaviour exactly.
+      const committed = 1 - this.commitmentScaling * (1 - child.depth / len);
+      const bonus = weight * committed * (1 + this.depthScaling * (child.depth - 1));
       const prevMag = Math.max(child.pos, -child.neg);
       if (bonus >= 0) {
         if (bonus > child.pos) child.pos = bonus;
