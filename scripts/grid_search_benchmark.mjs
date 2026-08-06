@@ -586,6 +586,23 @@ function datasetNameFor(manifestPath, used, explicit) {
 // a path or "label=path" (see parseManifestSpec). --limit applies per manifest.
 // Returns { entries, datasetNames } where datasetNames is in manifest
 // (command-line) order.
+// Resolve one manifest's RELATIVE audio_filepath. --audio-root wins when it
+// actually holds the file; otherwise fall back to the manifest's own directory.
+//
+// That fallback is what lets a single run score manifests living under
+// DIFFERENT audio roots (the bench takes one --audio-root), e.g. the sampled
+// sets under benchmark_datasets/french_medical/ next to the older ones rooted
+// in the NeMo tree. When neither location has the file, return the --audio-root
+// candidate so the "missing audio" error still names the flag most likely to be
+// wrong. `exists` is injectable so this stays unit-testable without a disk.
+export function resolveAudioPath(audioField, audioRoot, manifestDir, exists = existsSync) {
+  const fromRoot = resolve(audioRoot, audioField);
+  if (exists(fromRoot)) return fromRoot;
+  const fromManifest = resolve(manifestDir, audioField);
+  if (exists(fromManifest)) return fromManifest;
+  return fromRoot;
+}
+
 function loadManifests(manifestSpecs, audioRoot, limit) {
   const entries = [];
   const datasetNames = [];
@@ -610,7 +627,9 @@ function loadManifests(manifestSpecs, audioRoot, limit) {
       const text = obj.text ?? obj.transcript ?? obj.reference;
       if (!audioField) throw new Error(`manifest ${manifestPath} line ${lineNo}: missing audio_filepath`);
       if (text === undefined) throw new Error(`manifest ${manifestPath} line ${lineNo}: missing text`);
-      const audioPath = isAbsolute(audioField) ? audioField : resolve(audioRoot, audioField);
+      const audioPath = isAbsolute(audioField)
+        ? audioField
+        : resolveAudioPath(audioField, audioRoot, dirname(manifestPath));
       entries.push({ audioPath, text, duration: obj.duration, dataset });
       count++;
       if (limit && count >= limit) break;
@@ -951,7 +970,7 @@ const pickColumns = (cols) => (row) => cols.map((c) => row[c]);
 // frames (see summarizeCellBeam). The final load5 column is the OS 5-minute load
 // average captured when the cell finished, a trust flag for the timing columns
 // (see cellLoad5).
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'cscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'beam_med', 'beam_max', 'batch_med', 'batch_max', 'steps', 'load5'];
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'cscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'beam_med', 'beam_max', 'batch_med', 'batch_max', 'steps', 'load5', 'load_avg', 'load_max'];
 // MAES knob columns, inserted just before the 'dataset' column ONLY for the knobs
 // actually swept (in the `show` set), so a normal run's table is unchanged and a
 // MAES sweep gains just the columns that vary. Each entry: [header, accessor].
@@ -994,6 +1013,19 @@ function cellBeamMax(r) { return r.beamCell ? String(r.beamCell.beam_max) : '-';
 function cellBatchMed(r) { return r.beamCell ? String(r.beamCell.batch_med) : '-'; }
 function cellBatchMax(r) { return r.beamCell ? String(r.beamCell.batch_max) : '-'; }
 function cellSteps(r) { return r.beamCell ? String(r.beamCell.steps) : '-'; }
+// Roll a cell's per-utterance OS 1-minute load samples into the mean and peak
+// the tables show. A cell whose loadMax is far above loadAvg had a burst of
+// unrelated work on the box, so its decode timing should not be trusted (or
+// compared against a cell that ran quiet). No samples (a cell with zero
+// utterances, or an older resumed record) yields nulls, rendered "-".
+export function summarizeCellLoad(samples) {
+  if (!samples || !samples.length) return { loadAvg: null, loadMax: null };
+  return {
+    loadAvg: +mean(samples).toFixed(2),
+    loadMax: +Math.max(...samples).toFixed(2),
+  };
+}
+
 // Cell-level OS 5-minute load average (os.loadavg()[1]) captured when the cell
 // finished, shared across the cell's dataset rows like proc_t/dur_t. A load above
 // the machine's core count while a cell ran means other processes were competing
@@ -1002,6 +1034,9 @@ function cellSteps(r) { return r.beamCell ? String(r.beamCell.steps) : '-'; }
 // (e.g. an older resumed record predating this field), so the column auto-hides
 // via nonEmptyColumnIndices when no cell carries a value.
 function cellLoad5(r) { return r.load5 == null ? '-' : r.load5.toFixed(1); }
+// Mean / peak 1-min load DURING the cell (see summarizeCellLoad).
+function cellLoadAvg(r) { return r.loadAvg == null ? '-' : r.loadAvg.toFixed(1); }
+function cellLoadMax(r) { return r.loadMax == null ? '-' : r.loadMax.toFixed(1); }
 function accuracyBody(rows, show = EMPTY_SHOW) {
   const body = [];
   for (const r of rows) {
@@ -1029,6 +1064,8 @@ function accuracyBody(rows, show = EMPTY_SHOW) {
         cellBatchMax(r),
         cellSteps(r),
         cellLoad5(r),
+        cellLoadAvg(r),
+        cellLoadMax(r),
       ]);
     }
   }
@@ -1062,6 +1099,8 @@ function topBody(rows, show = EMPTY_SHOW) {
       cellBatchMax(r),
       cellSteps(r),
       cellLoad5(r),
+      cellLoadAvg(r),
+      cellLoadMax(r),
     ];
   });
 }
@@ -1288,6 +1327,8 @@ async function main() {
       // it through so a resumed cell renders the load5 column identically. Older
       // records predating this field have no load5, so default to null (renders "-").
       load5: s.load5 ?? null,
+      loadAvg: s.loadAvg ?? null,
+      loadMax: s.loadMax ?? null,
       timeMs: s.wall_ms || 0, timings, datasets: buildDatasets(perDs, order) };
   };
 
@@ -1459,6 +1500,11 @@ async function main() {
       // Per-utterance beamStats samples (collectBeamStats); empty for a greedy
       // beam=1 cell, which never runs the beam decoder. Rolled up per cell below.
       const beamStatsSamples = [];
+      // OS 1-minute load average sampled once per utterance, so a cell that ran
+      // slow because something ELSE was hammering the box is identifiable after
+      // the fact. The end-of-cell load5 below is a single point sample and misses
+      // a spike that started and ended mid-cell; the mean/max over the cell do not.
+      const loadSamples = [];
       const t0 = Date.now();
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
@@ -1520,6 +1566,7 @@ async function main() {
         // Two stacked progress bars: this run, then the whole grid (one line
         // each on a TTY; folded onto one \r line when piped).
         doneUtts++;
+        loadSamples.push(os.loadavg()[0]);
         const now = Date.now();
         const runP = progress(i + 1, entries.length, now - t0);
         const gridP = progress(doneUtts, totalUtts, now - gridT0, gridEta(now, totalUtts - doneUtts));
@@ -1534,10 +1581,12 @@ async function main() {
       // for the cell's decode timing. Rounded to 2 decimals so the JSONL value and
       // the (1-decimal) table render match between a live and a resumed cell.
       const load5 = +os.loadavg()[1].toFixed(2);
+      const { loadAvg, loadMax } = summarizeCellLoad(loadSamples);
       const datasets = buildDatasets(perDs, datasetNames);
       const r = { beamWidth: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
         commitmentScaling: row.commitmentScaling ?? null,
+        loadAvg, loadMax,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         beamCell: summarizeCellBeam(beamStatsSamples),
@@ -1570,6 +1619,7 @@ async function main() {
         beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, backend: ortForQuant(row.quant), boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
         commitmentScaling: row.commitmentScaling ?? null,
+        loadAvg, loadMax,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         utterances: entries.length,
