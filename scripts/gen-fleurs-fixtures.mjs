@@ -36,6 +36,7 @@ import { homedir } from 'node:os';
 
 import { loadParakeetModel, decodePcm, findFfmpeg } from './transcribe.mjs';
 import { words, overlap } from '../test/e2e/text-overlap.mjs';
+import { mulberry32, shuffled } from './lib/sample.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -107,26 +108,6 @@ Options:
 }
 
 const expandHome = (p) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p);
-
-// Deterministic RNG so a given --seed reproduces the same sample.
-function mulberry32(seed) {
-  let t = seed >>> 0;
-  return () => {
-    t += 0x6d2b79f5;
-    let x = Math.imul(t ^ (t >>> 15), 1 | t);
-    x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
-    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function shuffled(arr, rng) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
 
 function readManifest(path) {
   return readFileSync(path, 'utf-8')
