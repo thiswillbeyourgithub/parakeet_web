@@ -35,7 +35,7 @@ import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText, canonic
 import { createSerialQueue } from './lib/writeQueue.js';
 import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
-import { restoreCpuThreads } from './lib/cpuThreads.js';
+import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
@@ -760,6 +760,10 @@ export default function App() {
   // Chunking: split long audio into smaller segments before transcribing
   const [enableChunking, setEnableChunking] = useState(true);
   const [chunkDuration, setChunkDuration] = useState(DEFAULT_CHUNK_DURATION_SEC); // seconds
+  // Chunk-parallel encoding on WASM (a pool of encode workers). Default ON;
+  // encodePoolPlan additionally gates on hardware (cores/RAM/threads) at model
+  // load, so weak machines never spawn the pool even with the toggle on.
+  const [parallelEncode, setParallelEncode] = useState(true);
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
   const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
@@ -884,6 +888,15 @@ export default function App() {
   // Boost token-ids + params stashed for the decode worker to rebuild its trie
   // (the live BoostingTrie itself is not structured-cloneable). null = no boost.
   const boostEncodedRef = useRef(null);
+  // Encode-worker POOL (WASM-only): chunk-parallel encoding, the mirror of the
+  // decode worker above. [] = no pool (feature off/gated/failed -> serial
+  // in-thread encode). One shared pending map + id counter across the pool;
+  // requests are dealt round-robin.
+  const encodePoolRef = useRef([]);
+  const encodePoolReadyRef = useRef(null);     // Promise<boolean> resolved on init
+  const encodeReqIdRef = useRef(0);
+  const encodePendingRef = useRef(new Map());  // encode id -> { resolve, reject }
+  const encodePoolRoundRobinRef = useRef(0);
   const maxCores = navigator.hardwareConcurrency || 8;
   // ORT-style default (min(4, ceil(cores/2))): hardwareConcurrency counts
   // hyperthreads and ORT-WASM's spin-waiting pool makes oversubscription
@@ -1411,6 +1424,7 @@ export default function App() {
           savedMaesPrefixAlpha,
           savedCpuThreads,
           savedCpuThreadsMigrated,
+          savedParallelEncode,
           savedNoiseSuppression,
           savedAutoGainControl,
           savedRemoteMicGain,
@@ -1449,6 +1463,7 @@ export default function App() {
           // rescue run exactly once (see lib/cpuThreads.js).
           loadSetting('cpuThreads', null),
           loadSetting('cpuThreadsMigrated', false),
+          loadSetting('parallelEncode', true),
           loadSetting('noiseSuppression', true),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
@@ -1511,6 +1526,7 @@ export default function App() {
           // rescue never re-fires on a value the user re-picks on purpose.
           if (!savedCpuThreadsMigrated || migrationApplied) saveSetting('cpuThreadsMigrated', true);
         }
+        setParallelEncode(savedParallelEncode !== false);
         setNoiseSuppression(savedNoiseSuppression);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
@@ -1961,6 +1977,7 @@ export default function App() {
   usePersistedSetting('maesExpansionGamma', maesExpansionGamma, settingsLoaded);
   usePersistedSetting('maesPrefixAlpha', maesPrefixAlpha, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
+  usePersistedSetting('parallelEncode', parallelEncode, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
   usePersistedSetting('remoteMicGain', remoteMicGain, settingsLoaded);
@@ -2360,10 +2377,155 @@ export default function App() {
     });
   }, []);
 
-  // Terminate the decode worker on unmount.
+  // ---- Chunk-parallel encode pool (WASM only; mirror of the decode worker) ----
+
+  // Terminate every pool worker and reject anything still pending, so an
+  // in-flight pooled run rejects (and falls back to the serial path) instead of
+  // hanging. Used on model swap, toggle-off, worker crash and unmount.
+  const teardownEncodePool = useCallback((reason) => {
+    for (const w of encodePoolRef.current) { try { w.terminate(); } catch { /* ignore */ } }
+    encodePoolRef.current = [];
+    encodePoolReadyRef.current = null;
+    encodePendingRef.current.forEach(({ reject }) => reject(new Error(reason || 'encode pool reset')));
+    encodePendingRef.current.clear();
+  }, []);
+
+  // (Re)create the encode pool and init each worker with the just-loaded
+  // model's encoder URL/bytes (pre-verified by the main thread; the workers
+  // never fetch anything unverified). Resolves true once EVERY worker is ready
+  // to encode, false if any is unavailable or failed init (the run then
+  // encodes in-thread as before).
+  const initEncodePool = useCallback((initParams, workers) => {
+    teardownEncodePool('encode pool reset');
+    const pool = [];
+    try {
+      for (let i = 0; i < workers; i += 1) {
+        pool.push(new Worker(new URL('./lib/encode.worker.js', import.meta.url), { type: 'module' }));
+      }
+    } catch (e) {
+      console.warn('[Encode] pool unavailable, encoding on main thread:', e);
+      for (const w of pool) { try { w.terminate(); } catch { /* ignore */ } }
+      encodePoolReadyRef.current = Promise.resolve(false);
+      return encodePoolReadyRef.current;
+    }
+    encodePoolRef.current = pool;
+    const readies = pool.map((worker) => {
+      // Route encode replies (they carry an id) to their pending promise.
+      worker.addEventListener('message', (ev) => {
+        const msg = ev.data || {};
+        if ((msg.type === 'result' || msg.type === 'error') && msg.id != null) {
+          const pending = encodePendingRef.current.get(msg.id);
+          if (!pending) return;
+          encodePendingRef.current.delete(msg.id);
+          if (msg.type === 'result') {
+            // Rebuild the object encode() returns; transposed arrives transferred.
+            pending.resolve({
+              transposed: new Float32Array(msg.transposed),
+              D: msg.D, Tenc: msg.Tenc,
+              encode_ms: msg.encodeMs || 0, preprocess_ms: msg.preprocessMs || 0,
+            });
+          } else {
+            pending.reject(new Error(msg.message || 'encode failed'));
+          }
+        }
+      });
+      // A crashed worker (OOM is the realistic case: each holds its own copy
+      // of the encoder weights) never replies; tear the pool down so pending
+      // encodes reject now rather than hanging the run forever.
+      worker.addEventListener('error', (ev) => {
+        console.warn('[Encode] pool worker crashed:', ev?.message || ev);
+        teardownEncodePool('encode pool worker crashed');
+      });
+      return new Promise((resolve) => {
+        const onReady = (ev) => {
+          const msg = ev.data || {};
+          if (msg.type === 'ready') { worker.removeEventListener('message', onReady); resolve(true); }
+          else if (msg.type === 'error' && msg.id == null) {
+            worker.removeEventListener('message', onReady);
+            console.warn('[Encode] pool worker init failed, encoding on main thread:', msg.message);
+            resolve(false);
+          }
+        };
+        worker.addEventListener('message', onReady);
+        // Init-time crash: settle readiness too (the run-time listener above
+        // already tore the pool down).
+        worker.addEventListener('error', () => resolve(false));
+        worker.postMessage(initParams);
+      });
+    });
+    encodePoolReadyRef.current = Promise.all(readies)
+      .then((oks) => oks.every(Boolean) && encodePoolRef.current === pool);
+    return encodePoolReadyRef.current;
+  }, [teardownEncodePool]);
+
+  // Bridge handed to transcribeChunked as opts.encodeChunk: copy the chunk PCM
+  // (the driver hands a zero-copy view into the whole clip, and transferring a
+  // view's buffer would detach the clip) and post it TRANSFERRED to the next
+  // worker round-robin. Resolves with the same object encode() returns.
+  const encodeChunkViaPool = useCallback((pcm, meta, encOpts) => {
+    const pool = encodePoolRef.current;
+    if (!pool.length) return Promise.reject(new Error('encode pool unavailable'));
+    const worker = pool[encodePoolRoundRobinRef.current % pool.length];
+    encodePoolRoundRobinRef.current = (encodePoolRoundRobinRef.current + 1) % pool.length;
+    const copy = pcm.slice();
+    return new Promise((resolve, reject) => {
+      const id = ++encodeReqIdRef.current;
+      encodePendingRef.current.set(id, { resolve, reject });
+      worker.postMessage({
+        type: 'encode', id, chunkIndex: meta.chunkIndex,
+        pcm: copy.buffer, sampleRate: 16000,
+        enableProfiling: !!(encOpts && encOpts.enableProfiling),
+      }, [copy.buffer]);
+    });
+  }, []);
+
+  // Init params of the last successful WASM model load (minus the per-plan
+  // thread count), so the toggle below can start the pool without a full model
+  // reload. Cleared on WebGPU loads (the pool is a WASM-only feature).
+  const encodePoolInitParamsRef = useRef(null);
+
+  // Compute the hardware plan and start (or skip) the pool for the stashed
+  // model. Shared by loadModel and the toggle effect so the gate and logging
+  // cannot drift between them.
+  const startEncodePool = () => {
+    const params = encodePoolInitParamsRef.current;
+    if (!params) return;
+    const plan = encodePoolPlan({
+      cpuThreads, maxCores,
+      deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined,
+    });
+    if (plan.workers > 0) {
+      try {
+        initEncodePool({ ...params, numThreads: plan.threadsPerWorker }, plan.workers);
+        console.log(`[Encode] pool starting: ${plan.workers} workers x ${plan.threadsPerWorker} threads`);
+      } catch (e) {
+        console.warn('[Encode] failed to start encode pool:', e);
+        teardownEncodePool('encode pool init failed');
+      }
+    } else {
+      console.log(`[Encode] pool disabled by hardware gate (${plan.reason})`);
+    }
+  };
+
+  // React to the toggle without reloading the model: the pool is independent
+  // of the main-thread sessions, so tear it down / bring it up directly. A
+  // pooled run in flight when the user toggles off simply rejects and falls
+  // back to the serial path.
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    if (parallelEncode) {
+      if (!encodePoolRef.current.length) startEncodePool();
+    } else if (encodePoolRef.current.length) {
+      teardownEncodePool('parallel encode toggled off');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parallelEncode, settingsLoaded]);
+
+  // Terminate the decode worker + encode pool on unmount.
   useEffect(() => () => {
     if (decodeWorkerRef.current) { try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ } }
-  }, []);
+    teardownEncodePool('unmount');
+  }, [teardownEncodePool]);
 
   // Cheap synchronous size probe for the collapse gates below. It has to be
   // synchronous (deciding whether to render the textarea at all happens during
@@ -2755,6 +2917,28 @@ export default function App() {
         } else if (decodeWorkerRef.current) {
           try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ }
           decodeWorkerRef.current = null;
+        }
+        // Chunk-parallel encode pool (WASM only). Stash the worker init params
+        // whenever the loaded model is pool-eligible, so the sidebar toggle can
+        // start/stop the pool later without a model reload, and start it now
+        // when the toggle is on. fp32 is excluded: each pool worker holds its
+        // own copy of the encoder weights, fine at int8 (~850 MB) but not at
+        // fp32 (~2.4 GB per copy). Best-effort: a gate or failure just means
+        // the serial in-thread encode runs, exactly as before.
+        encodePoolInitParamsRef.current = (!wantWebgpu && wasmEncoderRequest !== 'fp32') ? {
+          type: 'init',
+          encoderUrl: modelUrls.urls.encoderUrl,
+          encoderDataUrl: modelUrls.urls.encoderDataUrl,
+          filenames: modelUrls.filenames,
+          nMels,
+          preprocessorBackend: modelUrls.preprocessorBackend,
+          preprocessorUrl: modelUrls.urls.preprocessorUrl,
+        } : null;
+        if (encodePoolInitParamsRef.current && parallelEncode) {
+          startEncodePool();
+        } else {
+          teardownEncodePool(encodePoolInitParamsRef.current
+            ? 'parallel encode disabled' : 'encode pool unsupported for this model');
         }
       } catch (sessErr) {
         // A cached weight file that fails ONNX deserialization (truncated
@@ -4327,6 +4511,23 @@ export default function App() {
         console.warn('[Decode] pipeline setup failed, using in-thread decode:', e);
         pipelineDecodeChunk = null;
       }
+      // WASM chunk-parallel encode: engage the pool only when the clip will
+      // actually chunk (a single-pass clip never calls encodeChunk, so awaiting
+      // pool readiness would only delay it) and every worker is ready.
+      let pipelineEncodeChunk = null;
+      try {
+        if (!pipelineDecodeChunk && backend === 'wasm' && encodePoolRef.current.length
+            && enableChunking && pcm.length > MAX_CHUNK_DURATION * 16000
+            && await (encodePoolReadyRef.current || Promise.resolve(false))) {
+          pipelineEncodeChunk = encodeChunkViaPool;
+          // Positive marker (asserted by the e2e) that chunk-parallel encoding
+          // actually engaged rather than silently falling through to serial.
+          console.log(`[Encode] pool engaged: ${encodePoolRef.current.length} workers encoding chunks in parallel with in-thread decode`);
+        }
+      } catch (e) {
+        console.warn('[Encode] pool setup failed, encoding in-thread:', e);
+        pipelineEncodeChunk = null;
+      }
       // If a pipelined run fails mid-flight, reset progress accounting and retry
       // once on the in-thread path so the old sequential loop stays ground truth.
       const resetProgressCounters = () => {
@@ -4338,6 +4539,14 @@ export default function App() {
           res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk }, onChunk);
         } catch (e) {
           console.warn('[Decode] pipelined run failed, retrying in-thread:', e);
+          resetProgressCounters();
+          res = await modelRef.current.transcribeChunked(pcm, 16000, chunkedOpts, onChunk);
+        }
+      } else if (pipelineEncodeChunk) {
+        try {
+          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, encodeChunk: pipelineEncodeChunk }, onChunk);
+        } catch (e) {
+          console.warn('[Encode] pooled run failed, retrying in-thread:', e);
           resetProgressCounters();
           res = await modelRef.current.transcribeChunked(pcm, 16000, chunkedOpts, onChunk);
         }
@@ -6014,6 +6223,22 @@ export default function App() {
                   disabled={modelSwapBlocked}
                   style={{ width: '4.5rem', opacity: modelSwapBlocked ? 0.5 : 1 }}
                 />
+              </div>
+            )}
+
+            {backend === 'wasm' && (
+              <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ flex: '1 1 auto' }}>
+                  <input
+                    type="checkbox"
+                    name="parallelEncode"
+                    checked={parallelEncode}
+                    onChange={e => setParallelEncode(e.target.checked)}
+                    disabled={modelSwapBlocked}
+                  />
+                  {' '}{t('parallelEncode')}
+                  <InfoTooltip text={t('tooltipParallelEncode')} />
+                </label>
               </div>
             )}
 

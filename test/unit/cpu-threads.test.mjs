@@ -13,7 +13,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { defaultWasmThreads } from '../../app/src/backend.js';
-import { restoreCpuThreads } from '../../app/ui/src/lib/cpuThreads.js';
+import { restoreCpuThreads, encodePoolPlan } from '../../app/ui/src/lib/cpuThreads.js';
 
 describe('defaultWasmThreads: ORT-style physical-core estimate capped at 4', () => {
   test('halves the logical count (rounding up) below the cap', () => {
@@ -94,5 +94,39 @@ describe('restoreCpuThreads: persisted-slider restore + legacy-default migration
     assert.equal(restoreCpuThreads({ stored: 0, migrated: true, maxCores: 8 }).threads, 4);
     assert.equal(restoreCpuThreads({ stored: 'lots', migrated: true, maxCores: 8 }).threads, 4);
     assert.equal(restoreCpuThreads({ stored: 3.6, migrated: true, maxCores: 8 }).threads, 4);
+  });
+});
+
+describe('encodePoolPlan: chunk-parallel encode pool gate + thread split', () => {
+  test('typical laptops get 2 workers, each with half the user thread budget', () => {
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: 8 }),
+      { workers: 2, threadsPerWorker: 2, reason: null });
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 6, maxCores: 12, deviceMemory: 8 }),
+      { workers: 2, threadsPerWorker: 3, reason: null });
+    // Odd budgets round down so the pool never exceeds the user's budget.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 5, maxCores: 8, deviceMemory: 8 }),
+      { workers: 2, threadsPerWorker: 2, reason: null });
+    // 4-core floor machine: 2 single-thread workers still beat 1x2t.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 4, deviceMemory: 8 }),
+      { workers: 2, threadsPerWorker: 1, reason: null });
+  });
+
+  test('undefined deviceMemory (Firefox/Node never expose it) passes the memory gate', () => {
+    assert.equal(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: undefined }).workers, 2);
+  });
+
+  test('gates: small core counts, low memory, unsplittable thread budget', () => {
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 2, deviceMemory: 8 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'cores' });
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: 4 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'memory' });
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 1, maxCores: 8, deviceMemory: 8 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'threads' });
+  });
+
+  test('garbage cpuThreads falls back to the default thread budget', () => {
+    // hc=8 -> defaultWasmThreads 4 -> 2 workers x 2 threads.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: NaN, maxCores: 8, deviceMemory: 8 }),
+      { workers: 2, threadsPerWorker: 2, reason: null });
   });
 });
