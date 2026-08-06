@@ -20,8 +20,9 @@ import {
   parseArgs, buildBoostDescriptors, tagOf, ACC_HEAD, accuracyBody, topBody,
 } from '../../scripts/grid_search_benchmark.mjs';
 
-// parseArgs insists on a manifest; the path is never opened by these pure bits.
-const parse = (...extra) => parseArgs(['--manifest', '/tmp/does-not-matter.jsonl', ...extra]);
+// parseArgs insists on a manifest and an explicit --ort; the path is never
+// opened by these pure bits and the backend is irrelevant to them.
+const parse = (...extra) => parseArgs(['--manifest', '/tmp/does-not-matter.jsonl', '--ort', 'wasm', ...extra]);
 
 // A full grid row, so tagOf sees every knob at its default but the boost ones.
 const row = (desc) => ({

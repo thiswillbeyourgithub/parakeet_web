@@ -217,14 +217,33 @@ function parseArgs(argv) {
     if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--decoder-quants must be int8, fp16 or fp32 (got ${q})`);
   }
   a.decoderQuants = [...new Set(a.decoderQuants)];
-  // ORT backend: the WASM EP reads every weight file into a Node Buffer (capped
-  // at 2 GiB per readFile) and has no fp16 CPU kernels, so the single-sidecar
-  // fp32 encoder and any fp16 model can only load on the native onnxruntime-node
-  // backend (it resolves external data from disk, no buffering). When --ort is
-  // left to auto (null) the backend is picked PER quant at load time
-  // (ortForQuant): node for fp16/fp32, wasm for int8. An explicit --ort (incl.
-  // cuda, which runs the native CUDA EP on the GPU) applies to every quant.
-  if (a.ort !== null && a.ort !== 'wasm' && a.ort !== 'node' && a.ort !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ort})`);
+  // ORT backend: REQUIRED, never defaulted. wasm and node give the same
+  // transcripts but wildly different timings (node is several times faster on
+  // CPU), and only wasm is what the web app actually ships. A default silently
+  // decides whether a run's proc_t/dur_t and dec_t/aud describe real user-facing
+  // decode cost or a native-only number that no browser will ever see, so the
+  // choice has to be made deliberately at every invocation.
+  //
+  // The WASM EP reads every weight file into a Node Buffer (capped at 2 GiB per
+  // readFile) and has no fp16 CPU kernels, so the single-sidecar fp32 encoder
+  // and any fp16 model can ONLY load on the native onnxruntime-node backend
+  // (it resolves external data from disk, no buffering). cuda runs the native
+  // CUDA EP on the GPU. Whichever is chosen applies to every swept quant.
+  if (a.ort === null) {
+    throw new Error(
+      '--ort is required and has no default: pass wasm, node or cuda.\n'
+      + '  wasm = what the web app ships, so proc_t/dur_t and dec_t/aud reflect real user-facing decode cost (int8 only)\n'
+      + '  node = native onnxruntime-node, several times faster and required for fp16/fp32, but its timings are NOT what a browser sees\n'
+      + '  cuda = native CUDA EP on the GPU (needs CUDA 12 + cuDNN 9 on the loader path)',
+    );
+  }
+  if (a.ort !== 'wasm' && a.ort !== 'node' && a.ort !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ort})`);
+  if (a.ort === 'wasm' && a.quants.some((q) => q !== 'int8')) {
+    throw new Error(
+      `--ort wasm cannot load ${a.quants.filter((q) => q !== 'int8').join(', ')}: the WASM EP has no fp16 kernels and caps `
+      + 'each weight file at 2 GiB. Use --ort node for fp16/fp32.',
+    );
+  }
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
     throw new Error('--beam-width must be a comma-separated list of integers in [1, 25]');
   }
@@ -319,11 +338,17 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            proxy). Folded into the resume key only when it differs
                            from a cell's encoder quant (matched runs keep their old
                            key).
-      --ort BACKEND        ORT runtime: wasm, node (native CPU) or cuda (NVIDIA
-                           GPU via the native onnxruntime-node CUDA EP; needs
-                           CUDA 12 + cuDNN 9 on the loader path, and FAILS loudly
-                           if the CUDA library can't load). Default: auto per quant
-                           (wasm for int8, node for fp16/fp32). The WASM EP reads
+      --ort BACKEND        REQUIRED, no default. ORT runtime: wasm, node (native
+                           CPU) or cuda (NVIDIA GPU via the native
+                           onnxruntime-node CUDA EP; needs CUDA 12 + cuDNN 9 on
+                           the loader path, and FAILS loudly if the CUDA library
+                           can't load). wasm and node produce the SAME transcripts
+                           but very different timings, and only wasm is what the
+                           web app ships, so this decides whether a run's
+                           proc_t/dur_t and dec_t/aud describe real user-facing
+                           decode cost or a native-only number no browser sees.
+                           Too consequential to default, so it is always explicit.
+                           The WASM EP reads
                            each weight file into a <2 GiB Node Buffer and has no
                            fp16 CPU kernels, so the
                            single-sidecar fp32 encoder ("File size > 2 GiB") and
@@ -1150,7 +1175,10 @@ async function main() {
   // is loaded inside the grid loop (one model + its own tokenizer per quant).
   // ORT backend per quant: auto picks node for fp16/fp32 (no WASM fp16 kernels /
   // >2 GiB single-file fp32) and wasm for int8; an explicit --ort overrides all.
-  const ortForQuant = (quant) => args.ort ?? (quant === 'int8' ? 'wasm' : 'node');
+  // --ort is required (see parseArgs), so the backend is exactly what the user
+  // asked for, the same for every quant. Kept as a function because several
+  // call sites read it per quant.
+  const ortForQuant = () => args.ort;
 
   // Build the boost dimension of the sweep as quant-INDEPENDENT descriptors (the
   // trie itself is built later, per quant, from that quant's tokenizer):
