@@ -36,7 +36,7 @@
 //   node scripts/grid_search_benchmark.mjs \
 //     --manifest ./benchmark_datasets/french_medical/dictionary_val.jsonl \
 //     --manifest ./benchmark_datasets/french_medical/drugs_val.jsonl \
-//     --audio-root ./benchmark_datasets/french_medical ...
+//     --audio-root ./benchmark_datasets/french_medical --ort wasm ...
 //
 // Built with Claude Code.
 
@@ -299,7 +299,8 @@ Run the benchmark against them with:
 node scripts/grid_search_benchmark.mjs \\
 ${p.datasets.map((d) => `  --manifest ./benchmark_datasets/french_medical/${d.manifest} \\`).join('\n')}
   --audio-root ./benchmark_datasets/french_medical \\
-  --model-dir ./fallback_models
+  --model-dir ./fallback_models \\
+  --ort wasm
 \`\`\`
 
 Built with Claude Code.

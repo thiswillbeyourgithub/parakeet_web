@@ -14,7 +14,35 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveAudioPath, summarizeCellLoad } from '../../scripts/grid_search_benchmark.mjs';
+import { parseArgs, resolveAudioPath, summarizeCellLoad } from '../../scripts/grid_search_benchmark.mjs';
+
+const parse = (...extra) => parseArgs(['--manifest', '/tmp/does-not-matter.jsonl', ...extra]);
+
+// --ort has no default on purpose: wasm and node give identical transcripts but
+// very different timings, and only wasm is what the web app ships. Defaulting it
+// would silently decide whether a run's proc_t/dur_t means anything to a user.
+describe('--ort is required, never defaulted', () => {
+  test('omitting it is an error that names the tradeoff', () => {
+    assert.throws(() => parse(), /--ort is required and has no default/);
+    assert.throws(() => parse(), /wasm = what the web app ships/);
+  });
+
+  test('each backend is accepted and applied verbatim', () => {
+    assert.equal(parse('--ort', 'wasm').ort, 'wasm');
+    assert.equal(parse('--ort', 'node').ort, 'node');
+    assert.equal(parse('--cuda').ort, 'cuda');
+  });
+
+  test('an unknown backend is rejected', () => {
+    assert.throws(() => parse('--ort', 'vulkan'), /--ort must be wasm, node or cuda/);
+  });
+
+  test('wasm is rejected for fp16/fp32, which it cannot load at all', () => {
+    assert.throws(() => parse('--ort', 'wasm', '--quant', 'fp16'), /--ort wasm cannot load fp16/);
+    assert.throws(() => parse('--ort', 'wasm', '--quant', 'int8,fp32'), /--ort wasm cannot load fp32/);
+    assert.equal(parse('--ort', 'node', '--quant', 'fp16').ort, 'node');
+  });
+});
 
 describe('resolveAudioPath', () => {
   // Injected existence oracle: only these absolute paths "exist".
