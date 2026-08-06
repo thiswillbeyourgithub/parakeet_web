@@ -46,6 +46,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 |---|---|
 | 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
 | ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)): for this model the browser WebGPU runtime falls back to the CPU for the encoder and ends up slower than WASM int8 |
+| 🧵 **Parallel Encoding** | On long recordings, audio chunks are encoded concurrently in background workers while the main thread decodes, roughly 30-45% faster end to end. On by default on capable machines (4+ cores, 8+ GB RAM; it costs extra memory because each worker keeps its own copy of the encoder) and can be toggled off in Settings |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
 | ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
 | 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
