@@ -692,6 +692,10 @@ export class ParakeetModel {
       filenames,
       backend = 'webgpu-hybrid',
       wasmPaths,
+      // 'relaxed' opts the WASM engine into Relaxed-SIMD kernels; requires
+      // wasmPaths pointing at binaries compiled with them (the stock /ort/
+      // artifacts are not). Anything else keeps plain SIMD.
+      wasmSimd = undefined,
       subsampling = 8,
       windowStride = 0.01,
       verbose = false,
@@ -716,7 +720,7 @@ export class ParakeetModel {
     if (backend.startsWith('webgpu')) {
         ortBackend = 'webgpu';
     }
-    const ort = await initOrt({ backend: ortBackend, wasmPaths, numThreads: cpuThreads });
+    const ort = await initOrt({ backend: ortBackend, wasmPaths, numThreads: cpuThreads, simd: wasmSimd });
 
     // 2. Configure session options for better performance
     // Graph-capture is beneficial only when every node runs on the same EP and
@@ -869,12 +873,12 @@ export class ParakeetModel {
    */
   static async decoderOnlyFromUrls({
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
-    wasmPaths, cpuThreads, subsampling = 8, windowStride = 0.01, verbose = false,
+    wasmPaths, wasmSimd, cpuThreads, subsampling = 8, windowStride = 0.01, verbose = false,
   }) {
     if (!decoderUrl || !tokenizerUrl) {
       throw new Error('decoderOnlyFromUrls requires decoderUrl and tokenizerUrl');
     }
-    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads });
+    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads, simd: wasmSimd });
     const sessionOptions = {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
@@ -913,7 +917,7 @@ export class ParakeetModel {
    */
   static async encoderOnlyFromUrls({
     encoderUrl, encoderDataUrl, filenames,
-    wasmPaths, cpuThreads, preprocessorBackend = 'js', preprocessorUrl, nMels = 128,
+    wasmPaths, wasmSimd, cpuThreads, preprocessorBackend = 'js', preprocessorUrl, nMels = 128,
     subsampling = 8, windowStride = 0.01, verbose = false,
   }) {
     if (!encoderUrl) {
@@ -922,7 +926,7 @@ export class ParakeetModel {
     if (preprocessorBackend !== 'js' && !preprocessorUrl) {
       throw new Error('encoderOnlyFromUrls requires preprocessorUrl when preprocessorBackend is not "js"');
     }
-    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads });
+    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads, simd: wasmSimd });
     const sessionOptions = {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',

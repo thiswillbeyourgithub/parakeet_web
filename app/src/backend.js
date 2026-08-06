@@ -129,9 +129,15 @@ export function defaultWasmThreads(hardwareConcurrency) {
  * @param {Object} opts
  * @param {('webgpu'|'wasm')} [opts.backend='webgpu'] Desired backend.
  * @param {string} [opts.wasmPaths] Optional path prefix for WASM binaries.
+ * @param {('relaxed'|undefined)} [opts.simd] Pass 'relaxed' to opt into WASM
+ *   Relaxed-SIMD kernels. Only meaningful when wasmPaths points at ORT
+ *   binaries compiled with --enable_wasm_relaxed_simd (the stock /ort/
+ *   artifacts are not); ORT itself throws at init when the engine lacks the
+ *   feature, so callers must pre-gate on a WebAssembly.validate probe.
+ *   Anything else keeps plain (fixed-width) SIMD.
  * @returns {Promise<typeof import('onnxruntime-web').default>}
  */
-export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}) {
+export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads, simd } = {}) {
   // Dynamic import to handle Vite bundling issues
   let ort;
   
@@ -172,11 +178,12 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
     if (typeof SharedArrayBuffer !== 'undefined') {
       ort.env.wasm.numThreads = numThreads
         || defaultWasmThreads(typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined);
-      ort.env.wasm.simd = true;
-      console.log(`[Parakeet.js] WASM configured with ${ort.env.wasm.numThreads} threads, SIMD enabled`);
+      ort.env.wasm.simd = simd === 'relaxed' ? 'relaxed' : true;
+      console.log(`[Parakeet.js] WASM configured with ${ort.env.wasm.numThreads} threads, SIMD ${ort.env.wasm.simd === 'relaxed' ? 'relaxed' : 'enabled'}`);
     } else {
       console.warn('[Parakeet.js] SharedArrayBuffer not available - using single-threaded WASM');
       ort.env.wasm.numThreads = 1;
+      if (simd === 'relaxed') ort.env.wasm.simd = 'relaxed';
     }
     
     // Enable other WASM optimizations
