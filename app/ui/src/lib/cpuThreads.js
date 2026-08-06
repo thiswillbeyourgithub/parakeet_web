@@ -38,3 +38,41 @@ export function restoreCpuThreads({ stored, migrated, maxCores }) {
   }
   return { threads, migrationApplied: false };
 }
+
+/**
+ * Pure policy for the chunk-parallel encode-worker pool (WASM only). The
+ * encoder's thread scaling saturates near the physical core count, but chunks
+ * are independent, so two extra ORT instances in workers, each with about half
+ * the user's thread budget, encode different chunks concurrently while the
+ * main thread decodes (measured on a 6C/12T box: 2x3t vs 1x6t is ~+45%
+ * encode throughput, 2x2t vs 1x4t ~+35% on 4 threads).
+ *
+ * Gates (any failure returns workers: 0 with the reason):
+ * - 'cores': under 4 logical cores there is no headroom to convert.
+ * - 'memory': each worker holds its own copy of the encoder weights
+ *   (~850 MB for int8), so low-RAM devices must not pay 2 extra copies.
+ *   navigator.deviceMemory is Chrome-only and caps its report at 8; undefined
+ *   (Firefox, Node) passes, the user toggle + serial fallback still protect.
+ * - 'threads': a 1-thread budget cannot be split; the pool needs >= 2.
+ *
+ * threadsPerWorker halves the USER's cpuThreads budget (not the raw core
+ * count): the slider stays the one knob for how much CPU inference may use,
+ * and the pool redistributes that budget instead of multiplying it.
+ *
+ * @param {object} args
+ * @param {number} args.cpuThreads The user's WASM thread setting.
+ * @param {number} args.maxCores navigator.hardwareConcurrency.
+ * @param {number|undefined} args.deviceMemory navigator.deviceMemory (GB), if exposed.
+ * @returns {{ workers: number, threadsPerWorker: number, reason: (string|null) }}
+ */
+export function encodePoolPlan({ cpuThreads, maxCores, deviceMemory }) {
+  const cores = Number.isFinite(maxCores) && maxCores > 0 ? Math.floor(maxCores) : 8;
+  const threads = Number.isFinite(cpuThreads) && cpuThreads >= 1
+    ? Math.floor(cpuThreads) : defaultWasmThreads(cores);
+  if (cores < 4) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
+  if (Number.isFinite(deviceMemory) && deviceMemory < 8) {
+    return { workers: 0, threadsPerWorker: 0, reason: 'memory' };
+  }
+  if (threads < 2) return { workers: 0, threadsPerWorker: 0, reason: 'threads' };
+  return { workers: 2, threadsPerWorker: Math.max(1, Math.floor(threads / 2)), reason: null };
+}
