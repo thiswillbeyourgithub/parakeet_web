@@ -22,7 +22,8 @@
 //
 // Message contract:
 //   -> {type:'init', encoderUrl, encoderDataUrl, filenames, numThreads, nMels,
-//                    preprocessorBackend, preprocessorUrl, subsampling, windowStride}
+//                    preprocessorBackend, preprocessorUrl, subsampling,
+//                    windowStride, wasmPaths, wasmSimd}
 //   <- {type:'ready'} | {type:'error', message}
 //   -> {type:'encode', id, chunkIndex, pcm:ArrayBuffer, sampleRate,
 //                       enableProfiling}                          // pcm TRANSFERRED in
@@ -44,10 +45,15 @@ function initModel(msg) {
   const {
     encoderUrl, encoderDataUrl, filenames, numThreads,
     nMels, preprocessorBackend, preprocessorUrl, subsampling, windowStride,
+    wasmPaths, wasmSimd,
   } = msg;
+  // wasmPaths/wasmSimd mirror the MAIN thread's ORT-variant selection
+  // (lib/ortVariant.js): pooled chunks must run the exact same binaries and
+  // SIMD mode as in-thread chunks, or one clip could mix numerics.
   return ParakeetModel.encoderOnlyFromUrls({
     encoderUrl, encoderDataUrl, filenames, cpuThreads: numThreads,
     nMels, preprocessorBackend, preprocessorUrl, subsampling, windowStride,
+    wasmPaths, wasmSimd,
   });
 }
 

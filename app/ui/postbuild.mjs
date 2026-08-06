@@ -72,18 +72,22 @@ async function processHtml(htmlPath) {
   }
 }
 
-// Generate dist/ort/manifest.json with sha384 of each ORT runtime asset.
-// backend.js fetches this at startup, verifies each /ort/*.{mjs,wasm} blob,
-// and hands ORT the verified bytes via wasmPaths. Without this manifest,
-// a serving-path compromise could swap the ~11 MB jsep.wasm for an
+// Generate dist/<dir>/manifest.json with sha384 of each ORT runtime asset.
+// backend.js fetches this at startup, verifies each *.{mjs,wasm} blob, and
+// hands ORT the verified bytes via wasmPaths. Without this manifest, a
+// serving-path compromise could swap the ~11 MB jsep.wasm for an
 // attacker-built ML runtime that exfiltrates PCM at inference time.
-async function emitOrtManifest() {
-  const ortDir = join(DIST, 'ort');
+// Covers the stock runtime under dist/ort/ and, when the deployment ships it
+// (scripts/build-ort-relaxed.sh), the opt-in Relaxed-SIMD build under
+// dist/ort-relaxed/; the latter being absent is the normal case and skips
+// quietly, which is also what App.jsx's availability probe keys off.
+async function emitOrtManifest(dirName = 'ort') {
+  const ortDir = join(DIST, dirName);
   let entries;
   try {
     entries = await readdir(ortDir);
   } catch (_) {
-    console.log('[postbuild] no dist/ort/ directory, skipping ORT manifest');
+    console.log(`[postbuild] no dist/${dirName}/ directory, skipping ORT manifest`);
     return;
   }
   const targets = entries.filter(n => /\.(mjs|wasm)$/.test(n));
@@ -92,7 +96,7 @@ async function emitOrtManifest() {
     manifest[name] = await sha384(join(ortDir, name));
   }
   await writeFile(join(ortDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
-  console.log(`[postbuild] wrote dist/ort/manifest.json (${targets.length} entries)`);
+  console.log(`[postbuild] wrote dist/${dirName}/manifest.json (${targets.length} entries)`);
 }
 
 // Generate dist/.well-known/asset-integrity.json with sha384 of any
@@ -139,6 +143,7 @@ async function main() {
   }
   for (const h of htmls) await processHtml(h);
   await emitOrtManifest();
+  await emitOrtManifest('ort-relaxed');
   await emitAssetIntegrity();
 }
 

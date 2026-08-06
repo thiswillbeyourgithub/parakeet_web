@@ -37,7 +37,8 @@ import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { defaultWasmThreads } from '../../src/backend.js';
-import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
+import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
+import { resolveOrtVariant } from './lib/ortVariant.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -770,6 +771,13 @@ export default function App() {
   // encodePoolPlan additionally gates on hardware (cores/RAM/threads) at model
   // load, so weak machines never spawn the pool even with the toggle on.
   const [parallelEncode, setParallelEncode] = useState(true);
+  // Opt-in Relaxed-SIMD ORT runtime (PERF_PLAN #5). The toggle only renders
+  // when this deployment ships /ort-relaxed/ artifacts AND the engine passes
+  // the WebAssembly.validate relaxed probe; the choice is applied at the FIRST
+  // model load of the page and pinned (ORT's WASM runtime initialises once, so
+  // switching binaries or SIMD mode afterwards needs a page reload).
+  const [relaxedSimd, setRelaxedSimd] = useState(false);
+  const [relaxedAvailable, setRelaxedAvailable] = useState(false);
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
   const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
@@ -1431,6 +1439,7 @@ export default function App() {
           savedCpuThreads,
           savedCpuThreadsMigrated,
           savedParallelEncode,
+          savedRelaxedSimd,
           savedNoiseSuppression,
           savedAutoGainControl,
           savedRemoteMicGain,
@@ -1470,6 +1479,7 @@ export default function App() {
           loadSetting('cpuThreads', null),
           loadSetting('cpuThreadsMigrated', false),
           loadSetting('parallelEncode', true),
+          loadSetting('relaxedSimd', false),
           loadSetting('noiseSuppression', true),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
@@ -1533,6 +1543,7 @@ export default function App() {
           if (!savedCpuThreadsMigrated || migrationApplied) saveSetting('cpuThreadsMigrated', true);
         }
         setParallelEncode(savedParallelEncode !== false);
+        setRelaxedSimd(savedRelaxedSimd === true);
         setNoiseSuppression(savedNoiseSuppression);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
@@ -1984,6 +1995,7 @@ export default function App() {
   usePersistedSetting('maesPrefixAlpha', maesPrefixAlpha, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('parallelEncode', parallelEncode, settingsLoaded);
+  usePersistedSetting('relaxedSimd', relaxedSimd, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
   usePersistedSetting('remoteMicGain', remoteMicGain, settingsLoaded);
@@ -2489,6 +2501,20 @@ export default function App() {
   // thread count), so the toggle below can start the pool without a full model
   // reload. Cleared on WebGPU loads (the pool is a WASM-only feature).
   const encodePoolInitParamsRef = useRef(null);
+  // ORT runtime-variant selection (PERF_PLAN #5): the /ort-relaxed/ presence
+  // probe starts at mount; resolveOrtVariant runs once at the first model load
+  // and the result is pinned for the page lifetime.
+  const relaxedArtifactsPromiseRef = useRef(null);
+  const ortVariantRef = useRef(null);
+  const relaxedSupported = useMemo(() => wasmRelaxedSimdSupported(), []);
+  useEffect(() => {
+    if (!relaxedArtifactsPromiseRef.current) {
+      relaxedArtifactsPromiseRef.current = fetch('/ort-relaxed/manifest.json', { method: 'HEAD' })
+        .then((r) => r.ok)
+        .catch(() => false);
+      relaxedArtifactsPromiseRef.current.then((ok) => setRelaxedAvailable(ok));
+    }
+  }, []);
 
   // Compute the hardware plan and start (or skip) the pool for the stashed
   // model. Shared by loadModel and the toggle effect so the gate and logging
@@ -2893,12 +2919,30 @@ export default function App() {
       // Determine mel bin count from model config (nemo128 → 128, nemo80 → 80)
       const nMels = modelUrls.modelConfig?.featuresSize || 128;
       try {
+        // Pin the ORT runtime variant on the page's FIRST model load: ORT's
+        // WASM runtime initialises once, so later loads reuse the same
+        // binaries/SIMD mode regardless of toggle churn (reload to change).
+        if (!ortVariantRef.current) {
+          const artifactsPresent = await (relaxedArtifactsPromiseRef.current || Promise.resolve(false));
+          ortVariantRef.current = resolveOrtVariant({
+            relaxedSetting: relaxedSimd,
+            probeSupported: relaxedSupported,
+            artifactsPresent,
+            backend,
+          });
+          if (ortVariantRef.current.engaged) {
+            console.log('[ORT] Relaxed-SIMD runtime variant engaged (/ort-relaxed/)');
+          }
+        }
+        const ortVariant = ortVariantRef.current;
         modelRef.current = await ParakeetModel.fromUrls({
           ...modelUrls.urls,
           filenames: modelUrls.filenames,
           backend,
           verbose: verboseLog,
           cpuThreads,
+          wasmPaths: ortVariant.wasmPaths,
+          wasmSimd: ortVariant.wasmSimd,
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });
@@ -2915,6 +2959,8 @@ export default function App() {
               tokenizerUrl: modelUrls.urls.tokenizerUrl,
               filenames: modelUrls.filenames,
               numThreads: cpuThreads,
+              wasmPaths: ortVariant.wasmPaths,
+              wasmSimd: ortVariant.wasmSimd,
             });
           } catch (e) {
             console.warn('[Decode] failed to start decode worker:', e);
@@ -2936,6 +2982,8 @@ export default function App() {
           encoderUrl: modelUrls.urls.encoderUrl,
           encoderDataUrl: modelUrls.urls.encoderDataUrl,
           filenames: modelUrls.filenames,
+          wasmPaths: ortVariant.wasmPaths,
+          wasmSimd: ortVariant.wasmSimd,
           nMels,
           preprocessorBackend: modelUrls.preprocessorBackend,
           preprocessorUrl: modelUrls.urls.preprocessorUrl,
@@ -4773,6 +4821,7 @@ export default function App() {
         webgpuEncoderQuant,
         cpuThreads,
         parallelEncode,
+        relaxedSimd,
         enableChunking,
         chunkDurationSec: chunkDuration,
         beamWidth,
@@ -4781,6 +4830,7 @@ export default function App() {
       model: {
         loaded: !!modelRef.current,
         status,
+        ortVariant: ortVariantRef.current,
         maxEncoderBatch: modelRef.current?.maxEncoderBatch ?? null,
         encodePool: {
           workers: encodePoolRef.current.length,
@@ -6310,6 +6360,21 @@ export default function App() {
                   />
                   {' '}{t('parallelEncode')}
                   <InfoTooltip text={t('tooltipParallelEncode')} />
+                </label>
+              </div>
+            )}
+
+            {backend === 'wasm' && relaxedAvailable && relaxedSupported && (
+              <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ flex: '1 1 auto' }}>
+                  <input
+                    type="checkbox"
+                    name="relaxedSimd"
+                    checked={relaxedSimd}
+                    onChange={e => setRelaxedSimd(e.target.checked)}
+                  />
+                  {' '}{t('relaxedSimd')}
+                  <InfoTooltip text={t('tooltipRelaxedSimd')} />
                 </label>
               </div>
             )}
