@@ -5309,6 +5309,26 @@ export default function App() {
     || isRecording
     || isRemoteMic;
 
+  // Status line. Defined once and rendered from the two mutually exclusive
+  // branches below (idle/failed, where it sits under the Load Model button, and
+  // loaded, where it sits under the capture controls) so it always ends up
+  // directly beneath the buttons and above the chunk progress bar, instead of
+  // being stranded between the logo and the controls.
+  const statusLine = (
+    <p className="app-status">
+      {(status === 'loadingModel' || isTranscribing || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
+        <span className="spinner spinner--inline" aria-hidden="true" />
+      )}
+      {t('status')}: {t(status) || status}
+      {boostRebuilding && (
+        <span className="app-status__note">
+          <span className="spinner spinner--inline" aria-hidden="true" />
+          {t('boostRebuilding')}
+        </span>
+      )}
+    </p>
+  );
+
   return (
     <div className="app">
       {devMode && (
@@ -5352,18 +5372,6 @@ export default function App() {
             ☰
           </button>
         </div>
-        <p className="app-header__status">
-          {(status === 'loadingModel' || isTranscribing || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
-            <span className="spinner spinner--inline" aria-hidden="true" />
-          )}
-          {t('status')}: {t(status) || status}
-          {boostRebuilding && (
-            <span className="app-header__status-note">
-              <span className="spinner spinner--inline" aria-hidden="true" />
-              {t('boostRebuilding')}
-            </span>
-          )}
-        </p>
       </div>
 
       {/* About modal */}
@@ -6283,6 +6291,7 @@ export default function App() {
           >
             {t('loadModel')}
           </button>
+          {statusLine}
           {/* Error banner: the requested precision couldn't be served by any
               source, so the load failed instead of silently downgrading to a
               different quant. Rendered here (inside the idle/failed block) so it
@@ -6421,6 +6430,8 @@ export default function App() {
         )}
       </div>
       )}
+
+      {statusLine}
 
       {recordingCountdown !== null && (
         <Banner tone="warning" style={{ marginTop: '0.5rem', fontSize: '1.1em', fontWeight: 'bold', justifyContent: 'center' }}>

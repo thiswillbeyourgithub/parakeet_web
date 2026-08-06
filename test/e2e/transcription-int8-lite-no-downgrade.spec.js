@@ -71,7 +71,7 @@ test('WASM int8 lite fails loudly (no silent default-int8 downgrade) when no sou
   // The load must fail with the explicit lite "can't serve this quant" banner,
   // NOT silently succeed on the default int8 encoder.
   await expect(page.locator('.fallback-prompt')).toContainText('lite', { timeout: 60 * 1000 });
-  await expect(page.locator('.app-header__status')).toContainText('Failed', { timeout: 60 * 1000 });
+  await expect(page.locator('.app-status')).toContainText('Failed', { timeout: 60 * 1000 });
 
   // hub.js threw rather than pinning to int8, and nothing was transcribed.
   expect(logs.some((l) => l.includes('pinned to int8')),
