@@ -102,10 +102,9 @@ function parseArgs(argv) {
     strengths: [1],         // swept dimension (only used when --phrase-boost given)
     minps: [null],          // swept dimension: min-p gate override (null = each phrase's baked min-p)
     depthScalings: [null],  // swept dimension: trie depth-scaling (null = trie's built-in default)
-    commitmentScaling: null, // NOT swept: one value for the whole run (null = trie's default, 1).
-                            // Partial-match discount strength (see BoostingTrie.insert). It is a
-                            // ship/don't-ship A/B lever rather than a tuning knob, so the honest
-                            // comparison is two whole runs, not an extra column in one table.
+    commitmentScalings: [null], // swept dimension: partial-match discount strength, baked into the
+                            // trie at build time like depth-scaling (see BoostingTrie.insert), so
+                            // each value costs one extra trie build (null = trie's built-in default).
     boosts: [],             // --phrase-boost specs (repeatable); inline / .txt / .pwc
     noBaseline: false,      // drop the no-boost row from the sweep
     maesNumSteps: [2],       // swept dimension: MAES max symbols emitted per frame
@@ -168,7 +167,7 @@ function parseArgs(argv) {
       case '-s': case '--boost-strength': a.strengths = numList(val(flag)); break;
       case '--boost-minp': a.minps = numList(val(flag)); break;
       case '--depth-scaling': a.depthScalings = numList(val(flag)); break;
-      case '--commitment-scaling': a.commitmentScaling = Number(val(flag)); break;
+      case '--commitment-scaling': a.commitmentScalings = numList(val(flag)); break;
       case '-b': case '--phrase-boost': a.boosts.push(val(flag)); break;
       case '--no-baseline': a.noBaseline = true; break;
       case '--maes-num-steps': a.maesNumSteps = numList(val(flag)); break;
@@ -238,9 +237,9 @@ function parseArgs(argv) {
   if (!a.depthScalings.length || a.depthScalings.some((d) => d !== null && (!Number.isFinite(d) || d < 0))) {
     throw new Error('--depth-scaling must be a comma-separated list of numbers >= 0 (0 = flat, no per-depth growth)');
   }
-  if (a.commitmentScaling !== null
-    && (!Number.isFinite(a.commitmentScaling) || a.commitmentScaling < 0 || a.commitmentScaling > 1)) {
-    throw new Error('--commitment-scaling must be a number in [0, 1] (0 = no partial-match discount, 1 = full)');
+  if (!a.commitmentScalings.length
+    || a.commitmentScalings.some((c) => c !== null && (!Number.isFinite(c) || c < 0 || c > 1))) {
+    throw new Error('--commitment-scaling must be a comma-separated list of numbers in [0, 1] (0 = no partial-match discount, 1 = full)');
   }
   if (!a.maesNumSteps.length || a.maesNumSteps.some((n) => !Number.isInteger(n) || n < 1)) {
     throw new Error('--maes-num-steps must be a comma-separated list of integers >= 1');
@@ -377,18 +376,21 @@ Decoding sweep (each is a comma-separated list; the grid is their product):
                            (least "inertia"), higher = stronger pull to complete a
                            started phrase. Unlike min-p this is baked into the
                            trie at build time, so each value rebuilds the trie
-                           (one per strength x depth-scaling). Only used when
+                           (one per strength x depth-scaling x
+                           commitment-scaling). Only used when
                            --phrase-boost is set. Default: the trie's built-in
                            default (no override).
-      --commitment-scaling N
-                           Strength of the d/L partial-match discount above, for
-                           the WHOLE run (a single number, not a swept list, in
-                           [0, 1]). 1 = full discount (the default), 0 = none, so
-                           a phrase's first token already earns its full weight
-                           (the behaviour before that ramp was introduced). It is
-                           a ship/don't-ship lever, so A/B it as two whole runs
-                           and compare their overall WER/CER. Only used when
-                           --phrase-boost is set.
+      --commitment-scaling LIST
+                           Strength of the d/L partial-match discount above, as a
+                           comma-separated list of numbers in [0, 1], e.g.
+                           "0,0.5,1". 1 = full discount (the default), 0 = none,
+                           so a phrase's first token already earns its full
+                           weight (the behaviour before that ramp was
+                           introduced). Baked into the trie like depth-scaling,
+                           so each value rebuilds the trie (one per strength x
+                           depth-scaling x commitment-scaling); the values then
+                           appear side by side in the "cscale" column. Only used
+                           when --phrase-boost is set.
       --no-baseline        Drop the auto-added no-boost baseline row from the
                            sweep (the row labelled boost=none, equivalent to a
                            strength of 0). Without it every boosted run keeps a
@@ -685,6 +687,69 @@ function summarizeCellBeam(samples) {
   };
 }
 
+// Stable per-cell key used both as the JSONL "run" field and to match a cell
+// against already-completed records when resuming. Boost cells fold in the
+// boost-source content hash so editing/swapping the boost file invalidates
+// only those cells (the no-boost baseline keeps its plain key).
+// The boost dimension of the sweep, as quant-INDEPENDENT descriptors (see the
+// call site). Pure, so the shape of the grid is unit-testable without a model:
+// one no-boost baseline plus the full (strength x depth-scaling x
+// commitment-scaling x min-p) product. depth-scaling and commitment-scaling are
+// both baked into each node's bonus at insert time (unlike min-p, which is a
+// decode-time gate), so each triple of them needs its OWN trie; min-p is then
+// swept over that one trie for free.
+export function buildBoostDescriptors(args, hasBoost, bDigest) {
+  const out = [];
+  if (!hasBoost || !args.noBaseline) {
+    out.push({ label: 'none', strength: null, minp: null, depthScaling: null, commitmentScaling: null, boostDigest: null });
+  }
+  if (hasBoost) {
+    for (const strength of args.strengths) {
+      for (const depthScaling of args.depthScalings) {
+        for (const commitmentScaling of args.commitmentScalings) {
+          for (const minp of args.minps) {
+            out.push({ label: 'boost', strength, minp, depthScaling, commitmentScaling, boostDigest: bDigest });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export function tagOf(row) {
+  const boostPart = row.boostDigest ? `boost#${row.boostDigest}` : row.label;
+  const minpPart = row.minp == null ? '' : '~' + row.minp;
+  // null depth-scaling appends nothing, so a sweep without --depth-scaling
+  // keeps the same resume key as before (existing jsonl stays reusable).
+  const depthPart = row.depthScaling == null ? '' : '^' + row.depthScaling;
+  // Same rule for commitment-scaling: null (the trie's default) appends
+  // nothing, so a sweep that leaves it alone keeps the pre-sweep resume key
+  // and existing jsonl stays reusable.
+  const commitPart = row.commitmentScaling == null ? '' : '%' + row.commitmentScaling;
+  // int8 (the default) appends nothing too, so an int8-only sweep keeps the
+  // same resume key as before this multi-quant change; fp16/fp32 always carry
+  // their quant so cells never collide across quants.
+  const quantPart = row.quant === 'int8' ? '' : ' quant=' + row.quant;
+  // Append the decoder quant ONLY when it differs from this cell's encoder quant:
+  // that is exactly the historical "decoder matches encoder" case, so matched
+  // runs keep their old resume key (pre-decoder-quant jsonl stays reusable), while
+  // a mismatched decoder (e.g. the int8-encoder/fp32-decoder default, or any swept
+  // decoder quant) gets a distinct key so it never falsely reuses a cell decoded
+  // with a different decoder.
+  const decPart = row.decoderQuant === row.quant ? '' : ' dec=' + row.decoderQuant;
+  // MAES knobs at their NeMo defaults (num-steps 2, beta 2, gamma 2.3, prefix-alpha 1)
+  // append nothing, so a sweep that leaves them at default keeps the same resume key
+  // as before this change (existing jsonl stays reusable); any non-default value
+  // carries its knob so cells never collide across MAES configs.
+  const maesPart =
+    (row.maesNumSteps === 2 ? '' : ' ns=' + row.maesNumSteps) +
+    (row.maesExpansionBeta === 2 ? '' : ' eb=' + row.maesExpansionBeta) +
+    (row.maesExpansionGamma === 2.3 ? '' : ' eg=' + row.maesExpansionGamma) +
+    (row.maesPrefixAlpha === 1 ? '' : ' pa=' + row.maesPrefixAlpha);
+  return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${commitPart}${quantPart}${decPart}${maesPart}`;
+}
+
 // --- per-dataset accuracy accumulation ------------------------------------
 // The name of the synthetic row that pools every dataset's utterances. Only
 // emitted when more than one dataset is benchmarked.
@@ -886,7 +951,7 @@ const pickColumns = (cols) => (row) => cols.map((c) => row[c]);
 // frames (see summarizeCellBeam). The final load5 column is the OS 5-minute load
 // average captured when the cell finished, a trust flag for the timing columns
 // (see cellLoad5).
-const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'beam_med', 'beam_max', 'batch_med', 'batch_max', 'steps', 'load5'];
+const ACC_HEAD = ['beam', 'quant', 'dec', 'boost', 'strength', 'minp', 'dscale', 'cscale', 'dataset', 'WER %', 'CER %', 'proc_t/dur_t', 'dec_t/aud', 'beam_med', 'beam_max', 'batch_med', 'batch_max', 'steps', 'load5'];
 // MAES knob columns, inserted just before the 'dataset' column ONLY for the knobs
 // actually swept (in the `show` set), so a normal run's table is unchanged and a
 // MAES sweep gains just the columns that vary. Each entry: [header, accessor].
@@ -951,6 +1016,7 @@ function accuracyBody(rows, show = EMPTY_SHOW) {
         r.strength == null ? '-' : String(r.strength),
         r.minp == null ? '-' : String(r.minp),
         r.depthScaling == null ? '-' : String(r.depthScaling),
+        r.commitmentScaling == null ? '-' : String(r.commitmentScaling),
         ...maes,
         d.name,
         pct(d.wordEdits, d.refWords).toFixed(2),
@@ -983,6 +1049,7 @@ function topBody(rows, show = EMPTY_SHOW) {
       r.strength == null ? '-' : String(r.strength),
       r.minp == null ? '-' : String(r.minp),
       r.depthScaling == null ? '-' : String(r.depthScaling),
+      r.commitmentScaling == null ? '-' : String(r.commitmentScaling),
       ...maesCells(r, show),
       d.name,
       pct(d.wordEdits, d.refWords).toFixed(2),
@@ -1054,22 +1121,7 @@ async function main() {
   const hasBoost = args.boosts.length > 0;
   // Content hash of the boost sources, folded into the boost cells' resume key.
   const bDigest = boostDigest(args.boosts);
-  const boostDescriptors = [];
-  if (!hasBoost || !args.noBaseline) {
-    boostDescriptors.push({ label: 'none', strength: null, minp: null, depthScaling: null, boostDigest: null });
-  }
-  if (hasBoost) {
-    for (const strength of args.strengths) {
-      for (const depthScaling of args.depthScalings) {
-        // depth-scaling is baked into each node's bonus at insert time (unlike
-        // min-p, which is a decode-time gate), so each (strength, depth-scaling)
-        // pair needs its OWN trie; min-p is then swept over that one trie for free.
-        for (const minp of args.minps) {
-          boostDescriptors.push({ label: 'boost', strength, minp, depthScaling, boostDigest: bDigest });
-        }
-      }
-    }
-  }
+  const boostDescriptors = buildBoostDescriptors(args, hasBoost, bDigest);
 
   // MAES decode knobs are a decode-time-only sweep (no model reload, no trie
   // rebuild), so they are the cheapest, innermost dimension: their product runs
@@ -1102,7 +1154,7 @@ async function main() {
   }
   const minpNote = hasBoost && args.minps.some((p) => p !== null) ? ` (min-p sweep: ${args.minps.map((p) => p ?? 'baked').join(', ')})` : '';
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
-  const commitNote = hasBoost && args.commitmentScaling !== null ? ` (commitment-scaling ${args.commitmentScaling})` : '';
+  const commitNote = hasBoost && args.commitmentScalings.some((c) => c !== null) ? ` (commitment-scaling sweep: ${args.commitmentScalings.map((c) => c ?? 'default').join(', ')})` : '';
   const maesNote = maesConfigs.length > 1 ? ` x ${maesConfigs.length} MAES config(s)` : '';
   console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s)${maesNote} = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}${commitNote}\n`);
 
@@ -1172,38 +1224,6 @@ async function main() {
     }
   }
 
-  // Stable per-cell key used both as the JSONL "run" field and to match a cell
-  // against already-completed records when resuming. Boost cells fold in the
-  // boost-source content hash so editing/swapping the boost file invalidates
-  // only those cells (the no-boost baseline keeps its plain key).
-  const tagOf = (row) => {
-    const boostPart = row.boostDigest ? `boost#${row.boostDigest}` : row.label;
-    const minpPart = row.minp == null ? '' : '~' + row.minp;
-    // null depth-scaling appends nothing, so a sweep without --depth-scaling
-    // keeps the same resume key as before (existing jsonl stays reusable).
-    const depthPart = row.depthScaling == null ? '' : '^' + row.depthScaling;
-    // int8 (the default) appends nothing too, so an int8-only sweep keeps the
-    // same resume key as before this multi-quant change; fp16/fp32 always carry
-    // their quant so cells never collide across quants.
-    const quantPart = row.quant === 'int8' ? '' : ' quant=' + row.quant;
-    // Append the decoder quant ONLY when it differs from this cell's encoder quant:
-    // that is exactly the historical "decoder matches encoder" case, so matched
-    // runs keep their old resume key (pre-decoder-quant jsonl stays reusable), while
-    // a mismatched decoder (e.g. the int8-encoder/fp32-decoder default, or any swept
-    // decoder quant) gets a distinct key so it never falsely reuses a cell decoded
-    // with a different decoder.
-    const decPart = row.decoderQuant === row.quant ? '' : ' dec=' + row.decoderQuant;
-    // MAES knobs at their NeMo defaults (num-steps 2, beta 2, gamma 2.3, prefix-alpha 1)
-    // append nothing, so a sweep that leaves them at default keeps the same resume key
-    // as before this change (existing jsonl stays reusable); any non-default value
-    // carries its knob so cells never collide across MAES configs.
-    const maesPart =
-      (row.maesNumSteps === 2 ? '' : ' ns=' + row.maesNumSteps) +
-      (row.maesExpansionBeta === 2 ? '' : ' eb=' + row.maesExpansionBeta) +
-      (row.maesExpansionGamma === 2.3 ? '' : ' eg=' + row.maesExpansionGamma) +
-      (row.maesPrefixAlpha === 1 ? '' : ' pa=' + row.maesPrefixAlpha);
-    return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${quantPart}${decPart}${maesPart}`;
-  };
 
   // Reconstruct a summary row (the shape the final tables consume) from a
   // completed run's records read back from the JSONL, so resumed cells render
@@ -1260,6 +1280,7 @@ async function main() {
     return { beamWidth: s.beam, quant: s.quant ?? 'int8', decoderQuant: s.decoderQuant ?? s.quant ?? 'int8',
       boostLabel: s.boost, strength: s.strength, minp: s.minp ?? null,
       depthScaling: s.depthScaling ?? null,
+      commitmentScaling: s.commitmentScaling ?? null,
       maesNumSteps: s.maesNumSteps ?? 2, maesExpansionBeta: s.maesExpansionBeta ?? 2,
       maesExpansionGamma: s.maesExpansionGamma ?? 2.3, maesPrefixAlpha: s.maesPrefixAlpha ?? 1,
       beamCell: summarizeCellBeam(beamStatsSamples),
@@ -1399,25 +1420,27 @@ async function main() {
       trieByKey = new Map();
       for (const strength of args.strengths) {
         for (const depthScaling of args.depthScalings) {
-          const phraseBoost = await buildPhraseBoost({
-            boosts: args.boosts,
-            strength,
-            depthScaling: depthScaling ?? undefined, // null => trie's built-in default
-            commitmentScaling: args.commitmentScaling ?? undefined, // null => trie's built-in default
-            tokenizer,
-            quiet: !args.verbose,
-            verbose: args.verbose,
-          });
-          if (!phraseBoost) {
-            console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
+          for (const commitmentScaling of args.commitmentScalings) {
+            const phraseBoost = await buildPhraseBoost({
+              boosts: args.boosts,
+              strength,
+              depthScaling: depthScaling ?? undefined, // null => trie's built-in default
+              commitmentScaling: commitmentScaling ?? undefined, // null => trie's built-in default
+              tokenizer,
+              quiet: !args.verbose,
+              verbose: args.verbose,
+            });
+            if (!phraseBoost) {
+              console.error(`[bench] warning: phrase-boost produced an empty trie (no in-vocab phrases); treating strength ${strength} as no-boost.`);
+            }
+            trieByKey.set(`${strength}|${depthScaling}|${commitmentScaling}`, phraseBoost ?? null);
           }
-          trieByKey.set(`${strength}|${depthScaling}`, phraseBoost ?? null);
         }
       }
     }
     for (const cell of cells) {
       cell.phraseBoost = cell.label === 'boost'
-        ? (trieByKey?.get(`${cell.strength}|${cell.depthScaling}`) ?? null)
+        ? (trieByKey?.get(`${cell.strength}|${cell.depthScaling}|${cell.commitmentScaling}`) ?? null)
         : null;
     }
 
@@ -1481,9 +1504,7 @@ async function main() {
           type: 'utterance', run: tag,
           beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boost: row.label, strength: row.strength, minp: row.minp ?? null,
           depthScaling: row.depthScaling ?? null,
-          // Constant for the whole run, but recorded per row so two A/B runs'
-          // jsonl files can be concatenated and still be told apart.
-          commitmentScaling: args.commitmentScaling ?? null,
+          commitmentScaling: row.commitmentScaling ?? null,
           dataset: e.dataset,
           audio: e.audioPath, duration: e.duration, audioSec: +audioSec.toFixed(3),
           ref: e.text, hyp, refNorm, hypNorm,
@@ -1516,7 +1537,7 @@ async function main() {
       const datasets = buildDatasets(perDs, datasetNames);
       const r = { beamWidth: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, boostLabel: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
-        commitmentScaling: args.commitmentScaling ?? null,
+        commitmentScaling: row.commitmentScaling ?? null,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         beamCell: summarizeCellBeam(beamStatsSamples),
@@ -1548,7 +1569,7 @@ async function main() {
         type: 'summary', run: tag,
         beam: row.beamWidth, quant: row.quant, decoderQuant: row.decoderQuant, backend: ortForQuant(row.quant), boost: row.label, strength: row.strength, minp: row.minp ?? null,
         depthScaling: row.depthScaling ?? null,
-        commitmentScaling: args.commitmentScaling ?? null,
+        commitmentScaling: row.commitmentScaling ?? null,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
         utterances: entries.length,
@@ -1695,6 +1716,7 @@ if (pathToFileURL(process.argv[1] || '').href === import.meta.url) {
 
 // Exported for unit testing the pure scoring / per-dataset aggregation logic.
 export {
+  parseArgs,
   normalizeText, score, parseManifestSpec, datasetNameFor, loadManifests,
   newAcc, addScore, buildDatasets, repDataset, cellRate,
   summarizeCellBeam,
