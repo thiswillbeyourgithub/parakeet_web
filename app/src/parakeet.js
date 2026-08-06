@@ -3240,7 +3240,7 @@ export class ParakeetModel {
       // decode wall (encode ran elsewhere, concurrently), while encode_ms /
       // preprocess_ms ride through opts.encoded and stay per-chunk correct.
       // Memory bound: at most `encodeAhead` encoder outputs are alive
-      // (~3 MB each for a 60 s chunk), nothing like the PCM or the weights.
+      // (~1 MB each at the default 20 s window), nothing like the weights.
       const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
       const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = transcribeOpts;
       const pending = [];
