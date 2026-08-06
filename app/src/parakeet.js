@@ -638,8 +638,9 @@ export class ParakeetModel {
 
     // Read blank ID from tokenizer (last vocab entry for TDT models).
     // Dynamic instead of hardcoded so multilingual models (v3, vocabSize 4097)
-    // work without modification.
-    this.blankId = tokenizer.blankId;
+    // work without modification. Encoder-only builds (encoderOnlyFromUrls) have
+    // no tokenizer: they only ever run encode(), which never reads blankId.
+    this.blankId = tokenizer ? tokenizer.blankId : null;
 
     // Combined model specific constants
     this.predHidden = 640;
@@ -890,6 +891,54 @@ export class ParakeetModel {
     ]);
     return new ParakeetModel({
       tokenizer, encoderSession: null, joinerSession, preprocessor: null,
+      ort, subsampling, windowStride, verbose, maxEncoderBatch: 1,
+    });
+  }
+
+  /**
+   * Build an ENCODE-ONLY ParakeetModel: the encoder ONNX session (forced to the
+   * WASM EP) + the mel preprocessor, with NO joiner session and NO tokenizer.
+   * Such a model can only run encode()/computeFeatures(); transcribe() is off
+   * the table (no joiner, no vocab). This is what each encode-pool worker
+   * (`app/ui/src/lib/encode.worker.js`) instantiates so two workers can encode
+   * different chunks concurrently while the main thread decodes (chunk-parallel
+   * encoding, the WASM throughput lever; see transcribeChunked's injected
+   * `encodeChunk`). Mirrors decoderOnlyFromUrls: same session/externalData
+   * plumbing as fromUrls so no encode logic is duplicated.
+   *
+   * `encoderUrl`/`encoderDataUrl` may be URL strings OR raw bytes (Uint8Array),
+   * matching fromUrls; the caller (main thread) is expected to hand pre-verified
+   * bytes, or a blob: URL minted from verified bytes, so the worker never does a
+   * second unverified fetch.
+   */
+  static async encoderOnlyFromUrls({
+    encoderUrl, encoderDataUrl, filenames,
+    wasmPaths, cpuThreads, preprocessorBackend = 'js', preprocessorUrl, nMels = 128,
+    subsampling = 8, windowStride = 0.01, verbose = false,
+  }) {
+    if (!encoderUrl) {
+      throw new Error('encoderOnlyFromUrls requires encoderUrl');
+    }
+    if (preprocessorBackend !== 'js' && !preprocessorUrl) {
+      throw new Error('encoderOnlyFromUrls requires preprocessorUrl when preprocessorBackend is not "js"');
+    }
+    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads });
+    const sessionOptions = {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+      executionMode: 'parallel',
+      enableCpuMemArena: true,
+      enableMemPattern: true,
+      logSeverityLevel: verbose ? 0 : 2,
+    };
+    const encoderExternalData = buildExternalData(encoderDataUrl, filenames?.encoder);
+    if (encoderExternalData) sessionOptions.externalData = encoderExternalData;
+    const preprocessor = preprocessorBackend === 'js'
+      ? new JsPreprocessor({ nMels })
+      : new OnnxPreprocessor(preprocessorUrl, { backend: 'wasm', wasmPaths, numThreads: cpuThreads });
+    const encoderSession = await ort.InferenceSession.create(encoderUrl, sessionOptions);
+    return new ParakeetModel({
+      tokenizer: null, encoderSession, joinerSession: null, preprocessor,
       ort, subsampling, windowStride, verbose, maxEncoderBatch: 1,
     });
   }
@@ -3134,6 +3183,19 @@ export class ParakeetModel {
     const decodeChunk = typeof transcribeOpts.decodeChunk === 'function'
       ? transcribeOpts.decodeChunk : null;
 
+    // Optional injected encoder: an async fn (pcm, meta, encodeOpts) -> the
+    // `{ transposed, D, Tenc, preprocess_ms, encode_ms }` object encode()
+    // returns. App.jsx wires this to a POOL of encode workers on WASM so two
+    // chunks encode concurrently while this thread decodes (chunk-parallel
+    // encoding; thread scaling saturates near the physical core count, chunks
+    // are independent, so a second ORT instance converts the wasted headroom
+    // into throughput). parakeet.js stays worker-agnostic (Node/CLI never sets
+    // it). Ignored when decodeChunk is present: that WebGPU path already
+    // overlaps encode with decode, and the two drivers must not both own the
+    // chunk loop.
+    const encodeChunk = !decodeChunk && typeof transcribeOpts.encodeChunk === 'function'
+      ? transcribeOpts.encodeChunk : null;
+
     if (decodeChunk) {
       // Pipelined producer/consumer. Producer: encode ahead on this thread and
       // dispatch each chunk's decode without awaiting it. A bounded in-flight
@@ -3142,7 +3204,9 @@ export class ParakeetModel {
       // consume() always sees chunks in order regardless of completion order.
       const depth = Math.max(2, (this.maxEncoderBatch || 1) + 1);
       const inflight = [];
-      const { decodeChunk: _dc, encoded: _enc, ...decodeOpts } = transcribeOpts;
+      // encodeChunk is stripped too: decodeOpts crosses a postMessage in the
+      // app's worker bridge, and a function would fail structured clone.
+      const { decodeChunk: _dc, encodeChunk: _ec, encoded: _enc, ...decodeOpts } = transcribeOpts;
       const drainOne = async () => {
         const item = inflight.shift();
         const chunkRes = await item.promise;
@@ -3154,11 +3218,56 @@ export class ParakeetModel {
         const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
         const tStart = performance.now();
         const promise = Promise.resolve(decodeChunk(enc, meta, decodeOpts));
+        // Mark handled from birth: drainOne awaits strictly in order, so a
+        // decode that rejects BEFORE its turn would otherwise surface as an
+        // unhandled rejection (Node crashes on those; browsers log noise).
+        // The drain still receives the rejection when it awaits.
+        promise.catch(() => {});
         encodedCache[ci] = null; // producer done with it; worker owns it now
         inflight.push({ ci, promise, tStart });
         if (inflight.length >= depth) await drainOne();
       }
       while (inflight.length) await drainOne();
+    } else if (encodeChunk) {
+      // Chunk-parallel encode (the WASM mirror of the decode pipeline above).
+      // Producer: dispatch chunk PCM to the injected encoder WITHOUT awaiting,
+      // up to `encodeAhead` in flight, so a 2-worker pool has both workers busy
+      // plus one chunk queued. Consumer: in STRICT chunk order, await the
+      // encode and run the SAME transcribe() fed opts.encoded, so decode +
+      // stitch are byte-identical to the serial path (same per-chunk compute
+      // and seams; only WHERE the encode ran moved). Metrics caveat, mirroring
+      // the decode worker's: each chunk's total_ms covers only the in-thread
+      // decode wall (encode ran elsewhere, concurrently), while encode_ms /
+      // preprocess_ms ride through opts.encoded and stay per-chunk correct.
+      // Memory bound: at most `encodeAhead` encoder outputs are alive
+      // (~3 MB each for a 60 s chunk), nothing like the PCM or the weights.
+      const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
+      const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = transcribeOpts;
+      const pending = [];
+      let nextCi = 0;
+      const dispatch = () => {
+        while (nextCi < chunkPlan.length && pending.length < ahead) {
+          const ci = nextCi; nextCi += 1;
+          const { start, end } = chunkPlan[ci];
+          const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
+          const promise = Promise.resolve(encodeChunk(audio.subarray(start, end), meta, { enableProfiling: perfEnabled }));
+          // Mark handled from birth: a rejection landing BEFORE this chunk's
+          // turn (the consumer awaits strictly in order) must not surface as an
+          // unhandled rejection; the consumer still receives it on await.
+          promise.catch(() => {});
+          pending.push({ ci, tStart: performance.now(), promise });
+        }
+      };
+      dispatch();
+      while (pending.length) {
+        const item = pending.shift();
+        const encoded = await item.promise;
+        // Refill BEFORE decoding so the pool stays busy under the decode.
+        dispatch();
+        const { start, end } = chunkPlan[item.ci];
+        const chunkRes = await this.transcribe(audio.subarray(start, end), sampleRate, { ...chunkOptsBase, encoded });
+        await consume(item.ci, chunkRes, performance.now() - item.tStart);
+      }
     } else {
       for (let ci = 0; ci < chunkPlan.length; ci += 1) {
         const { start, end } = chunkPlan[ci];

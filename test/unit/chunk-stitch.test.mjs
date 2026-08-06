@@ -191,22 +191,25 @@ describe('transcribeChunked metrics aggregation', () => {
 // carrying the chunk's absolute start/len, and a `decodeChunk` that resolves the
 // SAME per-chunk result the transcribe would, but after a delay chosen so
 // EARLIER chunks resolve LATER (forcing out-of-order completion).
-function makePipelineModel() {
-  const spanResult = (startSec, endSec) => {
-    const inChunk = TRUTH.filter((w) => w.start >= startSec && w.end <= endSec);
-    return {
-      utterance_text: inChunk.map((w) => w.text).join(' '),
-      words: inChunk.map((w) => ({
-        text: w.text,
-        start_time: +(w.start - startSec).toFixed(3),
-        end_time: +(w.end - startSec).toFixed(3),
-        confidence: 1,
-      })),
-      confidence_scores: {},
-      metrics: { total_ms: 1 },
-      is_final: true,
-    };
+// Scripted per-chunk result for a [startSec, endSec) span, shared by the
+// pipelined-decode and encode-pool driver models below.
+const spanResult = (startSec, endSec) => {
+  const inChunk = TRUTH.filter((w) => w.start >= startSec && w.end <= endSec);
+  return {
+    utterance_text: inChunk.map((w) => w.text).join(' '),
+    words: inChunk.map((w) => ({
+      text: w.text,
+      start_time: +(w.start - startSec).toFixed(3),
+      end_time: +(w.end - startSec).toFixed(3),
+      confidence: 1,
+    })),
+    confidence_scores: {},
+    metrics: { total_ms: 1 },
+    is_final: true,
   };
+};
+
+function makePipelineModel({ failAt = -1 } = {}) {
   return {
     maxEncoderBatch: 2,
     transcribeChunked: ParakeetModel.prototype.transcribeChunked,
@@ -216,12 +219,35 @@ function makePipelineModel() {
     // Identity "encoder": carry the chunk's absolute start/len to the decoder.
     encodeBatch: async (pcms) => pcms.map((p) => ({ __start: p[0], __len: p.length })),
     // Injected async decode; earlier chunkIndex waits longer -> out-of-order.
-    decodeChunk: (enc, meta) => new Promise((resolve) => {
+    // failAt rejects that chunk's decode (after its delay), for the
+    // failure-path tests.
+    decodeChunk: (enc, meta) => new Promise((resolve, reject) => {
       const startSec = enc.__start / SR;
       const endSec = (enc.__start + enc.__len) / SR;
-      setTimeout(() => resolve(spanResult(startSec, endSec)), (8 - meta.chunkIndex) * 4);
+      setTimeout(() => {
+        if (meta.chunkIndex === failAt) reject(new Error('decode boom'));
+        else resolve(spanResult(startSec, endSec));
+      }, (8 - meta.chunkIndex) * 4);
     }),
   };
+}
+
+// Run fn() while capturing process-level unhandledRejection events, then let
+// timers settle so a late rejection from a still-in-flight promise lands
+// inside the capture window. The pipelined drivers dispatch ahead and await
+// strictly in order, so a failure in a NOT-YET-AWAITED slot would otherwise
+// crash Node (default --unhandled-rejections=throw) / spam the browser console.
+async function withUnhandledCapture(fn) {
+  const unhandled = [];
+  const onUnhandled = (err) => { unhandled.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await fn();
+    await new Promise((r) => setTimeout(r, 50));
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  return unhandled;
 }
 
 describe('transcribeChunked pipelined decode (injected decodeChunk)', () => {
@@ -249,6 +275,118 @@ describe('transcribeChunked pipelined decode (injected decodeChunk)', () => {
     const sorted = [...order].sort((a, b) => a - b);
     assert.deepEqual(order, sorted, `onChunk order ${order} must be ascending`);
     assert.equal(order[0], 1, 'first reported chunk is 1');
+  });
+
+  test('a failing decode rejects the run and leaves no unhandled rejections', async () => {
+    // failAt 1: chunk 1's decode rejects BEFORE chunk 0's resolves (reverse
+    // delays), i.e. while it sits unawaited in the in-flight queue. Without the
+    // driver's mark-handled-at-dispatch, that rejection escapes as unhandled.
+    const unhandled = await withUnhandledCapture(async () => {
+      const model = makePipelineModel({ failAt: 1 });
+      await assert.rejects(
+        model.transcribeChunked(AUDIO, SR, { ...PIPE_OPTS, decodeChunk: model.decodeChunk }),
+        /decode boom/,
+      );
+    });
+    assert.deepEqual(unhandled, [], 'no unhandled rejections from in-flight decodes');
+  });
+});
+
+// Chunk-parallel-encode driver: when transcribeChunked is given an injected
+// async `encodeChunk` (and no decodeChunk), it dispatches chunk PCM to the
+// app's encode-worker pool ahead of the in-thread decode and consumes results
+// in STRICT chunk order. This model's transcribe() REQUIRES opts.encoded, so
+// the equality test also proves every chunk consumed the injected encode
+// result instead of silently re-encoding; encodeChunk resolves the identity
+// "encoder output" out of order (earlier chunks finish later) and records the
+// in-flight high-water mark to pin the bounded dispatch.
+function makeEncodePoolModel({ failAt = -1 } = {}) {
+  let live = 0;
+  const m = {
+    maxEncoderBatch: 1, // WASM-like: the pool, not encoder batching, is the lever
+    stats: { calls: 0, maxLive: 0, decoded: 0 },
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    transcribe: async (chunk, sampleRate, opts) => {
+      assert.ok(opts.encoded, 'pool path must feed transcribe() the precomputed encode');
+      m.stats.decoded += 1;
+      return spanResult(opts.encoded.__start / sampleRate, (opts.encoded.__start + opts.encoded.__len) / sampleRate);
+    },
+    encodeChunk: (pcm, meta) => new Promise((resolve, reject) => {
+      m.stats.calls += 1;
+      live += 1;
+      m.stats.maxLive = Math.max(m.stats.maxLive, live);
+      setTimeout(() => {
+        live -= 1;
+        if (meta.chunkIndex === failAt) reject(new Error('encode boom'));
+        else resolve({ __start: pcm[0], __len: pcm.length });
+      }, (8 - meta.chunkIndex) * 4);
+    }),
+  };
+  return m;
+}
+
+describe('transcribeChunked chunk-parallel encode (injected encodeChunk)', () => {
+  // Same small-chunk layout as the decode-driver tests: ~6 chunks, so the
+  // bounded dispatch and out-of-order completion are actually exercised.
+  const POOL_OPTS = { enableChunking: true, chunkDurationSec: 3, overlapSec: 1, returnTimestamps: true, snapToSilenceSec: 0 };
+
+  test('pool output equals the serial output despite out-of-order encode completion', async () => {
+    const seq = await makePipelineModel().transcribeChunked(AUDIO, SR, POOL_OPTS);
+    const model = makeEncodePoolModel();
+    const pooled = await model.transcribeChunked(AUDIO, SR, { ...POOL_OPTS, encodeChunk: model.encodeChunk });
+    assert.equal(pooled.utterance_text, seq.utterance_text, 'text must match');
+    assert.deepEqual(
+      pooled.words.map((w) => [w.text, w.start_time, w.end_time]),
+      seq.words.map((w) => [w.text, w.start_time, w.end_time]),
+      'deduped words must match',
+    );
+    assert.ok(model.stats.calls > 2, 'multi-chunk layout expected');
+    assert.equal(model.stats.decoded, model.stats.calls, 'every chunk decoded exactly once from its encode');
+  });
+
+  test('onChunk fires in ascending chunk order under the pool', async () => {
+    const model = makeEncodePoolModel();
+    const order = [];
+    await model.transcribeChunked(AUDIO, SR, { ...POOL_OPTS, encodeChunk: model.encodeChunk },
+      async ({ chunkNum }) => { order.push(chunkNum); });
+    const sorted = [...order].sort((a, b) => a - b);
+    assert.deepEqual(order, sorted, `onChunk order ${order} must be ascending`);
+    assert.equal(order[0], 1, 'first reported chunk is 1');
+  });
+
+  test('dispatch is bounded: encodeAhead in flight by default, custom value honoured', async () => {
+    const model = makeEncodePoolModel();
+    await model.transcribeChunked(AUDIO, SR, { ...POOL_OPTS, encodeChunk: model.encodeChunk });
+    // The producer fills the whole window up front, so the high-water mark hits
+    // the cap exactly: proof both that it ran ahead and that it stopped there.
+    assert.equal(model.stats.maxLive, 3, 'default encodeAhead is 3');
+
+    const model2 = makeEncodePoolModel();
+    await model2.transcribeChunked(AUDIO, SR, { ...POOL_OPTS, encodeChunk: model2.encodeChunk, encodeAhead: 2 });
+    assert.equal(model2.stats.maxLive, 2, 'encodeAhead: 2 caps the in-flight window at 2');
+  });
+
+  test('decodeChunk wins when both drivers are injected; encodeChunk is never called', async () => {
+    const model = makePipelineModel();
+    let encodeCalls = 0;
+    const res = await model.transcribeChunked(AUDIO, SR, {
+      ...POOL_OPTS,
+      decodeChunk: model.decodeChunk,
+      encodeChunk: () => { encodeCalls += 1; throw new Error('must not run'); },
+    });
+    assert.equal(encodeCalls, 0, 'encodeChunk must be ignored when decodeChunk is present');
+    assert.ok(res.utterance_text.length > 0, 'decode pipeline still produced output');
+  });
+
+  test('a failing encode rejects the run and leaves no unhandled rejections', async () => {
+    const unhandled = await withUnhandledCapture(async () => {
+      const model = makeEncodePoolModel({ failAt: 1 });
+      await assert.rejects(
+        model.transcribeChunked(AUDIO, SR, { ...POOL_OPTS, encodeChunk: model.encodeChunk }),
+        /encode boom/,
+      );
+    });
+    assert.deepEqual(unhandled, [], 'no unhandled rejections from in-flight encodes');
   });
 });
 
