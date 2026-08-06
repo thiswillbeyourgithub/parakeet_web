@@ -35,6 +35,8 @@ import { assignSpeakersToWords, groupWordsIntoTurns, turnsToLabeledText, canonic
 import { createSerialQueue } from './lib/writeQueue.js';
 import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
+import { restoreCpuThreads } from './lib/cpuThreads.js';
+import { defaultWasmThreads } from '../../src/backend.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -883,8 +885,10 @@ export default function App() {
   // (the live BoostingTrie itself is not structured-cloneable). null = no boost.
   const boostEncodedRef = useRef(null);
   const maxCores = navigator.hardwareConcurrency || 8;
-  // Default to all available CPU cores for best transcription throughput
-  const [cpuThreads, setCpuThreads] = useState(maxCores);
+  // ORT-style default (min(4, ceil(cores/2))): hardwareConcurrency counts
+  // hyperthreads and ORT-WASM's spin-waiting pool makes oversubscription
+  // slower than fewer threads, so "all cores" was actively harmful.
+  const [cpuThreads, setCpuThreads] = useState(() => defaultWasmThreads(maxCores));
   const modelRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -1406,6 +1410,7 @@ export default function App() {
           savedMaesExpansionGamma,
           savedMaesPrefixAlpha,
           savedCpuThreads,
+          savedCpuThreadsMigrated,
           savedNoiseSuppression,
           savedAutoGainControl,
           savedRemoteMicGain,
@@ -1439,7 +1444,11 @@ export default function App() {
           loadSetting('maesExpansionBeta', 2),
           loadSetting('maesExpansionGamma', 2.3),
           loadSetting('maesPrefixAlpha', 0), // off by default (see useState above)
-          loadSetting('cpuThreads', Math.max(1, maxCores - 2)),
+          // null default so restoreCpuThreads can tell "never set" apart from
+          // a persisted value; the migrated flag makes its legacy-default
+          // rescue run exactly once (see lib/cpuThreads.js).
+          loadSetting('cpuThreads', null),
+          loadSetting('cpuThreadsMigrated', false),
           loadSetting('noiseSuppression', true),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
@@ -1493,7 +1502,15 @@ export default function App() {
         setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 4);
         setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 4.0);
         setMaesPrefixAlpha(Number.isInteger(savedMaesPrefixAlpha) && savedMaesPrefixAlpha >= 0 ? savedMaesPrefixAlpha : 1);
-        setCpuThreads(savedCpuThreads);
+        {
+          const { threads, migrationApplied } = restoreCpuThreads({
+            stored: savedCpuThreads, migrated: savedCpuThreadsMigrated === true, maxCores,
+          });
+          setCpuThreads(threads);
+          // Stamp the flag after the first restore so the legacy-default
+          // rescue never re-fires on a value the user re-picks on purpose.
+          if (!savedCpuThreadsMigrated || migrationApplied) saveSetting('cpuThreadsMigrated', true);
+        }
         setNoiseSuppression(savedNoiseSuppression);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);

@@ -106,6 +106,24 @@ async function _verifiedOrtWasmPaths(basePath) {
 }
 
 /**
+ * Default ORT-WASM thread count for a machine reporting `hardwareConcurrency`
+ * logical processors. `hardwareConcurrency` counts HYPERTHREADS while ORT's
+ * WASM thread pool spin-waits, so running more threads than physical cores is
+ * actively destructive (measured on a 6C/12T box: 12 threads encode SLOWER
+ * than 1). Mirror onnxruntime-web's own heuristic
+ * (js/web/lib/backend-wasm.ts): ceil(hc / 2) approximates physical cores,
+ * capped at 4 where intra-op scaling is already flat (1t->6t was only 2.6x).
+ * Machines with more cores get their extra parallelism from the chunk-level
+ * encoder pool (parallel encode workers), not from a wider intra-op pool.
+ * @param {number} [hardwareConcurrency] navigator.hardwareConcurrency.
+ * @returns {number} thread count >= 1.
+ */
+export function defaultWasmThreads(hardwareConcurrency) {
+  const hc = Number.isFinite(hardwareConcurrency) && hardwareConcurrency > 0 ? hardwareConcurrency : 8;
+  return Math.max(1, Math.min(4, Math.ceil(hc / 2)));
+}
+
+/**
  * Initialise ONNX Runtime Web and pick the execution provider.
  * If WebGPU is requested but not supported, we transparently fall back to WASM.
  * @param {Object} opts
@@ -147,9 +165,13 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
 
   // Configure WASM for better performance
   if (backend === 'wasm' || backend === 'webgpu') {
-    // Enable multi-threading if supported
+    // Enable multi-threading if supported. When the caller does not pin a
+    // count, use defaultWasmThreads() rather than raw hardwareConcurrency:
+    // hyperthread-count threads oversubscribe the physical cores and ORT's
+    // spin-waiting pool makes that slower than single-threaded.
     if (typeof SharedArrayBuffer !== 'undefined') {
-      ort.env.wasm.numThreads = numThreads || navigator.hardwareConcurrency || 4;
+      ort.env.wasm.numThreads = numThreads
+        || defaultWasmThreads(typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined);
       ort.env.wasm.simd = true;
       console.log(`[Parakeet.js] WASM configured with ${ort.env.wasm.numThreads} threads, SIMD enabled`);
     } else {
