@@ -37,6 +37,7 @@ import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { defaultWasmThreads } from '../../src/backend.js';
+import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -736,6 +737,11 @@ export default function App() {
   // timeline) on every transcription and expose a per-entry "Debug" view.
   // In-memory only: the payload is never persisted (slimTranscriptForPersist).
   const [debugDecode, setDebugDecode] = useState(false);
+  // Machine-oriented environment recap shown in the Debug section (lib/
+  // supportReport.js): regenerated each time the section opens and on copy,
+  // never persisted.
+  const [supportReport, setSupportReport] = useState('');
+  const [supportReportCopied, setSupportReportCopied] = useState(false);
   const [frameStride, setFrameStride] = useState(1);
   // Beam search width. 1 = greedy (default, fastest, behavior unchanged). Higher
   // widths explore alternative hypotheses (~Nx decode cost) and let phrase
@@ -4745,6 +4751,72 @@ export default function App() {
     }
   }
 
+  // Build the support report: environment probes (lib/supportReport.js) plus
+  // the app/settings/model state only App has. Regenerated on section open and
+  // on copy so the pasted text reflects the current session, never a stale
+  // render.
+  async function generateSupportReport() {
+    const env = await collectEnvironment();
+    return buildSupportReport({
+      generatedAt: new Date().toISOString(),
+      app: {
+        name: 'parakeet_web',
+        version: VERSION,
+        mode: (typeof import.meta !== 'undefined' && import.meta.env?.MODE) || null,
+        url: typeof location !== 'undefined' ? `${location.origin}${location.pathname}` : null,
+        uiLanguage: lang,
+        modelRepo: repoId,
+      },
+      settings: {
+        backend,
+        wasmEncoderQuant,
+        webgpuEncoderQuant,
+        cpuThreads,
+        parallelEncode,
+        enableChunking,
+        chunkDurationSec: chunkDuration,
+        beamWidth,
+        debugDecode,
+      },
+      model: {
+        loaded: !!modelRef.current,
+        status,
+        maxEncoderBatch: modelRef.current?.maxEncoderBatch ?? null,
+        encodePool: {
+          workers: encodePoolRef.current.length,
+          plan: encodePoolPlan({ cpuThreads, maxCores, deviceMemory: navigator.deviceMemory }),
+        },
+      },
+      env,
+    });
+  }
+
+  async function copySupportReport() {
+    try {
+      const report = await generateSupportReport();
+      setSupportReport(report);
+      await navigator.clipboard.writeText(sanitizeClipboardText(report));
+      setSupportReportCopied(true);
+      setTimeout(() => setSupportReportCopied(false), 2000); // Reset after 2 seconds
+    } catch (err) {
+      console.error('[Copy] Failed to copy support report:', err);
+      alert(t('failedCopyClipboard'));
+    }
+  }
+
+  // Refresh the report whenever the Debug section is (re)opened or the model
+  // status/backend changes while it is open. The async probes (GPU adapter,
+  // storage estimate) resolve a tick after open; the cancel flag keeps a slow
+  // probe from clobbering a fresher regeneration.
+  useEffect(() => {
+    if (!sectionsOpen.debug) return undefined;
+    let cancelled = false;
+    generateSupportReport()
+      .then((r) => { if (!cancelled) setSupportReport(r); })
+      .catch((err) => { if (!cancelled) setSupportReport(`support report failed: ${err?.message || err}`); });
+    return () => { cancelled = true; };
+  }, [sectionsOpen.debug, status, backend]);
+
   async function copyToClipboard() {
     if (!text) return;
 
@@ -6395,6 +6467,45 @@ export default function App() {
                 {t('debugDecode')}
                 <InfoTooltip text={t('tooltipDebugDecode')} />
               </label>
+            </div>
+            <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.35rem' }}>
+              <span className="setting-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>
+                  {t('supportReport')}
+                  <InfoTooltip text={t('tooltipSupportReport')} />
+                </span>
+                <button
+                  type="button"
+                  className="support-report-copy"
+                  onClick={copySupportReport}
+                  style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem' }}
+                >
+                  {supportReportCopied ? t('copied') : t('supportReportCopy')}
+                </button>
+              </span>
+              <textarea
+                className="support-report-text"
+                readOnly
+                value={supportReport}
+                spellCheck={false}
+                wrap="off"
+                aria-label={t('supportReport')}
+                style={{
+                  width: '100%',
+                  minHeight: '6rem',
+                  maxHeight: '11rem',
+                  overflow: 'auto',
+                  resize: 'vertical',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                  fontSize: '0.68rem',
+                  lineHeight: 1.35,
+                  whiteSpace: 'pre',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  padding: '0.4rem',
+                  boxSizing: 'border-box',
+                }}
+              />
             </div>
           </CollapsibleSection>
           </div>
