@@ -58,7 +58,7 @@ test('a file uploaded while another transcription runs is queued and transcribed
   // Clip A starts transcribing immediately (model ready, queue empty).
   await page.locator('#audio-file-input').setInputFiles(fixture('jfk-moon-3min.mp3'));
   await expect.poll(() => resampleLogs, { timeout: 60 * 1000 }).toBeGreaterThan(0);
-  await expect(page.locator('.app-header__status')).toContainText('Transcribing');
+  await expect(page.locator('.app-status')).toContainText('Transcribing');
 
   // The crux: mid-run, all three capture entry points are still usable (they
   // used to be disabled until the run ended).
@@ -72,7 +72,7 @@ test('a file uploaded while another transcription runs is queued and transcribed
   await page.locator('#audio-file-input').setInputFiles(fixture('sample.aac'));
   await expect(page.locator('.banner--info', { hasText: /queued/i })).toBeVisible({ timeout: 60 * 1000 });
   // B's decode phase must not steal the status line from A's run.
-  await expect(page.locator('.app-header__status')).toContainText('jfk');
+  await expect(page.locator('.app-status')).toContainText('jfk');
 
   // Both runs complete on their own: A's finally drains the queue into B.
   await expect.poll(() => transcribeRuns, { timeout: 6 * 60 * 1000 }).toBe(2);
