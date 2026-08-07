@@ -111,6 +111,18 @@ function parseArgs(argv) {
     maesExpansionBeta: [2],  // swept dimension: MAES over-generation (top-(beam+beta))
     maesExpansionGamma: [2.3], // swept dimension: MAES adaptive log-prob prune threshold
     maesPrefixAlpha: [1],    // swept dimension: MAES prefix-search length gap (0 = off)
+    // Chunking sweep (PERF_PLAN item 2, long-audio sets). null chunk duration =
+    // chunking OFF: the historical bench behaviour (short utterances, one pass,
+    // shared encoder cache) AND the 'off' no-chunking reference cell of a sweep.
+    // Numeric durations run the REAL transcribeChunked path (seams, overlap,
+    // snapping), which cannot reuse the whole-clip encoder cache, so those cells
+    // pay a full encode each: chunk knobs are the most expensive dimension.
+    // No [10,25] app clamp here: measuring past the clamp is the point of the
+    // sweep (the clamp is UI prudence, not a measured frontier).
+    chunkDurations: [null],  // swept: seconds per chunk window, or 'off'
+    chunkOverlaps: [null],   // swept: seam overlap seconds (null = omit, engine default rules)
+    chunkSnaps: [null],      // swept: snap-to-silence lookback s (null = omit, engine default rules)
+    chunkEnergyMs: [null],   // swept: seam energy window ms (null = omit, engine default rules)
     frameStride: 1,
     threads: 0,
     limit: 0,               // 0 => all utterances
@@ -174,6 +186,11 @@ function parseArgs(argv) {
       case '--maes-expansion-beta': a.maesExpansionBeta = numList(val(flag)); break;
       case '--maes-expansion-gamma': a.maesExpansionGamma = numList(val(flag)); break;
       case '--maes-prefix-alpha': a.maesPrefixAlpha = numList(val(flag)); break;
+      // 'off' in the duration list is the no-chunking reference cell.
+      case '--chunk-duration': a.chunkDurations = val(flag).split(',').map((x) => x.trim()).filter(Boolean).map((x) => (x.toLowerCase() === 'off' ? null : Number(x))); break;
+      case '--chunk-overlap': a.chunkOverlaps = numList(val(flag)); break;
+      case '--chunk-snap': a.chunkSnaps = numList(val(flag)); break;
+      case '--chunk-energy-ms': a.chunkEnergyMs = numList(val(flag)); break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
       case '--limit': a.limit = parseInt(val(flag), 10); break;
@@ -259,6 +276,18 @@ function parseArgs(argv) {
   if (!a.commitmentScalings.length
     || a.commitmentScalings.some((c) => c !== null && (!Number.isFinite(c) || c < 0 || c > 1))) {
     throw new Error('--commitment-scaling must be a comma-separated list of numbers in [0, 1] (0 = no partial-match discount, 1 = full)');
+  }
+  if (!a.chunkDurations.length || a.chunkDurations.some((d) => d !== null && !(Number.isFinite(d) && d > 0))) {
+    throw new Error("--chunk-duration must be a comma-separated list of positive seconds and/or 'off' (the no-chunking reference cell)");
+  }
+  if (!a.chunkOverlaps.length || a.chunkOverlaps.some((o) => o !== null && !(Number.isFinite(o) && o >= 0))) {
+    throw new Error('--chunk-overlap must be a comma-separated list of non-negative seconds');
+  }
+  if (!a.chunkSnaps.length || a.chunkSnaps.some((s) => s !== null && !(Number.isFinite(s) && s >= 0))) {
+    throw new Error('--chunk-snap must be a comma-separated list of non-negative seconds (0 = fixed-stride seams)');
+  }
+  if (!a.chunkEnergyMs.length || a.chunkEnergyMs.some((w) => w !== null && !(Number.isFinite(w) && w > 0))) {
+    throw new Error('--chunk-energy-ms must be a comma-separated list of positive milliseconds');
   }
   if (!a.maesNumSteps.length || a.maesNumSteps.some((n) => !Number.isInteger(n) || n < 1)) {
     throw new Error('--maes-num-steps must be a comma-separated list of integers >= 1');
@@ -436,6 +465,24 @@ appears in the tables when it is actually swept:
                                  0 disables it (drops per-frame recombination passes);
                                  NeMo default 1. Default 1.
       --frame-stride N           Decimate encoder frames [1,4]. Default 1.
+
+Chunking sweep (long-audio seam tuning; default off = whole-clip decode, the
+historical behaviour; chunked cells run the real transcribeChunked seam path and
+bypass the whole-clip encoder cache, so they cost a full re-encode per cell):
+      --chunk-duration LIST      Chunk window seconds, e.g. "off,20,40,60". The
+                                 token "off" is the unchunked reference cell (its
+                                 resume tag is unchanged from pre-sweep runs).
+                                 Intentionally NOT clamped to the CLI's [10,25]
+                                 range so the app default (60) is sweepable.
+      --chunk-overlap LIST       Seam overlap seconds. Unset = engine default (2).
+      --chunk-snap LIST          Snap-to-silence search window seconds, 0 = off.
+                                 Unset = engine default (1).
+      --chunk-energy-ms LIST     Seam energy-window milliseconds used by snap.
+                                 Unset = engine default (150).
+                                 Unset sub-knobs are OMITTED from the decode opts,
+                                 so the engine defaults stay authoritative. Sub-knob
+                                 lists apply to every CHUNKED duration (cross
+                                 product); the off cell ignores them.
 
 Diagnostics (beam-vs-greedy study; single value each, constant across the run):
       --merge-duplicates on|off  NeMo merge_duplicate_hypotheses (log-sum-exp
@@ -761,6 +808,29 @@ export function buildBoostDescriptors(args, hasBoost, bDigest) {
   return out;
 }
 
+// Expand the chunking sweep lists into per-cell configs. A null duration is
+// the no-chunking cell: the other chunk knobs do not apply to it, so it
+// collapses to a SINGLE config instead of multiplying with them (otherwise an
+// off+4-overlap sweep would run 4 identical reference cells). Exported for the
+// unit tests.
+export function buildChunkConfigs({ chunkDurations, chunkOverlaps, chunkSnaps, chunkEnergyMs }) {
+  const out = [];
+  for (const chunkDuration of chunkDurations) {
+    if (chunkDuration === null) {
+      out.push({ chunkDuration: null, chunkOverlap: null, chunkSnap: null, chunkEnergyMs: null });
+      continue;
+    }
+    for (const chunkOverlap of chunkOverlaps) {
+      for (const chunkSnap of chunkSnaps) {
+        for (const w of chunkEnergyMs) {
+          out.push({ chunkDuration, chunkOverlap, chunkSnap, chunkEnergyMs: w });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 export function tagOf(row) {
   const boostPart = row.boostDigest ? `boost#${row.boostDigest}` : row.label;
   const minpPart = row.minp == null ? '' : '~' + row.minp;
@@ -791,7 +861,16 @@ export function tagOf(row) {
     (row.maesExpansionBeta === 2 ? '' : ' eb=' + row.maesExpansionBeta) +
     (row.maesExpansionGamma === 2.3 ? '' : ' eg=' + row.maesExpansionGamma) +
     (row.maesPrefixAlpha === 1 ? '' : ' pa=' + row.maesPrefixAlpha);
-  return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${commitPart}${quantPart}${decPart}${maesPart}`;
+  // Chunking off (null duration, the historical whole-clip cell) appends nothing,
+  // so pre-chunk-sweep jsonl stays reusable. A chunked cell always carries its
+  // duration; the sub-knobs append only when explicitly set (null = engine default),
+  // mirroring how they were requested on the CLI.
+  const chunkPart = row.chunkDuration == null ? '' :
+    ' cd=' + row.chunkDuration +
+    (row.chunkOverlap == null ? '' : ' ov=' + row.chunkOverlap) +
+    (row.chunkSnap == null ? '' : ' sn=' + row.chunkSnap) +
+    (row.chunkEnergyMs == null ? '' : ' ew=' + row.chunkEnergyMs);
+  return `beam=${row.beamWidth} ${boostPart}${row.strength == null ? '' : '@' + row.strength}${minpPart}${depthPart}${commitPart}${quantPart}${decPart}${maesPart}${chunkPart}`;
 }
 
 // --- per-dataset accuracy accumulation ------------------------------------
@@ -1004,6 +1083,12 @@ const MAES_COLS = [
   ['eb', (r) => r.maesExpansionBeta],
   ['eg', (r) => r.maesExpansionGamma],
   ['pa', (r) => r.maesPrefixAlpha],
+  // Chunk knobs ride the same show-set mechanism (null renders '-', i.e. the
+  // whole-clip reference cell / engine-default sub-knob).
+  ['cd', (r) => r.chunkDuration],
+  ['ov', (r) => r.chunkOverlap],
+  ['sn', (r) => r.chunkSnap],
+  ['ew', (r) => r.chunkEnergyMs],
 ];
 const EMPTY_SHOW = new Set();
 const maesCells = (r, show) => MAES_COLS.filter(([h]) => show.has(h)).map(([, f]) => { const v = f(r); return v == null ? '-' : String(v); });
@@ -1209,12 +1294,19 @@ async function main() {
   // its own model load + encoder-quant-specific output cache); decoder quant is
   // nested directly under it (it reloads the model but reuses the cached encoder
   // outputs); beam / boost / MAES are the cheap inner sweep.
+  // Chunk configs sit between the model dims and the cheap decode dims: a
+  // chunked cell re-encodes every clip (the encoder cache below only serves
+  // unchunked cells), so it is the most expensive non-model dimension.
+  const chunkConfigs = buildChunkConfigs(args);
+
   const grid = [];
   for (const quant of args.quants) {
     for (const decoderQuant of args.decoderQuants) {
-      for (const beamWidth of args.beamWidths) {
-        for (const bc of boostDescriptors) {
-          for (const mc of maesConfigs) grid.push({ quant, decoderQuant, beamWidth, ...bc, ...mc });
+      for (const cc of chunkConfigs) {
+        for (const beamWidth of args.beamWidths) {
+          for (const bc of boostDescriptors) {
+            for (const mc of maesConfigs) grid.push({ quant, decoderQuant, beamWidth, ...bc, ...mc, ...cc });
+          }
         }
       }
     }
@@ -1223,7 +1315,9 @@ async function main() {
   const depthNote = hasBoost && args.depthScalings.some((d) => d !== null) ? ` (depth-scaling sweep: ${args.depthScalings.map((d) => d ?? 'default').join(', ')})` : '';
   const commitNote = hasBoost && args.commitmentScalings.some((c) => c !== null) ? ` (commitment-scaling sweep: ${args.commitmentScalings.map((c) => c ?? 'default').join(', ')})` : '';
   const maesNote = maesConfigs.length > 1 ? ` x ${maesConfigs.length} MAES config(s)` : '';
-  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s)${maesNote} = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}${commitNote}\n`);
+  const chunkNote = chunkConfigs.length > 1 || chunkConfigs[0].chunkDuration !== null
+    ? ` x ${chunkConfigs.length} chunk config(s) (chunked cells bypass the encoder cache: full re-encode per cell)` : '';
+  console.error(`[bench] sweep: ${args.quants.length} encoder quant(s) [${args.quants.join(', ')}] x ${args.decoderQuants.length} decoder quant(s) [${args.decoderQuants.join(', ')}] x ${args.beamWidths.length} beam width(s) x ${boostDescriptors.length} boost config(s)${maesNote}${chunkNote} = ${grid.length} run(s) over ${entries.length} utterances each${minpNote}${depthNote}${commitNote}\n`);
 
   // Decode each audio once and cache the PCM across all grid rows (only the
   // decoding changes between rows, never the audio). For very large datasets
@@ -1256,7 +1350,16 @@ async function main() {
   }
 
   const decodeOpts = (row) => ({
-    enableChunking: false, // manifest utterances are short; one pass each
+    // Chunking off (one pass, historical behaviour) unless this cell sweeps a
+    // chunk duration; chunked cells run the REAL seam/overlap/snap path on the
+    // raw PCM.
+    enableChunking: row.chunkDuration != null,
+    ...(row.chunkDuration != null ? { chunkDurationSec: row.chunkDuration } : {}),
+    // Null sub-knobs are OMITTED (not defaulted here) so transcribeChunked's own
+    // signature defaults stay the single source of truth for "unset".
+    ...(row.chunkOverlap != null ? { overlapSec: row.chunkOverlap } : {}),
+    ...(row.chunkSnap != null ? { snapToSilenceSec: row.chunkSnap } : {}),
+    ...(row.chunkEnergyMs != null ? { seamEnergyWindowSec: row.chunkEnergyMs / 1000 } : {}),
     phraseBoost: row.phraseBoost,
     beamWidth: row.beamWidth,
     maesNumSteps: row.maesNumSteps,
@@ -1350,6 +1453,9 @@ async function main() {
       commitmentScaling: s.commitmentScaling ?? null,
       maesNumSteps: s.maesNumSteps ?? 2, maesExpansionBeta: s.maesExpansionBeta ?? 2,
       maesExpansionGamma: s.maesExpansionGamma ?? 2.3, maesPrefixAlpha: s.maesPrefixAlpha ?? 1,
+      // Pre-chunk-sweep records were always whole-clip, matching null (chunking off).
+      chunkDuration: s.chunkDuration ?? null, chunkOverlap: s.chunkOverlap ?? null,
+      chunkSnap: s.chunkSnap ?? null, chunkEnergyMs: s.chunkEnergyMs ?? null,
       beamCell: summarizeCellBeam(beamStatsSamples),
       // The cell's captured 5-min load average lives on its summary record; carry
       // it through so a resumed cell renders the load5 column identically. Older
@@ -1537,8 +1643,11 @@ async function main() {
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
         const pcm = await getPcm(e.audioPath);
-        const encoded = await getEncoded(e.audioPath);
-        const result = await transcribeQuiet(pcm, { ...decodeOpts(row), encoded });
+        // Chunked cells sweep the segmentation itself (duration/overlap/snap/energy
+        // window), so the whole-clip encoder cache is meaningless for them: they must
+        // re-encode per chunk inside transcribeChunked from the raw PCM.
+        const encoded = row.chunkDuration != null ? null : await getEncoded(e.audioPath);
+        const result = await transcribeQuiet(pcm, { ...decodeOpts(row), ...(encoded ? { encoded } : {}) });
         const hyp = result.utterance_text ?? '';
         const metrics = result.metrics ?? {};
         // Opt-in beam-search expansion stats for this utterance (present only on
@@ -1617,6 +1726,8 @@ async function main() {
         loadAvg, loadMax,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
+        chunkDuration: row.chunkDuration ?? null, chunkOverlap: row.chunkOverlap ?? null,
+        chunkSnap: row.chunkSnap ?? null, chunkEnergyMs: row.chunkEnergyMs ?? null,
         beamCell: summarizeCellBeam(beamStatsSamples),
         load5,
         timeMs, timings, datasets };
@@ -1650,6 +1761,8 @@ async function main() {
         loadAvg, loadMax,
         maesNumSteps: row.maesNumSteps, maesExpansionBeta: row.maesExpansionBeta,
         maesExpansionGamma: row.maesExpansionGamma, maesPrefixAlpha: row.maesPrefixAlpha,
+        chunkDuration: row.chunkDuration ?? null, chunkOverlap: row.chunkOverlap ?? null,
+        chunkSnap: row.chunkSnap ?? null, chunkEnergyMs: row.chunkEnergyMs ?? null,
         utterances: entries.length,
         wer_pct: +pct(overall.wordEdits, overall.refWords).toFixed(4),
         wer_mean_pct: +mean(overall.werSamples).toFixed(4),
@@ -1705,6 +1818,14 @@ async function main() {
   if (args.maesExpansionBeta.length > 1) maesShow.add('eb');
   if (args.maesExpansionGamma.length > 1) maesShow.add('eg');
   if (args.maesPrefixAlpha.length > 1) maesShow.add('pa');
+  // Chunk knobs also show when set to a single non-null value: unlike the MAES
+  // knobs (whose default is a real value), the chunk default is OFF, so even a
+  // constant chunked column is the only signal that the run was chunked at all.
+  const sweptOrOn = (list) => list.length > 1 || list[0] != null;
+  if (sweptOrOn(args.chunkDurations)) maesShow.add('cd');
+  if (sweptOrOn(args.chunkOverlaps)) maesShow.add('ov');
+  if (sweptOrOn(args.chunkSnaps)) maesShow.add('sn');
+  if (sweptOrOn(args.chunkEnergyMs)) maesShow.add('ew');
   const FULL_HEAD = accHead(maesShow);
 
   // Hide parameter columns that were not swept this run (every row would show "-"):
