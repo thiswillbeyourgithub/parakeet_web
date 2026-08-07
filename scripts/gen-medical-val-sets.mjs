@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Build the French-medical validation sets used to tune this repo's decoding
-// knobs (phrase boosting, beam width, commitment scaling, ...).
+// knobs (phrase boosting, beam width, commitment scaling, ...), and (with
+// --longest) the long-audio sets the chunk-parameter grid runs against
+// (top-N clips by duration instead of a seeded random draw; see --help).
 //
 // Source is the UltiMed-ASR-FR corpus (the "ultimate_french_medical_dataset"
 // project): synthetic French medical speech in four independent subsets, each
@@ -62,9 +64,10 @@ function parseArgs(argv) {
     subsets: DEFAULT_SUBSETS,
     perSubset: 100,
     seed: 1234,
-    out: resolve(ROOT, 'benchmark_datasets/french_medical'),
+    out: null,            // resolved after parsing: depends on --longest
     maxCer: null,         // null => keep every QC-passing clip (see --max-cer)
     allowGroupDupes: false,
+    longest: false,       // top-N by duration instead of a seeded random draw
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -83,6 +86,7 @@ function parseArgs(argv) {
       case '--out': a.out = resolve(expandHome(val())); break;
       case '--max-cer': a.maxCer = Number(val()); break;
       case '--allow-group-dupes': a.allowGroupDupes = true; break;
+      case '--longest': a.longest = true; break;
       case '--dry-run': a.dryRun = true; break;
       default: throw new Error(`Unknown option: ${arg}`);
     }
@@ -93,6 +97,12 @@ function parseArgs(argv) {
   if (!Number.isInteger(a.seed)) throw new Error('--seed must be an integer');
   if (a.maxCer !== null && !(Number.isFinite(a.maxCer) && a.maxCer >= 0)) {
     throw new Error('--max-cer must be a non-negative number');
+  }
+  // The two modes build DIFFERENT deliverables, so they must not share a
+  // default output tree (a bare --longest run would silently overwrite the
+  // french_medical sets otherwise).
+  if (a.out === null) {
+    a.out = resolve(ROOT, a.longest ? 'benchmark_datasets/long_audio' : 'benchmark_datasets/french_medical');
   }
   return a;
 }
@@ -119,6 +129,14 @@ function printHelp() {
   --allow-group-dupes   Keep several clips from the same group_id (the corpus emits
                         many variants per term/drug). Off by default so one term
                         cannot take over the draw.
+  --longest             Take the top N clips BY DURATION instead of a seeded
+                        random draw (group dedupe keeps each group's longest
+                        exemplar), name the manifests <subset>_long.jsonl, and
+                        default --out to ./benchmark_datasets/long_audio. This
+                        builds the long-audio set for the chunk-parameter grid
+                        (PERF_PLAN item 2), where seams-per-clip is the point:
+                        genuinely long clips only, never concatenations
+                        (stitched audio lies about seam behaviour).
   --dry-run             Report what would be drawn; copy nothing, write nothing.
 `);
 }
@@ -153,6 +171,16 @@ function rejectReason(entry, maxCer) {
   return null;
 }
 
+// The order the selection loop walks the pool in IS the sampling strategy:
+// seeded shuffle => uniform random draw; duration-descending => top-N-longest
+// (ties broken by audio_filepath so the draw stays deterministic without the
+// rng). Exported for the unit tests.
+export function drawOrder(entries, { longest = false, rng } = {}) {
+  if (!longest) return shuffled(entries, rng);
+  return [...entries].sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0)
+    || String(a.audio_filepath).localeCompare(String(b.audio_filepath)));
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const subsets = parseSubsets(args.subsets);
@@ -172,13 +200,16 @@ function main() {
       throw new Error(`${subset}/${split} is empty (PARROT ships no train/val split: use PARROT:test)`);
     }
 
-    // Reject, then dedupe by group, then shuffle: dropping before the shuffle
-    // keeps the draw uniform over the eligible pool rather than over the raw
-    // split (where a reject would silently shrink the sample).
+    // Reject, then dedupe by group, then draw: dropping before the draw keeps
+    // it uniform over the eligible pool rather than over the raw split (where
+    // a reject would silently shrink the sample). The draw order is the whole
+    // difference between the two modes: shuffled for the seeded random sets,
+    // duration-descending for --longest (which also makes the group dedupe
+    // keep each group's longest exemplar).
     const rejects = Object.create(null);
     const eligible = [];
     const seenGroups = new Set();
-    for (const e of shuffled(entries, rng)) {
+    for (const e of drawOrder(entries, { longest: args.longest, rng })) {
       const why = rejectReason(e, args.maxCer);
       if (why) { rejects[why] = (rejects[why] ?? 0) + 1; continue; }
       const group = e.group_id ?? null;
@@ -195,7 +226,7 @@ function main() {
         + `clips eligible (rejected: ${JSON.stringify(rejects)})`);
     }
 
-    const name = `${subset.toLowerCase()}_${split}`;
+    const name = args.longest ? `${subset.toLowerCase()}_long` : `${subset.toLowerCase()}_${split}`;
     const audioDir = join(args.out, 'audio', subset.toLowerCase());
     if (!args.dryRun) mkdirSync(audioDir, { recursive: true });
 
@@ -233,6 +264,7 @@ function main() {
     const manifestOut = join(args.out, `${name}.jsonl`);
     if (!args.dryRun) writeFileSync(manifestOut, `${lines.join('\n')}\n`);
 
+    const durs = eligible.map((e) => e.duration ?? 0);
     report.push({
       name,
       subset,
@@ -243,6 +275,8 @@ function main() {
       sampled: eligible.length,
       rejected: rejects,
       totalDurationSec: Number(totalSec.toFixed(2)),
+      durMinSec: durs.length ? Number(Math.min(...durs).toFixed(1)) : null,
+      durMaxSec: durs.length ? Number(Math.max(...durs).toFixed(1)) : null,
       totalAudioBytes: totalBytes,
     });
     console.error(`[gen] ${name}: ${eligible.length} clips, ${(totalSec / 60).toFixed(1)} min, `
@@ -253,10 +287,13 @@ function main() {
     generatedBy: 'scripts/gen-medical-val-sets.mjs',
     corpus: 'UltiMed-ASR-FR (ultimate_french_medical_dataset)',
     source: args.source,
+    mode: args.longest ? 'top-n-longest' : 'seeded-random',
+    subsets: args.subsets,
     seed: args.seed,
     perSubset: args.perSubset,
     maxCer: args.maxCer,
     allowGroupDupes: args.allowGroupDupes,
+    outBase: basename(args.out),
     datasets: report,
   };
 
@@ -271,18 +308,43 @@ function main() {
 }
 
 function renderReadme(p) {
+  const longest = p.mode === 'top-n-longest';
+  const base = `./benchmark_datasets/${p.outBase}`;
+  const durCol = longest ? ' clip range (s) |' : '';
   const rows = p.datasets.map((d) => `| \`${d.manifest}\` | ${d.subset} | ${d.split} | ${d.sampled} | `
-    + `${(d.totalDurationSec / 60).toFixed(1)} | ${d.poolSize} |`).join('\n');
-  return `# French medical validation sets
+    + `${(d.totalDurationSec / 60).toFixed(1)} | ${d.poolSize} |`
+    + (longest ? ` ${d.durMinSec}-${d.durMaxSec} |` : '')).join('\n');
+  const title = longest ? 'Long-audio benchmark sets' : 'French medical validation sets';
+  const how = longest
+    ? `the ${p.perSubset} LONGEST clips per subset (top-N by duration, each group_id's
+longest exemplar)`
+    : `seed \`${p.seed}\`, ${p.perSubset} clips per subset`;
+  const purpose = longest
+    ? `
 
-Generated by \`${p.generatedBy}\` (seed \`${p.seed}\`, ${p.perSubset} clips per subset)
+These sets exist for the chunk-parameter grid (PERF_PLAN item 2): long clips
+are the only place seam behaviour (chunk duration, overlap, silence snapping)
+expresses itself. They are genuinely long single recordings, never
+concatenations: stitched audio lies about seams (it is how the false "beam
+never helps" conclusion happened). Note the corpus simply has no clips past
+~77 s, so the widest chunk windows produce few seams per clip on the shorter
+set; the per-dataset duration ranges above are what bounds that.`
+    : '';
+  return `# ${title}
+
+Generated by \`${p.generatedBy}\` (${how})
 from the ${p.corpus} corpus at \`${p.source}\`.
 
-Do not edit by hand: re-run the generator with the same seed to rebuild an
-identical set. The audio is deliberately not committed.
+Do not edit by hand: re-run the generator to rebuild an identical set:
 
-| manifest | subset | split | clips | minutes | pool |
-|---|---|---|---:|---:|---:|
+\`\`\`bash
+node ${p.generatedBy} --subsets ${p.subsets} --per-subset ${p.perSubset}${longest ? ' --longest' : ` --seed ${p.seed}`} --out ${base}
+\`\`\`
+
+The audio is deliberately not committed.${purpose}
+
+| manifest | subset | split | clips | minutes | pool |${durCol}
+|---|---|---|---:|---:|---:|${longest ? '---:|' : ''}
 ${rows}
 
 Each subset is a separate manifest on purpose. \`scripts/grid_search_benchmark.mjs\`
@@ -297,8 +359,8 @@ Run the benchmark against them with:
 
 \`\`\`bash
 node scripts/grid_search_benchmark.mjs \\
-${p.datasets.map((d) => `  --manifest ./benchmark_datasets/french_medical/${d.manifest} \\`).join('\n')}
-  --audio-root ./benchmark_datasets/french_medical \\
+${p.datasets.map((d) => `  --manifest ${base}/${d.manifest} \\`).join('\n')}
+  --audio-root ${base} \\
   --model-dir ./fallback_models \\
   --ort wasm
 \`\`\`
@@ -307,4 +369,7 @@ Built with Claude Code.
 `;
 }
 
-main();
+// Import-safe (the unit tests import drawOrder): only run as a CLI.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
