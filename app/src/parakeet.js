@@ -385,12 +385,15 @@ export const DEFAULT_LENGTH_ALIGN_SLACK = 0.15;
  * @param {number} sampleRate   samples per second.
  * @returns {{energyWindow:number, energyHalf:number, energyAt:(i:number)=>number, hopProfile:(hopSamples:number)=>{energies:Float64Array, hopSamples:number, count:number}}}
  */
-export function createEnergySampler(audio, sampleRate) {
-  // ~150 ms window, probed narrowly: a real inter-word/sentence pause is that
-  // long, whereas a stop-consonant closure inside a word is only ~20-50 ms, so a
-  // window this wide averages the closure back up and only a genuine pause reads
-  // as a minimum. A narrower window would let a seam snap mid-word.
-  const energyWindow = Math.max(1, Math.round(0.15 * sampleRate));
+export function createEnergySampler(audio, sampleRate, windowSec = 0.15) {
+  // ~150 ms window by default, probed narrowly: a real inter-word/sentence
+  // pause is that long, whereas a stop-consonant closure inside a word is only
+  // ~20-50 ms, so a window this wide averages the closure back up and only a
+  // genuine pause reads as a minimum. A narrower window would let a seam snap
+  // mid-word (25 ms measurably did). Parameterized ONLY for the bench-side
+  // chunk-parameter sweep (PERF_PLAN item 2); every product caller keeps the
+  // default.
+  const energyWindow = Math.max(1, Math.round(windowSec * sampleRate));
   const energyHalf = energyWindow >> 1;
   const energyAt = (i) => {
     const a = Math.max(0, i - energyHalf);
@@ -2971,6 +2974,10 @@ export class ParakeetModel {
       // complements the overlap + text-anchored dedup (mergeOverlapWords), which
       // stays the primary safety net.
       snapToSilenceSec = DEFAULT_SNAP_TO_SILENCE_SEC,
+      // Seam energy window override, seconds. The 0.15 default IS the product
+      // value (see createEnergySampler); only the chunk-parameter grid sweeps
+      // it, so the app/CLI never pass it.
+      seamEnergyWindowSec = 0.15,
       ...transcribeOpts
     } = opts;
 
@@ -3009,7 +3016,7 @@ export class ParakeetModel {
     // to snap seams into pauses (probed every ~5 ms). The ~150 ms window rationale
     // lives on createEnergySampler; energyAt here is byte-identical to the old
     // inline closure, so seam placement (and every WASM transcript) is unchanged.
-    const { energyAt } = createEnergySampler(audio, sampleRate);
+    const { energyAt } = createEnergySampler(audio, sampleRate, seamEnergyWindowSec);
     const snapRadiusSamples = Math.max(0, Math.round(snapToSilenceSec * sampleRate));
     const snapStepSamples = Math.max(1, Math.round(0.005 * sampleRate));
 
