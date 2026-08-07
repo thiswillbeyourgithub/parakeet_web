@@ -380,6 +380,14 @@ body {
   white-space: nowrap;
 }
 
+/* Small parenthetical after a setting label, e.g. the beam width "(auto)"
+   marker shown while the width is still coupled to the boost state. */
+.setting-hint {
+  font-weight: 400;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
 .setting-options {
   display: flex;
   gap: 1rem;
