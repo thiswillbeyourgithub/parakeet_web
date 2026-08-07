@@ -157,6 +157,39 @@ export async function seedSettings(page, extra = {}) {
   );
 }
 
+// Read one (unprefixed) key back from the app's settings DB, so a spec can
+// deterministically wait for a UI edit's async IDB write instead of sleeping.
+// Shared here because several specs need it (it used to be copied per spec).
+export function readSetting(page, key) {
+  return page.evaluate(({ DB, STORE, PREFIX, key }) => new Promise((resolve) => {
+    const req = indexedDB.open(DB);
+    req.onsuccess = () => {
+      const db = req.result;
+      const get = db.transaction([STORE], 'readonly').objectStore(STORE).get(`${PREFIX}${key}`);
+      get.onsuccess = () => { db.close(); resolve(get.result); };
+      get.onerror = () => { db.close(); resolve(undefined); };
+    };
+    req.onerror = () => resolve(undefined);
+  }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX, key });
+}
+
+// Delete one (unprefixed) key from the app's settings DB. Needed to simulate a
+// LEGACY profile: the app's default-persist storm writes every known key on
+// first boot, so a key the current version persists can only be made absent
+// (as it would be in a pre-feature profile) by removing it after seeding.
+export function deleteSetting(page, key) {
+  return page.evaluate(({ DB, STORE, PREFIX, key }) => new Promise((resolve) => {
+    const req = indexedDB.open(DB);
+    req.onsuccess = () => {
+      const db = req.result;
+      const del = db.transaction([STORE], 'readwrite').objectStore(STORE).delete(`${PREFIX}${key}`);
+      del.onsuccess = () => { db.close(); resolve(true); };
+      del.onerror = () => { db.close(); resolve(false); };
+    };
+    req.onerror = () => resolve(false);
+  }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX, key });
+}
+
 // Expand a collapsible Settings group by clicking its header toggle, so a spec
 // can reach controls that now live inside a (default-collapsed) section. The
 // settings drawer must already be open. `name` is matched as a substring of the

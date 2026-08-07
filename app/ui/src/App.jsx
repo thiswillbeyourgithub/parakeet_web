@@ -36,6 +36,7 @@ import { createSerialQueue } from './lib/writeQueue.js';
 import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
+import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
 import { resolveOrtVariant } from './lib/ortVariant.js';
@@ -748,11 +749,16 @@ export default function App() {
   const [supportReport, setSupportReport] = useState('');
   const [supportReportCopied, setSupportReportCopied] = useState(false);
   const [frameStride, setFrameStride] = useState(1);
-  // Beam search width. 1 = greedy (default, fastest, behavior unchanged). Higher
-  // widths explore alternative hypotheses (~Nx decode cost) and let phrase
-  // boosting recover phrases greedy would prune. Full-file only: the streaming
-  // path forces width 1 in the decoder.
+  // Beam search width. 1 = greedy (fastest). Higher widths explore alternative
+  // hypotheses (~Nx decode cost) and let phrase boosting recover phrases greedy
+  // would prune. Full-file only: the streaming path forces width 1 in the
+  // decoder. While `beamWidthAuto` is true (the user never chose a width) the
+  // value is coupled to the boost state (lib/beamWidth.js): greedy without an
+  // active phrase list, DEFAULT_BEAM_WIDTH with one, because the 2026-08 sweep
+  // showed a wide beam WORSENS accuracy without a lexical prior and improves
+  // it with one. Editing the width in the UI turns the coupling off for good.
   const [beamWidth, setBeamWidth] = useState(DEFAULT_BEAM_WIDTH);
+  const [beamWidthAuto, setBeamWidthAuto] = useState(true);
   // MAES (Modified Adaptive Expansion Search) knobs, used only when beamWidth>1.
   // num-steps/beta/gamma are NeMo's `maes` defaults (2 / 2 / 2.3), matching
   // parakeet.js and transcribe.mjs. An earlier build shipped wider values
@@ -1436,6 +1442,7 @@ export default function App() {
           savedDebugDecode,
           savedFrameStride,
           savedBeamWidth,
+          savedBeamWidthAuto,
           savedMaesNumSteps,
           savedMaesExpansionBeta,
           savedMaesExpansionGamma,
@@ -1472,7 +1479,10 @@ export default function App() {
           loadSetting('verboseLog', false),
           loadSetting('debugDecode', false),
           loadSetting('frameStride', 1),
-          loadSetting('beamWidth', DEFAULT_BEAM_WIDTH),
+          // null defaults so restoreBeamWidthAuto can tell "never set" apart
+          // from an explicit choice (see lib/beamWidth.js).
+          loadSetting('beamWidth', null),
+          loadSetting('beamWidthAuto', null),
           loadSetting('maesNumSteps', 2),
           loadSetting('maesExpansionBeta', 2),
           loadSetting('maesExpansionGamma', 2.3),
@@ -1532,7 +1542,17 @@ export default function App() {
         setVerboseLog(savedVerboseLog);
         setDebugDecode(!!savedDebugDecode);
         setFrameStride(savedFrameStride);
-        setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(10, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
+        {
+          // Auto mode leaves beamWidth alone here: the coupling effect below
+          // resolves it from the boost state once settingsLoaded flips.
+          const beamAuto = restoreBeamWidthAuto({
+            savedAuto: savedBeamWidthAuto, savedBeamWidth, deviceDefault: DEFAULT_BEAM_WIDTH,
+          });
+          setBeamWidthAuto(beamAuto);
+          if (!beamAuto) {
+            setBeamWidth(Number.isInteger(savedBeamWidth) && savedBeamWidth >= 1 ? Math.min(10, savedBeamWidth) : DEFAULT_BEAM_WIDTH);
+          }
+        }
         setMaesNumSteps(Number.isInteger(savedMaesNumSteps) && savedMaesNumSteps >= 1 ? savedMaesNumSteps : 3);
         setMaesExpansionBeta(Number.isInteger(savedMaesExpansionBeta) && savedMaesExpansionBeta >= 0 ? savedMaesExpansionBeta : 4);
         setMaesExpansionGamma(Number.isFinite(savedMaesExpansionGamma) && savedMaesExpansionGamma > 0 ? savedMaesExpansionGamma : 4.0);
@@ -1993,6 +2013,19 @@ export default function App() {
   usePersistedSetting('debugDecode', debugDecode, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
   usePersistedSetting('beamWidth', beamWidth, settingsLoaded);
+  usePersistedSetting('beamWidthAuto', beamWidthAuto, settingsLoaded);
+
+  // Auto-coupled beam width (lib/beamWidth.js): until the user chooses a width
+  // themselves, follow the boost state. The sweep behind this showed the beam
+  // effect FLIPS SIGN with the lexical prior: without a phrase list, widening
+  // the beam degrades accuracy on term-dense audio (more room to prefer a
+  // fluent-but-wrong reading) while costing decode time; with one it is where
+  // the boosting gains come from. boostPhraseCount is the parse-time count (it
+  // updates even before a model loads), boostStrength 0 disables boosting.
+  useEffect(() => {
+    if (!settingsLoaded || !beamWidthAuto) return;
+    setBeamWidth(resolveAutoBeamWidth(boostPhraseCount > 0 && boostStrength !== 0, DEFAULT_BEAM_WIDTH));
+  }, [settingsLoaded, beamWidthAuto, boostPhraseCount, boostStrength]);
   usePersistedSetting('maesNumSteps', maesNumSteps, settingsLoaded);
   usePersistedSetting('maesExpansionBeta', maesExpansionBeta, settingsLoaded);
   usePersistedSetting('maesExpansionGamma', maesExpansionGamma, settingsLoaded);
@@ -6406,6 +6439,7 @@ export default function App() {
               <span className="setting-label" style={{ flex: '1 1 auto' }}>
                 {t('beamWidth')} (1-10):
                 <InfoTooltip text={t('tooltipBeamWidth')} />
+                {beamWidthAuto && <span className="setting-hint"> {t('beamWidthAutoHint')}</span>}
               </span>
               <input
                 type="number"
@@ -6415,7 +6449,11 @@ export default function App() {
                 value={beamWidth}
                 onChange={e=>{
                   const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setBeamWidth(Math.max(1, Math.min(10, Math.round(v))));
+                  if (Number.isFinite(v)) {
+                    // An explicit edit ends the boost-state coupling for good.
+                    setBeamWidthAuto(false);
+                    setBeamWidth(Math.max(1, Math.min(10, Math.round(v))));
+                  }
                 }}
                 style={{ width: '4.5rem' }}
               />
