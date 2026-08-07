@@ -16,7 +16,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ortRuntimeConfig, sessionOptionsFor } from '../../scripts/transcribe.mjs';
+import { ortRuntimeConfig, sessionOptionsFor, resolveWasmEnvOverrides } from '../../scripts/transcribe.mjs';
 
 describe('ortRuntimeConfig: ORT backend -> EP / from-path mapping', () => {
   test('wasm uses the WASM EP and loads from a Buffer (not a path)', () => {
@@ -74,5 +74,40 @@ describe('sessionOptionsFor: --threads reaches the right knob per backend', () =
   test('verbose picks the noisy log severity, quiet the terse one', () => {
     assert.equal(sessionOptionsFor({ executionProviders: ['cpu'], verbose: true }).logSeverityLevel, 0);
     assert.equal(sessionOptionsFor({ executionProviders: ['cpu'] }).logSeverityLevel, 3);
+  });
+});
+
+describe('resolveWasmEnvOverrides: --wasm-paths / --wasm-simd -> ort.env.wasm', () => {
+  test('defaults leave both overrides unset', () => {
+    assert.deepEqual(resolveWasmEnvOverrides(), { wasmPaths: null, simd: null });
+    assert.deepEqual(resolveWasmEnvOverrides({}), { wasmPaths: null, simd: null });
+  });
+
+  // ort-web string-concatenates the (fixed) artifact filename onto the prefix,
+  // so the prefix MUST end in a slash and be absolute (the CLI's cwd is not the
+  // repo root in general).
+  test('wasmPaths becomes an absolute prefix with a trailing slash', () => {
+    const { wasmPaths } = resolveWasmEnvOverrides({ wasmPaths: '/opt/ort-relaxed' });
+    assert.equal(wasmPaths, '/opt/ort-relaxed/');
+    assert.equal(resolveWasmEnvOverrides({ wasmPaths: '/opt/ort-relaxed/' }).wasmPaths, '/opt/ort-relaxed/');
+    // Relative input is resolved against cwd, never passed through raw.
+    assert.equal(resolveWasmEnvOverrides({ wasmPaths: 'rel/dir' }).wasmPaths.startsWith('/'), true);
+  });
+
+  // The union ort.env.wasm.simd actually accepts: booleans select the default
+  // fixed-SIMD-or-not pair, the two strings pin a specific engine flavour.
+  test('wasmSimd maps the CLI strings onto the ort union values', () => {
+    assert.equal(resolveWasmEnvOverrides({ wasmSimd: 'relaxed' }).simd, 'relaxed');
+    assert.equal(resolveWasmEnvOverrides({ wasmSimd: 'fixed' }).simd, 'fixed');
+    assert.equal(resolveWasmEnvOverrides({ wasmSimd: 'true' }).simd, true);
+    assert.equal(resolveWasmEnvOverrides({ wasmSimd: 'false' }).simd, false);
+  });
+
+  test('an unknown simd mode throws and names the accepted values', () => {
+    assert.throws(() => resolveWasmEnvOverrides({ wasmSimd: 'turbo' }), (e) => {
+      assert.match(e.message, /true, false, fixed or relaxed/);
+      assert.match(e.message, /turbo/);
+      return true;
+    });
   });
 });

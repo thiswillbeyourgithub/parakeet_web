@@ -131,6 +131,9 @@ function parseArgs(argv) {
     decoderQuant: 'int8',   // decoder/joiner quantisation, chosen independently (int8 matches fp32 quality here, smaller+faster)
     ortBackend: 'wasm',
     threads: 0,            // 0 => ORT default
+    wasmPaths: null,       // alternative ORT WASM artifact dir (A/B an engine build)
+    wasmSimd: null,        // ort.env.wasm.simd override (true|false|fixed|relaxed)
+    profile: false,        // per-stage metrics without the --verbose debug firehose
     timestamps: false,
     json: false,
     verbose: false,
@@ -170,6 +173,9 @@ function parseArgs(argv) {
       case '--decoder-quant': a.decoderQuant = val(flag); break;
       case '--ort': a.ortBackend = val(flag); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
+      case '--wasm-paths': a.wasmPaths = val(flag); break;
+      case '--wasm-simd': a.wasmSimd = val(flag); break;
+      case '--profile': a.profile = true; break;
       case '--ffmpeg': a.ffmpeg = val(flag); break;
       case '--timestamps': a.timestamps = true; break;
       case '--json': a.json = true; break;
@@ -184,6 +190,7 @@ function parseArgs(argv) {
   if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
   if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
   if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node' && a.ortBackend !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ortBackend})`);
+  if ((a.wasmPaths || a.wasmSimd) && a.ortBackend !== 'wasm') throw new Error('--wasm-paths / --wasm-simd only apply to --ort wasm');
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
   if (a.boostMinp !== null && (!Number.isFinite(a.boostMinp) || a.boostMinp < 0 || a.boostMinp > 1)) {
     throw new Error('--boost-minp must be a number in [0, 1] (0 = boost all, 1 = disabled)');
@@ -339,6 +346,18 @@ Options:
                            CUDA provider library cannot be loaded.
       --threads N          Inference threads: WASM thread count, or the native EP's
                            intra-op threads with --ort node|cuda (default: ORT chooses).
+      --wasm-paths DIR     Load the ORT WASM engine artifacts from DIR instead of the
+                           vendored dist (only with --ort wasm). Artifact filenames are
+                           fixed, so pointing at another directory is how an alternative
+                           engine build is selected, e.g. the relaxed-SIMD build from
+                           scripts/build-ort-relaxed.sh in app/ui/public/ort-relaxed/.
+      --wasm-simd MODE     ort.env.wasm.simd override: true, false, fixed or relaxed
+                           (only with --ort wasm). "relaxed" needs an engine built with
+                           relaxed-SIMD kernels AND a runtime that validates the
+                           instructions (Node 22 does), else ORT throws at init.
+      --profile            Collect per-stage timing metrics (preprocess/encode/decode)
+                           into the result (see --json) without --verbose's debug logs
+                           polluting stdout; what benchmarks should use.
       --timestamps         Include word timestamps and confidences in output.
       --json               Print the full result object as JSON.
       --ffmpeg PATH        ffmpeg binary to use (else auto-detected).
@@ -593,6 +612,30 @@ export function decodePcm(ffmpeg, file) {
 // trie the CLI uses, without duplicating the glue. The CLI's main() below is a
 // thin caller over them.
 
+// Map the CLI's --wasm-paths / --wasm-simd values onto the `ort.env.wasm`
+// overrides that select an alternative engine build (PERF_PLAN #5: the
+// relaxed-SIMD runtime from scripts/build-ort-relaxed.sh ships identically
+// NAMED artifacts in a different directory, so directory choice IS the variant
+// choice, exactly like the app's /ort-relaxed/ path). `wasmPaths` becomes an
+// absolute prefix with a trailing slash (ort-web string-concatenates the
+// artifact filename onto it); `simd` maps the CLI string onto the
+// true|false|'fixed'|'relaxed' union ort.env.wasm.simd accepts. Node's engine
+// validates relaxed SIMD (v22 does), so 'relaxed' under Node is a faithful A/B
+// of the browser toggle. Pure and exported for unit tests.
+export function resolveWasmEnvOverrides({ wasmPaths = null, wasmSimd = null } = {}) {
+  const out = { wasmPaths: null, simd: null };
+  if (wasmPaths) {
+    const abs = resolve(wasmPaths);
+    out.wasmPaths = abs.endsWith('/') ? abs : `${abs}/`;
+  }
+  if (wasmSimd != null) {
+    const map = { true: true, false: false, fixed: 'fixed', relaxed: 'relaxed' };
+    if (!(wasmSimd in map)) throw new Error(`--wasm-simd must be true, false, fixed or relaxed (got ${wasmSimd})`);
+    out.simd = map[wasmSimd];
+  }
+  return out;
+}
+
 // Build the ORT session options for one backend.
 //
 // The thread count needs backend-specific plumbing: WASM has its own global
@@ -622,6 +665,8 @@ export async function loadParakeetModel({
   threads = 0,
   verbose = false,
   ortBackend = 'wasm',
+  wasmPaths = null,
+  wasmSimd = null,
 } = {}) {
   const cfg = getModelConfig(modelKey);
   if (!cfg) throw new Error(`Unknown model "${modelKey}". Known: ${listModels().join(', ')}`);
@@ -635,6 +680,9 @@ export async function loadParakeetModel({
   if (ortBackend === 'wasm') {
     if (threads > 0) ortMod.env.wasm.numThreads = threads;
     ortMod.env.wasm.proxy = false;
+    const ov = resolveWasmEnvOverrides({ wasmPaths, wasmSimd });
+    if (ov.wasmPaths) ortMod.env.wasm.wasmPaths = ov.wasmPaths;
+    if (ov.simd !== null) ortMod.env.wasm.simd = ov.simd;
   }
   ortMod.env.logLevel = verbose ? 'verbose' : 'error';
 
@@ -766,6 +814,8 @@ async function main() {
     threads: args.threads,
     verbose: args.verbose,
     ortBackend: args.ortBackend,
+    wasmPaths: args.wasmPaths,
+    wasmSimd: args.wasmSimd,
   });
   console.error(`[transcribe] model: ${args.model} (enc ${args.quant} / dec ${args.decoderQuant}, ort=${args.ortBackend})`);
   console.error(`[transcribe] dir:   ${dir}`);
@@ -821,7 +871,7 @@ async function main() {
     temperature: 0,
     returnTimestamps: args.timestamps,
     returnConfidences: args.timestamps,
-    enableProfiling: args.verbose,
+    enableProfiling: args.verbose || args.profile,
     debug: args.verbose,
   }, ({ chunkNum, totalChunks, result: chunkRes, elapsedMs }) => {
     // Only prefix when there is more than one chunk; a single-pass run prints
