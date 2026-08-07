@@ -69,6 +69,18 @@ else
   fi
 fi
 
+# The onnxruntime repo has no root package.json, and this checkout usually
+# lives INSIDE parakeet_web (whose root package.json says "type": "module").
+# ORT's build post-processes its emitted .mjs with a CommonJS node script
+# (onnxruntime/wasm/wasm_post_build.js, plain require() in a .js file), and
+# Node resolves the module type by walking UP to the nearest package.json, so
+# without a stop marker here the walk escapes into parakeet_web and the
+# post-process dies with "require is not defined in ES module scope" at the
+# very last build step. Pin the whole source tree to CommonJS.
+if [[ ! -f "$SRC_DIR/package.json" ]]; then
+  printf '{\n  "type": "commonjs"\n}\n' > "$SRC_DIR/package.json"
+fi
+
 # Fail fast if the flag ever disappears from the build system.
 if ! grep -q "enable_wasm_relaxed_simd" "$SRC_DIR/tools/ci_build/build.py"; then
   echo "ERROR: --enable_wasm_relaxed_simd not found in tools/ci_build/build.py" >&2
@@ -96,24 +108,37 @@ python3 "$SRC_DIR/tools/ci_build/build.py" \
   --skip_submodule_sync
 
 echo "==> Collecting artifacts"
+# The relaxed build names its output by flavour: ort-wasm-RELAXEDSIMD-threaded.
+# The vendored onnxruntime-web loader knows nothing of that name: it always
+# imports <wasmPaths>ort-wasm-simd-threaded.jsep.mjs (env.wasm.simd='relaxed'
+# only changes the SUPPORT PROBE, verified against dist/ort.min.mjs), and the
+# app's integrity manifest likewise looks the canonical pair up by name. So the
+# install step RENAMES the pair to the canonical names and patches the baked
+# flavour filename inside the .mjs (emscripten resolves its .wasm by that
+# literal), keeping every load path consistent: the app's verified-blob path,
+# the plain wasmPaths-prefix path, and transcribe.mjs --wasm-paths under Node.
 DEST="$REPO_ROOT/app/ui/public/ort-relaxed"
 mkdir -p "$DEST"
-FOUND=0
-while IFS= read -r -d '' f; do
-  cp -v "$f" "$DEST/"
-  FOUND=$((FOUND + 1))
-done < <(find "$BUILD_DIR" -name 'ort-wasm-simd-threaded*' \( -name '*.mjs' -o -name '*.wasm' \) -print0)
+SRC_MJS="$(find "$BUILD_DIR" -name 'ort-wasm-*simd-threaded.jsep.mjs' | head -n 1)"
+SRC_WASM="$(find "$BUILD_DIR" -name 'ort-wasm-*simd-threaded.jsep.wasm' | head -n 1)"
 
-if [[ $FOUND -eq 0 ]]; then
-  echo "ERROR: no ort-wasm-simd-threaded* artifacts found under $BUILD_DIR" >&2
-  echo "       The build layout may have changed; look for the .mjs/.wasm pair manually." >&2
+if [[ -z "$SRC_MJS" || -z "$SRC_WASM" ]]; then
+  echo "ERROR: jsep .mjs/.wasm pair not found under $BUILD_DIR" >&2
+  echo "       (mjs='$SRC_MJS' wasm='$SRC_WASM'). The build layout may have" >&2
+  echo "       changed; look for the ort-wasm-*simd-threaded* pair manually." >&2
   exit 1
 fi
-if [[ ! -f "$DEST/ort-wasm-simd-threaded.jsep.mjs" || ! -f "$DEST/ort-wasm-simd-threaded.jsep.wasm" ]]; then
-  echo "WARNING: the jsep pair is missing from $DEST; the app's loader prefers" >&2
-  echo "         ort-wasm-simd-threaded.jsep.{mjs,wasm}. Check the build flags." >&2
+
+cp -v "$SRC_WASM" "$DEST/ort-wasm-simd-threaded.jsep.wasm"
+sed 's/ort-wasm-relaxedsimd-threaded\.jsep/ort-wasm-simd-threaded.jsep/g' \
+  "$SRC_MJS" > "$DEST/ort-wasm-simd-threaded.jsep.mjs"
+if grep -q 'relaxedsimd' "$DEST/ort-wasm-simd-threaded.jsep.mjs"; then
+  echo "ERROR: unpatched 'relaxedsimd' references remain in the installed .mjs;" >&2
+  echo "       the baked filename pattern changed, update the sed above." >&2
+  exit 1
 fi
 
-echo "==> Done: $FOUND file(s) in $DEST"
+echo "==> Done: canonical jsep pair installed in $DEST"
+echo "    (from $(basename "$SRC_MJS") / $(basename "$SRC_WASM"))"
 echo "    Next: cd app/ui && npm run build   (manifests dist/ort-relaxed/)"
 echo "    Then validate per the header comment before shipping."
