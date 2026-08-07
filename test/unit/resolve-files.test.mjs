@@ -156,3 +156,51 @@ describe('resolveFiles: per-quant encoder/decoder/vocab resolution', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// The folded encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// optimize-encoder-graph.py fold: identical numerics, ~23% fewer graph nodes,
+// faster session build) outranks every other name when the model dir ships it.
+// Shipping the file is the opt-in, so its absence (every dir predating it) must
+// resolve exactly as before; the existing tests above pin that side.
+describe('resolveFiles: folded encoder preference', () => {
+  test('int8 prefers encoder-model.int8.folded.onnx over both unfolded names', () => {
+    const dir = makeModelDir([
+      'encoder-model.int8.folded.onnx',
+      'encoder-model.int8.onnx',
+      'encoder-model.int8.smoothquant.onnx',
+      'decoder_joint-model.int8.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'int8');
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.folded.onnx');
+    // The decoder has no folded variant and must stay on its single name.
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.int8.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('fp16 prefers encoder-model.fp16.folded.onnx when present', () => {
+    const dir = makeModelDir([
+      'encoder-model.fp16.folded.onnx',
+      'encoder-model.fp16.onnx',
+      'decoder_joint-model.fp16.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'fp16');
+    assert.equal(basename(r.encoderPath), 'encoder-model.fp16.folded.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('fp32 has no folded variant and ignores stray folded files', () => {
+    // fp32's encoder carries external .data/shards the fold pipeline does not
+    // produce, so even a plausibly-named folded file must never be picked.
+    const dir = makeModelDir([
+      'encoder-model.folded.onnx',
+      'encoder-model.onnx',
+      'decoder_joint-model.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'fp32');
+    assert.equal(basename(r.encoderPath), 'encoder-model.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
