@@ -3037,9 +3037,15 @@ export class ParakeetModel {
     });
     const totalChunks = chunkPlan.length;
 
-    // Dedup is only possible when transcribe() returns timestamped words; with
-    // returnTimestamps off there are no words, so we keep the plain-concat path.
-    const canDedup = !!transcribeOpts.returnTimestamps;
+    // Seam dedup needs timestamped words (to peel each side's overlap zone and,
+    // when the LCS finds no anchor, midpoint-split it), so per-chunk decodes
+    // ALWAYS request them regardless of what the caller asked: gating dedup on
+    // the caller's returnTimestamps silently emitted every seam's overlap TWICE
+    // (measured 2026-08-07 on 200 long French-medical clips: insertions 116 ->
+    // 2574 as windows shrank, up to +11 WER, while the app -- which always
+    // requests timestamps -- was unaffected). Whether the caller gets words
+    // back is still their own returnTimestamps (see the result assembly).
+    const stitchOpts = { ...transcribeOpts, returnTimestamps: true };
     const wordMid = (w) => (w.start_time + w.end_time) / 2;
 
     const combinedTextParts = [];
@@ -3064,8 +3070,9 @@ export class ParakeetModel {
     const debugChunks = [];
 
     // Text reflecting what's currently in combinedWords (deduped) when we have
-    // words, otherwise the raw per-chunk concatenation.
-    const buildText = () => (canDedup && combinedWords.length
+    // words, otherwise the raw per-chunk concatenation (only reachable when a
+    // chunk transcribe yields no words at all, e.g. pure silence).
+    const buildText = () => (combinedWords.length
       ? combinedWords.map((w) => w.text).join(' ')
       : combinedTextParts.join(' '));
 
@@ -3124,8 +3131,8 @@ export class ParakeetModel {
       // the two overlap transcripts by text (LCS) and splice at their middle
       // common word (see mergeOverlapWords), which is robust to the timestamp
       // jitter a pure midpoint-time cut suffers at the seam. The first chunk
-      // (prevEnd null) and the no-timestamp fallback just append everything.
-      if (canDedup && prevEnd != null && combinedWords.length && chunkWords.length) {
+      // (prevEnd null) and a wordless chunk result just append everything.
+      if (prevEnd != null && combinedWords.length && chunkWords.length) {
         const overlapStartSec = start / sampleRate;
         const overlapEndSec = prevEnd / sampleRate;
         const seamSec = (start + prevEnd) / 2 / sampleRate;
@@ -3217,7 +3224,7 @@ export class ParakeetModel {
       const inflight = [];
       // encodeChunk is stripped too: decodeOpts crosses a postMessage in the
       // app's worker bridge, and a function would fail structured clone.
-      const { decodeChunk: _dc, encodeChunk: _ec, encoded: _enc, ...decodeOpts } = transcribeOpts;
+      const { decodeChunk: _dc, encodeChunk: _ec, encoded: _enc, ...decodeOpts } = stitchOpts;
       const drainOne = async () => {
         const item = inflight.shift();
         const chunkRes = await item.promise;
@@ -3253,7 +3260,7 @@ export class ParakeetModel {
       // Memory bound: at most `encodeAhead` encoder outputs are alive
       // (~1 MB each at the default 20 s window), nothing like the weights.
       const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
-      const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = transcribeOpts;
+      const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = stitchOpts;
       const pending = [];
       let nextCi = 0;
       const dispatch = () => {
@@ -3288,7 +3295,7 @@ export class ParakeetModel {
         // Batched path: reuse the group-encoded output; else let transcribe()
         // encode this chunk itself (the unchanged WASM/CLI path).
         const encoded = batchEncode ? await ensureEncoded(ci) : null;
-        const chunkOpts = encoded ? { ...transcribeOpts, encoded } : transcribeOpts;
+        const chunkOpts = encoded ? { ...stitchOpts, encoded } : stitchOpts;
         const chunkRes = await this.transcribe(chunk, sampleRate, chunkOpts);
         // Release the (large) encoder output now that it's decoded.
         encodedCache[ci] = null;
@@ -3300,7 +3307,9 @@ export class ParakeetModel {
     const totalDuration = audio.length / sampleRate;
     return {
       utterance_text: combinedText,
-      words: combinedWords,
+      // Words were force-requested per chunk for the seam dedup (stitchOpts);
+      // the caller only receives them if they asked.
+      words: transcribeOpts.returnTimestamps ? combinedWords : [],
       ...(debugChunks.length ? { decodeDebug: { chunks: debugChunks } } : {}),
       confidence_scores: firstChunkConfidences || {},
       metrics: anyMetrics ? {

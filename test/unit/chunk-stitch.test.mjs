@@ -139,10 +139,27 @@ describe('transcribeChunked without dedup', () => {
     assert.deepEqual(res.words.map((w) => w.text), ['alpha', 'bravo', 'echo', 'charlie', 'delta']);
   });
 
-  test('returnTimestamps false falls back to plain concat (overlap text duplicated, documents the limitation)', async () => {
+  test('returnTimestamps false still dedups seams (words force-requested internally, not returned)', async () => {
+    // Regression for the 2026-08-07 long-audio grid finding: dedup used to be
+    // gated on the CALLER's returnTimestamps, so timestamp-less callers (the
+    // bench, any API user) got every seam's overlap emitted twice (insertions
+    // 116 -> 2574 across 200 clips, up to +11 WER) while the app, which always
+    // requests timestamps, was unaffected. transcribeChunked now forces
+    // per-chunk timestamps for the stitch and only WITHHOLDS the words from
+    // the result when the caller did not ask.
+    const model = makeModel();
+    const res = await model.transcribeChunked(AUDIO, SR, { ...CHUNK_OPTS, returnTimestamps: false });
+    assert.equal(res.utterance_text, 'alpha bravo echo charlie delta');
+    assert.equal(res.words.length, 0, 'caller did not ask for words, so none are returned');
+  });
+
+  test('a transcribe that yields no words at all falls back to plain concat (overlap text duplicated)', async () => {
+    // The only remaining un-deduped path: the per-chunk transcribe returned no
+    // word objects even though the stitch asked for them (e.g. pure silence or
+    // a degenerate decode). Nothing to align on, so the overlap zone ("echo
+    // charlie") appears twice; kept as documented behaviour.
     const model = makeModel({ withTimestamps: false });
     const res = await model.transcribeChunked(AUDIO, SR, { ...CHUNK_OPTS, returnTimestamps: false });
-    // No words to align on, so the overlap zone ("echo charlie") appears twice.
     assert.equal(res.utterance_text, 'alpha bravo echo charlie echo charlie delta');
     assert.equal(res.words.length, 0);
   });
