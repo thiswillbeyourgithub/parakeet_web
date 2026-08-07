@@ -388,9 +388,13 @@ const VERSION = __APP_VERSION__;
 // The value IS the min-p, monotonic in [0, 1]: 0 = boost every candidate (no
 // gate), 1 = disabled (only the model's own top token is ever boosted). null
 // (a blank field) turns the override off, so each phrase keeps its own baked
-// min-p. 0.01 is a near-widest default so a wanted phrase is not silently gated
-// out (the failure mode a strict default produced).
-const BOOST_MINP_DEFAULT = 0.01;
+// min-p. An earlier default of 0.01 was near-widest so a wanted phrase was not
+// silently gated out (the failure mode a strict default produced); the 2026-08
+// French-medical 100-cell sweep moved it to 0.1: versus a looser gate it costs
+// nothing at boost strengths 0.5-1 (mean CER delta under 0.01, within run
+// noise) and guards against insertion storms when the strength is set too
+// high (recovering up to ~1.8 CER at strength 4).
+const BOOST_MINP_DEFAULT = 0.1;
 
 // Module-scope hook: persists `value` to IndexedDB whenever it changes,
 // gated on `loaded` so we don't overwrite the on-disk value with the
