@@ -98,4 +98,16 @@ describe('listLocalRepoFiles', () => {
     const files = await listLocalRepoFiles('/models');
     assert.deepEqual(files, ['encoder-model.fp16.onnx']);
   });
+
+  test('probes the folded encoder variants so a local mirror gets the same preference as an HF listing', async () => {
+    // Without these candidates a mirror shipping a folded encoder
+    // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-encoder-graph.py
+    // fold) would never report it, and getParakeetModel could not prefer it.
+    mockServer(['encoder-model.int8.folded.onnx', 'encoder-model.fp16.folded.onnx']);
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(
+      files.sort(),
+      ['encoder-model.fp16.folded.onnx', 'encoder-model.int8.folded.onnx'],
+    );
+  });
 });

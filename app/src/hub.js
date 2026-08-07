@@ -914,6 +914,9 @@ export async function listLocalRepoFiles(baseUrl) {
     'decoder_joint-model.fp16.onnx',
     'encoder-model.onnx.data',
     'decoder_joint-model.onnx.data',
+    // Folded encoder variants (see FOLDED_ENCODER_NAMES): probed so a local
+    // mirror that ships them gets the same folded preference as an HF listing.
+    ...Object.values(FOLDED_ENCODER_NAMES),
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) until the
@@ -949,6 +952,35 @@ export async function listLocalRepoFiles(baseUrl) {
 // scripts/quantize-int8-smoothquant.py --exclude-worst); only the encoder has a
 // lite build, the decoder always uses the plain int8 file.
 export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
+
+// Folded encoder variants. The model repo can ship an offline constant-folded
+// copy of an encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// optimize-encoder-graph.py fold): same weights, same numerics, ~23% fewer
+// graph nodes, so ORT builds the inference session ~2 s faster on WASM.
+// Shipping the file IS the opt-in: the model repo gates any folded artifact on
+// a bit-exact `check` plus a WER re-run before committing it, so loaders
+// simply prefer the folded name whenever the active source lists it and fall
+// back to the canonical name otherwise. fp32 is deliberately absent: its
+// encoder carries external .data/shards the fold pipeline does not produce
+// (a folded fp32 is future WebGPU work), and 'int8-lite' has no folded build.
+export const FOLDED_ENCODER_NAMES = {
+  int8: 'encoder-model.int8.folded.onnx',
+  fp16: 'encoder-model.fp16.folded.onnx',
+};
+
+/**
+ * The folded encoder filename to load for a resolved encoder quant, or null to
+ * use the canonical `encoder-model<QUANT_SUFFIX>` name. Pure (a lookup gated on
+ * the file listing) so both getParakeetModel and tests share one decision.
+ *
+ * @param {string} encoderQ Resolved encoder quant ('int8'|'int8-lite'|'fp16'|'fp32').
+ * @param {string[]} repoFiles Filenames available in the active source.
+ * @returns {string|null}
+ */
+export function foldedEncoderName(encoderQ, repoFiles) {
+  const name = FOLDED_ENCODER_NAMES[encoderQ];
+  return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
+}
 
 /**
  * Parse the fp32 encoder shard set out of a repo file listing. The shards
@@ -1259,7 +1291,15 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.warn('[Hub] No fp16 encoder in repo; using the fp32 encoder on WebGPU');
   }
 
-  const encoderName = `encoder-model${QUANT_SUFFIX[encoderQ]}`;
+  // Prefer the folded encoder build when the active source ships it: identical
+  // numerics, ~23% fewer graph nodes, faster session build (see
+  // FOLDED_ENCODER_NAMES). The name change mints a new cache key, so the
+  // generational sweep below evicts the unfolded blob after the first load.
+  const foldedEncoder = foldedEncoderName(encoderQ, repoFiles);
+  if (foldedEncoder) {
+    console.log(`[Hub] Using the folded encoder ${foldedEncoder} (same numerics, faster session build)`);
+  }
+  const encoderName = foldedEncoder || `encoder-model${QUANT_SUFFIX[encoderQ]}`;
   const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
   // External encoder weights come in one of two layouts. A sharded fp32 encoder
