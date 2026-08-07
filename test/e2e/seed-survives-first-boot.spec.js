@@ -21,25 +21,9 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { seedSettings, expandSettingsSection } from './seed.mjs';
+import { seedSettings, expandSettingsSection, readSetting } from './seed.mjs';
 
-const SETTINGS_DB = 'parakeetweb-settings-db';
-const SETTINGS_STORE = 'settings-store';
 
-// Read a setting straight out of the app's IndexedDB, bypassing the UI.
-function readSetting(page, key) {
-  return page.evaluate(({ DB, STORE, k }) => new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB);
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(undefined); return; }
-      const get = db.transaction([STORE], 'readonly').objectStore(STORE).get('parakeetweb_' + k);
-      get.onsuccess = () => { db.close(); resolve(get.result); };
-      get.onerror = () => { db.close(); reject(get.error); };
-    };
-  }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, k: key });
-}
 
 test('a seeded non-default setting survives the first boot and the reload', async ({ page }) => {
   await page.goto('/');

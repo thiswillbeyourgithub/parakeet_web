@@ -11,25 +11,9 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { seedSettings, expandSettingsSection } from './seed.mjs';
+import { seedSettings, expandSettingsSection, readSetting } from './seed.mjs';
 
-const SETTINGS_DB = 'parakeetweb-settings-db';
-const SETTINGS_STORE = 'settings-store';
 
-// Read one (unprefixed) key back from the app's settings DB, so the spec can
-// deterministically wait for a UI edit's async IDB write instead of sleeping.
-function readSetting(page, key) {
-  return page.evaluate(({ DB, STORE, key }) => new Promise((resolve) => {
-    const req = indexedDB.open(DB);
-    req.onsuccess = () => {
-      const db = req.result;
-      const get = db.transaction([STORE], 'readonly').objectStore(STORE).get(`parakeetweb_${key}`);
-      get.onsuccess = () => { db.close(); resolve(get.result); };
-      get.onerror = () => { db.close(); resolve(undefined); };
-    };
-    req.onerror = () => resolve(undefined);
-  }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, key });
-}
 
 const knobInput = (page, label) =>
   page.locator('.setting-row', { hasText: label }).locator('input[type="number"]');

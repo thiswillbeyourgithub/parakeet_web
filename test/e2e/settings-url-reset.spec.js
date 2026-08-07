@@ -7,27 +7,9 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, readSetting } from './seed.mjs';
 
-const SETTINGS_DB = 'parakeetweb-settings-db';
-const SETTINGS_STORE = 'settings-store';
-const SETTINGS_PREFIX = 'parakeetweb_';
 
-// Read one settings key straight from IndexedDB (unprefixed name in, raw value
-// out; undefined if absent). Used to observe the purge without touching the UI.
-function readSetting(page, key) {
-  return page.evaluate(({ DB, STORE, PREFIX, key }) => new Promise((resolve) => {
-    const req = indexedDB.open(DB);
-    req.onsuccess = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(undefined); return; }
-      const get = db.transaction([STORE], 'readonly').objectStore(STORE).get(PREFIX + key);
-      get.onsuccess = () => { db.close(); resolve(get.result); };
-      get.onerror = () => { db.close(); resolve(undefined); };
-    };
-    req.onerror = () => resolve(undefined);
-  }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX, key });
-}
 
 test('?reset purges saved settings, boots on defaults, and strips the param', async ({ page }) => {
   const logs = [];
