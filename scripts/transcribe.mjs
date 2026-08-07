@@ -878,7 +878,10 @@ async function main() {
     // its transcript once via the final block below.
     if (totalChunks > 1) {
       console.error(`[transcribe] chunk ${chunkNum}/${totalChunks} done in ${(elapsedMs / 1000).toFixed(1)}s`);
-      console.log(`[chunk ${chunkNum}/${totalChunks}] ${chunkRes.utterance_text}`);
+      // Streamed chunk text belongs on stdout for humans, but under --json
+      // stdout is a machine contract (one JSON document), so the stream moves
+      // to stderr there instead of corrupting it.
+      (args.json ? console.error : console.log)(`[chunk ${chunkNum}/${totalChunks}] ${chunkRes.utterance_text}`);
     }
   });
 
