@@ -165,6 +165,9 @@ export function readSetting(page, key) {
     const req = indexedDB.open(DB);
     req.onsuccess = () => {
       const db = req.result;
+      // A reset/purge can leave a freshly re-created DB without the store;
+      // an unguarded transaction() would throw inside the page.
+      if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(undefined); return; }
       const get = db.transaction([STORE], 'readonly').objectStore(STORE).get(`${PREFIX}${key}`);
       get.onsuccess = () => { db.close(); resolve(get.result); };
       get.onerror = () => { db.close(); resolve(undefined); };

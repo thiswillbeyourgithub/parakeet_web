@@ -16,7 +16,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { expandSettingsSection } from './seed.mjs';
+import { expandSettingsSection, readSetting } from './seed.mjs';
 
 const DB = 'parakeetweb-settings-db';
 const STORE = 'settings-store';
@@ -71,22 +71,6 @@ async function putSettings(page, entries) {
   }, { entries, DB, STORE, PREFIX });
 }
 
-function readSetting(page, key) {
-  return page.evaluate(async ({ key, DB, STORE, PREFIX }) => {
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB);
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    if (!db.objectStoreNames.contains(STORE)) return undefined;
-    return await new Promise((res) => {
-      const tx = db.transaction([STORE], 'readonly');
-      const g = tx.objectStore(STORE).get(PREFIX + key);
-      g.onsuccess = () => res(g.result);
-      g.onerror = () => res(undefined);
-    });
-  }, { key, DB, STORE, PREFIX });
-}
 
 test('a legacy curated-list profile does not seed the Custom slot with the list', async ({ page }) => {
   // Simulate a pre-`boostCustomText` profile that had a curated list selected:
