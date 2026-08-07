@@ -131,14 +131,20 @@ export function listModels() {
 // has that problem (it tracks fp16 over long single passes, see the model repo's
 // WER tables), and fp16/fp32 never did, so the special case is gone.
 //
-// The window is capped low (20 s default, 25 s max) because parakeet-tdt v3
-// transcription quality degrades noticeably once a single chunk runs much past
-// ~25 s of audio: accuracy drops off past that point regardless of backend or
-// precision, so we never let a chunk grow long enough to hit it. The floor
-// (10 s min) keeps the number of stitch seams sane on long files.
-export const DEFAULT_CHUNK_DURATION_SEC = 20;
+// The old 20 s default / 25 s cap assumed parakeet-tdt v3 degrades past ~25 s
+// per chunk. A 2026-08-07 grid over 200 long French-medical clips (2.7 h of
+// audio, seam dedup verified engaged) measured the OPPOSITE: quality improves
+// with the window, every seam costs a little (mostly deletions at the splice),
+// and 60 s chunks sit within +0.14 WER of decoding each clip whole (vs +0.66
+// at 20 s, +1.28 at 25 s), with flat throughput across window sizes. So the
+// default is 60 s; the cap leaves headroom above it (whole-clip decodes up to
+// ~77 s measured clean; past that is extrapolation, bounded at 90 s because
+// conformer attention memory grows quadratically with the window and an OOM
+// on a weak device fails loudly but still fails). The floor (10 s min) keeps
+// the number of stitch seams sane on long files.
+export const DEFAULT_CHUNK_DURATION_SEC = 60;
 export const MIN_CHUNK_DURATION_SEC = 10;
-export const MAX_CHUNK_DURATION_SEC = 25;
+export const MAX_CHUNK_DURATION_SEC = 90;
 
 /**
  * Get language display name.
