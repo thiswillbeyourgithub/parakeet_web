@@ -208,7 +208,7 @@ function parseArgs(argv) {
   if (!Number.isFinite(a.maesExpansionGamma) || a.maesExpansionGamma <= 0) throw new Error('--maes-expansion-gamma must be a positive number');
   if (!Number.isInteger(a.maesPrefixAlpha) || a.maesPrefixAlpha < 0) throw new Error('--maes-prefix-alpha must be an integer >= 0');
   if (!Number.isInteger(a.frameStride) || a.frameStride < 1 || a.frameStride > 4) throw new Error('--frame-stride must be an integer in [1, 4]');
-  if (!Number.isFinite(a.chunkDuration) || a.chunkDuration < MIN_CHUNK_DURATION_SEC || a.chunkDuration > MAX_CHUNK_DURATION_SEC) throw new Error(`--chunk-duration must be a number in [${MIN_CHUNK_DURATION_SEC}, ${MAX_CHUNK_DURATION_SEC}] seconds (parakeet degrades noticeably above ~${MAX_CHUNK_DURATION_SEC} s)`);
+  if (!Number.isFinite(a.chunkDuration) || a.chunkDuration < MIN_CHUNK_DURATION_SEC || a.chunkDuration > MAX_CHUNK_DURATION_SEC) throw new Error(`--chunk-duration must be a number in [${MIN_CHUNK_DURATION_SEC}, ${MAX_CHUNK_DURATION_SEC}] seconds (larger windows measured better up to ~77 s; the cap bounds attention memory, see models.js)`);
   if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
   if (!Number.isFinite(a.snapToSilence) || a.snapToSilence < 0) throw new Error('--snap-to-silence must be a non-negative number (0 disables)');
   return a;
@@ -304,10 +304,11 @@ Options:
       --frame-stride N     Decimate encoder frames before decoding (integer in
                            [1, 4]). 1 = use every frame (default). Sidebar knob.
       --chunk-duration N   Max chunk length in seconds for long audio. Default
-                           ${DEFAULT_CHUNK_DURATION_SEC}, allowed range ${MIN_CHUNK_DURATION_SEC}-${MAX_CHUNK_DURATION_SEC} (parakeet degrades
-                           noticeably above ~${MAX_CHUNK_DURATION_SEC} s). Long audio is split into
-                           overlapping chunks and each chunk's transcript is
-                           printed as it is produced.
+                           ${DEFAULT_CHUNK_DURATION_SEC}, allowed range ${MIN_CHUNK_DURATION_SEC}-${MAX_CHUNK_DURATION_SEC}. Larger windows measured
+                           BETTER (each seam costs a little; 60 s sits within
+                           +0.14 WER of whole-clip decode). Long audio is split
+                           into overlapping chunks and each chunk's transcript
+                           is printed as it is produced.
       --overlap N          Overlap between chunks in seconds. Default 2 (matches
                            the web UI).
       --snap-to-silence N  Snap each chunk seam to the quietest point within N

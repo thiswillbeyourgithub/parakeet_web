@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveOptions } from '../../scripts/openai-like-server/lib/options.mjs';
+import { MAX_CHUNK_DURATION_SEC } from '../../app/src/models.js';
 import { resolveRequestParams } from '../../scripts/openai-like-server/lib/params.mjs';
 import { createQueue } from '../../scripts/openai-like-server/lib/queue.mjs';
 
@@ -166,7 +167,9 @@ test('numeric request fields are range-checked like the CLI flags', () => {
   assert.equal(resolve({ temperature: '0.5' }).params.temperature, 0.5);
   assert.throws(() => resolve({ temperature: '3' }), /must be <= 1/);
   assert.throws(() => resolve({ beam_size: '99' }), /must be <= 25/);
-  assert.throws(() => resolve({ chunk_duration: '600' }), /must be <= 25/);
+  // The chunk bound follows models.js MAX_CHUNK_DURATION_SEC (measured, not
+  // hardcoded here, so a re-measured cap cannot silently desync this test).
+  assert.throws(() => resolve({ chunk_duration: '600' }), new RegExp(`must be <= ${MAX_CHUNK_DURATION_SEC}`));
 });
 
 test('language is validated against the model, and echoed', () => {

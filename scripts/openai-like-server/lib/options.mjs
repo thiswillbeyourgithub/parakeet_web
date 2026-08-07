@@ -221,7 +221,7 @@ export const OPTIONS = [
     key: 'chunkDuration', cli: ['--chunk-duration'], env: 'PARAKEET_CHUNK_DURATION', type: 'float',
     def: DEFAULT_CHUNK_DURATION_SEC, min: MIN_CHUNK_DURATION_SEC, max: MAX_CHUNK_DURATION_SEC,
     req: 'chunk_duration', section: 'Decoding',
-    help: `Chunk length in seconds (${MIN_CHUNK_DURATION_SEC}-${MAX_CHUNK_DURATION_SEC}; parakeet degrades past the max).`,
+    help: `Chunk length in seconds (${MIN_CHUNK_DURATION_SEC}-${MAX_CHUNK_DURATION_SEC}; larger windows measured better, the max bounds attention memory).`,
   },
   {
     key: 'overlap', cli: ['--overlap'], env: 'PARAKEET_OVERLAP', type: 'float', def: 2,
