@@ -227,7 +227,7 @@ git-only). Not documented file-by-file here:
 | `download-dictation-regex.sh` | Fetches dictation regex CSVs from Murmure for non-Docker local dev. |
 | `update-vendored.sh` | Refreshes the npm-vendored deps (version query, download, SHA verify, rewrite `SOURCE.md`). Run only on explicit request. |
 | `update-caddy.sh` | Refreshes the pinned Caddy base-image digest in the Dockerfile. |
-| `build-ort-relaxed.sh` | Builds the opt-in Relaxed-SIMD ONNX Runtime WASM artifacts from source (version-locked to the vendored `onnxruntime-web`, `--enable_wasm_relaxed_simd` + jsep) and installs them under `app/ui/public/ort-relaxed/`, where `postbuild.mjs` manifests them and `lib/ortVariant.js` can engage them. A heavy one-time emscripten compile: run it only on a quiet box, then validate per its header before shipping. |
+| `build-ort-relaxed.sh` | One-shot build-and-serve for the opt-in Relaxed-SIMD ONNX Runtime WASM variant: builds from source (version-locked to the vendored `onnxruntime-web`, `--enable_wasm_relaxed_simd` + jsep), installs the canonical pair under `app/ui/public/ort-relaxed/`, rebuilds the app so `postbuild.mjs` manifests it and `lib/ortVariant.js` can engage it, then deletes the ~10 GB source tree (the tree is ephemeral: kept only on failure for incremental retry, with `--keep-src`, or when a user-supplied `--src` owns it). A heavy one-time emscripten compile: run it only on a quiet box, then validate per its header before shipping. |
 | `openai-like-server/` | OpenAI/whisper-compatible HTTP API in front of this pipeline (own section below). |
 
 ---

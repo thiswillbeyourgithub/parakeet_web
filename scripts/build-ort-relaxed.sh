@@ -12,28 +12,39 @@
 # (app/ui/src/lib/ortVariant.js gates it on these artifacts being present).
 #
 # The build is a HEAVY one-time emscripten compile (roughly 30-60 min at full
-# parallelism, ~10 GB of disk for source + emsdk + objects). Do NOT run it
-# while a benchmark is measuring transcription time on this machine; to be
-# polite to a busy box, prefix with `nice -n 19` and pass a lower -j.
+# parallelism, ~10 GB of TRANSIENT disk for source + emsdk + objects; the tree
+# is deleted after a successful install, see below). Do NOT run it while a
+# benchmark is measuring transcription time on this machine; to be polite to a
+# busy box, prefix with `nice -n 19` and pass a lower -j.
+#
+# This is the whole deployment story in one command: build from source, install
+# the canonical pair under app/ui/public/ort-relaxed/, rebuild the app so
+# dist/ serves it (postbuild.mjs manifests dist/ort-relaxed/), then delete the
+# source tree. Operators who never run it simply ship the vendored stock
+# runtime; the app's runtime gate (ortVariant.js) falls back to stock whenever
+# the artifacts are absent or the browser lacks relaxed-SIMD support.
 #
 # Usage:
-#   ./scripts/build-ort-relaxed.sh [-j N] [--src DIR]
-#     -j N     parallel build jobs (default: nproc)
-#     --src DIR  reuse/clone the onnxruntime source tree there
-#                (default: .ort-src/ in the repo root, gitignored territory is
-#                 NOT assumed: the default lives outside the tracked tree only
-#                 if you point it there; the directory is left in place for
-#                 incremental rebuilds either way)
+#   ./scripts/build-ort-relaxed.sh [-j N] [--src DIR] [--keep-src]
+#     -j N        parallel build jobs (default: nproc)
+#     --src DIR   reuse/clone the onnxruntime source tree there instead of the
+#                 default .ort-src/ in the repo root. A user-supplied tree is
+#                 NEVER auto-deleted (you manage it).
+#     --keep-src  keep the default source tree after a successful install
+#                 (for iterating on build flags; default is to delete it, the
+#                 tree is ~10 GB of ephemeral build state).
+#
+# Cleanup contract: on SUCCESS the default .ort-src/ tree is removed (nothing
+# to gitignore, nothing hoarded); on FAILURE it is kept so a rerun resumes
+# incrementally and the logs stay inspectable.
 #
 # Requirements: git, python3, cmake, ninja (the ORT build bootstraps its own
 # pinned emsdk under the source tree, so no system emscripten is needed).
 #
-# After it finishes:
-#   1. cd app/ui && npm run build   (postbuild.mjs manifests dist/ort-relaxed/)
-#   2. Validate before trusting: load the app with the toggle on, confirm the
-#      "[ORT] Relaxed-SIMD runtime variant engaged" log line, transcribe a
-#      known clip, and compare against the stock engine's transcript. Then run
-#      the WER suite (scripts/wer-bench.mjs) before ever defaulting it on.
+# After it finishes, validate before trusting: load the app with the toggle
+# on, confirm the "[ORT] Relaxed-SIMD runtime variant engaged" log line,
+# transcribe a known clip, and compare against the stock engine's transcript.
+# Then run the WER suite (scripts/wer-bench.mjs) before ever defaulting it on.
 #
 # Written with the help of Claude Code.
 set -euo pipefail
@@ -41,11 +52,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="$(nproc)"
 SRC_DIR="$REPO_ROOT/.ort-src"
+USER_SRC=0
+KEEP_SRC=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -j) JOBS="$2"; shift 2 ;;
-    --src) SRC_DIR="$2"; shift 2 ;;
+    --src) SRC_DIR="$2"; USER_SRC=1; shift 2 ;;
+    --keep-src) KEEP_SRC=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -140,5 +154,27 @@ fi
 
 echo "==> Done: canonical jsep pair installed in $DEST"
 echo "    (from $(basename "$SRC_MJS") / $(basename "$SRC_WASM"))"
-echo "    Next: cd app/ui && npm run build   (manifests dist/ort-relaxed/)"
-echo "    Then validate per the header comment before shipping."
+
+# One-shot serve: rebuild the app so dist/ actually ships the pair
+# (postbuild.mjs writes dist/ort-relaxed/manifest.json when it is present).
+# The dev server serves public/ directly, so this only matters for dist.
+if [[ -d "$REPO_ROOT/app/ui/node_modules" ]]; then
+  echo "==> Rebuilding the app so dist/ serves the relaxed pair"
+  (cd "$REPO_ROOT/app/ui" && npm run build)
+else
+  echo "==> app/ui/node_modules missing; run this yourself to serve it:"
+  echo "    cd app/ui && npm install && npm run build"
+fi
+
+# Cleanup contract (see header): the source tree is ~10 GB of ephemeral build
+# state, deleted on success unless the operator asked to keep it or owns it.
+if [[ "$USER_SRC" -eq 1 ]]; then
+  echo "==> Keeping $SRC_DIR (user-supplied --src is never auto-deleted)"
+elif [[ "$KEEP_SRC" -eq 1 ]]; then
+  echo "==> Keeping $SRC_DIR (--keep-src)"
+else
+  echo "==> Removing the source tree $SRC_DIR (~10 GB; pass --keep-src to keep it)"
+  rm -rf "$SRC_DIR"
+fi
+
+echo "==> All done. Validate per the header comment before shipping."
