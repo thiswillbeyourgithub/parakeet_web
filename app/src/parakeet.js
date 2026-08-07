@@ -3320,7 +3320,10 @@ export class ParakeetModel {
       this.encoderSession = null;
       this.joinerSession = null;
       this.preprocessor = null;
-      console.log('[Parakeet] Model sessions released');
+      // Gated: this is the one dispose-path log, and an unconditional
+      // console.log here is the difference between `transcribe.mjs --json`
+      // emitting parseable stdout and not.
+      if (this.verbose) console.log('[Parakeet] Model sessions released');
     } catch (e) {
       console.warn('[Parakeet] Error releasing sessions:', e);
     }
