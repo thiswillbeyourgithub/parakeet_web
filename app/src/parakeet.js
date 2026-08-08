@@ -1013,13 +1013,25 @@ export class ParakeetModel {
       state2: outputState2 || state2,
     };
 
+    // Optional in-graph log-partition outputs (the model repo's
+    // optimize-decoder-graph.py `lse` artifact): one fp32 scalar per row for
+    // the token slice and the duration slice. When the loaded decoder ships
+    // them, the beam decoder skips its JS log-sum-exp pass over the ~8k token
+    // logits (see _partition); stock decoders leave them undefined.
+    const lseTok = out['lse_token'];
+    const lseDur = out['lse_duration'];
+    const logZ = lseTok ? lseTok.data[0] : undefined;
+    const durZ = lseDur ? lseDur.data[0] : undefined;
+    lseTok?.dispose?.();
+    lseDur?.dispose?.();
+
     // Expose the logits tensor so callers can dispose it after consuming the
     // subarray views (prevents WASM/GPU memory leaks in long decode loops).
     // `durLogits` is the raw per-duration logit view: the greedy path uses the
     // pre-argmaxed `step`, while the MAES beam path scores over it (the duration
     // index equals the frame advance, so durLogits[i] is the log-weight of
     // advancing `i` frames).
-    return { tokenLogits, step, durLogits, newState, _logitsTensor: logits };
+    return { tokenLogits, step, durLogits, newState, logZ, durZ, _logitsTensor: logits };
   }
 
   /**
@@ -1127,10 +1139,14 @@ export class ParakeetModel {
     const logits = out['outputs'];
     const outputState1 = out['output_states_1'];
     const outputState2 = out['output_states_2'];
+    const lseTokT = out['lse_token'];
+    const lseDurT = out['lse_duration'];
     const disposeOutputs = () => {
       logits?.dispose?.();
       outputState1?.dispose?.();
       outputState2?.dispose?.();
+      lseTokT?.dispose?.();
+      lseDurT?.dispose?.();
     };
 
     // Mirror _runCombinedStep's early shape validation so callers see a clear
@@ -1155,6 +1171,15 @@ export class ParakeetModel {
       throw new Error(`ParakeetModel batched decoder state size is ${sd1.length}/${sd2.length}, expected ${L * B * H}.`);
     }
 
+    // Optional in-graph log-partition outputs (see _runCombinedStep): one
+    // fp32 value per batch row. Copy the scalars out and free the tensors
+    // immediately; every validation throw above already routes through
+    // disposeOutputs, which covers them.
+    const lseTok = lseTokT ? Array.from(lseTokT.data) : null;
+    const lseDur = lseDurT ? Array.from(lseDurT.data) : null;
+    lseTokT?.dispose?.();
+    lseDurT?.dispose?.();
+
     const results = [];
     for (let b = 0; b < B; b++) {
       // tokenLogits/durLogits are zero-copy views straight into the batched
@@ -1173,6 +1198,8 @@ export class ParakeetModel {
       results.push({
         tokenLogits: data.subarray(b * total, b * total + vocab),
         durLogits: data.subarray(b * total + vocab, (b + 1) * total),
+        logZ: lseTok ? lseTok[b] : undefined,
+        durZ: lseDur ? lseDur[b] : undefined,
         newState: {
           state1: new this.ort.Tensor('float32', n1, [L, 1, H]),
           state2: new this.ort.Tensor('float32', n2, [L, 1, H]),
@@ -1368,6 +1395,21 @@ export class ParakeetModel {
   }
 
   /**
+   * The log-partition to normalize a logit row with: the decoder's in-graph
+   * value when the loaded decoder_joint ships the `lse_token`/`lse_duration`
+   * outputs (the model repo's optimize-decoder-graph.py `lse` artifact, where
+   * native SIMD computes it during the joiner run), else the JS pass over the
+   * row. The Number.isFinite guard doubles as the fallback for stock decoders
+   * (undefined) and for a pathological non-finite graph value.
+   * @param {number|undefined} z In-graph log-sum-exp for this row, if any.
+   * @param {Float32Array} logits The row to normalize (fallback input).
+   * @returns {number}
+   */
+  _partition(z, logits) {
+    return Number.isFinite(z) ? z : this._logSumExp(logits);
+  }
+
+  /**
    * Numerically stable log(exp(a) + exp(b)). Used by the beam decoder to
    * recombine the scores (log-probabilities) of merged duplicate hypotheses.
    * @param {number} a
@@ -1518,8 +1560,11 @@ export class ParakeetModel {
     for (const id of topIds) boostedVal.set(id, tokenLogits[id]);
     if (boostSaved) phraseBoost.restore(tokenLogits, boostSaved);
 
-    const logZ = this._logSumExp(tokenLogits);   // temperature-1 token partition
-    const durZ = this._logSumExp(durLogits);     // temperature-1 duration partition
+    // Temperature-1 partitions, in-graph when the decoder provides them (both
+    // are over the TRUE logits: applyBoost's in-place mutation was restored
+    // above, and the graph computed its value before any JS mutation).
+    const logZ = this._partition(stepOut.logZ, tokenLogits);
+    const durZ = this._partition(stepOut.durZ, durLogits);
     const nDur = durLogits.length;
     // Blank with duration 0 cannot advance time; force it to the smallest
     // non-zero duration (NeMo's min_non_zero_duration_idx == 1 under the
@@ -1670,9 +1715,9 @@ export class ParakeetModel {
     try {
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
-        const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
+        const { tokenLogits, durLogits, newState, logZ, durZ, _logitsTensor } = outs[i];
 
-        const blankLogp = tokenLogits[this.blankId] - this._logSumExp(tokenLogits);
+        const blankLogp = tokenLogits[this.blankId] - this._partition(logZ, tokenLogits);
 
         // Argmax duration, forced to the smallest non-zero index so the closing
         // blank always advances the frame (NeMo's min_non_zero_duration_idx == 1
@@ -1682,7 +1727,7 @@ export class ParakeetModel {
           if (durLogits[d] > bestVal) { bestVal = durLogits[d]; bestIdx = d; }
         }
         if (bestIdx === 0) bestIdx = durLogits.length > 1 ? 1 : 0;
-        const durLogp = durLogits[bestIdx] - this._logSumExp(durLogits);
+        const durLogp = durLogits[bestIdx] - this._partition(durZ, durLogits);
 
         child.score += blankLogp + durLogp;
         child.t = parentT + bestIdx;
@@ -1797,9 +1842,9 @@ export class ParakeetModel {
         for (let i = 0; i < active.length; i++) {
           const job = active[i];
           const tok = job.extension[job.k];
-          const { tokenLogits, durLogits, newState, _logitsTensor } = outs[i];
-          job.extLogp += (tokenLogits[tok] - this._logSumExp(tokenLogits))
-            + (durLogits[0] - this._logSumExp(durLogits));
+          const { tokenLogits, durLogits, newState, logZ, durZ, _logitsTensor } = outs[i];
+          job.extLogp += (tokenLogits[tok] - this._partition(logZ, tokenLogits))
+            + (durLogits[0] - this._partition(durZ, durLogits));
           _logitsTensor?.dispose?.();
           if (job.state !== job.short.state) this._disposeDecoderState(job.state);
           job.state = newState;
@@ -2074,6 +2119,8 @@ export class ParakeetModel {
               const spec = {
                 tokenLogits: out.tokenLogits.slice(),
                 durLogits: out.durLogits.slice(),
+                logZ: out.logZ,
+                durZ: out.durZ,
                 newState: out.newState,
                 _logitsTensor: null,
               };

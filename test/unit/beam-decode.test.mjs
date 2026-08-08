@@ -81,6 +81,7 @@ function makeModel(script) {
     _advanceDecision: proto._advanceDecision,
     _logSumExp: proto._logSumExp,
     _logAddExp: proto._logAddExp,
+    _partition: proto._partition,
     _topK: proto._topK,
     _expandHyp: proto._expandHyp,
     _applyBlankClosureBatch: proto._applyBlankClosureBatch,
@@ -190,6 +191,19 @@ describe('pure helpers', () => {
     assert.equal(m._logAddExp.call(m, -Infinity, -3), -3);
     assert.equal(m._logAddExp.call(m, -3, -Infinity), -3);
   });
+  test('_partition trusts a finite in-graph value verbatim (no recompute)', () => {
+    // 7.25 is nowhere near _logSumExp([1,2,3]) ~ 3.41: a finite graph value
+    // must be returned as-is, proving no JS sweep happens behind it.
+    assert.equal(m._partition.call(m, 7.25, Float32Array.from([1, 2, 3])), 7.25);
+  });
+  test('_partition falls back to _logSumExp when absent or non-finite', () => {
+    const flat = Float32Array.from([2, 2, 2, 2]);
+    const want = 2 + Math.log(4);
+    assert.ok(close(m._partition.call(m, undefined, flat), want), 'stock decoder: undefined');
+    assert.ok(close(m._partition.call(m, NaN, flat), want), 'NaN guard');
+    assert.ok(close(m._partition.call(m, Infinity, flat), want), 'Infinity guard');
+    assert.ok(close(m._partition.call(m, -Infinity, flat), want), '-Infinity guard');
+  });
   test('_advanceDecision step>0 advances by step', () => {
     const d1 = m._advanceDecision.call(m, 4, 0, 2, 3, 1);
     assert.ok(d1.nextT === 7 && d1.nextEmitted === 0 && d1.emit === true);
@@ -249,6 +263,22 @@ const Tenc = script.length;
 // and is covered by its own test below); the other knobs disable pruning so the
 // beam is free to find the globally-optimal path.
 const MAES = { maesNumSteps: 10, maesExpansionBeta: V, maesExpansionGamma: 100, maesPrefixAlpha: 0 };
+
+// Closure/branch-heavy script shared by the zero-duration-burst equivalence
+// test and the in-graph-LSE suite: every third frame favours duration 0 so
+// zero-duration emissions hit the maesNumSteps cap and the deferred batched
+// blank closures fire; the two-way logit spread keeps several hypotheses alive.
+const zScript = [];
+for (let t = 0; t < 12; t++) {
+  const logits = [0.2, 0.2, 0.2, 0.2, 0.2, 0.2];
+  logits[t % 5] = 2.2;
+  logits[(t + 1) % 5] = 1.4;
+  if (t % 5 === 4) logits[BLANK] = 2.0;
+  zScript.push({ logits, step: 1, durLogits: (t % 3 === 0) ? [1.2, 0.6, -20] : [-20, 0.8, 0.2] });
+}
+// MAES knobs under which zScript actually branches, closes and recombines
+// (tight caps, prefix recombination ON), unlike the no-prune MAES above.
+const Z_MAES = { maesNumSteps: 2, maesExpansionBeta: 3, maesExpansionGamma: 4.0, maesPrefixAlpha: 1 };
 
 async function runBeam(model, beamWidth, { phraseBoost = null, temperature = 1.0 } = {}) {
   phraseBoost?.reset();
@@ -780,19 +810,10 @@ describe('batched joiner expansion (#batch)', () => {
     // maesNumSteps cap, so the deferred batched blank closures fire (the
     // previous test's script never emits at duration 0). The batched run must
     // still reproduce the serial per-hypothesis loop exactly.
-    const zScript = [];
-    for (let t = 0; t < 12; t++) {
-      const logits = [0.2, 0.2, 0.2, 0.2, 0.2, 0.2];
-      logits[t % 5] = 2.2;
-      logits[(t + 1) % 5] = 1.4;
-      if (t % 5 === 4) logits[BLANK] = 2.0;
-      // Every third frame favours duration 0 so the symbol cap triggers closures.
-      zScript.push({ logits, step: 1, durLogits: (t % 3 === 0) ? [1.2, 0.6, -20] : [-20, 0.8, 0.2] });
-    }
     const beamOpts = {
       beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
       returnTimestamps: true, returnConfidences: true, timeStride: 0.08,
-      maesNumSteps: 2, maesExpansionBeta: 3, maesExpansionGamma: 4.0, maesPrefixAlpha: 1,
+      ...Z_MAES,
     };
 
     const serialModel = makeModel(zScript);
@@ -818,6 +839,193 @@ describe('batched joiner expansion (#batch)', () => {
     assert.ok(close(batched.overallLogProb, serial.overallLogProb), 'overallLogProb matches');
     assert.ok(eqFloatArr(batched.frameConfs, serial.frameConfs), 'frameConfs match');
     assert.ok(statesCreated > 0 && statesCreated === statesDisposed, 'no decoder-state leak with closures batched');
+  });
+});
+
+describe('in-graph LSE partitions (#R1, .lse. decoder artifact)', () => {
+  // The `.lse.` decoder_joint (model repo, scripts/optimize-decoder-graph.py)
+  // appends `lse_token`/`lse_duration` outputs: the log-partitions of the
+  // token and duration logit slices, computed in-graph. The engine consumes
+  // them via _partition, skipping the JS _logSumExp sweep over the ~8k token
+  // logits per hypothesis step; stock decoders ship no such outputs and keep
+  // the JS sweep (pinned by every other suite in this file). These tests wrap
+  // the shared stub so BOTH joiner entry points (batch-1 _runCombinedStep and
+  // the batched joinerSession) carry the extra outputs, with values computed
+  // by the very float64 _logSumExp the fallback uses, so an LSE-fed decode
+  // must reproduce the stock decode EXACTLY. (The real graph emits fp32; that
+  // rounding is gated repo-side by `optimize-decoder-graph.py check`.)
+
+  // Attach lse_token/lse_duration to both scripted joiner entry points.
+  // `poison` offsets lse_token away from the true partition, proving the
+  // graph value (not a JS recomputation) is what the decoder consumes.
+  function withLse(model, { poison = 0 } = {}) {
+    const origRun = model.joinerSession.run;
+    model.joinerSession.run = async (feeds) => {
+      const out = await origRun(feeds);
+      const B = out.outputs.dims[0];
+      const data = out.outputs.data;
+      const total = data.length / B;
+      const lseT = new Float64Array(B);
+      const lseD = new Float64Array(B);
+      for (let b = 0; b < B; b++) {
+        lseT[b] = proto._logSumExp.call(model, data.subarray(b * total, b * total + V)) + poison;
+        lseD[b] = proto._logSumExp.call(model, data.subarray(b * total + V, (b + 1) * total));
+      }
+      // Float64 backing keeps the values bit-equal to the JS fallback's
+      // (fp32-rounding fidelity of the real graph is the repo-side gate's job).
+      out.lse_token = new fakeOrt.Tensor('float32', lseT, [B, 1, 1]);
+      out.lse_duration = new fakeOrt.Tensor('float32', lseD, [B, 1, 1]);
+      return out;
+    };
+    const origStep = model._runCombinedStep;
+    model._runCombinedStep = async (...a) => {
+      const r = await origStep(...a);
+      r.logZ = proto._logSumExp.call(model, r.tokenLogits) + poison;
+      r.durZ = proto._logSumExp.call(model, r.durLogits);
+      return r;
+    };
+    return model;
+  }
+
+  for (const width of [2, 4]) {
+    test(`width ${width}: LSE-fed decode reproduces the stock decode exactly`, async () => {
+      const stock = await runBeam(makeModel(script), width);
+      const fed = await runBeam(withLse(makeModel(script)), width);
+      assert.deepStrictEqual(fed, stock);
+    });
+  }
+
+  test('LSE-fed == stock on the closure/prefix-heavy script (all three consumers)', async () => {
+    // zScript under Z_MAES drives _expandHyp, _applyBlankClosureBatch AND
+    // _prefixSearch (prefix recombination on), so every _partition call site
+    // consumes a graph value on the fed run.
+    const beamOpts = {
+      beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: true, returnConfidences: true, timeStride: 0.08,
+      ...Z_MAES,
+    };
+    const stock = await makeModel(zScript)._decodeBeam(makeTransposed(12), D, 12, beamOpts);
+    const fed = await withLse(makeModel(zScript))._decodeBeam(makeTransposed(12), D, 12, beamOpts);
+    assert.ok(stock.ids.length > 0, 'non-empty transcript');
+    assert.deepStrictEqual(fed, stock);
+  });
+
+  test('fed decode never falls back to the JS sweep; stock decode does', async () => {
+    // withLse computes its values through proto._logSumExp directly, so
+    // instrumenting model._logSumExp counts ONLY the engine's fallback calls.
+    const instrument = (model) => {
+      let n = 0;
+      const orig = model._logSumExp;
+      model._logSumExp = function (...a) { n++; return orig.apply(this, a); };
+      return () => n;
+    };
+    const beamOpts = {
+      beamWidth: 6, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+      ...Z_MAES,
+    };
+    const stockM = makeModel(zScript);
+    const stockSweeps = instrument(stockM);
+    await stockM._decodeBeam(makeTransposed(12), D, 12, beamOpts);
+    assert.ok(stockSweeps() > 0, 'stock decoder pays JS log-sum-exp sweeps');
+
+    const fedM = withLse(makeModel(zScript));
+    const fedSweeps = instrument(fedM);
+    await fedM._decodeBeam(makeTransposed(12), D, 12, beamOpts);
+    assert.equal(fedSweeps(), 0, 'every partition came from the graph outputs');
+  });
+
+  test('a poisoned lse_token provably changes hypothesis scores', async () => {
+    const opts = {
+      beamWidth: 4, temperature: 1.0, frameStride: 1, phraseBoost: null,
+      returnTimestamps: false, returnConfidences: false, timeStride: 0.08,
+      ...MAES, nBest: 2,
+    };
+    const clean = await withLse(makeModel(script))._decodeBeam(makeTransposed(Tenc), D, Tenc, opts);
+    const poisoned = await withLse(makeModel(script), { poison: 7 })._decodeBeam(makeTransposed(Tenc), D, Tenc, opts);
+    // Every expansion prices its candidates off the poisoned partition, so
+    // every surviving score drops by 7 per step. If the engine recomputed the
+    // partition from the logits instead of consuming the graph value, the two
+    // runs would be byte-identical and this must fail.
+    assert.ok(poisoned.nbest[0].score < clean.nbest[0].score - 1,
+      `poisoned winner ${poisoned.nbest[0].score} must score well below clean ${clean.nbest[0].score}`);
+  });
+
+  test('_runCombinedStepBatch scatters per-row logZ/durZ and disposes the lse tensors', async () => {
+    const ND = 2;
+    const total = V + ND;
+    let disposed = 0;
+    const track = (t) => { t.dispose = () => { disposed++; }; return t; };
+    const m = {
+      blankId: BLANK,
+      ort: fakeOrt,
+      predLayers: PRED_L,
+      predHidden: PRED_H,
+      tokenizer: { id2token: new Array(V) },
+      _combState1: fakeState(),
+      _combState2: fakeState(),
+      _runCombinedStepBatch: proto._runCombinedStepBatch,
+      _runCombinedStep: () => { throw new Error('B>1 must not take the batch-1 path'); },
+      joinerSession: {
+        run: async (feeds) => {
+          const B = feeds.targets.dims[0];
+          return {
+            outputs: new fakeOrt.Tensor('float32', new Float32Array(B * total), [B, 1, 1, total]),
+            output_states_1: new fakeOrt.Tensor('float32', new Float32Array(PRED_L * B * PRED_H), [PRED_L, B, PRED_H]),
+            output_states_2: new fakeOrt.Tensor('float32', new Float32Array(PRED_L * B * PRED_H), [PRED_L, B, PRED_H]),
+            lse_token: track(new fakeOrt.Tensor('float32', Float32Array.from({ length: B }, (_, b) => 40 + b), [B, 1, 1])),
+            lse_duration: track(new fakeOrt.Tensor('float32', Float32Array.from({ length: B }, (_, b) => 50 + b), [B, 1, 1])),
+          };
+        },
+      },
+    };
+    const hyps = [
+      { t: 0, lastTok: 1, state: null },
+      { t: 2, lastTok: 4, state: null },
+      { t: 1, lastTok: 3, state: null },
+    ];
+    const res = await m._runCombinedStepBatch(hyps, makeTransposed(3), D);
+    assert.ok(eqFloatArr(res.map((r) => r.logZ), [40, 41, 42]), 'row b gets lse_token[b]');
+    assert.ok(eqFloatArr(res.map((r) => r.durZ), [50, 51, 52]), 'row b gets lse_duration[b]');
+    assert.equal(disposed, 2, 'both lse tensors freed once the scalars are copied out');
+    res.sharedLogits?.dispose?.();
+  });
+
+  test('_runCombinedStep surfaces scalar logZ/durZ, disposes the tensors; stock leaves them undefined', async () => {
+    let disposed = 0;
+    const track = (t) => { t.dispose = () => { disposed++; }; return t; };
+    const mk = (lse) => ({
+      blankId: BLANK,
+      tokenizer: { id2token: new Array(V) },
+      _targetIdArray: new Int32Array(1),
+      _targetTensor: new fakeOrt.Tensor('int32', new Int32Array(1), [1, 1]),
+      _targetLenTensor: new fakeOrt.Tensor('int32', Int32Array.from([1]), [1]),
+      _combState1: fakeState(),
+      _combState2: fakeState(),
+      _runCombinedStep: proto._runCombinedStep,
+      joinerSession: {
+        run: async () => ({
+          outputs: new fakeOrt.Tensor('float32', Float32Array.from([...script[0].logits, 0, -20]), [1, 1, 1, V + 2]),
+          output_states_1: fakeState(),
+          output_states_2: fakeState(),
+          // 4.25 / 0.5 are exactly representable in fp32, so strict equality holds.
+          ...(lse ? {
+            lse_token: track(new fakeOrt.Tensor('float32', Float32Array.from([4.25]), [1, 1, 1])),
+            lse_duration: track(new fakeOrt.Tensor('float32', Float32Array.from([0.5]), [1, 1, 1])),
+          } : {}),
+        }),
+      },
+    });
+    const enc = new fakeOrt.Tensor('float32', new Float32Array(D), [1, D, 1]);
+    const fed = await mk(true)._runCombinedStep(enc, BLANK, null);
+    assert.equal(fed.logZ, 4.25);
+    assert.equal(fed.durZ, 0.5);
+    assert.equal(disposed, 2, 'both lse tensors freed');
+    fed._logitsTensor.dispose();
+    const stock = await mk(false)._runCombinedStep(enc, BLANK, null);
+    assert.equal(stock.logZ, undefined);
+    assert.equal(stock.durZ, undefined);
+    stock._logitsTensor.dispose();
   });
 });
 
@@ -1103,6 +1311,7 @@ describe('shared-partition confidence (_expandHyp)', () => {
       blankId: VOC - 1,
       _topK: proto._topK,
       _logSumExp: proto._logSumExp,
+      _partition: proto._partition,
       _frameConfidence: proto._frameConfidence,
       _expSumAround(...args) {
         counters.sweeps++;
