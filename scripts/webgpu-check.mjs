@@ -181,6 +181,12 @@ async function main() {
     let encoderBatch = 0;          // parakeet.js's "[Parakeet.js] Encoder batching enabled: batch=N"
     let stageSplit = null;         // App.jsx's "[Transcribe] Stage split: ..." line
     let totalTimeLine = null;      // App.jsx's "[Transcribe] Total time for entire audio: ..."
+    // hub.js's "[Hub] Using the optimized encoder <name>" marker. Which BUILD of
+    // the encoder ran is what a timing comparison is about (the optimized fp32
+    // graph exists precisely to stop the WebGPU EP fragmenting the encoder), and
+    // it is decided silently by what the mirror happens to serve, so record it:
+    // a wall time with no build attached cannot be compared against anything.
+    let optimizedEncoder = null;
     const debug = !!process.env.WEBGPU_DEBUG; // forward all page console to stderr
     // Benign console noise to ignore, all by-design and not failures:
     //  - "Failed to load resource ... 404": with local source, hub.js HEAD-probes
@@ -207,6 +213,8 @@ async function main() {
       const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(txt);
       if (hit) { lastChunk = Number(hit[1]); chunkTotal = Number(hit[2]); }
       if (txt.includes('[Decode] pipeline engaged')) pipelineEngaged = true;
+      const oe = /\[Hub\] Using the optimized encoder (\S+)/.exec(txt);
+      if (oe) optimizedEncoder = oe[1];
       const eb = /\[Parakeet\.js\] Encoder batching enabled: batch=(\d+)/.exec(txt);
       if (eb) encoderBatch = Number(eb[1]);
       const st = /\[Transcribe\] Stage split: (encode [\d.]+s, decode [\d.]+s \| pipeline overlap ceiling ~[\d.]+s.*)/.exec(txt);
@@ -357,6 +365,7 @@ async function main() {
     console.log(`chunks transcribed : ${lastChunk}/${chunkTotal}`);
     if (totalTimeLine) console.log(`wall time          : ${totalTimeLine}`);
     if (stageSplit) console.log(`${stageSplit}`);
+    console.log(`encoder build      : ${optimizedEncoder ? `optimized (${optimizedEncoder})` : 'stock'}`);
     console.log(`encoder batch      : ${encoderBatch || 'n/a'}`);
     console.log(`heap samples       : ${valid.length}`);
     if (canJudgeLeak) {
