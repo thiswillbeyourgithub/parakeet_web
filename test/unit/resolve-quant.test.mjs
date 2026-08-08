@@ -25,6 +25,14 @@ const WITH_FP32_SHARDS_SUBFOLDER = [
 ];
 // A repo that ALSO ships the lighter int8 encoder (encoder-model.int8.lite.onnx).
 const WITH_LITE = ['encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'encoder-model.onnx', 'decoder_joint-model.int8.onnx'];
+// A repo whose ONLY loadable fp32 layout is the OPTIMIZED shard set (the
+// constant-folded graph from optimize-encoder-graph.py, sharded by
+// shard-fp32.py --encoder encoder-model.optimized.onnx), with no stock shards.
+const WITH_OPTIMIZED_FP32_SHARDS_ONLY = [
+  'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+  'sharded/encoder-model.optimized.onnx',
+  'sharded/encoder-model.optimized.onnx.data.000', 'sharded/encoder-model.optimized.onnx.data.001',
+];
 
 describe('resolveModelQuant: WASM is pinned to int8', () => {
   for (const backend of ['wasm']) {
@@ -82,6 +90,29 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
     assert.equal(r.pinnedToInt8, false);
     assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS_SUBFOLDER, allowWasmFp32: true }), true);
+  });
+
+  // The OPTIMIZED shard set (encoder-model.optimized.onnx.data.NNN) is a full
+  // fp32 layout of its own: a source shipping only it must satisfy fp32 on both
+  // backends, and a flat optimized graph without shards must not (same 2 GB
+  // walls as the stock single-file).
+  test('opt-in + fp32 request + ONLY the optimized shard set -> fp32 (not pinned), and satisfiable on WebGPU too', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY, allowWasmFp32: true }), true);
+    const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY });
+    assert.equal(g.webgpuFp32NeedsShards, false, 'optimized shards clear the WebGPU shard requirement');
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY }), true);
+  });
+
+  test('opt-in + fp32 request + a flat optimized graph but NO shard set of either kind -> int8 pin', () => {
+    const flatOptimizedOnly = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'encoder-model.optimized.onnx', 'encoder-model.optimized.onnx.data'];
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOptimizedOnly, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+    const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOptimizedOnly });
+    assert.equal(g.webgpuFp32NeedsShards, true, 'a flat optimized graph is as unloadable as the stock single-file');
   });
 });
 

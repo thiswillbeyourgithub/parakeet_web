@@ -71,6 +71,8 @@ describe('listLocalRepoFiles', () => {
   test('prefers flat shards and does not also probe sharded/ when flat shards exist', async () => {
     // When the shards ARE flat, the sharded/ fallback must not run (a flat layout
     // is complete on its own); a sharded/ duplicate must not be double-counted.
+    // The scope is per encoder: the OPTIMIZED walk may still probe sharded/ for
+    // ITS OWN set (absent here), only the STOCK sharded/ probe must be skipped.
     const probed = [];
     globalThis.fetch = async (url) => {
       const rel = String(url).slice('/models/'.length);
@@ -81,7 +83,8 @@ describe('listLocalRepoFiles', () => {
     };
     const files = await listLocalRepoFiles('/models');
     assert.deepEqual(files, ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
-    assert.ok(!probed.some((p) => p.startsWith('sharded/')), 'sharded/ must not be probed when flat shards exist');
+    assert.ok(!probed.some((p) => p.startsWith('sharded/encoder-model.onnx.data.')),
+      'the stock sharded/ set must not be probed when flat stock shards exist');
   });
 
   test('empty when the mirror serves none of the candidates (no local model)', async () => {
@@ -109,6 +112,45 @@ describe('listLocalRepoFiles', () => {
       files.sort(),
       ['encoder-model.fp16.optimized.onnx', 'encoder-model.int8.smoothquant.optimized.onnx'],
     );
+  });
+
+  test('walks the OPTIMIZED fp32 shard set (encoder-model.optimized.onnx.data.NNN) like the stock one', async () => {
+    // The optimized fp32 preference is gated on ITS shard set
+    // (optimizedEncoderName), so a mirror shipping only optimized shards must
+    // report them or the preference can never engage on a local mirror.
+    mockServer([
+      'encoder-model.optimized.onnx.data.000',
+      'encoder-model.optimized.onnx.data.001',
+    ]);
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(files, [
+      'encoder-model.optimized.onnx.data.000',
+      'encoder-model.optimized.onnx.data.001',
+    ]);
+  });
+
+  test('finds optimized shards under sharded/ and reports basenames, independently of the stock set', async () => {
+    // Both fp32 layouts at once: STOCK shards flat, OPTIMIZED shards under
+    // sharded/ (how shard-fp32.py --encoder encoder-model.optimized.onnx writes
+    // them). The per-encoder probe scoping must report BOTH sets: the flat stock
+    // shards must not suppress the optimized sharded/ walk.
+    const present = new Set([
+      'encoder-model.onnx.data.000',
+      'encoder-model.onnx.data.001',
+      'sharded/encoder-model.optimized.onnx.data.000',
+      'sharded/encoder-model.optimized.onnx.data.001',
+    ]);
+    globalThis.fetch = async (url) => {
+      const rel = String(url).slice('/models/'.length);
+      return { ok: present.has(rel) };
+    };
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(files.sort(), [
+      'encoder-model.onnx.data.000',
+      'encoder-model.onnx.data.001',
+      'encoder-model.optimized.onnx.data.000',
+      'encoder-model.optimized.onnx.data.001',
+    ]);
   });
 
   test('probes the LSE decoder variants so a local mirror gets the same preference as an HF listing', async () => {

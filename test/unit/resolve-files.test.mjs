@@ -190,9 +190,13 @@ describe('resolveFiles: optimized encoder preference', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('fp32 has no optimized variant and ignores stray optimized files', () => {
-    // fp32's encoder carries external .data/shards the fold pipeline does not
-    // produce, so even a plausibly-named optimized file must never be picked.
+  test('fp32 prefers encoder-model.optimized.onnx when present', () => {
+    // Unlike hub.js (which additionally gates fp32 on the optimized SHARD set,
+    // browsers cannot load a flat multi-GB graph), the Node CLI runs on native
+    // ORT with 64-bit memory and resolves the optimized graph's own
+    // encoder-model.optimized.onnx.data sidecar (or .data.NNN shards) from the
+    // graph basename, so the graph file's presence alone is the switch here,
+    // matching the int8/fp16 semantics above.
     const dir = makeModelDir([
       'encoder-model.optimized.onnx',
       'encoder-model.onnx',
@@ -200,7 +204,9 @@ describe('resolveFiles: optimized encoder preference', () => {
       'vocab.txt',
     ]);
     const r = resolveFiles(dir, 'fp32');
-    assert.equal(basename(r.encoderPath), 'encoder-model.onnx');
+    assert.equal(basename(r.encoderPath), 'encoder-model.optimized.onnx');
+    // Absence keeps resolving the stock name, pinned by "fp16 and fp32 resolve
+    // their plain names" above.
     rmSync(dir, { recursive: true, force: true });
   });
 });
