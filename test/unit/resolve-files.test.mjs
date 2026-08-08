@@ -204,3 +204,66 @@ describe('resolveFiles: folded encoder preference', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// The LSE decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// optimize-decoder-graph.py lse: the identical joint graph plus in-graph
+// lse_token/lse_duration log-partition outputs the beam decoder consumes via
+// _partition) outranks the stock decoder name when the model dir ships it.
+// As with the folded encoder, shipping the file is the opt-in; absence must
+// resolve exactly as before (pinned by the suites above).
+describe('resolveFiles: LSE decoder preference', () => {
+  test('int8 prefers decoder_joint-model.int8.lse.onnx over the stock name', () => {
+    const dir = makeModelDir([
+      'encoder-model.int8.onnx',
+      'decoder_joint-model.int8.lse.onnx',
+      'decoder_joint-model.int8.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'int8');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.int8.lse.onnx');
+    // The encoder resolution is independent of the decoder's lse variant.
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('fp32 prefers decoder_joint-model.lse.onnx over the stock name', () => {
+    const dir = makeModelDir([
+      'encoder-model.onnx',
+      'decoder_joint-model.lse.onnx',
+      'decoder_joint-model.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'fp32');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.lse.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('fp16 has no LSE variant and ignores a stray lse-named file', () => {
+    // No fp16 lse artifact is shipped (an fp16 graph would accumulate the
+    // partition in fp16), so even a plausibly-named file must never be picked.
+    const dir = makeModelDir([
+      'encoder-model.fp16.onnx',
+      'decoder_joint-model.fp16.lse.onnx',
+      'decoder_joint-model.fp16.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'fp16');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.fp16.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('mixed quants pick each side\'s preferred artifact (int8 folded encoder + fp32 lse decoder)', () => {
+    // The app's actual pairing: int8 encoder with the fp32 decoder_joint.
+    const dir = makeModelDir([
+      'encoder-model.int8.folded.onnx',
+      'encoder-model.int8.onnx',
+      'decoder_joint-model.lse.onnx',
+      'decoder_joint-model.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'int8', 'fp32');
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.folded.onnx');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.lse.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

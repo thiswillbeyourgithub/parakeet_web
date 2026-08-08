@@ -110,4 +110,16 @@ describe('listLocalRepoFiles', () => {
       ['encoder-model.fp16.folded.onnx', 'encoder-model.int8.folded.onnx'],
     );
   });
+
+  test('probes the LSE decoder variants so a local mirror gets the same preference as an HF listing', async () => {
+    // Same contract as the folded encoder, decoder side: a mirror shipping an
+    // lse decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+    // optimize-decoder-graph.py lse) must be able to report it.
+    mockServer(['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.lse.onnx']);
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(
+      files.sort(),
+      ['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.lse.onnx'],
+    );
+  });
 });
