@@ -403,10 +403,18 @@ const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ..
 const REPO_OPTIMIZED_FP16 = ['encoder-model.fp16.optimized.onnx', ...REPO_FP16];
 const REPO_OPTIMIZED_PLUS_LITE = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_LITE];
 // fp32's optimized build is only usable through its OWN shard set (browser paths
-// can never load a flat multi-GB fp32 graph, see the sharded describes above),
-// so the model repo ships it under sharded/ alongside the stock set.
+// can never load a flat multi-GB fp32 graph, see the sharded describes above).
+// A source shipping BOTH layouts, which is what the model repo does:
 const REPO_OPTIMIZED_FP32 = [
   ...REPO_HF_SHARDED,
+  'sharded/encoder-model.optimized.onnx',
+  'sharded/encoder-model.optimized.onnx.data.000',
+  'sharded/encoder-model.optimized.onnx.data.001',
+];
+// ...and one shipping ONLY the optimized layout, the single case where it is
+// selected (it measured slower on GPU, so it is a fallback, not a preference).
+const REPO_OPTIMIZED_FP32_ONLY = [
+  'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt', 'nemo128.onnx',
   'sharded/encoder-model.optimized.onnx',
   'sharded/encoder-model.optimized.onnx.data.000',
   'sharded/encoder-model.optimized.onnx.data.001',
@@ -447,8 +455,8 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
     assert.ok(!downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
   });
 
-  test('WASM fp32 + optimized shard set shipped -> optimized graph + shards from sharded/, stock set not fetched', async () => {
-    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32);
+  test('WASM fp32 + ONLY the optimized shard set -> optimized graph + shards from sharded/', async () => {
+    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32_ONLY);
     const r = await getParakeetModel('test/wasm-fp32-optimized', {
       backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
     });
@@ -466,8 +474,8 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
     }
   });
 
-  test('WebGPU fp32 + optimized shard set shipped -> same preference, never the flat sidecar', async () => {
-    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32);
+  test('WebGPU fp32 + ONLY the optimized shard set -> loads it as bytes, never a flat sidecar', async () => {
+    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32_ONLY);
     const r = await getParakeetModel('test/webgpu-fp32-optimized', {
       backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
     });
@@ -478,20 +486,36 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
     assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder graph must load as bytes');
     assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx'));
     assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must NOT fetch the flat 2.4GB sidecar on WebGPU');
-    assert.ok(!downloaded.includes('sharded/encoder-model.onnx'), 'must not also fetch the stock sharded graph');
   });
 
-  test('optimizedEncoderName: gated on the listing, fp32 additionally gated on its shard set', () => {
+  // The regression this guards: the optimized fp32 build measured ~23% SLOWER on
+  // a real GPU, so when a source ships BOTH shard sets (what the model repo does)
+  // the loader must stay on the stock build.
+  test('fp32 + BOTH shard sets shipped -> stock wins, optimized is not fetched', async () => {
+    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32);
+    const r = await getParakeetModel('test/webgpu-fp32-both', {
+      backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.encoder, 'encoder-model.onnx');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
+      ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.ok(!downloaded.some((f) => f.includes('optimized')), `optimized build must not be fetched; got ${downloaded.join(', ')}`);
+  });
+
+  test('optimizedEncoderName: listing-gated, fp32 only as a stock-absent fallback', () => {
     assert.equal(optimizedEncoderName('int8', REPO_OPTIMIZED_INT8), 'encoder-model.int8.smoothquant.optimized.onnx');
     assert.equal(optimizedEncoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
-    // fp32 is only preferred through its shard set: a flat optimized graph
-    // without .data.NNN shards is unloadable in every browser path (2 GB
-    // ArrayBuffer/blob/IDB walls), so it must never be preferred.
-    assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32), 'encoder-model.optimized.onnx');
+    // fp32 is reachable only through a shard set: a flat optimized graph with no
+    // .data.NNN shards is unloadable in every browser path (2 GB
+    // ArrayBuffer/blob/IDB walls), so it must never be chosen.
+    assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32_ONLY), 'encoder-model.optimized.onnx',
+      'optimized shards alone -> load them, nothing else can serve fp32');
+    assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32), null,
+      'both shard sets -> stock wins (optimized measured ~23% slower on GPU)');
     assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_NO_FP16]), null,
       'flat optimized graph without its shard set -> stock');
     assert.equal(optimizedEncoderName('fp32', REPO_HF_SHARDED), null,
-      'stock shards alone must not trigger the optimized preference');
+      'stock shards alone -> stock');
     assert.equal(optimizedEncoderName('int8', null), null, 'defensive: no listing at all');
   });
 });

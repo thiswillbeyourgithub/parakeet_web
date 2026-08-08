@@ -511,7 +511,11 @@ const QUANT_FILES = {
     decoder: ['decoder_joint-model.fp16.onnx'],
   },
   fp32: {
-    encoder: ['encoder-model.optimized.onnx', 'encoder-model.onnx'],
+    // Stock FIRST for fp32, unlike int8/fp16: the optimized fp32 build measured
+    // ~23% SLOWER on a real GPU (see hub.js optimizedEncoderName), so it is a
+    // fallback for a dir that ships only it, not a preference. Point --model-dir
+    // at a dir holding just one build to A/B them.
+    encoder: ['encoder-model.onnx', 'encoder-model.optimized.onnx'],
     decoder: ['decoder_joint-model.lse.onnx', 'decoder_joint-model.onnx'],
   },
 };
@@ -722,7 +726,7 @@ export async function loadParakeetModel({
     windowStride: 0.01,
     verbose,
   });
-  return { model, tokenizer, cfg, dir };
+  return { model, tokenizer, cfg, dir, encoderPath, decoderPath };
 }
 
 // Build the phrase-boosting trie (or null when no phrases were given) from the
@@ -824,7 +828,7 @@ export async function buildPhraseBoost({ boosts = [], strength = 1, depthScaling
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  const { model, tokenizer, dir } = await loadParakeetModel({
+  const { model, tokenizer, dir, encoderPath, decoderPath } = await loadParakeetModel({
     model: args.model,
     modelDir: args.modelDir,
     quant: args.quant,
@@ -837,6 +841,11 @@ async function main() {
   });
   console.error(`[transcribe] model: ${args.model} (enc ${args.quant} / dec ${args.decoderQuant}, ort=${args.ortBackend})`);
   console.error(`[transcribe] dir:   ${dir}`);
+  // Name the artifacts resolveFiles actually picked. A quant alone does not say
+  // which BUILD ran: the resolver silently prefers a `.optimized.` encoder and a
+  // `.lse.` decoder when the dir ships them, so an A/B between two model dirs
+  // (or a timing quoted from this harness) is unattributable without this line.
+  console.error(`[transcribe] files: enc ${basename(encoderPath)} / dec ${basename(decoderPath)}`);
 
   const ffmpeg = findFfmpeg(args.ffmpeg);
   console.error(`[transcribe] ffmpeg: ${ffmpeg}`);
