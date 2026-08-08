@@ -16,7 +16,7 @@
 // by the Olicorne HF repo); the e2e model dir only carries it when a
 // fallback_models symlink (or `npm run e2e:models` once the fetch list includes
 // it) provides the file, so when the static server does not serve it the spec
-// SKIPS itself rather than fail, exactly like the folded-encoder spec.
+// SKIPS itself rather than fail, exactly like the optimized-encoder spec.
 //
 // Built with Claude Code.
 
@@ -52,7 +52,7 @@ test('transcribes JFK English (MP3) at beam 5 preferring the LSE int8 decoder', 
   });
 
   // Force the LOCAL model source at CONFIG level (same window.__CONFIG__
-  // mechanism as the folded-encoder spec): the LSE preference is
+  // mechanism as the optimized-encoder spec): the LSE preference is
   // listing-gated, and only the local /models server (serve.mjs) is
   // guaranteed to serve the lse file. The seeded `modelSource: 'local'` alone
   // is NOT enough: it only enables the local fallback, the app still lists

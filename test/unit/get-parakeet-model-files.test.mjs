@@ -19,7 +19,7 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getParakeetModel, QuantUnavailableError, foldedEncoderName, lseDecoderName } from '../../app/src/hub.js';
+import { getParakeetModel, QuantUnavailableError, optimizedEncoderName, lseDecoderName } from '../../app/src/hub.js';
 
 // A streaming body so _streamAndCache's reader loop runs; content is irrelevant
 // here (we assert on which files were selected, not their bytes).
@@ -393,64 +393,64 @@ describe('getParakeetModel file selection: preprocessor backend', () => {
   });
 });
 
-// The folded encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// The optimized encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
 // optimize-encoder-graph.py fold: identical numerics, ~23% fewer graph nodes,
 // faster session build) must be preferred whenever the active source lists it,
 // without changing the reported quantisation. Its absence resolves exactly as
-// before (the earlier describes pin that side with folded-less fixtures).
-const REPO_FOLDED_INT8 = ['encoder-model.int8.folded.onnx', ...REPO_NO_FP16];
-const REPO_FOLDED_FP16 = ['encoder-model.fp16.folded.onnx', ...REPO_FP16];
-const REPO_FOLDED_PLUS_LITE = ['encoder-model.int8.folded.onnx', ...REPO_LITE];
+// before (the earlier describes pin that side with optimized-less fixtures).
+const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_NO_FP16];
+const REPO_OPTIMIZED_FP16 = ['encoder-model.fp16.optimized.onnx', ...REPO_FP16];
+const REPO_OPTIMIZED_PLUS_LITE = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_LITE];
 
-describe('getParakeetModel file selection: folded encoder preference', () => {
-  test('WASM int8 + folded shipped -> folded encoder downloaded, unfolded not fetched, quant still int8', async () => {
-    const downloaded = mockHf(REPO_FOLDED_INT8);
-    const r = await getParakeetModel('test/wasm-int8-folded', {
+describe('getParakeetModel file selection: optimized encoder preference', () => {
+  test('WASM int8 + optimized shipped -> optimized encoder downloaded, stock not fetched, quant still int8', async () => {
+    const downloaded = mockHf(REPO_OPTIMIZED_INT8);
+    const r = await getParakeetModel('test/wasm-int8-optimized', {
       backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
     });
-    assert.equal(r.filenames.encoder, 'encoder-model.int8.folded.onnx');
+    assert.equal(r.filenames.encoder, 'encoder-model.int8.smoothquant.optimized.onnx');
     assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' }, 'the fold changes the file, never the reported quant');
-    assert.ok(downloaded.includes('encoder-model.int8.folded.onnx'));
-    assert.ok(!downloaded.includes('encoder-model.int8.onnx'), 'must not also fetch the unfolded encoder');
-    assert.ok(r.cacheInfo.filenames.includes('encoder-model.int8.folded.onnx'),
-      'the folded file gets its own cache key so the sweep can evict the unfolded blob');
+    assert.ok(downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
+    assert.ok(!downloaded.includes('encoder-model.int8.onnx'), 'must not also fetch the stock encoder');
+    assert.ok(r.cacheInfo.filenames.includes('encoder-model.int8.smoothquant.optimized.onnx'),
+      'the optimized file gets its own cache key so the sweep can evict the stock blob');
   });
 
-  test('WebGPU fp16 + folded shipped -> folded fp16 encoder', async () => {
-    const downloaded = mockHf(REPO_FOLDED_FP16);
-    const r = await getParakeetModel('test/webgpu-fp16-folded', {
+  test('WebGPU fp16 + optimized shipped -> optimized fp16 encoder', async () => {
+    const downloaded = mockHf(REPO_OPTIMIZED_FP16);
+    const r = await getParakeetModel('test/webgpu-fp16-optimized', {
       backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'int8',
     });
-    assert.equal(r.filenames.encoder, 'encoder-model.fp16.folded.onnx');
+    assert.equal(r.filenames.encoder, 'encoder-model.fp16.optimized.onnx');
     assert.equal(r.quantisation.encoder, 'fp16');
-    assert.ok(downloaded.includes('encoder-model.fp16.folded.onnx'));
+    assert.ok(downloaded.includes('encoder-model.fp16.optimized.onnx'));
     assert.ok(!downloaded.includes('encoder-model.fp16.onnx'));
   });
 
-  test('int8-lite request ignores a folded default-int8 file (no folded lite build exists)', async () => {
-    const downloaded = mockHf(REPO_FOLDED_PLUS_LITE);
-    const r = await getParakeetModel('test/wasm-lite-vs-folded', {
+  test('int8-lite request ignores an optimized default-int8 file (no optimized lite build exists)', async () => {
+    const downloaded = mockHf(REPO_OPTIMIZED_PLUS_LITE);
+    const r = await getParakeetModel('test/wasm-lite-vs-optimized', {
       backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8',
     });
     assert.equal(r.filenames.encoder, 'encoder-model.int8.lite.onnx',
-      'an explicit lite request must never be hijacked by the folded default build');
-    assert.ok(!downloaded.includes('encoder-model.int8.folded.onnx'));
+      'an explicit lite request must never be hijacked by the optimized default build');
+    assert.ok(!downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
   });
 
-  test('foldedEncoderName: gated on the listing, fp32 always canonical', () => {
-    assert.equal(foldedEncoderName('int8', REPO_FOLDED_INT8), 'encoder-model.int8.folded.onnx');
-    assert.equal(foldedEncoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
+  test('optimizedEncoderName: gated on the listing, fp32 always canonical', () => {
+    assert.equal(optimizedEncoderName('int8', REPO_OPTIMIZED_INT8), 'encoder-model.int8.smoothquant.optimized.onnx');
+    assert.equal(optimizedEncoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
     // fp32's encoder carries external .data/shards the fold pipeline does not
     // produce, so even a plausibly-named file must never be preferred.
-    assert.equal(foldedEncoderName('fp32', ['encoder-model.folded.onnx', ...REPO_NO_FP16]), null);
-    assert.equal(foldedEncoderName('int8', null), null, 'defensive: no listing at all');
+    assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_NO_FP16]), null);
+    assert.equal(optimizedEncoderName('int8', null), null, 'defensive: no listing at all');
   });
 });
 
 // The LSE decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
 // optimize-decoder-graph.py lse: the same joint graph plus in-graph
 // lse_token/lse_duration log-partition outputs consumed by the beam decoder's
-// _partition) follows the folded encoder's contract: prefer it whenever the
+// _partition) follows the optimized encoder's contract: prefer it whenever the
 // active source lists it, never change the reported quant, resolve exactly as
 // before when absent (the earlier describes pin that side with lse-less
 // fixtures).
@@ -470,14 +470,14 @@ describe('getParakeetModel file selection: LSE decoder preference', () => {
       'the lse file gets its own cache key so the sweep can evict the stock blob');
   });
 
-  test('lse decoder and folded encoder are preferred together (independent switches)', async () => {
-    const downloaded = mockHf(['decoder_joint-model.int8.lse.onnx', ...REPO_FOLDED_INT8]);
-    const r = await getParakeetModel('test/wasm-int8-lse-and-folded', {
+  test('lse decoder and optimized encoder are preferred together (independent switches)', async () => {
+    const downloaded = mockHf(['decoder_joint-model.int8.lse.onnx', ...REPO_OPTIMIZED_INT8]);
+    const r = await getParakeetModel('test/wasm-int8-lse-and-optimized', {
       backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
     });
-    assert.equal(r.filenames.encoder, 'encoder-model.int8.folded.onnx');
+    assert.equal(r.filenames.encoder, 'encoder-model.int8.smoothquant.optimized.onnx');
     assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
-    assert.ok(downloaded.includes('encoder-model.int8.folded.onnx'));
+    assert.ok(downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
     assert.ok(downloaded.includes('decoder_joint-model.int8.lse.onnx'));
   });
 
