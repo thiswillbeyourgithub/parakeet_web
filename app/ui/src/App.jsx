@@ -36,6 +36,7 @@ import { createSerialQueue } from './lib/writeQueue.js';
 import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
+import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
@@ -1460,6 +1461,7 @@ export default function App() {
           savedKeyboardShortcutsEnabled,
           savedEnableChunking,
           savedChunkDuration,
+          savedChunkDurationMigrated,
           savedTranscriptDisplayMode,
           savedDiarizationNumSpeakers,
           savedLiveTranscriptionEnabled,
@@ -1506,8 +1508,10 @@ export default function App() {
           loadSetting('enableChunking', true),
           // Load with `null` so the restore below can tell "never set" apart from
           // an explicit choice; when never set, chunkDuration keeps its
-          // DEFAULT_CHUNK_DURATION_SEC initial value.
+          // DEFAULT_CHUNK_DURATION_SEC initial value. The migrated flag makes
+          // the legacy-default rescue run exactly once (see lib/chunkDuration.js).
           loadSetting('chunkDuration', null),
+          loadSetting('chunkDurationMigrated', false),
           loadSetting('transcriptDisplayMode', 'raw'),
           loadSetting('diarizationNumSpeakers', 0),
           loadSetting('liveTranscriptionEnabled', false),
@@ -1585,12 +1589,19 @@ export default function App() {
         setShowAdvancedInfo(savedShowAdvancedInfo);
         setKeyboardShortcutsEnabled(savedKeyboardShortcutsEnabled === true);
         setEnableChunking(savedEnableChunking);
-        // A saved value means the user previously picked a chunk window; honour
-        // it, but clamp to the allowed range so a value persisted before the
-        // range was tightened (e.g. the old 60 s default) can't exceed the cap.
-        // When absent, chunkDuration keeps its DEFAULT_CHUNK_DURATION_SEC initial value.
-        if (savedChunkDuration != null) {
-          setChunkDuration(Math.max(MIN_CHUNK_DURATION_SEC, Math.min(MAX_CHUNK_DURATION_SEC, savedChunkDuration)));
+        // A saved value means the user previously picked a chunk window (or the
+        // old 20 s default was written back on first boot); honour it, clamped
+        // to the allowed range, except the one-time legacy-default rescue to
+        // the current 60 s default (see lib/chunkDuration.js). When absent,
+        // chunkDuration keeps its DEFAULT_CHUNK_DURATION_SEC initial value.
+        {
+          const { duration, migrationApplied } = restoreChunkDuration({
+            stored: savedChunkDuration, migrated: savedChunkDurationMigrated === true,
+          });
+          if (duration != null) setChunkDuration(duration);
+          // Stamp the flag after the first restore so the rescue never
+          // re-fires on a 20 s value the user re-picks on purpose.
+          if (!savedChunkDurationMigrated || migrationApplied) saveSetting('chunkDurationMigrated', true);
         }
         // 'confidence' was a removed display mode; map any persisted value to 'raw'.
         setTranscriptDisplayMode(savedTranscriptDisplayMode === 'confidence' ? 'raw' : savedTranscriptDisplayMode);
