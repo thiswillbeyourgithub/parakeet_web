@@ -990,11 +990,25 @@ export const OPTIMIZED_ENCODER_NAMES = {
  * The optimized encoder filename to load for a resolved encoder quant, or null
  * to use the canonical `encoder-model<QUANT_SUFFIX>` name. Pure (a lookup gated
  * on the file listing) so both getParakeetModel and tests share one decision.
- * fp32 is special-cased: its weights only load through the shard layout, so the
- * preference requires the optimized SHARD SET in the listing (a flat
+ * fp32 is special-cased TWICE.
+ *
+ * First, its weights only load through the shard layout, so the preference is
+ * keyed on the optimized SHARD SET in the listing (a flat
  * encoder-model.optimized.onnx alone must not flip the choice toward a file the
  * browser paths cannot load); the flat graph need not be listed at all, since
  * the sharded layout carries its own rewritten graph.
+ *
+ * Second, and unlike int8/fp16, the optimized fp32 build is a FALLBACK rather
+ * than a preference: it is used only when the stock shard set is absent. The
+ * fold was built for WebGPU on the theory that the shape ops it removes are the
+ * ones fragmenting the graph across execution providers, and measurement on a
+ * real GPU refuted that (RTX 3090 Ti / Chromium 148, 3 min clip, 4 chunks, encode
+ * wall): stock 174.5 / 157.3 / 200.3 s vs optimized 214.9 / 198.5 / 198.7 s, i.e.
+ * the two cleanly paired runs both put stock ~41 s (~23%) AHEAD and optimized
+ * never won. So a source shipping BOTH layouts keeps the stock build, while a
+ * source shipping ONLY the optimized one still loads (it is bit-exact, just not
+ * faster). Re-run scripts/webgpu-check.mjs --fp32 on a quiet box before
+ * promoting this to a real preference.
  *
  * @param {string} encoderQ Resolved encoder quant ('int8'|'int8-lite'|'fp16'|'fp32').
  * @param {string[]} repoFiles Filenames available in the active source.
@@ -1004,6 +1018,7 @@ export function optimizedEncoderName(encoderQ, repoFiles) {
   const name = OPTIMIZED_ENCODER_NAMES[encoderQ];
   if (!name || !Array.isArray(repoFiles)) return null;
   if (encoderQ === 'fp32') {
+    if (parseEncoderShards(repoFiles).shards.length > 0) return null; // stock wins
     return parseEncoderShards(repoFiles, name).shards.length > 0 ? name : null;
   }
   return repoFiles.includes(name) ? name : null;

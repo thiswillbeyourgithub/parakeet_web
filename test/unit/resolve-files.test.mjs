@@ -190,24 +190,28 @@ describe('resolveFiles: optimized encoder preference', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('fp32 prefers encoder-model.optimized.onnx when present', () => {
-    // Unlike hub.js (which additionally gates fp32 on the optimized SHARD set,
-    // browsers cannot load a flat multi-GB graph), the Node CLI runs on native
-    // ORT with 64-bit memory and resolves the optimized graph's own
-    // encoder-model.optimized.onnx.data sidecar (or .data.NNN shards) from the
-    // graph basename, so the graph file's presence alone is the switch here,
-    // matching the int8/fp16 semantics above.
+  test('fp32 keeps the stock encoder even when the optimized one is present', () => {
+    // Unlike int8/fp16, whose `.optimized.` builds are a preference, the
+    // optimized fp32 build measured ~23% SLOWER on a real GPU (see hub.js
+    // optimizedEncoderName), so stock is first in the candidate list and the
+    // optimized graph is only a fallback for a dir that ships nothing else.
     const dir = makeModelDir([
       'encoder-model.optimized.onnx',
       'encoder-model.onnx',
       'decoder_joint-model.onnx',
       'vocab.txt',
     ]);
-    const r = resolveFiles(dir, 'fp32');
-    assert.equal(basename(r.encoderPath), 'encoder-model.optimized.onnx');
-    // Absence keeps resolving the stock name, pinned by "fp16 and fp32 resolve
-    // their plain names" above.
+    assert.equal(basename(resolveFiles(dir, 'fp32').encoderPath), 'encoder-model.onnx');
     rmSync(dir, { recursive: true, force: true });
+
+    const optOnly = makeModelDir([
+      'encoder-model.optimized.onnx',
+      'decoder_joint-model.onnx',
+      'vocab.txt',
+    ]);
+    assert.equal(basename(resolveFiles(optOnly, 'fp32').encoderPath), 'encoder-model.optimized.onnx',
+      'a dir shipping only the optimized build must still resolve');
+    rmSync(optOnly, { recursive: true, force: true });
   });
 });
 

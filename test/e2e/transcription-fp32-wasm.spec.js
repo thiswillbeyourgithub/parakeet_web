@@ -15,11 +15,12 @@
 // than fail: run `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py` (writes ./fallback_models/sharded)
 // to get coverage locally. serve.mjs serves those shards from MODEL_DIR/sharded/.
 //
-// When the OPTIMIZED fp32 shard set (optimize-encoder-graph.py fold, sharded by
-// shard-fp32.py --encoder encoder-model.optimized.onnx) is also present, this
-// spec doubles as the in-browser proof of the optimized-fp32 preference: it
-// asserts hub.js's optimized-encoder marker exactly when that set is served,
-// so neither the stock nor the optimized configuration can pass as the other.
+// It also pins WHICH fp32 build loads. The optimized fp32 encoder (the
+// optimize-encoder-graph.py fold, sharded by shard-fp32.py --encoder
+// encoder-model.optimized.onnx) measured ~23% SLOWER on a real GPU, so hub.js
+// keeps the stock build whenever both shard sets are available. Asserting the
+// optimized marker's ABSENCE here stops the spec from silently drifting onto
+// the other build when the local mirror ships both, which it does.
 //
 // Built with Claude Code.
 
@@ -112,15 +113,18 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
     `expected the sharded fp32 encoder to be mounted; saw logs:\n${logs.join('\n')}`).toBe(true);
   expect(logs.some((l) => l.includes('pinned to int8')),
     'fp32 opt-in unexpectedly fell back to the int8 pin').toBe(false);
-  // Pin WHICH fp32 build loaded, so neither configuration can pass silently on
-  // the other: when the optimized shard set is served hub.js must prefer it
-  // (same marker contract as transcription-optimized-encoder.spec.js); when
-  // only the stock set is served the preference must not engage.
+  // Pin WHICH fp32 build loaded. The stock shard set is served (asserted above,
+  // it is what this spec needs to run at all), so the stock build must win even
+  // when the optimized shard set sits right next to it: the optimized fp32
+  // encoder measured ~23% SLOWER on a real GPU, so hub.js treats it as a
+  // stock-absent fallback rather than a preference (see optimizedEncoderName).
+  // Without this the spec would silently start covering whichever build the
+  // local mirror happens to ship.
   const optimizedMarker = logs.some((l) => l.includes('[Hub] Using the optimized encoder encoder-model.optimized.onnx'));
   expect(optimizedMarker,
     optimizedServed
-      ? `optimized fp32 shard set is served but the optimized encoder was not preferred; saw logs:\n${logs.join('\n')}`
-      : 'optimized encoder marker appeared although no optimized shard set is served').toBe(optimizedServed);
+      ? `both fp32 shard sets are served, so the STOCK build must load, but the optimized marker appeared; saw logs:\n${logs.join('\n')}`
+      : 'optimized encoder marker appeared although no optimized shard set is served').toBe(false);
 
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 
