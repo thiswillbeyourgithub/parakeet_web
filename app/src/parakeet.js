@@ -442,7 +442,7 @@ export function createEnergySampler(audio, sampleRate, windowSec = 0.15) {
  * > 0 (the default in transcribeChunked, see snapToSilenceSec), each interior
  * boundary is snapped to the QUIETEST point within `snapRadiusSamples` BEFORE its
  * nominal end (searching backward, so a chunk
- * never grows past `maxChunkSamples` and the ~25 s quality wall is respected).
+ * never grows past `maxChunkSamples` and the configured window cap is respected).
  * A chunk edge is where the encoder has the least acoustic context, so a word
  * sitting on the seam is transcribed with low context on both sides; landing the
  * seam in a pause instead removes that worst case. The overlap + text-anchored
@@ -3305,7 +3305,7 @@ export class ParakeetModel {
       // decode wall (encode ran elsewhere, concurrently), while encode_ms /
       // preprocess_ms ride through opts.encoded and stay per-chunk correct.
       // Memory bound: at most `encodeAhead` encoder outputs are alive
-      // (~1 MB each at the default 20 s window), nothing like the weights.
+      // (~3 MB each at the default 60 s window), nothing like the weights.
       const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
       const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = stitchOpts;
       const pending = [];

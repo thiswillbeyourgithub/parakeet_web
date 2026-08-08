@@ -1,7 +1,7 @@
 // Tier-3 realistic long-audio chunking E2E. chunking.spec.js stresses the
 // chunk/stitch path with a tiny 10 s window on the ~11 s JFK clip; this is the
 // complementary realistic case: a ~3 minute continuous speech run through the
-// app at its DEFAULT chunk window.
+// app at a seam-dense 20 s chunk window.
 //
 // The clip is the first 3 minutes of JFK's "We choose to go to the Moon" Rice
 // University address (1962, public domain), cropped + transcribed by
@@ -13,11 +13,11 @@
 // stitched FLEURS clip is still used as the default WER-bench subject; only this
 // e2e was repointed.)
 //
-// The default chunk window is a single 20 s for every backend (see
-// app/src/models.js). This spec SEEDS that 20 s window explicitly (also the
-// max is 25 s, so the window is always short): the
-// 3 min clip then splits into ~10 chunks and the stitched transcript must recover
-// the content across seams that land mid-sentence.
+// The app's default chunk window is 60 s with a 10-90 s range (see
+// app/src/models.js). This spec SEEDS a deliberately smaller 20 s window: the
+// 3 min clip then splits into ~10 chunks (instead of 3 at the default) and the
+// stitched transcript must recover the content across many seams that land
+// mid-sentence.
 //
 // The golden (jfk-moon-3min.expected.txt) is this repo's own int8 pipeline
 // transcript of the same crop at that same 20 s window
@@ -40,7 +40,7 @@ const AUDIO = resolve(FX, 'jfk-moon-3min.mp3');
 const GOLDEN = readFileSync(resolve(FX, 'jfk-moon-3min.expected.txt'), 'utf-8').trim();
 
 test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', async ({ page }) => {
-  // A few minutes of audio split into ~a dozen chunks; well over the default cap.
+  // A few minutes of audio split into ~a dozen chunks at the seeded window.
   test.setTimeout(20 * 60 * 1000);
 
   const errors = [];
@@ -54,8 +54,9 @@ test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', as
     if (hit) { chunkLogs += 1; chunkTotals.add(Number(hit[2])); }
   });
 
-  // Seed backend (wasm) + local model + a 20 s chunk window (the default, and
-  // near the 25 s max), which gives many seams on a 3 min clip.
+  // Seed backend (wasm) + local model + a 20 s chunk window (well below the
+  // 60 s default, matching the golden's generation window), which gives many
+  // seams on a 3 min clip.
   await page.goto('/');
   await seedSettings(page, { chunkDuration: 20 });
   await page.reload();

@@ -538,7 +538,7 @@ describe('planChunks (silence-aware boundaries)', () => {
     assert.equal(plan[1].start, 140, 'next chunk starts overlapSamples before the snapped seam');
   });
 
-  test('never snaps past the max length (searches backward only, respecting the ~25 s wall)', () => {
+  test('never snaps past the max length (searches backward only, respecting the window cap)', () => {
     // A dip AFTER the nominal end must be ignored: honoring it would make the
     // chunk longer than maxChunkSamples.
     const energyAt = (i) => (i === 230 ? 0 : 1); // 230 > nominal end 200
