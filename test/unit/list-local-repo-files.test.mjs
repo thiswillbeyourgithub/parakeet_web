@@ -99,20 +99,20 @@ describe('listLocalRepoFiles', () => {
     assert.deepEqual(files, ['encoder-model.fp16.onnx']);
   });
 
-  test('probes the folded encoder variants so a local mirror gets the same preference as an HF listing', async () => {
-    // Without these candidates a mirror shipping a folded encoder
+  test('probes the optimized encoder variants so a local mirror gets the same preference as an HF listing', async () => {
+    // Without these candidates a mirror shipping an optimized encoder
     // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-encoder-graph.py
     // fold) would never report it, and getParakeetModel could not prefer it.
-    mockServer(['encoder-model.int8.folded.onnx', 'encoder-model.fp16.folded.onnx']);
+    mockServer(['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.fp16.optimized.onnx']);
     const files = await listLocalRepoFiles('/models');
     assert.deepEqual(
       files.sort(),
-      ['encoder-model.fp16.folded.onnx', 'encoder-model.int8.folded.onnx'],
+      ['encoder-model.fp16.optimized.onnx', 'encoder-model.int8.smoothquant.optimized.onnx'],
     );
   });
 
   test('probes the LSE decoder variants so a local mirror gets the same preference as an HF listing', async () => {
-    // Same contract as the folded encoder, decoder side: a mirror shipping an
+    // Same contract as the optimized encoder, decoder side: a mirror shipping an
     // lse decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
     // optimize-decoder-graph.py lse) must be able to report it.
     mockServer(['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.lse.onnx']);

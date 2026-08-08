@@ -914,10 +914,10 @@ export async function listLocalRepoFiles(baseUrl) {
     'decoder_joint-model.fp16.onnx',
     'encoder-model.onnx.data',
     'decoder_joint-model.onnx.data',
-    // Folded encoder / LSE decoder variants (see FOLDED_ENCODER_NAMES /
+    // Optimized encoder / LSE decoder variants (see OPTIMIZED_ENCODER_NAMES /
     // LSE_DECODER_NAMES): probed so a local mirror that ships them gets the
     // same preference as an HF listing.
-    ...Object.values(FOLDED_ENCODER_NAMES),
+    ...Object.values(OPTIMIZED_ENCODER_NAMES),
     ...Object.values(LSE_DECODER_NAMES),
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
@@ -955,44 +955,49 @@ export async function listLocalRepoFiles(baseUrl) {
 // lite build, the decoder always uses the plain int8 file.
 export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
 
-// Folded encoder variants. The model repo can ship an offline constant-folded
+// Optimized encoder variants. The model repo can ship an offline-optimized
 // copy of an encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
-// optimize-encoder-graph.py fold): same weights, same numerics, ~23% fewer
+// optimize-encoder-graph.py fold, which constant-folds the runtime
+// shape-computation glue away): same weights, same numerics, ~23% fewer
 // graph nodes, so ORT builds the inference session ~2 s faster on WASM.
-// Shipping the file IS the opt-in: the model repo gates any folded artifact on
-// a bit-exact `check` plus a WER re-run before committing it, so loaders
-// simply prefer the folded name whenever the active source lists it and fall
+// Shipping the file IS the opt-in: the model repo gates any optimized artifact
+// on a bit-exact `check` plus a WER re-run before committing it, so loaders
+// simply prefer the optimized name whenever the active source lists it and fall
 // back to the canonical name otherwise. fp32 is deliberately absent: its
 // encoder carries external .data/shards the fold pipeline does not produce
-// (a folded fp32 is future WebGPU work), and 'int8-lite' has no folded build.
-export const FOLDED_ENCODER_NAMES = {
-  int8: 'encoder-model.int8.folded.onnx',
-  fp16: 'encoder-model.fp16.folded.onnx',
+// (an optimized fp32 is future WebGPU work), and 'int8-lite' has no optimized
+// build. The int8 name carries its `.smoothquant.` provenance because the
+// optimization was applied to the SmoothQuant int8 build (the one published as
+// the canonical encoder-model.int8.onnx); fp16 is a plain cast of fp32, so its
+// name has no such marker.
+export const OPTIMIZED_ENCODER_NAMES = {
+  int8: 'encoder-model.int8.smoothquant.optimized.onnx',
+  fp16: 'encoder-model.fp16.optimized.onnx',
 };
 
 /**
- * The folded encoder filename to load for a resolved encoder quant, or null to
- * use the canonical `encoder-model<QUANT_SUFFIX>` name. Pure (a lookup gated on
- * the file listing) so both getParakeetModel and tests share one decision.
+ * The optimized encoder filename to load for a resolved encoder quant, or null
+ * to use the canonical `encoder-model<QUANT_SUFFIX>` name. Pure (a lookup gated
+ * on the file listing) so both getParakeetModel and tests share one decision.
  *
  * @param {string} encoderQ Resolved encoder quant ('int8'|'int8-lite'|'fp16'|'fp32').
  * @param {string[]} repoFiles Filenames available in the active source.
  * @returns {string|null}
  */
-export function foldedEncoderName(encoderQ, repoFiles) {
-  const name = FOLDED_ENCODER_NAMES[encoderQ];
+export function optimizedEncoderName(encoderQ, repoFiles) {
+  const name = OPTIMIZED_ENCODER_NAMES[encoderQ];
   return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
 }
 
-// LSE decoder variants, the decoder-side sibling of the folded encoder. The
+// LSE decoder variants, the decoder-side sibling of the optimized encoder. The
 // model repo can ship a decoder_joint with two extra in-graph outputs
 // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py
 // lse): the original graph byte-untouched plus `lse_token`/`lse_duration`,
 // the log-partition scalars the beam decoder otherwise recomputes in JS with
 // ~8k Math.exp per hypothesis per step (parakeet.js _partition consumes them,
 // and falls back to the JS pass on stock decoders). Same opt-in contract as
-// FOLDED_ENCODER_NAMES: shipping the file is the switch, gated repo-side on a
-// bit-exact check of the original outputs. No fp16 entry: an fp16 graph would
+// OPTIMIZED_ENCODER_NAMES: shipping the file is the switch, gated repo-side on
+// a bit-exact check of the original outputs. No fp16 entry: an fp16 graph would
 // accumulate the partition in fp16 and no such artifact is shipped.
 export const LSE_DECODER_NAMES = {
   int8: 'decoder_joint-model.int8.lse.onnx',
@@ -1321,15 +1326,15 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.warn('[Hub] No fp16 encoder in repo; using the fp32 encoder on WebGPU');
   }
 
-  // Prefer the folded encoder build when the active source ships it: identical
-  // numerics, ~23% fewer graph nodes, faster session build (see
-  // FOLDED_ENCODER_NAMES). The name change mints a new cache key, so the
-  // generational sweep below evicts the unfolded blob after the first load.
-  const foldedEncoder = foldedEncoderName(encoderQ, repoFiles);
-  if (foldedEncoder) {
-    console.log(`[Hub] Using the folded encoder ${foldedEncoder} (same numerics, faster session build)`);
+  // Prefer the optimized encoder build when the active source ships it:
+  // identical numerics, ~23% fewer graph nodes, faster session build (see
+  // OPTIMIZED_ENCODER_NAMES). The name change mints a new cache key, so the
+  // generational sweep below evicts the stock blob after the first load.
+  const optimizedEncoder = optimizedEncoderName(encoderQ, repoFiles);
+  if (optimizedEncoder) {
+    console.log(`[Hub] Using the optimized encoder ${optimizedEncoder} (same numerics, faster session build)`);
   }
-  const encoderName = foldedEncoder || `encoder-model${QUANT_SUFFIX[encoderQ]}`;
+  const encoderName = optimizedEncoder || `encoder-model${QUANT_SUFFIX[encoderQ]}`;
   // Same find-and-prefer contract for the LSE decoder (in-graph log-partition
   // outputs the beam decoder consumes instead of its JS log-sum-exp pass).
   const lseDecoder = lseDecoderName(decoderQ, repoFiles);

@@ -157,44 +157,44 @@ describe('resolveFiles: per-quant encoder/decoder/vocab resolution', () => {
   });
 });
 
-// The folded encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// The optimized encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
 // optimize-encoder-graph.py fold: identical numerics, ~23% fewer graph nodes,
 // faster session build) outranks every other name when the model dir ships it.
 // Shipping the file is the opt-in, so its absence (every dir predating it) must
 // resolve exactly as before; the existing tests above pin that side.
-describe('resolveFiles: folded encoder preference', () => {
-  test('int8 prefers encoder-model.int8.folded.onnx over both unfolded names', () => {
+describe('resolveFiles: optimized encoder preference', () => {
+  test('int8 prefers encoder-model.int8.smoothquant.optimized.onnx over both stock names', () => {
     const dir = makeModelDir([
-      'encoder-model.int8.folded.onnx',
+      'encoder-model.int8.smoothquant.optimized.onnx',
       'encoder-model.int8.onnx',
       'encoder-model.int8.smoothquant.onnx',
       'decoder_joint-model.int8.onnx',
       'vocab.txt',
     ]);
     const r = resolveFiles(dir, 'int8');
-    assert.equal(basename(r.encoderPath), 'encoder-model.int8.folded.onnx');
-    // The decoder has no folded variant and must stay on its single name.
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.smoothquant.optimized.onnx');
+    // The decoder has no optimized variant and must stay on its single name.
     assert.equal(basename(r.decoderPath), 'decoder_joint-model.int8.onnx');
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('fp16 prefers encoder-model.fp16.folded.onnx when present', () => {
+  test('fp16 prefers encoder-model.fp16.optimized.onnx when present', () => {
     const dir = makeModelDir([
-      'encoder-model.fp16.folded.onnx',
+      'encoder-model.fp16.optimized.onnx',
       'encoder-model.fp16.onnx',
       'decoder_joint-model.fp16.onnx',
       'vocab.txt',
     ]);
     const r = resolveFiles(dir, 'fp16');
-    assert.equal(basename(r.encoderPath), 'encoder-model.fp16.folded.onnx');
+    assert.equal(basename(r.encoderPath), 'encoder-model.fp16.optimized.onnx');
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('fp32 has no folded variant and ignores stray folded files', () => {
+  test('fp32 has no optimized variant and ignores stray optimized files', () => {
     // fp32's encoder carries external .data/shards the fold pipeline does not
-    // produce, so even a plausibly-named folded file must never be picked.
+    // produce, so even a plausibly-named optimized file must never be picked.
     const dir = makeModelDir([
-      'encoder-model.folded.onnx',
+      'encoder-model.optimized.onnx',
       'encoder-model.onnx',
       'decoder_joint-model.onnx',
       'vocab.txt',
@@ -209,7 +209,7 @@ describe('resolveFiles: folded encoder preference', () => {
 // optimize-decoder-graph.py lse: the identical joint graph plus in-graph
 // lse_token/lse_duration log-partition outputs the beam decoder consumes via
 // _partition) outranks the stock decoder name when the model dir ships it.
-// As with the folded encoder, shipping the file is the opt-in; absence must
+// As with the optimized encoder, shipping the file is the opt-in; absence must
 // resolve exactly as before (pinned by the suites above).
 describe('resolveFiles: LSE decoder preference', () => {
   test('int8 prefers decoder_joint-model.int8.lse.onnx over the stock name', () => {
@@ -252,17 +252,17 @@ describe('resolveFiles: LSE decoder preference', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('mixed quants pick each side\'s preferred artifact (int8 folded encoder + fp32 lse decoder)', () => {
+  test('mixed quants pick each side\'s preferred artifact (int8 optimized encoder + fp32 lse decoder)', () => {
     // The app's actual pairing: int8 encoder with the fp32 decoder_joint.
     const dir = makeModelDir([
-      'encoder-model.int8.folded.onnx',
+      'encoder-model.int8.smoothquant.optimized.onnx',
       'encoder-model.int8.onnx',
       'decoder_joint-model.lse.onnx',
       'decoder_joint-model.onnx',
       'vocab.txt',
     ]);
     const r = resolveFiles(dir, 'int8', 'fp32');
-    assert.equal(basename(r.encoderPath), 'encoder-model.int8.folded.onnx');
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.smoothquant.optimized.onnx');
     assert.equal(basename(r.decoderPath), 'decoder_joint-model.lse.onnx');
     rmSync(dir, { recursive: true, force: true });
   });
