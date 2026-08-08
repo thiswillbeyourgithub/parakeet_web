@@ -61,8 +61,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PARAKEET_E2E_MODEL_DIR }}
-          # Bump this key when the pinned model repo/revision changes.
-          key: parakeet-e2e-models-istupakov-v3-int8
+          # Keyed on the fetch list itself: editing scripts/fetch-e2e-models.mjs
+          # (new file, repo/revision change, optional -> required flip) mints a
+          # fresh cache so newly listed weights get baked in. Optional entries
+          # that 404'd at save time are retried every run (cheap HEAD-sized
+          # miss) until a list edit re-keys the cache.
+          key: parakeet-e2e-models-${{ hashFiles('scripts/fetch-e2e-models.mjs') }}
       - name: Fetch model weights (cache miss only)
         run: npm run e2e:models
 
