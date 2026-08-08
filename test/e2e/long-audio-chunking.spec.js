@@ -58,7 +58,12 @@ test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', as
   // 60 s default, matching the golden's generation window), which gives many
   // seams on a 3 min clip.
   await page.goto('/');
-  await seedSettings(page, { chunkDuration: 20 });
+  // chunkDurationMigrated: 20 s is the LEGACY default, and the app's one-time
+  // migration (lib/chunkDuration.js) rescues an unmigrated 20 to 60, which
+  // would collapse this clip to ~3 chunks. The first boot (pre-seed) already
+  // stamps the flag, but seeding it too makes the deliberate 20 s choice
+  // independent of that ordering detail, like a real user re-picking 20.
+  await seedSettings(page, { chunkDuration: 20, chunkDurationMigrated: true });
   await page.reload();
 
   await page.locator('[data-umami-event="load_model_button"]').click();
