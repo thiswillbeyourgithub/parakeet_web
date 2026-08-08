@@ -914,9 +914,11 @@ export async function listLocalRepoFiles(baseUrl) {
     'decoder_joint-model.fp16.onnx',
     'encoder-model.onnx.data',
     'decoder_joint-model.onnx.data',
-    // Folded encoder variants (see FOLDED_ENCODER_NAMES): probed so a local
-    // mirror that ships them gets the same folded preference as an HF listing.
+    // Folded encoder / LSE decoder variants (see FOLDED_ENCODER_NAMES /
+    // LSE_DECODER_NAMES): probed so a local mirror that ships them gets the
+    // same preference as an HF listing.
     ...Object.values(FOLDED_ENCODER_NAMES),
+    ...Object.values(LSE_DECODER_NAMES),
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) until the
@@ -979,6 +981,34 @@ export const FOLDED_ENCODER_NAMES = {
  */
 export function foldedEncoderName(encoderQ, repoFiles) {
   const name = FOLDED_ENCODER_NAMES[encoderQ];
+  return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
+}
+
+// LSE decoder variants, the decoder-side sibling of the folded encoder. The
+// model repo can ship a decoder_joint with two extra in-graph outputs
+// (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py
+// lse): the original graph byte-untouched plus `lse_token`/`lse_duration`,
+// the log-partition scalars the beam decoder otherwise recomputes in JS with
+// ~8k Math.exp per hypothesis per step (parakeet.js _partition consumes them,
+// and falls back to the JS pass on stock decoders). Same opt-in contract as
+// FOLDED_ENCODER_NAMES: shipping the file is the switch, gated repo-side on a
+// bit-exact check of the original outputs. No fp16 entry: an fp16 graph would
+// accumulate the partition in fp16 and no such artifact is shipped.
+export const LSE_DECODER_NAMES = {
+  int8: 'decoder_joint-model.int8.lse.onnx',
+  fp32: 'decoder_joint-model.lse.onnx',
+};
+
+/**
+ * The LSE decoder filename to load for a resolved decoder quant, or null to
+ * use the canonical `decoder_joint-model<QUANT_SUFFIX>` name.
+ *
+ * @param {string} decoderQ Resolved decoder quant ('int8'|'fp16'|'fp32').
+ * @param {string[]} repoFiles Filenames available in the active source.
+ * @returns {string|null}
+ */
+export function lseDecoderName(decoderQ, repoFiles) {
+  const name = LSE_DECODER_NAMES[decoderQ];
   return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
 }
 
@@ -1300,7 +1330,13 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Using the folded encoder ${foldedEncoder} (same numerics, faster session build)`);
   }
   const encoderName = foldedEncoder || `encoder-model${QUANT_SUFFIX[encoderQ]}`;
-  const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
+  // Same find-and-prefer contract for the LSE decoder (in-graph log-partition
+  // outputs the beam decoder consumes instead of its JS log-sum-exp pass).
+  const lseDecoder = lseDecoderName(decoderQ, repoFiles);
+  if (lseDecoder) {
+    console.log(`[Hub] Using the LSE decoder ${lseDecoder} (in-graph log-partition, faster beam decode)`);
+  }
+  const decoderName = lseDecoder || `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
   // External encoder weights come in one of two layouts. A sharded fp32 encoder
   // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each

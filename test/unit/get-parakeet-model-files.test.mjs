@@ -19,7 +19,7 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getParakeetModel, QuantUnavailableError, foldedEncoderName } from '../../app/src/hub.js';
+import { getParakeetModel, QuantUnavailableError, foldedEncoderName, lseDecoderName } from '../../app/src/hub.js';
 
 // A streaming body so _streamAndCache's reader loop runs; content is irrelevant
 // here (we assert on which files were selected, not their bytes).
@@ -444,5 +444,50 @@ describe('getParakeetModel file selection: folded encoder preference', () => {
     // produce, so even a plausibly-named file must never be preferred.
     assert.equal(foldedEncoderName('fp32', ['encoder-model.folded.onnx', ...REPO_NO_FP16]), null);
     assert.equal(foldedEncoderName('int8', null), null, 'defensive: no listing at all');
+  });
+});
+
+// The LSE decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// optimize-decoder-graph.py lse: the same joint graph plus in-graph
+// lse_token/lse_duration log-partition outputs consumed by the beam decoder's
+// _partition) follows the folded encoder's contract: prefer it whenever the
+// active source lists it, never change the reported quant, resolve exactly as
+// before when absent (the earlier describes pin that side with lse-less
+// fixtures).
+const REPO_LSE_INT8 = ['decoder_joint-model.int8.lse.onnx', ...REPO_NO_FP16];
+
+describe('getParakeetModel file selection: LSE decoder preference', () => {
+  test('WASM int8 + lse shipped -> lse decoder downloaded, stock decoder not fetched, quant still int8', async () => {
+    const downloaded = mockHf(REPO_LSE_INT8);
+    const r = await getParakeetModel('test/wasm-int8-lse', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
+    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' }, 'the lse variant changes the file, never the reported quant');
+    assert.ok(downloaded.includes('decoder_joint-model.int8.lse.onnx'));
+    assert.ok(!downloaded.includes('decoder_joint-model.int8.onnx'), 'must not also fetch the stock decoder');
+    assert.ok(r.cacheInfo.filenames.includes('decoder_joint-model.int8.lse.onnx'),
+      'the lse file gets its own cache key so the sweep can evict the stock blob');
+  });
+
+  test('lse decoder and folded encoder are preferred together (independent switches)', async () => {
+    const downloaded = mockHf(['decoder_joint-model.int8.lse.onnx', ...REPO_FOLDED_INT8]);
+    const r = await getParakeetModel('test/wasm-int8-lse-and-folded', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.encoder, 'encoder-model.int8.folded.onnx');
+    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
+    assert.ok(downloaded.includes('encoder-model.int8.folded.onnx'));
+    assert.ok(downloaded.includes('decoder_joint-model.int8.lse.onnx'));
+  });
+
+  test('lseDecoderName: gated on the listing, fp16 always canonical', () => {
+    assert.equal(lseDecoderName('int8', REPO_LSE_INT8), 'decoder_joint-model.int8.lse.onnx');
+    assert.equal(lseDecoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
+    assert.equal(lseDecoderName('fp32', ['decoder_joint-model.lse.onnx', ...REPO_NO_FP16]), 'decoder_joint-model.lse.onnx');
+    // No fp16 lse artifact is shipped (an fp16 graph would accumulate the
+    // partition in fp16), so even a plausibly-named file must never be preferred.
+    assert.equal(lseDecoderName('fp16', ['decoder_joint-model.fp16.lse.onnx', ...REPO_FP16]), null);
+    assert.equal(lseDecoderName('int8', null), null, 'defensive: no listing at all');
   });
 });

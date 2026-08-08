@@ -492,10 +492,16 @@ export function resolveModelDir(cliDir, repoId) {
 // the opt-in (the model repo gates folded artifacts on a bit-exact check plus
 // a WER re-run), mirroring hub.js FOLDED_ENCODER_NAMES. fp32 has no folded
 // variant (its encoder carries external .data/shards the fold does not produce).
+//
+// Same story for a `.lse.` DECODER (optimize-decoder-graph.py lse): the
+// identical joint graph plus two in-graph log-partition outputs the beam
+// decoder consumes instead of its JS log-sum-exp pass (parakeet.js
+// _partition). Mirrors hub.js LSE_DECODER_NAMES; no fp16 lse artifact is
+// shipped (an fp16 graph would accumulate the partition in fp16).
 const QUANT_FILES = {
   int8: {
     encoder: ['encoder-model.int8.folded.onnx', 'encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
-    decoder: ['decoder_joint-model.int8.onnx'],
+    decoder: ['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.int8.onnx'],
   },
   fp16: {
     encoder: ['encoder-model.fp16.folded.onnx', 'encoder-model.fp16.onnx'],
@@ -503,7 +509,7 @@ const QUANT_FILES = {
   },
   fp32: {
     encoder: ['encoder-model.onnx'],
-    decoder: ['decoder_joint-model.onnx'],
+    decoder: ['decoder_joint-model.lse.onnx', 'decoder_joint-model.onnx'],
   },
 };
 
