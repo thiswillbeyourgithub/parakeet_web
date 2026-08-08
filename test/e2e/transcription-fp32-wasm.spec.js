@@ -15,13 +15,19 @@
 // than fail: run `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py` (writes ./fallback_models/sharded)
 // to get coverage locally. serve.mjs serves those shards from MODEL_DIR/sharded/.
 //
+// When the OPTIMIZED fp32 shard set (optimize-encoder-graph.py fold, sharded by
+// shard-fp32.py --encoder encoder-model.optimized.onnx) is also present, this
+// spec doubles as the in-browser proof of the optimized-fp32 preference: it
+// asserts hub.js's optimized-encoder marker exactly when that set is served,
+// so neither the stock nor the optimized configuration can pass as the other.
+//
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
 
@@ -33,11 +39,18 @@ const fixture = (name) => resolve(here, '../fixtures', name);
 // present the opt-in would fall back to the int8 pin, so there is nothing to
 // test: skip.
 const SHARD_PROBE = '/models/encoder-model.onnx.data.000';
+// When the OPTIMIZED fp32 shard set (optimize-encoder-graph.py fold +
+// shard-fp32.py --encoder encoder-model.optimized.onnx) is also served, hub.js
+// must prefer it; the probe goes to the explicit sharded/ path because
+// serve.mjs's sharded-first rerouting only covers the stock names.
+const OPTIMIZED_SHARD_PROBE = '/models/sharded/encoder-model.optimized.onnx.data.000';
 
 test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async ({ page, request, baseURL }) => {
   const head = await request.head(SHARD_PROBE).catch(() => null);
   requireWeightsOrSkip(test, !head || !head.ok(),
     `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py for local fp32 coverage)`);
+  const optHead = await request.head(OPTIMIZED_SHARD_PROBE).catch(() => null);
+  const optimizedServed = Boolean(optHead && optHead.ok());
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();
@@ -66,8 +79,23 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   // WASM. Seed it directly (rather than driving the settings UI) for a
   // deterministic, fast test of the sharded-fp32-on-WASM load path.
   await page.goto('/');
-  await seedSettings(page, { wasmEncoderQuant: 'fp32' });
+  await seedSettings(page);
   await page.reload();
+
+  // Opt into fp32 through the real encoder-precision radio instead of seeding
+  // wasmEncoderQuant: a seeded value is only applied by the ASYNC settings
+  // restore, and clicking Load straight after reload can beat it (observed: the
+  // spec then silently loads the default int8 weights and fails on the
+  // shard-mount assertion). Driving the radio is race-free (synchronous React
+  // state) and exercises the real UI path, same as transcription-int8-lite.
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Model and performance');
+  const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
+  await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
+  await fp32Radio.check();
+  await expect(fp32Radio).toBeChecked();
+  // Close the settings sidebar so its overlay doesn't intercept the load click.
+  await page.locator('.settings-sidebar-close').click();
 
   await page.locator('[data-umami-event="load_model_button"]').click();
 
@@ -84,6 +112,15 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
     `expected the sharded fp32 encoder to be mounted; saw logs:\n${logs.join('\n')}`).toBe(true);
   expect(logs.some((l) => l.includes('pinned to int8')),
     'fp32 opt-in unexpectedly fell back to the int8 pin').toBe(false);
+  // Pin WHICH fp32 build loaded, so neither configuration can pass silently on
+  // the other: when the optimized shard set is served hub.js must prefer it
+  // (same marker contract as transcription-optimized-encoder.spec.js); when
+  // only the stock set is served the preference must not engage.
+  const optimizedMarker = logs.some((l) => l.includes('[Hub] Using the optimized encoder encoder-model.optimized.onnx'));
+  expect(optimizedMarker,
+    optimizedServed
+      ? `optimized fp32 shard set is served but the optimized encoder was not preferred; saw logs:\n${logs.join('\n')}`
+      : 'optimized encoder marker appeared although no optimized shard set is served').toBe(optimizedServed);
 
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 
