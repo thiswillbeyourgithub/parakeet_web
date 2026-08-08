@@ -99,6 +99,29 @@ const REPO_HF_SHARDED = [
   'vocab.txt', 'nemo128.onnx',
 ];
 
+// Path-aware HF mock: unlike mockHf (which records only the trailing segment),
+// this records the FULL repo-relative path after /resolve/<rev>/ so a test can
+// tell `sharded/encoder-model.onnx` apart from the flat `encoder-model.onnx`.
+// Shared by the sharded-fp32 and optimized-fp32 describes.
+function mockHfPaths(repoFiles) {
+  const present = new Set(repoFiles);
+  const downloaded = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes('/api/models/') && u.includes('/tree/')) {
+      const arr = repoFiles.map((path) => ({ type: 'file', path }));
+      return new Response(JSON.stringify(arr), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    const m = u.match(/\/resolve\/[^/]+\/(.+?)(?:\?|$)/);
+    const rel = m ? m[1].split('/').map(decodeURIComponent).join('/') : u;
+    if (opts.method === 'HEAD') return new Response(null, { status: present.has(rel) ? 200 : 404 });
+    if (!present.has(rel)) return new Response('not found', { status: 404 });
+    downloaded.push(rel);
+    return bodyResponse();
+  };
+  return downloaded;
+}
+
 describe('getParakeetModel file selection: WASM', () => {
   test('int8 request -> int8 encoder/decoder, no external sidecar, no preprocessor (JS default)', async () => {
     const downloaded = mockHf(REPO_NO_FP16);
@@ -238,28 +261,6 @@ describe('getParakeetModel: sharded fp32 straight from HuggingFace (shards under
   let originalFetch2;
   beforeEach(() => { originalFetch2 = globalThis.fetch; });
   afterEach(() => { globalThis.fetch = originalFetch2; });
-
-  // Path-aware HF mock: unlike mockHf (which records only the trailing segment),
-  // this records the FULL repo-relative path after /resolve/<rev>/ so a test can
-  // tell `sharded/encoder-model.onnx` apart from the flat `encoder-model.onnx`.
-  function mockHfPaths(repoFiles) {
-    const present = new Set(repoFiles);
-    const downloaded = [];
-    globalThis.fetch = async (url, opts = {}) => {
-      const u = String(url);
-      if (u.includes('/api/models/') && u.includes('/tree/')) {
-        const arr = repoFiles.map((path) => ({ type: 'file', path }));
-        return new Response(JSON.stringify(arr), { status: 200, headers: { 'content-type': 'application/json' } });
-      }
-      const m = u.match(/\/resolve\/[^/]+\/(.+?)(?:\?|$)/);
-      const rel = m ? m[1].split('/').map(decodeURIComponent).join('/') : u;
-      if (opts.method === 'HEAD') return new Response(null, { status: present.has(rel) ? 200 : 404 });
-      if (!present.has(rel)) return new Response('not found', { status: 404 });
-      downloaded.push(rel);
-      return bodyResponse();
-    };
-    return downloaded;
-  }
 
   test('WASM fp32: fetches the rewritten graph + shards from sharded/, never the flat single-file', async () => {
     const downloaded = mockHfPaths(REPO_HF_SHARDED);
@@ -401,6 +402,15 @@ describe('getParakeetModel file selection: preprocessor backend', () => {
 const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_NO_FP16];
 const REPO_OPTIMIZED_FP16 = ['encoder-model.fp16.optimized.onnx', ...REPO_FP16];
 const REPO_OPTIMIZED_PLUS_LITE = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_LITE];
+// fp32's optimized build is only usable through its OWN shard set (browser paths
+// can never load a flat multi-GB fp32 graph, see the sharded describes above),
+// so the model repo ships it under sharded/ alongside the stock set.
+const REPO_OPTIMIZED_FP32 = [
+  ...REPO_HF_SHARDED,
+  'sharded/encoder-model.optimized.onnx',
+  'sharded/encoder-model.optimized.onnx.data.000',
+  'sharded/encoder-model.optimized.onnx.data.001',
+];
 
 describe('getParakeetModel file selection: optimized encoder preference', () => {
   test('WASM int8 + optimized shipped -> optimized encoder downloaded, stock not fetched, quant still int8', async () => {
@@ -437,12 +447,51 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
     assert.ok(!downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
   });
 
-  test('optimizedEncoderName: gated on the listing, fp32 always canonical', () => {
+  test('WASM fp32 + optimized shard set shipped -> optimized graph + shards from sharded/, stock set not fetched', async () => {
+    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32);
+    const r = await getParakeetModel('test/wasm-fp32-optimized', {
+      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.equal(r.filenames.encoder, 'encoder-model.optimized.onnx', 'filename stays the bare basename the graph references');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
+      ['encoder-model.optimized.onnx.data.000', 'encoder-model.optimized.onnx.data.001'],
+      'mount paths must match the optimized graph\'s external_data basenames');
+    assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx'), 'must fetch the optimized rewritten graph from sharded/');
+    assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx.data.000')
+      && downloaded.includes('sharded/encoder-model.optimized.onnx.data.001'));
+    for (const stock of ['encoder-model.onnx', 'encoder-model.onnx.data', 'sharded/encoder-model.onnx',
+      'sharded/encoder-model.onnx.data.000', 'sharded/encoder-model.onnx.data.001']) {
+      assert.ok(!downloaded.includes(stock), `must not also fetch the stock ${stock}`);
+    }
+  });
+
+  test('WebGPU fp32 + optimized shard set shipped -> same preference, never the flat sidecar', async () => {
+    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32);
+    const r = await getParakeetModel('test/webgpu-fp32-optimized', {
+      backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.equal(r.filenames.encoder, 'encoder-model.optimized.onnx');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
+      ['encoder-model.optimized.onnx.data.000', 'encoder-model.optimized.onnx.data.001']);
+    assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder graph must load as bytes');
+    assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx'));
+    assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must NOT fetch the flat 2.4GB sidecar on WebGPU');
+    assert.ok(!downloaded.includes('sharded/encoder-model.onnx'), 'must not also fetch the stock sharded graph');
+  });
+
+  test('optimizedEncoderName: gated on the listing, fp32 additionally gated on its shard set', () => {
     assert.equal(optimizedEncoderName('int8', REPO_OPTIMIZED_INT8), 'encoder-model.int8.smoothquant.optimized.onnx');
     assert.equal(optimizedEncoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
-    // fp32's encoder carries external .data/shards the fold pipeline does not
-    // produce, so even a plausibly-named file must never be preferred.
-    assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_NO_FP16]), null);
+    // fp32 is only preferred through its shard set: a flat optimized graph
+    // without .data.NNN shards is unloadable in every browser path (2 GB
+    // ArrayBuffer/blob/IDB walls), so it must never be preferred.
+    assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32), 'encoder-model.optimized.onnx');
+    assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_NO_FP16]), null,
+      'flat optimized graph without its shard set -> stock');
+    assert.equal(optimizedEncoderName('fp32', REPO_HF_SHARDED), null,
+      'stock shards alone must not trigger the optimized preference');
     assert.equal(optimizedEncoderName('int8', null), null, 'defensive: no listing at all');
   });
 });

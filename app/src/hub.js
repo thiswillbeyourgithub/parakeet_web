@@ -922,25 +922,30 @@ export async function listLocalRepoFiles(baseUrl) {
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) until the
-  // first gap so resolveModelQuant and the download loop can see them. The
-  // shards (plus the rewritten encoder-model.onnx that points at them) sit
-  // either flat under baseUrl or in a `sharded/` subfolder: scripts/shard-fp32.py's
-  // DEFAULT output is `<model-dir>/sharded`, so an operator who runs it over an
-  // `hf download` mirror and bind-mounts the parent serves the shards at
-  // `/models/sharded/...`, not flat. Probe flat first, then under sharded/, and
-  // report basenames either way so resolveModelQuant stays oblivious to the
-  // layout; getParakeetModel re-probes the physical subfolder to fetch the
-  // encoder graph + shards from the right place (vocab + the int8 decoder, which
-  // scripts/shard-fp32.py does NOT copy into sharded/, still come from the flat root).
-  const shardName = (i) => `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
-  for (let i = 0; ; i++) {
-    if (!(await probe(shardName(i)))) break;
-    files.push(shardName(i));
-  }
-  if (!files.some((f) => /^encoder-model\.onnx\.data\.\d+$/.test(f))) {
+  // first gap so resolveModelQuant and the download loop can see them, for BOTH
+  // fp32 encoder names: the stock encoder-model.onnx and the optimized
+  // encoder-model.optimized.onnx (each shard set gates its own preference, see
+  // optimizedEncoderName). The shards (plus the rewritten graph that points at
+  // them) sit either flat under baseUrl or in a `sharded/` subfolder:
+  // scripts/shard-fp32.py's DEFAULT output is `<model-dir>/sharded`, so an
+  // operator who runs it over an `hf download` mirror and bind-mounts the
+  // parent serves the shards at `/models/sharded/...`, not flat. Probe flat
+  // first, then under sharded/, and report basenames either way so
+  // resolveModelQuant stays oblivious to the layout; getParakeetModel re-probes
+  // the physical subfolder to fetch the encoder graph + shards from the right
+  // place (vocab + the int8 decoder, which scripts/shard-fp32.py does NOT copy
+  // into sharded/, still come from the flat root).
+  for (const enc of ['encoder-model.onnx', OPTIMIZED_ENCODER_NAMES.fp32]) {
+    const shardName = (i) => `${enc}.data.${String(i).padStart(3, '0')}`;
     for (let i = 0; ; i++) {
-      if (!(await probe(`sharded/${shardName(i)}`))) break;
+      if (!(await probe(shardName(i)))) break;
       files.push(shardName(i));
+    }
+    if (!files.some((f) => f.startsWith(`${enc}.data.`))) {
+      for (let i = 0; ; i++) {
+        if (!(await probe(`sharded/${shardName(i)}`))) break;
+        files.push(shardName(i));
+      }
     }
   }
   return files;
@@ -963,22 +968,33 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx'
 // Shipping the file IS the opt-in: the model repo gates any optimized artifact
 // on a bit-exact `check` plus a WER re-run before committing it, so loaders
 // simply prefer the optimized name whenever the active source lists it and fall
-// back to the canonical name otherwise. fp32 is deliberately absent: its
-// encoder carries external .data/shards the fold pipeline does not produce
-// (an optimized fp32 is future WebGPU work), and 'int8-lite' has no optimized
-// build. The int8 name carries its `.smoothquant.` provenance because the
-// optimization was applied to the SmoothQuant int8 build (the one published as
-// the canonical encoder-model.int8.onnx); fp16 is a plain cast of fp32, so its
-// name has no such marker.
+// back to the canonical name otherwise. The fp32 entry matters most on WebGPU:
+// the stock fp32 graph's ~500 shape-glue ops have no WebGPU kernels, so the EP
+// fragments the graph into GPU/CPU ping-pong (~15x slower than WASM int8) and
+// the fold removes exactly that op family. fp32 weights only ever load through
+// the <2 GB shard layout (both browser backends, see resolveModelQuant), so
+// optimizedEncoderName gates the fp32 preference on the OPTIMIZED shard set
+// (encoder-model.optimized.onnx.data.NNN) being listed, not on the flat graph.
+// 'int8-lite' has no optimized build. The int8 name carries its
+// `.smoothquant.` provenance because the optimization was applied to the
+// SmoothQuant int8 build (the one published as the canonical
+// encoder-model.int8.onnx); fp16 and fp32 are plain casts/exports of the same
+// weights, so their names carry only the tag.
 export const OPTIMIZED_ENCODER_NAMES = {
   int8: 'encoder-model.int8.smoothquant.optimized.onnx',
   fp16: 'encoder-model.fp16.optimized.onnx',
+  fp32: 'encoder-model.optimized.onnx',
 };
 
 /**
  * The optimized encoder filename to load for a resolved encoder quant, or null
  * to use the canonical `encoder-model<QUANT_SUFFIX>` name. Pure (a lookup gated
  * on the file listing) so both getParakeetModel and tests share one decision.
+ * fp32 is special-cased: its weights only load through the shard layout, so the
+ * preference requires the optimized SHARD SET in the listing (a flat
+ * encoder-model.optimized.onnx alone must not flip the choice toward a file the
+ * browser paths cannot load); the flat graph need not be listed at all, since
+ * the sharded layout carries its own rewritten graph.
  *
  * @param {string} encoderQ Resolved encoder quant ('int8'|'int8-lite'|'fp16'|'fp32').
  * @param {string[]} repoFiles Filenames available in the active source.
@@ -986,7 +1002,11 @@ export const OPTIMIZED_ENCODER_NAMES = {
  */
 export function optimizedEncoderName(encoderQ, repoFiles) {
   const name = OPTIMIZED_ENCODER_NAMES[encoderQ];
-  return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
+  if (!name || !Array.isArray(repoFiles)) return null;
+  if (encoderQ === 'fp32') {
+    return parseEncoderShards(repoFiles, name).shards.length > 0 ? name : null;
+  }
+  return repoFiles.includes(name) ? name : null;
 }
 
 // LSE decoder variants, the decoder-side sibling of the optimized encoder. The
@@ -1045,6 +1065,17 @@ export function parseEncoderShards(repoFiles, encoderName = 'encoder-model.onnx'
   return { shards: entries.map((e) => e.base), subdir: entries.length ? entries[0].dir : '' };
 }
 
+// Whether the listing carries ANY loadable fp32 shard set: the stock
+// encoder-model.onnx.data.NNN or the optimized encoder-model.optimized.onnx
+// .data.NNN (see OPTIMIZED_ENCODER_NAMES). fp32 weights are only ever loaded
+// through shards on the browser backends, so this is the one existence check
+// resolveModelQuant and quantSatisfiable share; WHICH set to load is decided
+// later by optimizedEncoderName.
+function hasFp32ShardSet(repoFiles) {
+  return parseEncoderShards(repoFiles).shards.length > 0
+    || parseEncoderShards(repoFiles, OPTIMIZED_ENCODER_NAMES.fp32).shards.length > 0;
+}
+
 /**
  * Resolve the effective encoder/decoder quantisation for a backend, given what
  * the repo actually ships. Pure (no I/O) so it can be unit-tested.
@@ -1084,7 +1115,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     // parseEncoderShards matches them flat OR under a `sharded/` subfolder (how
     // the HF tree API lists them and how the model repo ships them), so a request
     // is no longer wrongly pinned just because the shards live in `sharded/`.
-    const hasFp32Shards = parseEncoderShards(repoFiles).shards.length > 0;
+    const hasFp32Shards = hasFp32ShardSet(repoFiles);
     if (allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
       return {
         encoderQ: 'fp32',
@@ -1139,7 +1170,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   // like WASM. Flag when it resolved to fp32 with no shards so the caller can try
   // a /models mirror that ships them, then surface QuantUnavailableError rather
   // than attempting a load that dies deep in ORT (Module.MountedFiles).
-  const hasFp32Shards = parseEncoderShards(repoFiles).shards.length > 0;
+  const hasFp32Shards = hasFp32ShardSet(repoFiles);
   const webgpuFp32NeedsShards = encoderQ === 'fp32' && !hasFp32Shards;
   return {
     encoderQ,

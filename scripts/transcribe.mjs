@@ -491,8 +491,10 @@ export function resolveModelDir(cliDir, repoId) {
 // identical weights and numerics but ~23% fewer graph nodes, so ORT builds the
 // session faster. Shipping the file is the opt-in (the model repo gates
 // optimized artifacts on a bit-exact check plus a WER re-run), mirroring
-// hub.js OPTIMIZED_ENCODER_NAMES. fp32 has no optimized variant (its encoder
-// carries external .data/shards the fold does not produce).
+// hub.js OPTIMIZED_ENCODER_NAMES. The fp32 fold writes its weights to an
+// `encoder-model.optimized.onnx.data` sidecar (or .data.NNN shards, see
+// shard-fp32.py); both createSession paths resolve external data from the graph
+// basename, so the candidate list alone routes them.
 //
 // Same story for a `.lse.` DECODER (optimize-decoder-graph.py lse): the
 // identical joint graph plus two in-graph log-partition outputs the beam
@@ -509,7 +511,7 @@ const QUANT_FILES = {
     decoder: ['decoder_joint-model.fp16.onnx'],
   },
   fp32: {
-    encoder: ['encoder-model.onnx'],
+    encoder: ['encoder-model.optimized.onnx', 'encoder-model.onnx'],
     decoder: ['decoder_joint-model.lse.onnx', 'decoder_joint-model.onnx'],
   },
 };
