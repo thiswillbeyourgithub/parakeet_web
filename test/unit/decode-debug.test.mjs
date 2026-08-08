@@ -70,6 +70,7 @@ function makeModel(script) {
     _advanceDecision: proto._advanceDecision,
     _logSumExp: proto._logSumExp,
     _logAddExp: proto._logAddExp,
+    _partition: proto._partition,
     _topK: proto._topK,
     _expandHyp: proto._expandHyp,
     _applyBlankClosureBatch: proto._applyBlankClosureBatch,
