@@ -501,10 +501,16 @@ export function resolveModelDir(cliDir, repoId) {
 // decoder consumes instead of its JS log-sum-exp pass (parakeet.js
 // _partition). Mirrors hub.js LSE_DECODER_NAMES; no fp16 lse artifact is
 // shipped (an fp16 graph would accumulate the partition in fp16).
+//
+// A `.lse.topk.` decoder outranks the plain `.lse.` one: it is the same graph
+// with the in-graph top-K token logits/ids and the split-out duration logits
+// appended, which lets the greedy loop fetch a few dozen floats per joint call
+// instead of the whole ~8.2k-float row (parakeet.js TOPK_FETCHES). Mirrors
+// hub.js TOPK_DECODER_NAMES, same shipping-the-file-is-the-opt-in contract.
 const QUANT_FILES = {
   int8: {
     encoder: ['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
-    decoder: ['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.int8.onnx'],
+    decoder: ['decoder_joint-model.int8.lse.topk.onnx', 'decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.int8.onnx'],
   },
   fp16: {
     encoder: ['encoder-model.fp16.optimized.onnx', 'encoder-model.fp16.onnx'],
@@ -516,7 +522,7 @@ const QUANT_FILES = {
     // fallback for a dir that ships only it, not a preference. Point --model-dir
     // at a dir holding just one build to A/B them.
     encoder: ['encoder-model.onnx', 'encoder-model.optimized.onnx'],
-    decoder: ['decoder_joint-model.lse.onnx', 'decoder_joint-model.onnx'],
+    decoder: ['decoder_joint-model.lse.topk.onnx', 'decoder_joint-model.lse.onnx', 'decoder_joint-model.onnx'],
   },
 };
 
@@ -843,7 +849,7 @@ async function main() {
   console.error(`[transcribe] dir:   ${dir}`);
   // Name the artifacts resolveFiles actually picked. A quant alone does not say
   // which BUILD ran: the resolver silently prefers a `.optimized.` encoder and a
-  // `.lse.` decoder when the dir ships them, so an A/B between two model dirs
+  // `.lse.topk.`/`.lse.` decoder when the dir ships them, so an A/B between two model dirs
   // (or a timing quoted from this harness) is unattributable without this line.
   console.error(`[transcribe] files: enc ${basename(encoderPath)} / dec ${basename(decoderPath)}`);
 

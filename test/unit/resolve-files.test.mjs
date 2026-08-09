@@ -277,3 +277,68 @@ describe('resolveFiles: LSE decoder preference', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// The TopK decoder (optimize-decoder-graph.py topk) is the LSE graph plus
+// in-graph topk_logits/topk_ids/duration_logits, so the greedy loop can fetch a
+// few dozen floats per joint call instead of the whole row (parakeet.js
+// TOPK_FETCHES). Strict superset, hence ahead of `.lse.` in the candidate list;
+// mirrors hub.js TOPK_DECODER_NAMES.
+describe('resolveFiles: TopK decoder preference', () => {
+  test('int8 prefers decoder_joint-model.int8.lse.topk.onnx over lse and stock', () => {
+    const dir = makeModelDir([
+      'encoder-model.int8.onnx',
+      'decoder_joint-model.int8.lse.topk.onnx',
+      'decoder_joint-model.int8.lse.onnx',
+      'decoder_joint-model.int8.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'int8');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.int8.lse.topk.onnx');
+    assert.equal(basename(r.encoderPath), 'encoder-model.int8.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('fp32 prefers decoder_joint-model.lse.topk.onnx over lse and stock', () => {
+    const dir = makeModelDir([
+      'encoder-model.onnx',
+      'decoder_joint-model.lse.topk.onnx',
+      'decoder_joint-model.lse.onnx',
+      'decoder_joint-model.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'fp32');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.lse.topk.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('no topk file -> the lse decoder still wins, then the stock name', () => {
+    const lseOnly = makeModelDir([
+      'encoder-model.int8.onnx',
+      'decoder_joint-model.int8.lse.onnx',
+      'decoder_joint-model.int8.onnx',
+      'vocab.txt',
+    ]);
+    assert.equal(basename(resolveFiles(lseOnly, 'int8').decoderPath), 'decoder_joint-model.int8.lse.onnx');
+    rmSync(lseOnly, { recursive: true, force: true });
+
+    const stockOnly = makeModelDir([
+      'encoder-model.int8.onnx',
+      'decoder_joint-model.int8.onnx',
+      'vocab.txt',
+    ]);
+    assert.equal(basename(resolveFiles(stockOnly, 'int8').decoderPath), 'decoder_joint-model.int8.onnx');
+    rmSync(stockOnly, { recursive: true, force: true });
+  });
+
+  test('fp16 has no TopK variant and ignores a stray topk-named file', () => {
+    const dir = makeModelDir([
+      'encoder-model.fp16.onnx',
+      'decoder_joint-model.fp16.lse.topk.onnx',
+      'decoder_joint-model.fp16.onnx',
+      'vocab.txt',
+    ]);
+    const r = resolveFiles(dir, 'fp16');
+    assert.equal(basename(r.decoderPath), 'decoder_joint-model.fp16.onnx');
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
