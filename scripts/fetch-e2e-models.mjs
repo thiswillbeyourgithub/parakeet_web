@@ -45,6 +45,7 @@ export const MODELS = [
   // cache (the workflow keys on a hash of this file) so they get baked in.
   { repo: ASR_REPO, file: 'encoder-model.int8.smoothquant.optimized.onnx', optional: true },
   { repo: ASR_REPO, file: 'decoder_joint-model.int8.lse.onnx', optional: true },
+  { repo: ASR_REPO, file: 'decoder_joint-model.int8.lse.topk.onnx', optional: true },
   { repo: 'csukuangfj/sherpa-onnx-pyannote-segmentation-3-0', file: 'model.onnx' },
   { repo: 'csukuangfj/speaker-embedding-models', file: '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx' },
 ];
