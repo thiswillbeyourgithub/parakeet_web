@@ -620,13 +620,45 @@ function hypTailIds(hyp, n) {
 // memory for the whole transcription.
 const DEBUG_ALTERNATIVES_K = 5;
 
+// Stage-2 in-graph TOP-K decoder outputs (the model repo's
+// optimize-decoder-graph.py `topk` artifact, decoder_joint-model*.lse.topk.onnx):
+// the k largest TOKEN logits of the `outputs` row (descending) with their vocab
+// ids, plus the TDT duration logits split out of that same row. They are
+// APPENDED after the stock outputs (which stay bit-identical), so a decoder that
+// ships them is a drop-in replacement.
+//
+// Why they exist: `outputs` is one ~8.2k-float row per joint call (8193 token
+// logits + 5 duration logits) that ORT has to copy back into JS on EVERY step,
+// where the greedy decoder only ever reads its argmax (plus, under decode-debug,
+// the top DEBUG_ALTERNATIVES_K). Fetching only these small outputs skips that
+// readback and the JS full-vocab argmax scan.
+const TOPK_OUTPUT_NAMES = ['topk_logits', 'topk_ids', 'duration_logits'];
+
+// Stage-1 in-graph log-partition scalars (the `lse` artifact). The top-K fast
+// path REQUIRES them: without the full row there is no way to recompute the
+// token/duration log-partition in JS (see _partition).
+const LSE_OUTPUT_NAMES = ['lse_token', 'lse_duration'];
+
+// Exactly what a fast-path joint call fetches. `outputs` (the ~8.2k-float row)
+// and `prednet_lengths` (never read by any decode path) are deliberately
+// absent: ORT prunes execution/readback to the requested outputs, which is
+// where the win comes from. Every other call site passes NO fetches list at
+// all, so its behaviour is byte-identical to before this existed.
+const TOPK_FETCHES = ['output_states_1', 'output_states_2', ...LSE_OUTPUT_NAMES, ...TOPK_OUTPUT_NAMES];
+
+// Temperature at/below which _frameConfidence is a constant 1.0 and never
+// touches the logit row (same 1e-8 threshold it uses internally). The greedy
+// fast path is gated on it because confidence at a positive temperature needs a
+// full-vocab exp sum, which the top-K row cannot provide.
+const GREEDY_CONF_TEMP_EPS = 1e-8;
+
 /**
  * Lightweight Parakeet model wrapper designed for browser usage.
  * Supports the *combined* decoder_joint-model ONNX (encoder+decoder+joiner in
  * transformerjs style) exported by parakeet TDT.
  */
 export class ParakeetModel {
-  constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s, verbose = false, maxEncoderBatch = 1 }) {
+  constructor({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling = 8, windowStride = 0.01, normalizer = (s)=>s, verbose = false, maxEncoderBatch = 1, useTopkOutputs = true }) {
     this.tokenizer = tokenizer;
     this.encoderSession = encoderSession;
     this.joinerSession = joinerSession;
@@ -671,6 +703,39 @@ export class ParakeetModel {
     this._targetTensor = new ort.Tensor('int32', this._targetIdArray, [1, 1]);
     this._targetLenArray = new Int32Array([1]);
     this._targetLenTensor = new ort.Tensor('int32', this._targetLenArray, [1]);
+
+    // Master switch for the in-graph top-K decoder outputs (TOPK_OUTPUT_NAMES).
+    // Default true: shipping a decoder that carries them IS the opt-in, exactly
+    // like the lse artifact. An explicit `false` disables the fast path
+    // ENTIRELY, so every joint call fetches the full `outputs` row again: this
+    // is the A/B control for benchmarking the readback saving and the escape
+    // hatch if a future artifact ever diverges. `transcribe(opts.useTopkOutputs)`
+    // overrides it per call.
+    this.useTopkOutputs = useTopkOutputs !== false;
+    // Memoised capability probe + one-shot engagement log (see _topkOutputsReady).
+    this._topkReady = undefined;
+    this._topkEngagedLogged = false;
+  }
+
+  /**
+   * Whether the LOADED decoder_joint session declares the stage-2 top-K outputs
+   * AND the stage-1 lse ones (the fast path needs both: top-K for the candidate
+   * logits, lse for the log-partition it can no longer compute in JS).
+   *
+   * The lse outputs are consumed opportunistically (`out['lse_token']` is simply
+   * undefined on a stock decoder, see _runCombinedStep), but the top-K decision
+   * has to be made BEFORE the run because it selects the fetch list, so this
+   * reads the session's declared `outputNames` instead. Memoised: the session's
+   * output list never changes for a given model instance.
+   * @returns {boolean}
+   */
+  _topkOutputsReady() {
+    if (this._topkReady === undefined) {
+      const names = this.joinerSession?.outputNames;
+      const has = (n) => Array.isArray(names) && names.includes(n);
+      this._topkReady = TOPK_OUTPUT_NAMES.every(has) && LSE_OUTPUT_NAMES.every(has);
+    }
+    return this._topkReady;
   }
 
   /**
@@ -857,7 +922,7 @@ export class ParakeetModel {
       console.log(`[Parakeet.js] Encoder batching enabled: batch=${maxEncoderBatch} (backend=${backend})`);
     }
 
-    return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose, maxEncoderBatch });
+    return new ParakeetModel({ tokenizer, encoderSession, joinerSession, preprocessor, ort, subsampling, windowStride, verbose, maxEncoderBatch, useTopkOutputs: cfg.useTopkOutputs });
   }
 
   /**
@@ -877,6 +942,7 @@ export class ParakeetModel {
   static async decoderOnlyFromUrls({
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
     wasmPaths, wasmSimd, cpuThreads, subsampling = 8, windowStride = 0.01, verbose = false,
+    useTopkOutputs = true,
   }) {
     if (!decoderUrl || !tokenizerUrl) {
       throw new Error('decoderOnlyFromUrls requires decoderUrl and tokenizerUrl');
@@ -898,7 +964,7 @@ export class ParakeetModel {
     ]);
     return new ParakeetModel({
       tokenizer, encoderSession: null, joinerSession, preprocessor: null,
-      ort, subsampling, windowStride, verbose, maxEncoderBatch: 1,
+      ort, subsampling, windowStride, verbose, maxEncoderBatch: 1, useTopkOutputs,
     });
   }
 
@@ -950,7 +1016,21 @@ export class ParakeetModel {
     });
   }
 
-  async _runCombinedStep(encTensor, token, currentState = null) {
+  /**
+   * One batch-1 decoder+joiner step.
+   *
+   * `stepOpts.topk` asks for the in-graph top-K fast path: the run then fetches
+   * only TOPK_FETCHES (no ~8.2k-float `outputs` row) and the result carries
+   * `topkLogits`/`topkIds` with `tokenLogits: null`. It engages only when the
+   * loaded decoder declares those outputs AND the row actually holds at least
+   * `stepOpts.minK` candidates; otherwise the SAME feeds are re-run with no
+   * fetches list at all, i.e. exactly the pre-existing behaviour (the graph is
+   * deterministic, so the re-run reproduces the discarded fast run bit for bit).
+   * Callers that need arbitrary token logits (phrase boosting, the beam's blank
+   * lookup, prefix search) must not pass `topk`.
+   * @param {object|null} [stepOpts] - { topk: boolean, minK: number }
+   */
+  async _runCombinedStep(encTensor, token, currentState = null, stepOpts = null) {
     const singleToken = typeof token === 'number' ? token : this.blankId;
 
     // Reuse pre-allocated tensors — just mutate the backing array
@@ -966,6 +1046,14 @@ export class ParakeetModel {
       input_states_1: state1,
       input_states_2: state2,
     };
+
+    const wantTopk = !!stepOpts?.topk && this._topkOutputsReady();
+    if (wantTopk) {
+      const fast = this._readTopkStep(await this.joinerSession.run(feeds, TOPK_FETCHES), stepOpts.minK || 1, state1, state2);
+      if (fast) return fast;
+      // k was too small (or an output came back malformed): fall through to the
+      // untouched full-row path below, which re-runs the same feeds.
+    }
 
     const out = await this.joinerSession.run(feeds);
     const logits = out['outputs'];
@@ -1032,6 +1120,73 @@ export class ParakeetModel {
     // index equals the frame advance, so durLogits[i] is the log-weight of
     // advancing `i` frames).
     return { tokenLogits, step, durLogits, newState, logZ, durZ, _logitsTensor: logits };
+  }
+
+  /**
+   * Consume ONE fast-path (TOPK_FETCHES) joiner result into the same result
+   * shape `_runCombinedStep` returns, or null when the row cannot serve this
+   * step (an output missing/malformed, or fewer than `minK` candidates). On
+   * null every tensor read here is disposed, so the caller can safely re-run
+   * the same feeds on the full path.
+   *
+   * The k logits/ids and the 5 duration logits are COPIED out (a few dozen
+   * values) and their tensors freed immediately, mirroring how the lse scalars
+   * are copied out of `lse_token`/`lse_duration`. `tokenLogits` is deliberately
+   * null rather than a truncated array: consumers must branch on the absence of
+   * the full row instead of silently indexing a row that no longer exists.
+   * @returns {object|null}
+   */
+  _readTopkStep(out, minK, fallbackState1, fallbackState2) {
+    const topkL = out['topk_logits'];
+    const topkI = out['topk_ids'];
+    const durT = out['duration_logits'];
+    const outputState1 = out['output_states_1'];
+    const outputState2 = out['output_states_2'];
+    const lseTok = out['lse_token'];
+    const lseDur = out['lse_duration'];
+    const freeSmall = () => {
+      topkL?.dispose?.(); topkI?.dispose?.(); durT?.dispose?.();
+      lseTok?.dispose?.(); lseDur?.dispose?.();
+    };
+    const ok = topkL?.data?.length && topkI?.data?.length && durT?.data?.length
+      && lseTok?.data?.length && lseDur?.data?.length
+      && outputState1 && outputState2
+      && topkI.data.length >= minK && topkL.data.length >= minK;
+    if (!ok) {
+      freeSmall();
+      outputState1?.dispose?.();
+      outputState2?.dispose?.();
+      return null;
+    }
+
+    const topkLogits = topkL.data.slice();
+    const topkIds = topkI.data.slice();
+    const durLogits = durT.data.slice();
+    const logZ = lseTok.data[0];
+    const durZ = lseDur.data[0];
+    freeSmall();
+
+    // Duration argmax over the SAME five logits the full row carries (the graph
+    // only splits them out), so `step` matches the full path exactly.
+    let step = 0, maxVal = -Infinity;
+    for (let i = 0; i < durLogits.length; ++i) {
+      if (durLogits[i] > maxVal) { maxVal = durLogits[i]; step = i; }
+    }
+
+    return {
+      tokenLogits: null,
+      topkLogits,
+      topkIds,
+      step,
+      durLogits,
+      newState: {
+        state1: outputState1 || fallbackState1,
+        state2: outputState2 || fallbackState2,
+      },
+      logZ,
+      durZ,
+      _logitsTensor: null,
+    };
   }
 
   /**
@@ -1455,22 +1610,35 @@ export class ParakeetModel {
    * per-candidate bonus = boosted - true. The chosen token is forced into the
    * alternatives so the view can always show it in context, and alternatives
    * are sorted by boosted value: the order the argmax actually saw.
-   * @param {Float32Array} tokenLogits true (unboosted) logits
-   * @param {{chosenId:number, frame:number, duration:number, boosted:Map|null}} info
+   * On the in-graph top-K fast path there is no full row to scan: `topk`
+   * carries the k descending candidate logits, their ids and the graph's
+   * log-partition, which is everything this record reads (the fast path is
+   * gated on there being no phrase boost, so `boosted` is null there and the
+   * bonus column is uniformly 0). Same record either way.
+   * @param {Float32Array|null} tokenLogits true (unboosted) logits, null on the top-K path
+   * @param {{chosenId:number, frame:number, duration:number, boosted:Map|null,
+   *          topk:{ids:Int32Array, logits:Float32Array, logZ:number}|null}} info
    * @returns {object} per-token debug record (see transcribe()'s decodeDebug)
    */
-  _debugEmitRecord(tokenLogits, { chosenId, frame, duration, boosted = null }) {
-    const altIds = this._topK(tokenLogits, DEBUG_ALTERNATIVES_K);
+  _debugEmitRecord(tokenLogits, { chosenId, frame, duration, boosted = null, topk = null }) {
+    // One accessor for both shapes: a full row indexes by vocab id, a top-K row
+    // looks the id up in its (tiny, k <= 16) id list.
+    const logitOf = topk
+      ? (id) => topk.logits[Array.prototype.indexOf.call(topk.ids, id)]
+      : (id) => tokenLogits[id];
+    const altIds = topk
+      ? Array.from(topk.ids).slice(0, DEBUG_ALTERNATIVES_K)
+      : this._topK(tokenLogits, DEBUG_ALTERNATIVES_K);
     if (!altIds.includes(chosenId)) altIds.push(chosenId);
-    const logZ = this._logSumExp(tokenLogits);
-    const bonusOf = (id) => (boosted?.has(id) ? boosted.get(id) - tokenLogits[id] : 0);
+    const logZ = topk ? topk.logZ : this._logSumExp(tokenLogits);
+    const bonusOf = (id) => (boosted?.has(id) ? boosted.get(id) - logitOf(id) : 0);
     const alternatives = altIds.map((id) => ({
       id,
-      logit: tokenLogits[id],
-      logp: tokenLogits[id] - logZ,
+      logit: logitOf(id),
+      logp: logitOf(id) - logZ,
       boostBonus: bonusOf(id),
     })).sort((a, b) => (b.logit + b.boostBonus) - (a.logit + a.boostBonus));
-    const logpChosen = tokenLogits[chosenId] - logZ;
+    const logpChosen = logitOf(chosenId) - logZ;
     return {
       frame,
       duration,
@@ -1481,7 +1649,7 @@ export class ParakeetModel {
       // and the pill colouring useless. This intrinsic probability is the
       // model's real per-token confidence and is meaningful at any UI temperature.
       conf: Math.exp(logpChosen),
-      trueLogit: tokenLogits[chosenId],
+      trueLogit: logitOf(chosenId),
       logp: logpChosen,
       boostBonus: bonusOf(chosenId),
       rankDelta: null, // greedy has no joint (token+duration) beam score
@@ -2564,6 +2732,12 @@ export class ParakeetModel {
       lengthNormPrune = false,
       nBest = 1,
       forceBeam = false,
+      // Per-call override of the model-level `useTopkOutputs` switch (see the
+      // constructor): `false` forces every joint call to fetch the full
+      // `outputs` row even when the loaded decoder ships the in-graph top-K
+      // outputs. This is the A/B control for the readback saving; undefined
+      // (the default) keeps the model's setting.
+      useTopkOutputs = undefined,
     } = opts;
 
     // Beam search is full-file only: a beam of N hypotheses cannot be serialized
@@ -2644,6 +2818,32 @@ export class ParakeetModel {
       };
       decoderState = hyp.state; // keep the function-scope alias in sync for finally
 
+      // --- In-graph top-K fast path (stage-2 decoder artifact) -----------
+      // Decided ONCE for the whole greedy run because every input is constant
+      // over it. All of these must hold, or the loop keeps fetching the full
+      // ~8.2k-float `outputs` row exactly as before:
+      //   - the loaded decoder declares topk_logits/topk_ids/duration_logits
+      //     AND lse_token/lse_duration (_topkOutputsReady),
+      //   - the fast path is not switched off (model flag or per-call opt),
+      //   - no phrase-boost trie is active: shallow fusion adds rewards to
+      //     ARBITRARY vocab ids before the argmax, which needs the full row,
+      //   - temperature is 0 (GREEDY_CONF_TEMP_EPS): a positive temperature
+      //     prices confidence with a full-vocab exp sum (_frameConfidence),
+      //   - the row carries at least the candidates this run reads: 1 for the
+      //     argmax, DEBUG_ALTERNATIVES_K when decode-debug collects
+      //     alternatives (enforced per call via minK, which falls back to the
+      //     full row rather than reporting a short list).
+      // The BEAM path deliberately never asks for it: _expandHyp needs the
+      // blank's logit even when blank falls outside the top k, _prefixSearch
+      // scores arbitrary extension tokens, and _applyBlankClosureBatch reads
+      // the blank logit too, none of which a top-K row can serve exactly.
+      const topkStepOpts = ((useTopkOutputs ?? this.useTopkOutputs) !== false
+        && !phraseBoost
+        && temperature <= GREEDY_CONF_TEMP_EPS
+        && this._topkOutputsReady())
+        ? { topk: true, minK: collectDecodeDebug ? DEBUG_ALTERNATIVES_K : 1 }
+        : null;
+
       while (hyp.t < Tenc) {
         // Yield to browser every ~50 frames to keep UI responsive
         if (hyp.t % 50 === 0) {
@@ -2654,7 +2854,17 @@ export class ParakeetModel {
         inFlightEncTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
 
         const prevTok = hyp.ids.length ? hyp.ids[hyp.ids.length - 1] : this.blankId;
-        const { tokenLogits, step, newState, _logitsTensor } = await this._runCombinedStep(inFlightEncTensor, prevTok, hyp.state);
+        const { tokenLogits, topkLogits, topkIds, step, newState, logZ, _logitsTensor } =
+          await this._runCombinedStep(inFlightEncTensor, prevTok, hyp.state, topkStepOpts);
+
+        // `tokenLogits === null` means the joint returned only its top-K row
+        // (see _readTopkStep); anything that needs the full vocab row branches
+        // on this. The plan above guarantees nothing in this loop does.
+        const topkStep = tokenLogits === null;
+        if (topkStep && !this._topkEngagedLogged) {
+          this._topkEngagedLogged = true;
+          console.log(`[Parakeet.js] TopK decoder outputs engaged (k=${topkIds.length})`);
+        }
 
         // Phrase boosting (shallow fusion): add the trie's rewards into the
         // token logits before the argmax so the per-step choice is biased
@@ -2663,7 +2873,16 @@ export class ParakeetModel {
         // Argmax is invariant to a positive temperature divide, so we argmax
         // the raw logits directly (avoids the Infinity/NaN trap at temp 0).
         const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
-        let { maxId, maxLogit } = this._pickArgmax(tokenLogits);
+        // The graph's top-K row is sorted descending, so its first entry IS the
+        // argmax; only the ORDER of exactly-equal logits may differ from the JS
+        // scan's lowest-index-wins tie-break (accepted divergence).
+        let maxId, maxLogit;
+        if (topkStep) {
+          maxId = topkIds[0];
+          maxLogit = topkLogits[0];
+        } else {
+          ({ maxId, maxLogit } = this._pickArgmax(tokenLogits));
+        }
 
         // Decode-debug: the boosted values only exist between applyBoost and
         // restore, so capture them here (id -> boosted logit) for the emit
@@ -2683,7 +2902,10 @@ export class ParakeetModel {
           maxLogit = tokenLogits[maxId];
         }
 
-        const confVal = this._frameConfidence(tokenLogits, maxLogit, temperature);
+        // The top-K path is gated on temperature 0, where _frameConfidence is a
+        // constant 1.0 and never touches the (absent) full row; spelled out
+        // here rather than relying on that guard from the outside.
+        const confVal = topkStep ? 1.0 : this._frameConfidence(tokenLogits, maxLogit, temperature);
         hyp.frameConfs.push(confVal);
         hyp.overallLogProb += Math.log(confVal);
 
@@ -2707,6 +2929,9 @@ export class ParakeetModel {
               frame: hyp.t,
               duration: step > 0 ? step : 1,
               boosted: dbgBoosted,
+              // Top-K rows carry their own alternatives + log-partition; minK
+              // above guaranteed at least DEBUG_ALTERNATIVES_K of them.
+              topk: topkStep ? { ids: topkIds, logits: topkLogits, logZ } : null,
             }));
           }
           // Only adopt the new decoder state when a non-blank token is emitted.

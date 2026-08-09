@@ -914,11 +914,13 @@ export async function listLocalRepoFiles(baseUrl) {
     'decoder_joint-model.fp16.onnx',
     'encoder-model.onnx.data',
     'decoder_joint-model.onnx.data',
-    // Optimized encoder / LSE decoder variants (see OPTIMIZED_ENCODER_NAMES /
-    // LSE_DECODER_NAMES): probed so a local mirror that ships them gets the
-    // same preference as an HF listing.
+    // Optimized encoder / LSE / TopK decoder variants (see
+    // OPTIMIZED_ENCODER_NAMES / LSE_DECODER_NAMES / TOPK_DECODER_NAMES): probed
+    // so a local mirror that ships them gets the same preference as an HF
+    // listing.
     ...Object.values(OPTIMIZED_ENCODER_NAMES),
     ...Object.values(LSE_DECODER_NAMES),
+    ...Object.values(TOPK_DECODER_NAMES),
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) until the
@@ -1052,6 +1054,35 @@ export const LSE_DECODER_NAMES = {
  */
 export function lseDecoderName(decoderQ, repoFiles) {
   const name = LSE_DECODER_NAMES[decoderQ];
+  return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
+}
+
+// TopK decoder variants: the LSE decoders (above) with THREE more in-graph
+// outputs appended (optimize-decoder-graph.py topk), the existing ones left
+// bit-identical. `topk_logits`/`topk_ids` are the k largest TOKEN logits of the
+// joint row with their vocab ids, `duration_logits` is the TDT duration slice.
+// They let the decode loop fetch a few dozen floats per joint call instead of
+// reading the whole ~8.2k-float `outputs` row back out of ORT (parakeet.js
+// TOPK_FETCHES / _readTopkStep; a decoder without them keeps the full-row
+// path). Superset of the LSE artifact, so it is preferred OVER it, and the same
+// opt-in contract applies: shipping the file is the switch. No fp16 entry, for
+// the same reason LSE_DECODER_NAMES has none.
+export const TOPK_DECODER_NAMES = {
+  int8: 'decoder_joint-model.int8.lse.topk.onnx',
+  fp32: 'decoder_joint-model.lse.topk.onnx',
+};
+
+/**
+ * The TopK decoder filename to load for a resolved decoder quant, or null when
+ * the active source does not ship it (the caller then falls back to the LSE
+ * name, then to the canonical one).
+ *
+ * @param {string} decoderQ Resolved decoder quant ('int8'|'fp16'|'fp32').
+ * @param {string[]} repoFiles Filenames available in the active source.
+ * @returns {string|null}
+ */
+export function topkDecoderName(decoderQ, repoFiles) {
+  const name = TOPK_DECODER_NAMES[decoderQ];
   return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
 }
 
@@ -1384,13 +1415,21 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Using the optimized encoder ${optimizedEncoder} (same numerics, faster session build)`);
   }
   const encoderName = optimizedEncoder || `encoder-model${QUANT_SUFFIX[encoderQ]}`;
-  // Same find-and-prefer contract for the LSE decoder (in-graph log-partition
-  // outputs the beam decoder consumes instead of its JS log-sum-exp pass).
-  const lseDecoder = lseDecoderName(decoderQ, repoFiles);
+  // Same find-and-prefer contract for the decoder, in two stages: the TopK
+  // variant (in-graph top-K token logits + duration logits, so a decode step
+  // stops reading the full ~8.2k-float row back from ORT) is a superset of the
+  // LSE one (in-graph log-partition outputs the beam decoder consumes instead
+  // of its JS log-sum-exp pass), so it wins when both are listed; otherwise the
+  // LSE one; otherwise the canonical name.
+  const topkDecoder = topkDecoderName(decoderQ, repoFiles);
+  if (topkDecoder) {
+    console.log(`[Hub] Using the TopK decoder ${topkDecoder} (in-graph top-K, smaller per-step readback)`);
+  }
+  const lseDecoder = topkDecoder ? null : lseDecoderName(decoderQ, repoFiles);
   if (lseDecoder) {
     console.log(`[Hub] Using the LSE decoder ${lseDecoder} (in-graph log-partition, faster beam decode)`);
   }
-  const decoderName = lseDecoder || `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
+  const decoderName = topkDecoder || lseDecoder || `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
   // External encoder weights come in one of two layouts. A sharded fp32 encoder
   // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each

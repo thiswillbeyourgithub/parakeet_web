@@ -19,7 +19,7 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getParakeetModel, QuantUnavailableError, optimizedEncoderName, lseDecoderName } from '../../app/src/hub.js';
+import { getParakeetModel, QuantUnavailableError, optimizedEncoderName, lseDecoderName, topkDecoderName } from '../../app/src/hub.js';
 
 // A streaming body so _streamAndCache's reader loop runs; content is irrelevant
 // here (we assert on which files were selected, not their bytes).
@@ -562,5 +562,46 @@ describe('getParakeetModel file selection: LSE decoder preference', () => {
     // partition in fp16), so even a plausibly-named file must never be preferred.
     assert.equal(lseDecoderName('fp16', ['decoder_joint-model.fp16.lse.onnx', ...REPO_FP16]), null);
     assert.equal(lseDecoderName('int8', null), null, 'defensive: no listing at all');
+  });
+});
+
+// The TopK decoder (optimize-decoder-graph.py topk) is the LSE graph with
+// topk_logits/topk_ids/duration_logits appended, i.e. a strict superset, so it
+// must outrank the lse file when both are listed and fall back through lse to
+// the canonical name when it is not.
+const REPO_TOPK_INT8 = ['decoder_joint-model.int8.lse.topk.onnx', ...REPO_LSE_INT8];
+
+describe('getParakeetModel file selection: TopK decoder preference', () => {
+  test('WASM int8 + topk shipped -> topk decoder downloaded, lse and stock not fetched, quant still int8', async () => {
+    const downloaded = mockHf(REPO_TOPK_INT8);
+    const r = await getParakeetModel('test/wasm-int8-topk', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.topk.onnx');
+    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' }, 'the topk variant changes the file, never the reported quant');
+    assert.ok(downloaded.includes('decoder_joint-model.int8.lse.topk.onnx'));
+    assert.ok(!downloaded.includes('decoder_joint-model.int8.lse.onnx'), 'must not also fetch the lse decoder');
+    assert.ok(!downloaded.includes('decoder_joint-model.int8.onnx'), 'must not also fetch the stock decoder');
+    assert.ok(r.cacheInfo.filenames.includes('decoder_joint-model.int8.lse.topk.onnx'),
+      'the topk file gets its own cache key so the sweep can evict the older blob');
+  });
+
+  test('no topk in the listing -> the lse decoder still wins', async () => {
+    const downloaded = mockHf(REPO_LSE_INT8);
+    const r = await getParakeetModel('test/wasm-int8-topk-absent', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
+    assert.ok(!downloaded.includes('decoder_joint-model.int8.lse.topk.onnx'));
+  });
+
+  test('topkDecoderName: gated on the listing, fp16 always canonical', () => {
+    assert.equal(topkDecoderName('int8', REPO_TOPK_INT8), 'decoder_joint-model.int8.lse.topk.onnx');
+    assert.equal(topkDecoderName('int8', REPO_LSE_INT8), null, 'lse alone -> no topk');
+    assert.equal(topkDecoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
+    assert.equal(topkDecoderName('fp32', ['decoder_joint-model.lse.topk.onnx', ...REPO_NO_FP16]), 'decoder_joint-model.lse.topk.onnx');
+    // No fp16 topk artifact is shipped, same reason as the lse one.
+    assert.equal(topkDecoderName('fp16', ['decoder_joint-model.fp16.lse.topk.onnx', ...REPO_FP16]), null);
+    assert.equal(topkDecoderName('int8', null), null, 'defensive: no listing at all');
   });
 });
