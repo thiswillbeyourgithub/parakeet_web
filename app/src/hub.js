@@ -954,10 +954,13 @@ export async function listLocalRepoFiles(baseUrl) {
 // Map a resolved quant to its ONNX filename suffix. fp16 files are produced by
 // parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py and must be hosted in
 // the model repo to be selected. 'int8-lite' is a lighter int8 encoder build
-// (encoder-model.int8.lite.onnx, ~757 MB vs the default int8's ~841 MB: more
-// linear2 nodes kept in fp32, see the model repo's
-// scripts/quantize-int8-smoothquant.py --exclude-worst); only the encoder has a
-// lite build, the decoder always uses the plain int8 file.
+// (encoder-model.int8.lite.onnx, ~757 MB vs the default int8's ~841 MB). BOTH
+// builds keep the worst linear2 MatMuls in fp32 (model repo's
+// scripts/quantize-int8-smoothquant.py --exclude-worst); lite keeps FEWER of
+// them (11, --exclude-worst 0.05) than the default (18), so it quantizes MORE,
+// which is why it is ~84 MB smaller and scores slightly worse (FLEURS macro WER
+// 14.82% vs 14.27%). Only the encoder has a lite build, the decoder always uses
+// the plain int8 file.
 export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
 
 // Optimized encoder variants. The model repo can ship an offline-optimized
