@@ -41,6 +41,20 @@ test('gate precedence: the toggle wins over everything else', () => {
   assert.equal(v.reason, 'off');
 });
 
+test('operator kill-switch forces stock only on explicit false', () => {
+  // VITE_ORT_RELAXED_ENABLE='false': the deployment backs the binary out for
+  // everyone, overriding an opted-in user, with its own reason.
+  const killed = resolveOrtVariant({ ...ALL_ON, operatorEnabled: false });
+  assert.deepEqual(killed, { wasmPaths: ORT_STOCK_BASE, wasmSimd: undefined, engaged: false, reason: 'operator' });
+  // Explicit true and undefined (older callers, tests, non-docker deploys)
+  // both leave the gate to the other facts.
+  assert.equal(resolveOrtVariant({ ...ALL_ON, operatorEnabled: true }).engaged, true);
+  assert.equal(resolveOrtVariant(ALL_ON).engaged, true);
+  // The user's own off still reports as 'off' (their choice, not the
+  // operator's) even when the operator also disabled it.
+  assert.equal(resolveOrtVariant({ ...ALL_ON, relaxedSetting: false, operatorEnabled: false }).reason, 'off');
+});
+
 test('empty and missing facts default to stock, never throw', () => {
   assert.equal(resolveOrtVariant().engaged, false);
   assert.equal(resolveOrtVariant({}).engaged, false);

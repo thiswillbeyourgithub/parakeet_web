@@ -230,6 +230,7 @@ echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boo
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
 echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
+echo "[entrypoint] VITE_ORT_RELAXED_ENABLE=${VITE_ORT_RELAXED_ENABLE:-(not set, relaxed-SIMD ORT gate stays user-toggleable)}"
 echo "[entrypoint] VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-(not set, no default curated list)}"
 # F-142: surface the resolved HSTS / CSP override values so operators can
 # confirm at startup that their docker/.env overrides are actually in the
@@ -517,6 +518,7 @@ VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
 VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
 VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
 VITE_RELAY_ENABLE="${VITE_RELAY_ENABLE:-}" \
+VITE_ORT_RELAXED_ENABLE="${VITE_ORT_RELAXED_ENABLE:-}" \
 VITE_PHRASE_BOOST_DEFAULT="${VITE_PHRASE_BOOST_DEFAULT:-}" \
 VITE_DIARIZATION_SEG_REPO="${VITE_DIARIZATION_SEG_REPO:-}" \
 VITE_DIARIZATION_SEG_FILE="${VITE_DIARIZATION_SEG_FILE:-}" \
@@ -533,6 +535,7 @@ node -e '
     "VITE_ANALYTICS_WEBSITE_ID",
     "VITE_ANALYTICS_SRI",
     "VITE_RELAY_ENABLE",
+    "VITE_ORT_RELAXED_ENABLE",
     "VITE_PHRASE_BOOST_DEFAULT",
     "VITE_DIARIZATION_SEG_REPO",
     "VITE_DIARIZATION_SEG_FILE",

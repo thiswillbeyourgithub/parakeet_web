@@ -20,6 +20,11 @@ export const CONFIG = {
   // (anything else, including unset, keeps it enabled). Server-side
   // RELAY_ENABLE remains the master gate.
   VITE_RELAY_ENABLE: runtime.VITE_RELAY_ENABLE ?? import.meta.env.VITE_RELAY_ENABLE,
+  // 'false' is the operator kill-switch for the Relaxed-SIMD ORT runtime
+  // (lib/ortVariant.js): every visitor gets the vendored stock runtime and the
+  // sidebar toggle hides, no rebuild needed. Anything else (or unset) leaves
+  // the normal toggle+probe+artifacts gate in charge.
+  VITE_ORT_RELAXED_ENABLE: runtime.VITE_ORT_RELAXED_ENABLE ?? import.meta.env.VITE_ORT_RELAXED_ENABLE,
   // Default curated phrase-boost list to pre-select for a fresh visitor (no
   // saved boost choice yet). A bare name or a "<name>.txt"; the UI normalises
   // and validates it against the served manifest. Overridable per-link via the

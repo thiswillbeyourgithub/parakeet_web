@@ -27,9 +27,14 @@ export const ORT_RELAXED_BASE = '/ort-relaxed/';
  * @returns {{wasmPaths: string, wasmSimd: ('relaxed'|undefined), engaged: boolean, reason: (string|null)}}
  *   reason (when not engaged): 'off' | 'unsupported' | 'unavailable' | 'backend'.
  */
-export function resolveOrtVariant({ relaxedSetting, probeSupported, artifactsPresent, backend } = {}) {
+export function resolveOrtVariant({ relaxedSetting, probeSupported, artifactsPresent, backend, operatorEnabled } = {}) {
   const stock = { wasmPaths: ORT_STOCK_BASE, wasmSimd: undefined, engaged: false };
   if (!relaxedSetting) return { ...stock, reason: 'off' };
+  // Operator kill-switch (VITE_ORT_RELAXED_ENABLE='false'): forces the
+  // vendored stock runtime for every visitor regardless of their toggle, so a
+  // deployment can back out the self-compiled binary without a rebuild. Only
+  // an explicit false disengages; undefined (older callers, tests) stays on.
+  if (operatorEnabled === false) return { ...stock, reason: 'operator' };
   if (backend !== 'wasm') return { ...stock, reason: 'backend' };
   if (!probeSupported) return { ...stock, reason: 'unsupported' };
   if (!artifactsPresent) return { ...stock, reason: 'unavailable' };
