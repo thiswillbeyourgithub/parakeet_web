@@ -42,6 +42,7 @@ import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
 import { resolveOrtVariant } from './lib/ortVariant.js';
 import { benchRelaxedAutoPick } from './lib/relaxedAutoPick.js';
+import { isChromiumFamily } from './lib/browserFamily.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -2566,6 +2567,12 @@ export default function App() {
   // Operator kill-switch: VITE_ORT_RELAXED_ENABLE='false' forces the vendored
   // stock runtime for every visitor (and hides the toggle) without a rebuild.
   const relaxedOperatorEnabled = CONFIG.VITE_ORT_RELAXED_ENABLE !== 'false';
+  // Slow-browser heads-up: the WASM engine is ~9x slower outside the
+  // Chromium family (SpiderMonkey SIMD codegen, measured 2026-08-10, see
+  // lib/browserFamily.js). Dismissal is DELIBERATELY not persisted: the
+  // slowness is real on every visit, so the popup returns on every reload.
+  const slowBrowser = useMemo(() => !isChromiumFamily(typeof navigator !== 'undefined' ? navigator : null), []);
+  const [slowBrowserDismissed, setSlowBrowserDismissed] = useState(false);
   useEffect(() => {
     if (!relaxedArtifactsPromiseRef.current) {
       relaxedArtifactsPromiseRef.current = fetch('/ort-relaxed/manifest.json', { method: 'HEAD' })
@@ -5796,6 +5803,23 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      {/* Slow-browser warning: dismissable, never persisted, so it returns on
+          every reload (the slowness does too). */}
+      {slowBrowser && !slowBrowserDismissed && (
+        <Modal onClose={() => setSlowBrowserDismissed(true)}>
+          <div data-testid="slow-browser-modal">
+            <h3 style={{ marginTop: 0 }}>🐢 {t('slowBrowserTitle')}</h3>
+            <p>{t('slowBrowserBody1')}</p>
+            <p>{t('slowBrowserBody2')}</p>
+            <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+              <button className="btn" onClick={() => setSlowBrowserDismissed(true)}>
+                {t('slowBrowserDismiss')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* About modal */}
       {showAbout && (
