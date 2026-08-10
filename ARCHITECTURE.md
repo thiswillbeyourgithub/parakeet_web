@@ -89,7 +89,7 @@ points: the main app and the remote-microphone phone page.
 | `index.html` | Main app HTML entry. |
 | `remote-mic.html` | Separate HTML entry for the phone "remote mic" page. |
 | `vite.config.js` | Vite build config: the `parakeet.js` alias to `app/src`, the two entry points, optional local HTTPS, and the COOP/COEP setup. |
-| `postbuild.mjs` | Post-build SRI injector: adds `integrity=` to the content-hashed `<script>`/`<link>` refs in `dist/*.html`, and emits the asset-integrity / ORT manifests that `backend.js` and `asset-integrity.js` verify against at runtime. |
+| `postbuild.mjs` | Post-build SRI injector: adds `integrity=` to the content-hashed `<script>`/`<link>` refs in `dist/*.html`, and emits the asset-integrity / ORT manifests that `backend.js` and `asset-integrity.js` verify against at runtime. Skips the `ort-relaxed` manifest when the wasm is an un-smudged git-lfs POINTER (a clone without git-lfs), so such a build honestly reports the relaxed runtime as absent instead of engaging a 130-byte "wasm" (`isLfsPointer`, unit-tested in `test/unit/postbuild-lfs-pointer.test.mjs`). |
 | `package.json` / `package-lock.json` | UI dependencies and build scripts. |
 
 ### Source (`app/ui/src/`)
@@ -351,5 +351,5 @@ the `.githooks/pre-push` prompt, or run it by hand. It needs a FREE GPU.
 
 | File | Role |
 |---|---|
-| `.githooks/pre-push` | Runs the fast tiers (unit + http) on every push, then (when a terminal is attached) offers two heavy opt-ins asked UP FRONT so the run is unattended: tier 3 (Playwright WASM E2E, rebuilds `dist` first) and `scripts/webgpu-check.mjs` on a real GPU (`--fp32` by default; override via `PREPUSH_WEBGPU_ARGS`). A `webgpu-check` exit-2 (no GPU) is a SKIP, not a failure. No terminal (CI) skips both. Activated by the root `package.json` `prepare` script. |
+| `.githooks/pre-push` | Runs the fast tiers (unit + http) on every push, then (when a terminal is attached) offers two heavy opt-ins asked UP FRONT so the run is unattended: tier 3 (Playwright WASM E2E, rebuilds `dist` first) and `scripts/webgpu-check.mjs` on a real GPU (`--fp32` by default; override via `PREPUSH_WEBGPU_ARGS`). A `webgpu-check` exit-2 (no GPU) is a SKIP, not a failure. No terminal (CI) skips both. Ends with `git lfs pre-push` (soft-gated on git-lfs being installed) so the LFS-tracked relaxed-SIMD wasm uploads with the push; its sibling `post-checkout`/`post-merge`/`post-commit` hooks are the git-lfs smudge stubs, softened to no-op (instead of hard-failing every commit) on clones without git-lfs. Activated by the root `package.json` `prepare` script. |
 | `.github/workflows/test.yml` | PR CI gate: mirrors the pre-push fast tiers and adds tier-3 E2E as a separate job. |

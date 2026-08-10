@@ -24,7 +24,7 @@
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(__dirname, 'dist');
@@ -81,6 +81,14 @@ async function processHtml(htmlPath) {
 // (scripts/build-ort-relaxed.sh), the opt-in Relaxed-SIMD build under
 // dist/ort-relaxed/; the latter being absent is the normal case and skips
 // quietly, which is also what App.jsx's availability probe keys off.
+// A git-lfs pointer file is what a clone WITHOUT git-lfs checks out in place
+// of the real relaxed-SIMD wasm (tracked via .gitattributes): ~130 bytes of
+// UTF-8 starting with this magic. A real wasm/mjs can never start with it.
+export function isLfsPointer(bytes) {
+  return Buffer.from(bytes.subarray(0, 40)).toString('utf8')
+    .startsWith('version https://git-lfs.github.com/spec/');
+}
+
 async function emitOrtManifest(dirName = 'ort') {
   const ortDir = join(DIST, dirName);
   let entries;
@@ -93,7 +101,16 @@ async function emitOrtManifest(dirName = 'ort') {
   const targets = entries.filter(n => /\.(mjs|wasm)$/.test(n));
   const manifest = {};
   for (const name of targets) {
-    manifest[name] = await sha384(join(ortDir, name));
+    const bytes = await readFile(join(ortDir, name));
+    // Without this, a no-git-lfs clone would manifest the pointer text, the
+    // app's availability probe would see the manifest and engage, and ORT
+    // would then choke on a 130-byte "wasm". Skipping the manifest makes the
+    // gate report the runtime as absent, which is the honest state.
+    if (isLfsPointer(bytes)) {
+      console.warn(`[postbuild] dist/${dirName}/${name} is an un-smudged git-lfs pointer (clone without git-lfs); skipping the ${dirName} manifest so the app falls back to the stock runtime`);
+      return;
+    }
+    manifest[name] = 'sha384-' + createHash('sha384').update(bytes).digest('base64');
   }
   await writeFile(join(ortDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   console.log(`[postbuild] wrote dist/${dirName}/manifest.json (${targets.length} entries)`);
@@ -147,7 +164,11 @@ async function main() {
   await emitAssetIntegrity();
 }
 
-main().catch(err => {
-  console.error('[postbuild] failed:', err);
-  process.exit(1);
-});
+// Run only when invoked as a script (node postbuild.mjs): the unit tests
+// import isLfsPointer and must not trigger a build's side effects.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(err => {
+    console.error('[postbuild] failed:', err);
+    process.exit(1);
+  });
+}
