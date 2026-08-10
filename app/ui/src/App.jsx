@@ -2555,6 +2555,9 @@ export default function App() {
   const relaxedArtifactsPromiseRef = useRef(null);
   const ortVariantRef = useRef(null);
   const relaxedSupported = useMemo(() => wasmRelaxedSimdSupported(), []);
+  // Operator kill-switch: VITE_ORT_RELAXED_ENABLE='false' forces the vendored
+  // stock runtime for every visitor (and hides the toggle) without a rebuild.
+  const relaxedOperatorEnabled = CONFIG.VITE_ORT_RELAXED_ENABLE !== 'false';
   useEffect(() => {
     if (!relaxedArtifactsPromiseRef.current) {
       relaxedArtifactsPromiseRef.current = fetch('/ort-relaxed/manifest.json', { method: 'HEAD' })
@@ -2977,6 +2980,7 @@ export default function App() {
             probeSupported: relaxedSupported,
             artifactsPresent,
             backend,
+            operatorEnabled: relaxedOperatorEnabled,
           });
           if (ortVariantRef.current.engaged) {
             console.log('[ORT] Relaxed-SIMD runtime variant engaged (/ort-relaxed/)');
@@ -6412,7 +6416,7 @@ export default function App() {
               </div>
             )}
 
-            {backend === 'wasm' && relaxedAvailable && relaxedSupported && (
+            {backend === 'wasm' && relaxedAvailable && relaxedSupported && relaxedOperatorEnabled && (
               <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
                 <label style={{ flex: '1 1 auto' }}>
                   <input
