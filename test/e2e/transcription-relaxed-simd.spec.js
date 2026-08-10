@@ -91,3 +91,47 @@ test('relaxed-SIMD engine engages when toggled and transcribes the golden clip',
 
   expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
 });
+
+test('auto mode runs the micro-bench and engagement matches its pick', async ({ page }) => {
+  test.skip(!existsSync(DIST_MANIFEST),
+    existsSync(PUBLIC_DIR)
+      ? 'app/ui/public/ort-relaxed exists but dist/ort-relaxed does not: rebuild app/ui (cd app/ui && npm run build)'
+      : 'no relaxed-SIMD engine artifacts (run scripts/build-ort-relaxed.sh, then rebuild app/ui)');
+
+  const errors = [];
+  let relaxedEngaged = false;
+  let autoPickLine = null;
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+    if (m.text().includes('[ORT] Relaxed-SIMD runtime variant engaged')) relaxedEngaged = true;
+    const mm = /\[ORT\] Relaxed-SIMD auto-pick: (relaxed|stock)/.exec(m.text());
+    if (mm) autoPickLine = mm[1];
+  });
+
+  await page.goto('/');
+  const probe = await page.evaluate(() => WebAssembly.validate(new Uint8Array([
+    0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0,
+    10, 15, 1, 13, 0, 65, 1, 253, 15, 65, 2, 253, 15, 253, 128, 2, 11,
+  ])));
+  test.skip(!probe, 'this browser engine does not validate relaxed SIMD');
+
+  // 'auto' is the default, but seed it explicitly so this spec still tests
+  // auto mode if the default ever changes.
+  await page.locator('[data-umami-event="load_model_button"]').waitFor({ timeout: 30 * 1000 });
+  await page.waitForTimeout(500);
+  await seedSettings(page, { relaxedSimd: 'auto' });
+  await page.reload();
+
+  await page.locator('[data-umami-event="load_model_button"]').click();
+  await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+
+  // The pick is hardware-dependent (V8 on AVX2 picks relaxed, but a CPU where
+  // the relaxed lowering wins nothing legitimately picks stock), so the spec
+  // pins CONSISTENCY: the bench must have run, and the engaged variant must
+  // be exactly what it picked.
+  expect(autoPickLine, 'expected the "[ORT] Relaxed-SIMD auto-pick:" marker').not.toBeNull();
+  expect(relaxedEngaged, `auto-pick said "${autoPickLine}" but engagement disagrees`)
+    .toBe(autoPickLine === 'relaxed');
+
+  expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
+});
