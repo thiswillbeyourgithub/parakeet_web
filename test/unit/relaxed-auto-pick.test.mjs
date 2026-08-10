@@ -33,11 +33,15 @@ test('kernels execute and return an i32 (zero memory dots to zero)', () => {
 });
 
 test('pickFromTimings needs a clear relaxed win, everything else is stock', () => {
-  // 2x faster: clear win.
+  // 2x faster: clear win (V8's measured kernel ratio is 2.06x).
   assert.equal(pickFromTimings(4.0, 2.0), 'relaxed');
   // Exactly at the margin counts as a win (>=).
-  assert.equal(pickFromTimings(1.1, 1.0), 'relaxed');
-  // Inside the margin, equal, and slower all resolve to stock.
+  assert.equal(pickFromTimings(1.5, 1.0), 'relaxed');
+  // Inside the margin, equal, and slower all resolve to stock. 1.45 is the
+  // measured SpiderMonkey kernel ratio, which evaporates end to end
+  // (Firefox ran the relaxed build ~4% SLOWER), so it MUST stay stock: if
+  // the default margin is ever lowered below it, this pin fails.
+  assert.equal(pickFromTimings(1.45, 1.0), 'stock');
   assert.equal(pickFromTimings(1.05, 1.0), 'stock');
   assert.equal(pickFromTimings(1.0, 1.0), 'stock');
   assert.equal(pickFromTimings(1.0, 1.2), 'stock');

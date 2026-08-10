@@ -21,11 +21,16 @@
 // call, cheap enough to run fresh on every model load (no persistence, so an
 // engine update can never leave a stale pick behind).
 //
-// The pick rule is asymmetric on purpose: relaxed must beat plain by a clear
-// margin (default 10%) to be chosen, because stock is the auditable
-// npm-vendored runtime and relaxed numerics are implementation-defined. Ties
-// and losses go to stock; so do all failure modes (no WebAssembly, compile
-// error, nonsensical timings).
+// The pick rule is asymmetric on purpose: relaxed must beat plain by a LARGE
+// margin (default 1.5x) to be chosen, because stock is the auditable
+// npm-vendored runtime, relaxed numerics are implementation-defined, and a
+// kernel-level win dilutes heavily into the full workload. Calibration
+// (2026-08-10, same box): V8's 2.06x kernel win survives as -18.6% end-to-end
+// wall, while SpiderMonkey's 1.45x kernel win EVAPORATES end to end (Firefox
+// measured ~4% SLOWER on the relaxed build despite winning both the int8-dot
+// and relaxed-madd kernels), so a modest kernel win must not flip the
+// runtime. Ties and losses go to stock; so do all failure modes (no
+// WebAssembly, compile error, nonsensical timings).
 //
 // Written with the help of Claude Code.
 
@@ -132,7 +137,7 @@ export function relaxedKernelBytes() { return moduleBytes(RELAXED_STEP); }
 
 // ---- pick logic -------------------------------------------------------------
 
-export const AUTO_PICK_MARGIN = 1.1;
+export const AUTO_PICK_MARGIN = 1.5;
 
 // Pure decision: relaxed only on a clear win; every degenerate timing
 // (zero, NaN, missing) falls back to the auditable stock runtime.
