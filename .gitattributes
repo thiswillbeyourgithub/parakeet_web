@@ -1,0 +1,1 @@
+app/ui/public/ort-relaxed/*.wasm filter=lfs diff=lfs merge=lfs -text
