@@ -19,6 +19,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
 - [Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)
+- [Moteur CPU plus rapide (Relaxed-SIMD)](#moteur-cpu-plus-rapide-relaxed-simd)
 - [Mode dictée](#mode-dictée)
 - [Identification des locuteurs](#identification-des-locuteurs)
 - [Appareils de dictée (SpeechMike)](#appareils-de-dictée-speechmike)
@@ -82,6 +83,14 @@ Choisir un backend GPU semble devoir être plus rapide, mais pour ce modèle ce 
 L'encodeur (un Conformer) émet des centaines d'opérateurs à forme dynamique (`Shape`, `ConstantOfShape`, et la tuyauterie de gather/concat/slice autour). Le moteur WebGPU du navigateur ([onnxruntime-web](https://onnxruntime.ai/)) n'a pas de noyaux GPU pour ces opérateurs : il les exécute donc sur le CPU et découpe l'encodeur en îlots GPU/CPU. Chaque frontière d'îlot est une synchronisation de périphérique, si bien que le GPU attend au lieu de calculer : les poids montent bien en VRAM, mais l'utilisation du GPU reste proche de 0 % et l'exécution de bout en bout finit environ 15x plus lente que la voie WASM int8 (mesuré sur une RTX 3090 Ti, en pleine précision fp32). C'est une limite de la couverture d'opérateurs du moteur, pas de votre GPU.
 
 WASM int8 tourne déjà confortablement plus vite que le temps réel sur une machine courante, c'est donc de toute façon le meilleur choix par défaut. La voie de retour vers l'accélération GPU est un ré-export de l'encodeur à forme statique qui supprime entièrement ces opérateurs à forme dynamique ; s'il voit le jour, le backend GPU pourra être réactivé. Pour le diagnostic, vous pouvez encore forcer WebGPU avec le paramètre d'URL `?webgpu=1`. (Cette analyse, ainsi que l'application, ont été réalisées avec l'aide de [Claude Code](https://claude.com/claude-code).)
+
+## Moteur CPU plus rapide (Relaxed-SIMD)
+
+L'application embarque une seconde version du moteur WASM de ONNX Runtime, compilée avec [Relaxed SIMD](https://github.com/WebAssembly/relaxed-simd), dont l'instruction de produit scalaire int8 compacté accélère nettement le calcul matriciel quantifié sur les navigateurs dont le moteur en tire profit (environ 19 % plus rapide de bout en bout mesuré sur les navigateurs de la famille Chromium avec le modèle int8 ; Firefox valide ces instructions mais ne les exécute pas plus vite, il reste donc sur le moteur standard).
+
+Par défaut le réglage est Auto : au premier chargement du modèle, l'application exécute un micro-benchmark d'environ 40 ms du motif d'instructions exact dans votre navigateur et choisit le moteur le plus rapide, si bien que les utilisateurs de Chrome/Brave/Edge profitent de l'accélération et tous les autres gardent la version standard. Vous pouvez forcer Activé ou Désactivé dans les réglages (appliqué au prochain chargement de page). La qualité de transcription est inchangée dans tous les cas (vérifié par un benchmark WER/CER sur l'intégralité des jeux de validation FLEURS français+anglais).
+
+Comme il s'agit d'un binaire compilé maison plutôt que celui publié sur npm, il est produit par un builder Docker reproductible à chaîne d'outils épinglée (`scripts/build-ort-relaxed-docker.sh --repro-check`, qui le compile deux fois dans des conteneurs neufs et n'installe qu'un résultat identique au bit près) et il est livré avec ses fichiers de provenance `SHA256SUMS` et `BUILD-INFO`, pour que chacun puisse le recompiler et comparer. Les auto-hébergeurs peuvent à tout moment ramener tous les visiteurs sur le moteur standard de npm avec la variable d'environnement `VITE_ORT_RELAXED_ENABLE=false`, sans reconstruction. (Réalisé et mesuré avec l'aide de [Claude Code](https://claude.com/claude-code).)
 
 ## Mode dictée
 

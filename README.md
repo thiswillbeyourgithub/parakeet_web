@@ -19,6 +19,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Why is WebGPU disabled?](#why-is-webgpu-disabled)
+- [Faster CPU engine (Relaxed-SIMD)](#faster-cpu-engine-relaxed-simd)
 - [Dictation Mode](#dictation-mode)
 - [Speaker Diarization](#speaker-diarization)
 - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
@@ -82,6 +83,14 @@ Picking a GPU backend sounds like it should be faster, but for this model it is 
 The encoder (a Conformer) emits hundreds of dynamic-shape operators (`Shape`, `ConstantOfShape`, and the gather/concat/slice plumbing around them). The browser WebGPU runtime ([onnxruntime-web](https://onnxruntime.ai/)) has no GPU kernels for those operators, so it runs them on the CPU and splits the encoder into GPU/CPU islands. Every island boundary is a device synchronization, so the GPU mostly waits instead of computing: the weights do upload to VRAM, but GPU utilization stays near 0% and the end-to-end run comes out roughly 15x slower than the plain WASM int8 path (measured on an RTX 3090 Ti, running at full fp32 precision). This is a limitation of the runtime's operator coverage, not of your GPU.
 
 WASM int8 already runs comfortably faster than real time on a typical machine, so it is the better default regardless. The path back to GPU acceleration is a static-shape re-export of the encoder that removes those dynamic-shape operators entirely; if that lands, the GPU backend can be re-enabled. For diagnostics you can still force WebGPU with the `?webgpu=1` URL parameter. (This analysis, and the app, were done with the help of [Claude Code](https://claude.com/claude-code).)
+
+## Faster CPU engine (Relaxed-SIMD)
+
+The app ships a second build of the ONNX Runtime WASM engine compiled with [Relaxed SIMD](https://github.com/WebAssembly/relaxed-simd), whose packed int8 dot-product instruction speeds up the quantized matrix math considerably on browsers whose engine profits from it (measured about 19% faster end to end on Chromium-family browsers with the int8 model; Firefox validates the instructions but runs them no faster, so it stays on the stock engine).
+
+By default the setting is Auto: at the first model load the app runs a ~40 ms micro-benchmark of the exact instruction pattern in your browser and picks the faster engine, so Chrome/Brave/Edge users get the speedup and everyone else keeps the standard build. You can force On or Off in the settings (applied at the next page load). Transcription quality is unaffected either way (verified by a WER/CER benchmark over the full FLEURS French+English validation sets).
+
+Because this is a self-compiled binary rather than the npm-published one, it is built by a reproducible, pinned-toolchain Docker builder (`scripts/build-ort-relaxed-docker.sh --repro-check`, which compiles it twice in fresh containers and only installs a bit-identical result) and ships with its `SHA256SUMS` and `BUILD-INFO` provenance files so anyone can rebuild and compare. Self-hosters can force every visitor back to the stock npm-vendored engine at any time with the `VITE_ORT_RELAXED_ENABLE=false` environment variable, no rebuild needed. (Built and benchmarked with the help of [Claude Code](https://claude.com/claude-code).)
 
 ## Dictation Mode
 
