@@ -240,6 +240,10 @@ const translations = {
 
     // About / info section
     about: 'About',
+    slowBrowserTitle: 'This browser will be slow',
+    slowBrowserBody1: 'Heads-up: the speech engine runs up to ~10x slower in this browser than in Chromium-based ones (measured in Firefox; its engine optimizes the SIMD math the model relies on much less well). Everything still works, but long recordings will take a while.',
+    slowBrowserBody2: 'For a fast experience, use a Chromium-based browser such as Brave, Chrome, or Edge.',
+    slowBrowserDismiss: 'Got it, continue anyway',
     aboutTitle: 'About ParakeetWeb',
     privacyEmphasis: '100% private & local — your audio never leaves your device, no server, no cloud.',
     instancePerks: 'Nothing to install, no account to create, no ads, no personal or cross-site tracking. Works anywhere Chrome is installed.',
@@ -642,6 +646,10 @@ const translations = {
 
     // About / info section
     about: '\u00c0 propos',
+    slowBrowserTitle: 'Ce navigateur sera lent',
+    slowBrowserBody1: 'Attention : le moteur vocal tourne jusqu\u2019\u00e0 ~10x plus lentement dans ce navigateur que dans ceux bas\u00e9s sur Chromium (mesur\u00e9 dans Firefox ; son moteur optimise beaucoup moins bien le calcul SIMD dont le mod\u00e8le d\u00e9pend). Tout fonctionne quand m\u00eame, mais les enregistrements longs prendront du temps.',
+    slowBrowserBody2: 'Pour une exp\u00e9rience rapide, utilisez un navigateur bas\u00e9 sur Chromium comme Brave, Chrome ou Edge.',
+    slowBrowserDismiss: 'Compris, continuer quand m\u00eame',
     aboutTitle: '\u00c0 propos de ParakeetWeb',
     privacyEmphasis: '100\u00a0% priv\u00e9 et local \u2014 votre audio ne quitte jamais votre appareil, ni serveur, ni cloud.',
     instancePerks: "Rien \u00e0 installer, aucun compte \u00e0 cr\u00e9er, aucune publicit\u00e9, aucun pistage personnel ni intersites. Fonctionne partout o\u00f9 Chrome est install\u00e9.",
