@@ -55,6 +55,30 @@ test('operator kill-switch forces stock only on explicit false', () => {
   assert.equal(resolveOrtVariant({ ...ALL_ON, relaxedSetting: false, operatorEnabled: false }).reason, 'off');
 });
 
+test('auto mode engages only on a clear micro-bench win', () => {
+  const AUTO = { ...ALL_ON, relaxedSetting: 'auto' };
+  // Bench says relaxed: engage exactly like an explicit on.
+  assert.deepEqual(
+    resolveOrtVariant({ ...AUTO, autoPick: 'relaxed' }),
+    { wasmPaths: ORT_RELAXED_BASE, wasmSimd: 'relaxed', engaged: true, reason: null });
+  // Bench says stock, bench missing, bench garbage: all stay on the
+  // auditable vendored runtime with the auto-stock reason.
+  for (const autoPick of ['stock', null, undefined, 'banana']) {
+    const v = resolveOrtVariant({ ...AUTO, autoPick });
+    assert.equal(v.engaged, false, `autoPick=${autoPick}`);
+    assert.equal(v.reason, 'auto-stock');
+  }
+  // The other gates still precede the auto decision.
+  assert.equal(resolveOrtVariant({ ...AUTO, autoPick: 'relaxed', backend: 'webgpu-hybrid' }).reason, 'backend');
+  assert.equal(resolveOrtVariant({ ...AUTO, autoPick: 'relaxed', artifactsPresent: false }).reason, 'unavailable');
+  // Legacy/string forms keep their exact meaning: 'on'/true engage without a
+  // bench, 'off'/false report off (App.jsx migrates persisted false to
+  // 'auto'; seeds and tests that pass false mean literal off).
+  assert.equal(resolveOrtVariant({ ...ALL_ON, relaxedSetting: 'on' }).engaged, true);
+  assert.equal(resolveOrtVariant({ ...ALL_ON, relaxedSetting: false }).reason, 'off');
+  assert.equal(resolveOrtVariant({ ...ALL_ON, relaxedSetting: 'off' }).reason, 'off');
+});
+
 test('empty and missing facts default to stock, never throw', () => {
   assert.equal(resolveOrtVariant().engaged, false);
   assert.equal(resolveOrtVariant({}).engaged, false);

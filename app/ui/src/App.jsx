@@ -41,6 +41,7 @@ import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
 import { resolveOrtVariant } from './lib/ortVariant.js';
+import { benchRelaxedAutoPick } from './lib/relaxedAutoPick.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -787,7 +788,7 @@ export default function App() {
   // the WebAssembly.validate relaxed probe; the choice is applied at the FIRST
   // model load of the page and pinned (ORT's WASM runtime initialises once, so
   // switching binaries or SIMD mode afterwards needs a page reload).
-  const [relaxedSimd, setRelaxedSimd] = useState(false);
+  const [relaxedSimd, setRelaxedSimd] = useState('auto');
   const [relaxedAvailable, setRelaxedAvailable] = useState(false);
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
@@ -1495,7 +1496,7 @@ export default function App() {
           loadSetting('cpuThreads', null),
           loadSetting('cpuThreadsMigrated', false),
           loadSetting('parallelEncode', true),
-          loadSetting('relaxedSimd', false),
+          loadSetting('relaxedSimd', 'auto'),
           loadSetting('noiseSuppression', true),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
@@ -1571,7 +1572,14 @@ export default function App() {
           if (!savedCpuThreadsMigrated || migrationApplied) saveSetting('cpuThreadsMigrated', true);
         }
         setParallelEncode(savedParallelEncode !== false);
-        setRelaxedSimd(savedRelaxedSimd === true);
+        // Tri-state with legacy-boolean migration: a persisted true was a real
+        // opt-in and stays 'on'; a persisted false becomes 'auto' because the
+        // toggle never shipped publicly (no /ort-relaxed/ artifacts were ever
+        // deployed), so every stored false is the old default-persist value,
+        // not a user's choice. Explicit 'off' is representable from now on.
+        setRelaxedSimd(
+          savedRelaxedSimd === true || savedRelaxedSimd === 'on' ? 'on'
+            : savedRelaxedSimd === 'off' ? 'off' : 'auto');
         setNoiseSuppression(savedNoiseSuppression);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
@@ -2975,12 +2983,27 @@ export default function App() {
         // binaries/SIMD mode regardless of toggle churn (reload to change).
         if (!ortVariantRef.current) {
           const artifactsPresent = await (relaxedArtifactsPromiseRef.current || Promise.resolve(false));
+          // In 'auto' mode (the default), a ~40 ms micro-bench of the int8
+          // dot-product instruction decides per engine+CPU: V8 profits from
+          // the relaxed build, SpiderMonkey validates it but runs it slower
+          // (PERF_PLAN #5). Run it only when every other gate could pass, so
+          // most loads (no artifacts, WebGPU, kill-switch) never pay it.
+          let autoPick = null;
+          if (relaxedSimd === 'auto' && backend === 'wasm' && relaxedSupported
+              && artifactsPresent && relaxedOperatorEnabled) {
+            const bench = benchRelaxedAutoPick();
+            autoPick = bench.pick;
+            console.log(`[ORT] Relaxed-SIMD auto-pick: ${bench.pick}`
+              + (bench.reason ? ` (${bench.reason})`
+                : ` (plain ${bench.plainMs.toFixed(1)} ms, relaxed ${bench.relaxedMs.toFixed(1)} ms)`));
+          }
           ortVariantRef.current = resolveOrtVariant({
             relaxedSetting: relaxedSimd,
             probeSupported: relaxedSupported,
             artifactsPresent,
             backend,
             operatorEnabled: relaxedOperatorEnabled,
+            autoPick,
           });
           if (ortVariantRef.current.engaged) {
             console.log('[ORT] Relaxed-SIMD runtime variant engaged (/ort-relaxed/)');
@@ -6418,16 +6441,19 @@ export default function App() {
 
             {backend === 'wasm' && relaxedAvailable && relaxedSupported && relaxedOperatorEnabled && (
               <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                <label style={{ flex: '1 1 auto' }}>
-                  <input
-                    type="checkbox"
-                    name="relaxedSimd"
-                    checked={relaxedSimd}
-                    onChange={e => setRelaxedSimd(e.target.checked)}
-                  />
-                  {' '}{t('relaxedSimd')}
+                <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                  {t('relaxedSimd')}:
                   <InfoTooltip text={t('tooltipRelaxedSimd')} />
-                </label>
+                </span>
+                <select
+                  name="relaxedSimd"
+                  value={relaxedSimd}
+                  onChange={e => setRelaxedSimd(e.target.value)}
+                >
+                  <option value="auto">{t('relaxedSimdAuto')}</option>
+                  <option value="on">{t('relaxedSimdOn')}</option>
+                  <option value="off">{t('relaxedSimdOff')}</option>
+                </select>
               </div>
             )}
 
