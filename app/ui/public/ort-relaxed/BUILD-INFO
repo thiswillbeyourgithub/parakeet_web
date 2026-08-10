@@ -1,0 +1,12 @@
+# Provenance for the committed Relaxed-SIMD ONNX Runtime WASM pair.
+# Produced by scripts/build-ort-relaxed-docker.sh --repro-check, which built
+# the pair twice in two fresh containers and confirmed the two results are
+# bit-identical. Re-run that command and diff SHA256SUMS to audit these bytes.
+ort_version_tag   = v1.27.0
+base_image        = ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
+node_version      = 22.23.2
+emsdk_version     = 4.0.23
+docker_image      = parakeet-ort-relaxed-builder
+docker_image_id   = sha256:85e9ea9dbae50749f492e3f016bb7f325842f260ab945cbb894aa5eb27064cce
+build_date_utc    = 2026-08-10T12:25:50Z
+repro_check       = PASS (2 independent builds, bit-identical)
