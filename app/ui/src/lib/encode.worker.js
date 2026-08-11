@@ -1,11 +1,15 @@
-// Encode worker: runs the Parakeet conformer ENCODER (WASM) off the main
-// thread. App.jsx spawns a small POOL of these (see encodePoolPlan in
-// lib/cpuThreads.js) and wires them into transcribeChunked's injected
-// `encodeChunk` (app/src/parakeet.js): two workers encode different chunks
-// concurrently while the main thread decodes, converting the encoder's
-// saturated thread scaling into throughput on the WASM backend. On WebGPU the
-// whole feature is off (the GPU encoder + decode worker already overlap), so
-// nothing here runs there.
+// Encode worker (WASM only): App.jsx spawns a small POOL of these (see
+// encodePoolPlan in lib/cpuThreads.js) and wires them into transcribeChunked's
+// injected `encodeChunk` (app/src/parakeet.js): two workers encode different
+// chunks concurrently while the main thread decodes, converting the encoder's
+// saturated thread scaling into throughput on the WASM backend.
+//
+// Deliberately NOT used for WebGPU: running the GPU encoder session in a
+// dedicated worker was tried (2026-08-11) as a fix for the rendering coupling
+// (compositor frames gating JSEP yields) and measured ~3x WORSE than the
+// animated main thread. WebGPU callback delivery is gated by the page's
+// compositor activity process-wide, workers included; the actual fix is the
+// html.gpu-run animation pause in App.css/App.jsx.
 //
 // This is a MODULE worker importing ParakeetModel directly from app/src (not
 // via the 'parakeet.js' alias) so the worker bundle stays free of the hub.js
@@ -21,8 +25,8 @@
 // still integrity-checked by initOrt -> backend.js _verifiedOrtWasmPaths.
 //
 // Message contract:
-//   -> {type:'init', encoderUrl, encoderDataUrl, filenames, numThreads, nMels,
-//                    preprocessorBackend, preprocessorUrl, subsampling,
+//   -> {type:'init', encoderUrl, encoderDataUrl, filenames, numThreads,
+//                    nMels, preprocessorBackend, preprocessorUrl, subsampling,
 //                    windowStride, wasmPaths, wasmSimd}
 //   <- {type:'ready'} | {type:'error', message}
 //   -> {type:'encode', id, chunkIndex, pcm:ArrayBuffer, sampleRate,

@@ -177,6 +177,7 @@ async function main() {
     let crashed = false;
     let sessionMode = null;        // "[Parakeet.js] Creating ONNX sessions with execution mode '...'"
     let lastChunk = 0, chunkTotal = 0;
+    let animsPaused = false;       // saw App.jsx's "[Transcribe] animations paused" marker
     let pipelineEngaged = false;   // saw App.jsx's "[Decode] pipeline engaged" marker
     let encoderBatch = 0;          // parakeet.js's "[Parakeet.js] Encoder batching enabled: batch=N"
     let stageSplit = null;         // App.jsx's "[Transcribe] Stage split: ..." line
@@ -212,6 +213,7 @@ async function main() {
       if (md) sessionMode = md[1];
       const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(txt);
       if (hit) { lastChunk = Number(hit[1]); chunkTotal = Number(hit[2]); }
+      if (txt.includes('[Transcribe] animations paused')) animsPaused = true;
       if (txt.includes('[Decode] pipeline engaged')) pipelineEngaged = true;
       const oe = /\[Hub\] Using the optimized encoder (\S+)/.exec(txt);
       if (oe) optimizedEncoder = oe[1];
@@ -348,6 +350,13 @@ async function main() {
       contentChecks.push({ name: 'chunking engaged (>=2)', ok: chunkTotal >= 2, detail: `total=${chunkTotal}` });
       contentChecks.push({ name: `content overlap (>=${MIN_OVERLAP})`, ok: o >= MIN_OVERLAP, detail: o.toFixed(2) });
       contentChecks.push({ name: 'no runaway duplication', ok: gotN <= goldN * 1.5, detail: `${gotN} words vs golden ${goldN}` });
+      // The animation pause is the fix for the WebGPU rendering coupling
+      // (2026-08-11): compositor frames gate WebGPU callback delivery
+      // process-wide, so the spinner taxed every JSEP yield ~50x. Assert the
+      // pause marker so a green run proves the guard engaged; if it ever
+      // regresses, wall time blows up ~15x and content still passes, so the
+      // marker is the only cheap tell.
+      contentChecks.push({ name: 'animations paused (WebGPU guard)', ok: animsPaused, detail: animsPaused ? 'yes' : 'MARKER MISSING (rendering-coupling guard regressed?)' });
       // The decode-worker pipeline (GPU encode overlapping WASM decode) engages
       // on any WebGPU multi-chunk run; assert the marker so a green run proves
       // the worker path ran rather than silently falling through to in-thread.
