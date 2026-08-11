@@ -1314,6 +1314,19 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   to { transform: rotate(360deg); }
 }
 
+/* While a WebGPU transcription runs, EVERY CSS animation on the page is
+   paused (App.jsx toggles this class around runTranscription). Continuous
+   compositor frame production gates WebGPU callback delivery process-wide
+   (main thread AND workers), so an infinite animation like the spinner taxes
+   every JSEP yield inside session.run and slowed the fp32 encoder ~50x
+   (measured 2026-08-11). Discrete updates (progress bar, status text,
+   transitions) only produce a frame per change and are harmless. */
+html.gpu-run *,
+html.gpu-run *::before,
+html.gpu-run *::after {
+  animation-play-state: paused !important;
+}
+
 /* Pulsing dots: softer indicator used while live transcription is streaming */
 .live-dots {
   display: inline-flex;

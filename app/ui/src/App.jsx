@@ -924,6 +924,9 @@ export default function App() {
   const encodeReqIdRef = useRef(0);
   const encodePendingRef = useRef(new Map());  // encode id -> { resolve, reject }
   const encodePoolRoundRobinRef = useRef(0);
+  // Depth of in-flight WebGPU transcription runs holding the html.gpu-run
+  // animation pause (see runTranscription); the class drops only at 0.
+  const gpuRunDepthRef = useRef(0);
   const maxCores = navigator.hardwareConcurrency || 8;
   // ORT-style default (min(4, ceil(cores/2))): hardwareConcurrency counts
   // hyperthreads and ORT-WASM's spin-waiting pool makes oversubscription
@@ -3083,6 +3086,17 @@ export default function App() {
           preprocessorBackend: modelUrls.preprocessorBackend,
           preprocessorUrl: modelUrls.urls.preprocessorUrl,
         } : null;
+        // NOTE (2026-08-11): running the WebGPU encoder session in a dedicated
+        // worker was tried as the fix for the rendering coupling (JSEP yields
+        // inside session.run queueing behind compositor frames while the
+        // spinner animates) and MEASURED WORSE: WebGPU callback delivery is
+        // gated by the page's compositor activity process-wide, so a worker
+        // encode under an animating main page ran ~3x slower than the animated
+        // main thread (723 s vs ~227 s on the 3-min fp32 clip; an ORT-free
+        // mapAsync probe confirmed worker awaits stall >2 s/iter while the
+        // page animates, vs 2.4 ms idle). The actual fix is pausing the page's
+        // CSS animations for the duration of a WebGPU run (the html.gpu-run
+        // toggle in runTranscription), which restores probe speed in-thread.
         if (encodePoolInitParamsRef.current && parallelEncode) {
           startEncodePool();
         } else {
@@ -4551,6 +4565,21 @@ export default function App() {
   async function runTranscription(pcm, { safeName, audioDuration, audioBlob = null, replaceId = null }) {
     setTranscribing(true);
     setStatus(`${t('transcribingFile')} "${safeName}"…`);
+    // WebGPU rendering-coupling guard: pause every CSS animation for the whole
+    // run (the html.gpu-run rule in App.css). Continuous compositor frames
+    // gate WebGPU callback delivery process-wide, so an animating spinner
+    // taxes every JSEP yield inside encoder session.run: measured ~50x on the
+    // fp32 encoder (227 s -> 4.5 s on a 3-min clip, 2026-08-11). Moving the
+    // encoder to a worker does NOT escape this (workers stall even harder
+    // while the page animates), so pausing the page's own animations is the
+    // fix. Depth-counted so overlapping runs never unpause each other early.
+    const gpuRun = backend.startsWith('webgpu');
+    if (gpuRun) {
+      gpuRunDepthRef.current += 1;
+      document.documentElement.classList.add('gpu-run');
+      // Positive marker asserted by scripts/webgpu-check.mjs.
+      console.log('[Transcribe] animations paused (WebGPU rendering-coupling guard)');
+    }
     try {
       // Never decode with a stale/absent boost trie while a rebuild for the
       // current config is pending (see waitForBoostReady above).
@@ -4807,6 +4836,10 @@ export default function App() {
       setStatus('transcriptionFailed');
       alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
     } finally {
+      if (gpuRun) {
+        gpuRunDepthRef.current = Math.max(0, gpuRunDepthRef.current - 1);
+        if (gpuRunDepthRef.current === 0) document.documentElement.classList.remove('gpu-run');
+      }
       setTranscribing(false);
       // The final transcription has now been pushed (or the run failed and
       // the user has been alerted). Either way, drop the awaiting indicator.
