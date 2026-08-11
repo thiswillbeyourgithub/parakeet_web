@@ -2528,8 +2528,21 @@ export default function App() {
         worker.postMessage(initParams);
       });
     });
-    encodePoolReadyRef.current = Promise.all(readies)
-      .then((oks) => oks.every(Boolean) && encodePoolRef.current === pool);
+    // Watchdog: a worker whose init HANGS (neither ready nor error, seen with
+    // a wedged GPU session build) must not leave the ready promise pending
+    // forever, or a transcription gated on it would hang too. 120 s covers a
+    // slow cold init (fp32 = 2.4 GB of weights to stage) with margin.
+    const INIT_WATCHDOG_MS = 120000;
+    const watchdog = new Promise((resolve) => setTimeout(() => resolve(null), INIT_WATCHDOG_MS));
+    encodePoolReadyRef.current = Promise.race([Promise.all(readies), watchdog])
+      .then((oks) => {
+        if (oks === null) {
+          console.warn('[Encode] pool init watchdog fired; falling back');
+          if (encodePoolRef.current === pool) teardownEncodePool('encode pool init timed out');
+          return false;
+        }
+        return oks.every(Boolean) && encodePoolRef.current === pool;
+      });
     return encodePoolReadyRef.current;
   }, [teardownEncodePool]);
 
