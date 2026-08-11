@@ -31,6 +31,22 @@ export function buildExternalData(source, modelFilename) {
 }
 
 /**
+ * ORT executionProviders list for a session-mode string. Shared by fromUrls
+ * and encoderOnlyFromUrls so the EP shape can never drift between the two
+ * session builders.
+ *
+ * @param {('webgpu-hybrid'|'webgpu-strict'|'wasm')} backend Session mode.
+ * @returns {Array<string|object>} executionProviders for InferenceSession.create.
+ */
+export function executionProvidersFor(backend) {
+  const webgpuEp = { name: 'webgpu', deviceType: 'gpu', powerPreference: 'high-performance' };
+  if (backend === 'webgpu-hybrid') return [webgpuEp, 'wasm'];
+  if (backend === 'webgpu-strict') return [webgpuEp];
+  if (backend === 'wasm') return ['wasm'];
+  return [];
+}
+
+/**
  * Build the per-transcription perf metrics object and, when `perfEnabled`, log
  * the `[Perf]` summary plus the per-phase table. `proc_t/dur_t` is the
  * processing-time / audio-duration ratio (lower is faster; < 1 = faster than
@@ -802,7 +818,7 @@ export class ParakeetModel {
     const isFullWasm = backend === 'wasm';
 
     const baseSessionOptions = {
-      executionProviders: [],
+      executionProviders: executionProvidersFor(backend),
       graphOptimizationLevel: 'all',
       executionMode: 'parallel',
       enableCpuMemArena: true,
@@ -811,29 +827,6 @@ export class ParakeetModel {
       enableGraphCapture: graphCaptureEnabled,
       logSeverityLevel: verbose ? 0 : 2, // 0=verbose, 2=warning
     };
-
-    // Set execution provider based on backend
-    if (backend === 'webgpu-hybrid') {
-      // WebGPU with fallback to WASM for encoder; decoder may be forced to WASM-only.
-      baseSessionOptions.executionProviders = [
-        {
-          name: 'webgpu',
-          deviceType: 'gpu',
-          powerPreference: 'high-performance'
-        },
-        'wasm'
-      ];
-    } else if (backend === 'webgpu-strict') {
-      baseSessionOptions.executionProviders = [
-        {
-          name: 'webgpu',
-          deviceType: 'gpu',
-          powerPreference: 'high-performance'
-        }
-      ];
-    } else if (backend === 'wasm') {
-      baseSessionOptions.executionProviders = ['wasm'];
-    }
 
     console.log(`[Parakeet.js] Creating ONNX sessions with execution mode '${backend}'. Providers:`, baseSessionOptions.executionProviders);
     if (verbose) {
@@ -969,15 +962,20 @@ export class ParakeetModel {
   }
 
   /**
-   * Build an ENCODE-ONLY ParakeetModel: the encoder ONNX session (forced to the
-   * WASM EP) + the mel preprocessor, with NO joiner session and NO tokenizer.
-   * Such a model can only run encode()/computeFeatures(); transcribe() is off
-   * the table (no joiner, no vocab). This is what each encode-pool worker
-   * (`app/ui/src/lib/encode.worker.js`) instantiates so two workers can encode
-   * different chunks concurrently while the main thread decodes (chunk-parallel
-   * encoding, the WASM throughput lever; see transcribeChunked's injected
-   * `encodeChunk`). Mirrors decoderOnlyFromUrls: same session/externalData
-   * plumbing as fromUrls so no encode logic is duplicated.
+   * Build an ENCODE-ONLY ParakeetModel: the encoder ONNX session + the mel
+   * preprocessor, with NO joiner session and NO tokenizer. Such a model can
+   * only run encode()/computeFeatures(); transcribe() is off the table (no
+   * joiner, no vocab). This is what each encode worker
+   * (`app/ui/src/lib/encode.worker.js`) instantiates, on the 'wasm' backend:
+   * the chunk-parallel WASM encode pool, two workers encoding different
+   * chunks concurrently while the main thread decodes. Mirrors
+   * decoderOnlyFromUrls: same session/externalData plumbing as fromUrls so no
+   * encode logic is duplicated. `backend` also accepts the webgpu modes for
+   * API symmetry with fromUrls (executionProvidersFor is shared), but the app
+   * does NOT run the GPU encoder in a worker: that was tried 2026-08-11 and
+   * measured ~3x worse than the main thread, because WebGPU callback delivery
+   * is gated by the page's compositor activity process-wide (the fix for the
+   * rendering coupling is App.jsx's html.gpu-run animation pause instead).
    *
    * `encoderUrl`/`encoderDataUrl` may be URL strings OR raw bytes (Uint8Array),
    * matching fromUrls; the caller (main thread) is expected to hand pre-verified
@@ -985,7 +983,7 @@ export class ParakeetModel {
    * second unverified fetch.
    */
   static async encoderOnlyFromUrls({
-    encoderUrl, encoderDataUrl, filenames,
+    encoderUrl, encoderDataUrl, filenames, backend = 'wasm',
     wasmPaths, wasmSimd, cpuThreads, preprocessorBackend = 'js', preprocessorUrl, nMels = 128,
     subsampling = 8, windowStride = 0.01, verbose = false,
   }) {
@@ -995,9 +993,16 @@ export class ParakeetModel {
     if (preprocessorBackend !== 'js' && !preprocessorUrl) {
       throw new Error('encoderOnlyFromUrls requires preprocessorUrl when preprocessorBackend is not "js"');
     }
-    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads, simd: wasmSimd });
+    const executionProviders = executionProvidersFor(backend);
+    if (!executionProviders.length) {
+      throw new Error(`encoderOnlyFromUrls: unsupported backend '${backend}'`);
+    }
+    const ort = await initOrt({
+      backend: backend.startsWith('webgpu') ? 'webgpu' : 'wasm',
+      wasmPaths, numThreads: cpuThreads, simd: wasmSimd,
+    });
     const sessionOptions = {
-      executionProviders: ['wasm'],
+      executionProviders,
       graphOptimizationLevel: 'all',
       executionMode: 'parallel',
       enableCpuMemArena: true,
@@ -3259,7 +3264,23 @@ export class ParakeetModel {
     // so callers don't need a separate branch.
     if (!enableChunking || audio.length <= maxChunkSamples) {
       const t0 = performance.now();
-      const result = await this.transcribe(audio, sampleRate, transcribeOpts);
+      // An injected encodeChunk carries the single-pass encode too, keeping
+      // the driver contract uniform: a caller that off-loads encode() gets it
+      // off-loaded regardless of clip length. decodeChunk keeps precedence,
+      // matching the pipelined driver below. The WASM encode pool never hits
+      // this: App.jsx only injects it for clips long enough to multi-chunk.
+      const { encodeChunk: soloEncode, decodeChunk: soloDecode, ...soloOpts } = transcribeOpts;
+      let result;
+      if (typeof soloEncode === 'function' && typeof soloDecode !== 'function') {
+        const encoded = await soloEncode(
+          audio,
+          { chunkIndex: 0, audioLen: audio.length },
+          { enableProfiling: this.verbose || !!transcribeOpts.enableProfiling },
+        );
+        result = await this.transcribe(audio, sampleRate, { ...soloOpts, encoded });
+      } else {
+        result = await this.transcribe(audio, sampleRate, transcribeOpts);
+      }
       if (onChunk) {
         await onChunk({
           chunkNum: 1,

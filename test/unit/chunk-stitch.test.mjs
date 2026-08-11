@@ -407,6 +407,88 @@ describe('transcribeChunked chunk-parallel encode (injected encodeChunk)', () =>
   });
 });
 
+// Single-pass path (clip fits in one chunk, or chunking disabled): the WebGPU
+// encode worker exists to keep session.run off the rendering-coupled main
+// thread, and a <= chunk-length clip pays the same per-run tax as a chunked
+// one, so an injected encodeChunk must carry this path too. decodeChunk keeps
+// precedence exactly like the multi-chunk driver.
+describe('transcribeChunked single-pass with injected encodeChunk', () => {
+  // 5 s < chunkDurationSec 10 => audio.length <= maxChunkSamples, single pass.
+  const SHORT = makeAudio(80000);
+
+  // transcribe() REQUIRES opts.encoded and asserts the driver fields were
+  // stripped, so passing proves the injected encode was consumed, not ignored.
+  function makeSoloModel() {
+    const m = {
+      stats: { encodes: 0, meta: null, pcmLen: 0, encodeOpts: null },
+      transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+      transcribe: async (chunk, sampleRate, opts) => {
+        assert.ok(opts.encoded, 'single pass must feed transcribe() the injected encode');
+        assert.ok(!('encodeChunk' in opts) && !('decodeChunk' in opts),
+          'driver fields must not leak into transcribe opts');
+        return spanResult(opts.encoded.__start / sampleRate, (opts.encoded.__start + opts.encoded.__len) / sampleRate);
+      },
+      encodeChunk: async (pcm, meta, encodeOpts) => {
+        m.stats.encodes += 1;
+        m.stats.meta = meta;
+        m.stats.pcmLen = pcm.length;
+        m.stats.encodeOpts = encodeOpts;
+        return { __start: pcm[0], __len: pcm.length };
+      },
+    };
+    return m;
+  }
+
+  test('short clip: encodeChunk runs once on the full clip and matches the in-thread result', async () => {
+    const serial = await makePipelineModel().transcribeChunked(SHORT, SR, CHUNK_OPTS);
+    const model = makeSoloModel();
+    const seen = [];
+    const res = await model.transcribeChunked(SHORT, SR, { ...CHUNK_OPTS, encodeChunk: model.encodeChunk },
+      async ({ chunkNum, totalChunks }) => { seen.push([chunkNum, totalChunks]); });
+    assert.equal(res.utterance_text, serial.utterance_text, 'text must match the in-thread single pass');
+    assert.deepEqual(
+      res.words.map((w) => [w.text, w.start_time, w.end_time]),
+      serial.words.map((w) => [w.text, w.start_time, w.end_time]),
+      'words must match the in-thread single pass',
+    );
+    assert.equal(model.stats.encodes, 1, 'exactly one encode dispatch');
+    assert.equal(model.stats.pcmLen, SHORT.length, 'encodeChunk sees the whole clip');
+    assert.deepEqual(model.stats.meta, { chunkIndex: 0, audioLen: SHORT.length });
+    assert.equal(typeof model.stats.encodeOpts.enableProfiling, 'boolean');
+    assert.deepEqual(seen, [[1, 1]], 'onChunk still fires once as chunk 1/1');
+  });
+
+  test('enableChunking:false routes even a long clip through encodeChunk once', async () => {
+    const model = makeSoloModel();
+    const res = await model.transcribeChunked(AUDIO, SR,
+      { ...CHUNK_OPTS, enableChunking: false, encodeChunk: model.encodeChunk });
+    assert.equal(model.stats.encodes, 1, 'one whole-clip encode dispatch');
+    assert.equal(model.stats.pcmLen, AUDIO.length, 'encodeChunk sees the un-split clip');
+    assert.ok(res.utterance_text.length > 0);
+  });
+
+  test('decodeChunk precedence holds on the single-pass path: encodeChunk never runs', async () => {
+    let encodeCalls = 0;
+    let sawEncoded = 'unset';
+    const model = {
+      transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+      // Plain in-thread transcribe: must NOT receive an injected encode.
+      transcribe: async (chunk, sampleRate, opts) => {
+        sawEncoded = opts.encoded;
+        return spanResult(chunk[0] / sampleRate, (chunk[0] + chunk.length) / sampleRate);
+      },
+    };
+    const res = await model.transcribeChunked(SHORT, SR, {
+      ...CHUNK_OPTS,
+      decodeChunk: async () => { throw new Error('single pass never decodes via the worker'); },
+      encodeChunk: () => { encodeCalls += 1; throw new Error('must not run'); },
+    });
+    assert.equal(encodeCalls, 0, 'encodeChunk must be ignored when decodeChunk is present');
+    assert.equal(sawEncoded, undefined, 'transcribe ran plain, no injected encode');
+    assert.ok(res.utterance_text.length > 0);
+  });
+});
+
 // Word factory for the pure-function tests below: a timestamped word centred at
 // `mid` seconds (a nominal 0.2 s span, only the midpoint matters to the seam).
 const W = (text, mid) => ({ text, start_time: mid - 0.1, end_time: mid + 0.1 });
