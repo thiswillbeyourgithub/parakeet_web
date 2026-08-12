@@ -3266,12 +3266,14 @@ export class ParakeetModel {
       const t0 = performance.now();
       // An injected encodeChunk carries the single-pass encode too, keeping
       // the driver contract uniform: a caller that off-loads encode() gets it
-      // off-loaded regardless of clip length. decodeChunk keeps precedence,
-      // matching the pipelined driver below. The WASM encode pool never hits
-      // this: App.jsx only injects it for clips long enough to multi-chunk.
-      const { encodeChunk: soloEncode, decodeChunk: soloDecode, ...soloOpts } = transcribeOpts;
+      // off-loaded regardless of clip length. decodeChunk is a multi-chunk
+      // pipelining concern and is ignored here: with a single chunk there is
+      // nothing to overlap, so the decode stays on this thread. The WASM
+      // encode pool never hits this: App.jsx only injects it for clips long
+      // enough to multi-chunk.
+      const { encodeChunk: soloEncode, decodeChunk: _soloDecode, ...soloOpts } = transcribeOpts;
       let result;
-      if (typeof soloEncode === 'function' && typeof soloDecode !== 'function') {
+      if (typeof soloEncode === 'function') {
         const encoded = await soloEncode(
           audio,
           { chunkIndex: 0, audioLen: audio.length },
@@ -3497,34 +3499,68 @@ export class ParakeetModel {
     // Optional injected encoder: an async fn (pcm, meta, encodeOpts) -> the
     // `{ transposed, D, Tenc, preprocess_ms, encode_ms }` object encode()
     // returns. App.jsx wires this to a POOL of encode workers on WASM so two
-    // chunks encode concurrently while this thread decodes (chunk-parallel
-    // encoding; thread scaling saturates near the physical core count, chunks
-    // are independent, so a second ORT instance converts the wasted headroom
-    // into throughput). parakeet.js stays worker-agnostic (Node/CLI never sets
-    // it). Ignored when decodeChunk is present: that WebGPU path already
-    // overlaps encode with decode, and the two drivers must not both own the
-    // chunk loop.
-    const encodeChunk = !decodeChunk && typeof transcribeOpts.encodeChunk === 'function'
+    // chunks encode concurrently while decode runs on this thread (chunk-
+    // parallel encoding; thread scaling saturates near the physical core
+    // count, chunks are independent, so a second ORT instance converts the
+    // wasted headroom into throughput). parakeet.js stays worker-agnostic
+    // (Node/CLI never sets it). Alone it drives the pool loop below (decode
+    // stays on this thread); together with decodeChunk it COMPOSES: pooled
+    // encodes feed the decode pipeline, so this thread only orchestrates and
+    // stitches while encode and decode overlap in workers.
+    const encodeChunk = typeof transcribeOpts.encodeChunk === 'function'
       ? transcribeOpts.encodeChunk : null;
 
     if (decodeChunk) {
-      // Pipelined producer/consumer. Producer: encode ahead on this thread and
+      // Pipelined producer/consumer. Producer: encode ahead (on this thread,
+      // or via the injected encode pool when encodeChunk is also present) and
       // dispatch each chunk's decode without awaiting it. A bounded in-flight
-      // queue (depth ~ maxEncoderBatch + 1) caps how far the GPU runs ahead of
-      // the worker, bounding memory. Consumer: drain the OLDEST decode first, so
-      // consume() always sees chunks in order regardless of completion order.
+      // queue (depth ~ maxEncoderBatch + 1) caps how far encode runs ahead of
+      // the decoder, bounding memory. Consumer: drain the OLDEST decode first,
+      // so consume() always sees chunks in order regardless of completion
+      // order.
       const depth = Math.max(2, (this.maxEncoderBatch || 1) + 1);
       const inflight = [];
       // encodeChunk is stripped too: decodeOpts crosses a postMessage in the
       // app's worker bridge, and a function would fail structured clone.
       const { decodeChunk: _dc, encodeChunk: _ec, encoded: _enc, ...decodeOpts } = stitchOpts;
+
+      // Composed mode: encodes come from the pool with the same bounded
+      // look-ahead as the encode-pool driver below (dispatch without
+      // awaiting, consume strictly in chunk order, refill BEFORE the decode
+      // dispatch so the pool never idles under a decode). Metrics caveats
+      // compose too: per-chunk total_ms is decode-wall only, and SUMMED
+      // encode_ms can exceed wall clock because pool workers overlap.
+      const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
+      const encPending = [];
+      let nextEnc = 0;
+      const dispatchEncodes = () => {
+        while (encodeChunk && nextEnc < chunkPlan.length && encPending.length < ahead) {
+          const ci = nextEnc; nextEnc += 1;
+          const { start, end } = chunkPlan[ci];
+          const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
+          const promise = Promise.resolve(encodeChunk(audio.subarray(start, end), meta, { enableProfiling: perfEnabled }));
+          // Mark handled from birth (same rule as the decode dispatch below):
+          // a pooled encode that fails before its in-order turn must not
+          // surface as an unhandled rejection.
+          promise.catch(() => {});
+          encPending.push({ ci, promise });
+        }
+      };
+      const nextEncoded = async (ci) => {
+        if (!encodeChunk) return ensureEncoded(ci);
+        dispatchEncodes();
+        const item = encPending.shift(); // in-order dispatch: item.ci === ci
+        const encoded = await item.promise;
+        dispatchEncodes(); // refill before the decode dispatch below
+        return encoded;
+      };
       const drainOne = async () => {
         const item = inflight.shift();
         const chunkRes = await item.promise;
         await consume(item.ci, chunkRes, performance.now() - item.tStart);
       };
       for (let ci = 0; ci < chunkPlan.length; ci += 1) {
-        const enc = await ensureEncoded(ci);
+        const enc = await nextEncoded(ci);
         const { start, end } = chunkPlan[ci];
         const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
         const tStart = performance.now();

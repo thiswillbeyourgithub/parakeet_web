@@ -342,6 +342,61 @@ function makeEncodePoolModel({ failAt = -1 } = {}) {
   return m;
 }
 
+// Composed driver: BOTH hooks injected (the WASM shape App.jsx runs when the
+// encode pool and the decode worker are both up). Encodes come from the pool
+// with bounded look-ahead and each chunk's encoded output is handed straight to
+// the decode worker, so this thread only orchestrates and stitches. The fake
+// books every touch of the model's OWN encode paths (they must stay unused),
+// records the exact object each stage produced/received so identity can be
+// proven, and tracks live/high-water counters for both stages. Both stages
+// resolve LATER for EARLIER chunks (same reverse-delay trick as the two
+// single-stage fakes), so encodes AND decodes complete out of order.
+function makeComposedModel({ failEncodeAt = -1, failDecodeAt = -1, maxEncoderBatch = 2 } = {}) {
+  let liveEnc = 0;
+  let liveDec = 0;
+  const m = {
+    maxEncoderBatch,
+    stats: {
+      encodeCalls: 0, decodeCalls: 0, maxLiveEncodes: 0, maxLiveDecodes: 0,
+      produced: new Map(), received: new Map(), ownEncodePath: [],
+    },
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    // Composed mode must never fall back to the model's own encode/decode.
+    transcribe: async () => {
+      m.stats.ownEncodePath.push('transcribe');
+      throw new Error('composed mode must not call transcribe()');
+    },
+    encodeBatch: async () => {
+      m.stats.ownEncodePath.push('encodeBatch');
+      throw new Error('composed mode must not call encodeBatch()');
+    },
+    encodeChunk: (pcm, meta) => new Promise((resolve, reject) => {
+      m.stats.encodeCalls += 1;
+      liveEnc += 1;
+      m.stats.maxLiveEncodes = Math.max(m.stats.maxLiveEncodes, liveEnc);
+      setTimeout(() => {
+        liveEnc -= 1;
+        if (meta.chunkIndex === failEncodeAt) { reject(new Error('encode boom')); return; }
+        const encoded = { __start: pcm[0], __len: pcm.length };
+        m.stats.produced.set(meta.chunkIndex, encoded);
+        resolve(encoded);
+      }, (8 - meta.chunkIndex) * 4);
+    }),
+    decodeChunk: (enc, meta) => new Promise((resolve, reject) => {
+      m.stats.decodeCalls += 1;
+      m.stats.received.set(meta.chunkIndex, enc);
+      liveDec += 1;
+      m.stats.maxLiveDecodes = Math.max(m.stats.maxLiveDecodes, liveDec);
+      setTimeout(() => {
+        liveDec -= 1;
+        if (meta.chunkIndex === failDecodeAt) { reject(new Error('decode boom')); return; }
+        resolve(spanResult(enc.__start / SR, (enc.__start + enc.__len) / SR));
+      }, (8 - meta.chunkIndex) * 4);
+    }),
+  };
+  return m;
+}
+
 describe('transcribeChunked chunk-parallel encode (injected encodeChunk)', () => {
   // Same small-chunk layout as the decode-driver tests: ~6 chunks, so the
   // bounded dispatch and out-of-order completion are actually exercised.
@@ -383,16 +438,100 @@ describe('transcribeChunked chunk-parallel encode (injected encodeChunk)', () =>
     assert.equal(model2.stats.maxLive, 2, 'encodeAhead: 2 caps the in-flight window at 2');
   });
 
-  test('decodeChunk wins when both drivers are injected; encodeChunk is never called', async () => {
-    const model = makePipelineModel();
-    let encodeCalls = 0;
-    const res = await model.transcribeChunked(AUDIO, SR, {
-      ...POOL_OPTS,
-      decodeChunk: model.decodeChunk,
-      encodeChunk: () => { encodeCalls += 1; throw new Error('must not run'); },
+  test('both hooks COMPOSE: pooled encodes feed the worker decodes and the output equals the serial run', async () => {
+    // Deliberate spec change (was: decodeChunk precedence, encodeChunk ignored).
+    const seq = await makePipelineModel().transcribeChunked(AUDIO, SR, POOL_OPTS);
+    const model = makeComposedModel();
+    const order = [];
+    let totalChunks = 0;
+    const composed = await model.transcribeChunked(AUDIO, SR,
+      { ...POOL_OPTS, encodeChunk: model.encodeChunk, decodeChunk: model.decodeChunk },
+      async (ev) => { order.push(ev.chunkNum); totalChunks = ev.totalChunks; });
+
+    // The model's own encode paths must stay untouched: in composed mode every
+    // encode comes from the pool and every decode from the worker.
+    assert.deepEqual(model.stats.ownEncodePath, [],
+      'composed mode must not call the model\'s own encodeBatch()/transcribe()');
+    assert.ok(totalChunks > 2, 'multi-chunk layout expected');
+    assert.equal(order.length, totalChunks, 'onChunk fires once per chunk');
+    assert.equal(model.stats.encodeCalls, totalChunks, 'exactly one encodeChunk call per chunk');
+    assert.equal(model.stats.decodeCalls, totalChunks, 'exactly one decodeChunk call per chunk');
+
+    // Each chunk's decode received EXACTLY the object that chunk's encode
+    // resolved with (identity, not a look-alike re-encode).
+    for (let ci = 0; ci < totalChunks; ci += 1) {
+      const produced = model.stats.produced.get(ci);
+      assert.ok(produced, `chunk ${ci} encode resolved an encoder output`);
+      assert.equal(model.stats.received.get(ci), produced,
+        `chunk ${ci} decode must receive the very object its encode resolved with`);
+    }
+
+    // Out-of-order completion on BOTH stages must not change a byte of the
+    // stitched result compared with the plain in-thread run.
+    assert.equal(composed.utterance_text, seq.utterance_text, 'text must match the serial run');
+    assert.deepEqual(composed, seq, 'composed result must equal the serial in-thread result');
+
+    const sorted = [...order].sort((a, b) => a - b);
+    assert.deepEqual(order, sorted, `onChunk order ${order} must be ascending`);
+    assert.equal(order[0], 1, 'first reported chunk is 1');
+  });
+
+  test('composed dispatch is bounded on both stages (encodeAhead encodes, max(2, maxEncoderBatch + 1) decodes)', async () => {
+    // maxEncoderBatch 2 => decode window depth 3; the producer fills the encode
+    // window up front, so its high-water mark hits the cap exactly.
+    const model = makeComposedModel({ maxEncoderBatch: 2 });
+    await model.transcribeChunked(AUDIO, SR,
+      { ...POOL_OPTS, encodeChunk: model.encodeChunk, decodeChunk: model.decodeChunk });
+    assert.equal(model.stats.maxLiveEncodes, 3, 'default encodeAhead is 3');
+    assert.ok(model.stats.maxLiveDecodes <= 3,
+      `decode window is max(2, maxEncoderBatch + 1) = 3, saw ${model.stats.maxLiveDecodes}`);
+    assert.ok(model.stats.maxLiveDecodes >= 2,
+      'decodes really overlap (otherwise the pipeline is serial in disguise)');
+
+    // encodeAhead caps the pool side without touching the decode window.
+    const model1 = makeComposedModel({ maxEncoderBatch: 2 });
+    await model1.transcribeChunked(AUDIO, SR,
+      { ...POOL_OPTS, encodeChunk: model1.encodeChunk, decodeChunk: model1.decodeChunk, encodeAhead: 1 });
+    assert.equal(model1.stats.maxLiveEncodes, 1, 'encodeAhead: 1 caps the in-flight encodes at 1');
+    assert.ok(model1.stats.maxLiveDecodes <= 3,
+      `decode window still bounded by 3, saw ${model1.stats.maxLiveDecodes}`);
+
+    // A WASM-like model (no encoder batching) still gets the floor-2 window.
+    const modelWasm = makeComposedModel({ maxEncoderBatch: 1 });
+    await modelWasm.transcribeChunked(AUDIO, SR,
+      { ...POOL_OPTS, encodeChunk: modelWasm.encodeChunk, decodeChunk: modelWasm.decodeChunk });
+    assert.ok(modelWasm.stats.maxLiveDecodes <= 2,
+      `decode window is max(2, 1 + 1) = 2, saw ${modelWasm.stats.maxLiveDecodes}`);
+    assert.ok(modelWasm.stats.maxLiveDecodes >= 2, 'the floor-2 window is actually filled');
+  });
+
+  test('composed: a failing pooled encode rejects the run and leaves no unhandled rejections', async () => {
+    // Chunk 1's encode rejects while chunk 0's is still in flight (reverse
+    // delays), i.e. before the strict-order consumer awaits it, and with
+    // chunk 2's encode already dispatched behind it.
+    const unhandled = await withUnhandledCapture(async () => {
+      const model = makeComposedModel({ failEncodeAt: 1 });
+      await assert.rejects(
+        model.transcribeChunked(AUDIO, SR,
+          { ...POOL_OPTS, encodeChunk: model.encodeChunk, decodeChunk: model.decodeChunk }),
+        /encode boom/,
+      );
     });
-    assert.equal(encodeCalls, 0, 'encodeChunk must be ignored when decodeChunk is present');
-    assert.ok(res.utterance_text.length > 0, 'decode pipeline still produced output');
+    assert.deepEqual(unhandled, [], 'no unhandled rejections from in-flight encodes or decodes');
+  });
+
+  test('composed: a failing worker decode rejects the run and leaves no unhandled rejections', async () => {
+    // Chunk 1's decode rejects BEFORE chunk 0's resolves, i.e. while it sits
+    // unawaited in the in-flight queue, with later decodes still dispatched.
+    const unhandled = await withUnhandledCapture(async () => {
+      const model = makeComposedModel({ failDecodeAt: 1 });
+      await assert.rejects(
+        model.transcribeChunked(AUDIO, SR,
+          { ...POOL_OPTS, encodeChunk: model.encodeChunk, decodeChunk: model.decodeChunk }),
+        /decode boom/,
+      );
+    });
+    assert.deepEqual(unhandled, [], 'no unhandled rejections from in-flight encodes or decodes');
   });
 
   test('a failing encode rejects the run and leaves no unhandled rejections', async () => {
@@ -407,11 +546,12 @@ describe('transcribeChunked chunk-parallel encode (injected encodeChunk)', () =>
   });
 });
 
-// Single-pass path (clip fits in one chunk, or chunking disabled): the WebGPU
-// encode worker exists to keep session.run off the rendering-coupled main
-// thread, and a <= chunk-length clip pays the same per-run tax as a chunked
-// one, so an injected encodeChunk must carry this path too. decodeChunk keeps
-// precedence exactly like the multi-chunk driver.
+// Single-pass path (clip fits in one chunk, or chunking disabled): the encode
+// worker exists to keep session.run off the main thread, and a <= chunk-length
+// clip pays the same per-run tax as a chunked one, so an injected encodeChunk
+// must carry this path too, whether or not a decodeChunk was injected as well.
+// decodeChunk is a multi-chunk pipelining concern (nothing to overlap with a
+// single chunk), so it is never called here.
 describe('transcribeChunked single-pass with injected encodeChunk', () => {
   // 5 s < chunkDurationSec 10 => audio.length <= maxChunkSamples, single pass.
   const SHORT = makeAudio(80000);
@@ -467,25 +607,29 @@ describe('transcribeChunked single-pass with injected encodeChunk', () => {
     assert.ok(res.utterance_text.length > 0);
   });
 
-  test('decodeChunk precedence holds on the single-pass path: encodeChunk never runs', async () => {
-    let encodeCalls = 0;
-    let sawEncoded = 'unset';
-    const model = {
-      transcribeChunked: ParakeetModel.prototype.transcribeChunked,
-      // Plain in-thread transcribe: must NOT receive an injected encode.
-      transcribe: async (chunk, sampleRate, opts) => {
-        sawEncoded = opts.encoded;
-        return spanResult(chunk[0] / sampleRate, (chunk[0] + chunk.length) / sampleRate);
-      },
-    };
+  test('single pass with BOTH hooks: encodeChunk still runs once, decodeChunk never does', async () => {
+    // Deliberate spec change (was: decodeChunk precedence, encodeChunk skipped).
+    const serial = await makePipelineModel().transcribeChunked(SHORT, SR, CHUNK_OPTS);
+    const model = makeSoloModel();
+    let decodeCalls = 0;
     const res = await model.transcribeChunked(SHORT, SR, {
       ...CHUNK_OPTS,
-      decodeChunk: async () => { throw new Error('single pass never decodes via the worker'); },
-      encodeChunk: () => { encodeCalls += 1; throw new Error('must not run'); },
+      encodeChunk: model.encodeChunk,
+      decodeChunk: async () => {
+        decodeCalls += 1;
+        throw new Error('single pass never decodes via the worker');
+      },
     });
-    assert.equal(encodeCalls, 0, 'encodeChunk must be ignored when decodeChunk is present');
-    assert.equal(sawEncoded, undefined, 'transcribe ran plain, no injected encode');
-    assert.ok(res.utterance_text.length > 0);
+    assert.equal(model.stats.encodes, 1,
+      'encode off-load is uniform: encodeChunk runs even when decodeChunk is present');
+    assert.equal(model.stats.pcmLen, SHORT.length, 'encodeChunk sees the whole clip');
+    assert.equal(decodeCalls, 0, 'decodeChunk is a multi-chunk concern, never called on the single-pass path');
+    assert.equal(res.utterance_text, serial.utterance_text, 'text must match the plain in-thread single pass');
+    assert.deepEqual(
+      res.words.map((w) => [w.text, w.start_time, w.end_time]),
+      serial.words.map((w) => [w.text, w.start_time, w.end_time]),
+      'words must match the plain in-thread single pass',
+    );
   });
 });
 
