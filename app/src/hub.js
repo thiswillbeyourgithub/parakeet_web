@@ -498,8 +498,8 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
   // Treat it as no partial (re-download) rather than try to migrate.
   if (meta && Array.isArray(meta.chunks)) meta = null;
 
-  // Segment blobs already on disk from previous flushes. Kept as Blobs
-  // (not loaded into JS heap) until final assembly.
+  // Segment payloads already on disk from previous flushes, re-wrapped into
+  // in-memory Blobs (spillable blob storage, not JS heap) until final assembly.
   const segments = [];
   let segCount = meta?.segCount || 0;
   let received = meta?.received || 0;
@@ -511,8 +511,14 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
     try {
       for (let i = 0; i < segCount; i++) {
         const seg = await getFileFromDb(segKey(i));
-        if (!(seg instanceof Blob)) throw new Error(`segment ${i} missing or wrong type`);
-        segments.push(seg);
+        // Segments are stored as plain ArrayBuffers (BY VALUE); wrap each into
+        // a fresh Blob so the bytes move to spillable blob storage instead of
+        // sitting in the JS heap. A legacy Blob segment (written before the
+        // by-value change) is treated as unreadable: its backing can alias the
+        // IDB record's file, which is the exact breakage the by-value store
+        // exists to prevent, so restarting the download is the safe path.
+        if (!(seg instanceof ArrayBuffer)) throw new Error(`segment ${i} missing or wrong type`);
+        segments.push(new Blob([seg]));
       }
     } catch (e) {
       console.warn(`${logTag} Partial segments unreadable for ${filename}, restarting:`, e);
@@ -559,11 +565,26 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
 
   // Flush the in-memory tail to a new segment record, then drop it from heap.
   // No-op under noCache: there the bytes stay in `memBuf` and are never offloaded.
+  //
+  // The record value is a plain ArrayBuffer (BY VALUE), deliberately NOT a
+  // Blob: Chromium can swap an IDB-written Blob's backing over to the
+  // IDB-owned blob file, after which the final composite (and even the cached
+  // record assembled from it) aliases those files, and deleteAllPartial()
+  // dropping the segment records leaves every handle pointing at reclaimed
+  // data: ORT's fetch of the model blob URL then dies with
+  // net::ERR_BLOB_REFERENCED_BLOB_BROKEN (reproduced deterministically with
+  // the ~880 MB int8 encoder in Chromium's full binary, e.g. Playwright
+  // channel 'chromium'; the headless shell never swaps). Bytes stored by value
+  // cannot alias anything, and the in-memory segment Blob below lives in
+  // ordinary spillable blob storage, independent of IndexedDB.
   async function flushTail() {
     if (noCache || typeof indexedDB === 'undefined' || tailBytes === 0) return;
-    const segBlob = new Blob(tailChunks, { type: contentType });
+    const buf = new Uint8Array(tailBytes);
+    let off = 0;
+    for (const c of tailChunks) { buf.set(c, off); off += c.length; }
+    const segBlob = new Blob([buf], { type: contentType });
     try {
-      await saveFileToDb(segKey(segCount), segBlob);
+      await saveFileToDb(segKey(segCount), buf.buffer);
       segments.push(segBlob);
       segCount += 1;
       tailChunks = [];
@@ -685,21 +706,37 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
 
   // Final assembly: segments on disk plus the trailing in-memory chunks.
   // Blob composition is by reference, so this is cheap.
-  const blob = new Blob([...segments, ...tailChunks], { type: contentType });
+  const composite = new Blob([...segments, ...tailChunks], { type: contentType });
 
+  // The blob handed to the caller. Whenever the cache write succeeds it is
+  // replaced by the blob READ BACK from the cache record instead of the
+  // in-memory composite: the composite references many renderer blob-storage
+  // parts, whose paged data Chromium's full binary has been observed to lose
+  // under multi-GB blob traffic (NotReadableError on read,
+  // net::ERR_BLOB_REFERENCED_BLOB_BROKEN on fetch; hit with the ~880 MB int8
+  // encoder via scripts/transcribe-browser.mjs, 2026-08-12). The readback blob
+  // is backed by the cache record's own IndexedDB storage, which lives as long
+  // as the record, i.e. the exact blob every warm reload already serves.
+  let blob = composite;
   if (typeof indexedDB !== 'undefined') {
     try {
-      await saveFileToDb(cacheKey, blob);
+      await saveFileToDb(cacheKey, composite);
       // Record validation metadata next to the blob so a later load can verify
       // integrity (size) and freshness (etag) before reusing it. Best-effort:
       // a failure here just means the next load skips validation and trusts the
       // cache, which matches the pre-metadata behaviour.
       try {
-        await saveFileToDb(META_PREFIX + cacheKey, { etag, size: blob.size, savedAt: Date.now() });
+        await saveFileToDb(META_PREFIX + cacheKey, { etag, size: composite.size, savedAt: Date.now() });
       } catch (e) {
         console.warn(`${logTag} Failed to write cache metadata for ${filename}:`, e);
       }
       console.log(`${logTag} Cached ${filename} in IndexedDB`);
+      const stored = await getFileFromDb(cacheKey);
+      if (stored instanceof Blob && stored.size === composite.size) {
+        blob = stored;
+      } else {
+        console.warn(`${logTag} Cache readback mismatch for ${filename} (got ${stored && stored.size}); serving the in-memory blob`);
+      }
     } catch (e) {
       console.warn(`${logTag} Failed to cache in IndexedDB:`, e);
     }
