@@ -25,6 +25,11 @@ export const CONFIG = {
   // sidebar toggle hides, no rebuild needed. Anything else (or unset) leaves
   // the normal toggle+probe+artifacts gate in charge.
   VITE_ORT_RELAXED_ENABLE: runtime.VITE_ORT_RELAXED_ENABLE ?? import.meta.env.VITE_ORT_RELAXED_ENABLE,
+  // 'false' is the operator kill-switch for the composed WASM decode pipeline
+  // (App.jsx): the decode worker stays WebGPU-only and WASM runs keep the
+  // encode pool + in-thread decode. Anything else (or unset) leaves the
+  // normal pool-engaged + worker-ready gate in charge.
+  VITE_WASM_DECODE_PIPELINE: runtime.VITE_WASM_DECODE_PIPELINE ?? import.meta.env.VITE_WASM_DECODE_PIPELINE,
   // Default curated phrase-boost list to pre-select for a fresh visitor (no
   // saved boost choice yet). A bare name or a "<name>.txt"; the UI normalises
   // and validates it against the served manifest. Overridable per-link via the
