@@ -231,7 +231,7 @@ echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
 echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
 echo "[entrypoint] VITE_ORT_RELAXED_ENABLE=${VITE_ORT_RELAXED_ENABLE:-(not set, relaxed-SIMD ORT gate stays user-toggleable)}"
-echo "[entrypoint] VITE_WASM_DECODE_PIPELINE=${VITE_WASM_DECODE_PIPELINE:-(not set, WASM composed decode pipeline enabled)}"
+echo "[entrypoint] VITE_WASM_DECODE_PIPELINE=${VITE_WASM_DECODE_PIPELINE:-(not set, decode worker stays WebGPU-only)}"
 echo "[entrypoint] VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-(not set, no default curated list)}"
 # F-142: surface the resolved HSTS / CSP override values so operators can
 # confirm at startup that their docker/.env overrides are actually in the

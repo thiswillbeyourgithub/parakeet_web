@@ -9,6 +9,10 @@
 // still matches the golden. Unlike the WebGPU decode pipeline (untestable
 // headless), composed mode is pure WASM, so headless Chromium covers it fully.
 //
+// Composed mode is operator opt-in on WASM (VITE_WASM_DECODE_PIPELINE='true',
+// default off after it measured as a wash on wall clock), so this spec injects
+// that flag; transcription-parallel-encode.spec.js covers the default shape.
+//
 // Reuses the transcription-parallel-encode.spec.js recipe: WASM-int8 local
 // weights (serve.mjs), chunkDuration seeded to 10 s so the ~11 s JFK clip
 // splits into >1 chunk (composed mode only ever runs on multi-chunk clips).
@@ -55,6 +59,13 @@ test('composed pipeline (pool encode + worker decode) engages and the stitched t
         || /\[Decode\] (composed run failed|pipelined run failed|pipeline setup failed|failed to start decode worker|worker (error|unavailable))/.test(mt)) {
       trouble.push(mt);
     }
+  });
+
+  // Composed mode on WASM is operator opt-in (default off: it measured as a
+  // wash on wall clock). Inject the flag the way docker's entrypoint writes
+  // it, before any app script runs.
+  await page.addInitScript(() => {
+    window.__CONFIG__ = { ...(window.__CONFIG__ || {}), VITE_WASM_DECODE_PIPELINE: 'true' };
   });
 
   await page.goto('/');
