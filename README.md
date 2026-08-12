@@ -28,6 +28,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Remote Microphone (Phone as Mic)](#remote-microphone-phone-as-mic)
 - [Local Model Fallback](#local-model-fallback)
 - [OpenAI-Compatible API Server](#openai-compatible-api-server)
+- [Benchmark](#benchmark)
 - [Resetting the app](#resetting-the-app)
 - [Mobile debugging](#mobile-debugging)
 - [Architecture](#architecture)
@@ -59,6 +60,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 🎚️ **Capture Controls** | Per-recording toggles for noise suppression and auto gain control |
 | 🌐 **Bilingual UI** | Interface available in English and French, auto-selected from your browser language (the underlying model itself is multilingual) |
 | 📦 **SmoothQuant int8 Encoder** | The encoder runs as a SmoothQuant int8 model by default, recalibrated so its accuracy tracks fp32 even on long audio (unlike a stock int8 cast that degrades badly past ~30 s). From the encoder-precision picker you can opt into a lighter `int8 lite` encoder (~757 MB vs the default ~841 MB: it keeps more layers in fp32), or the full **sharded fp32** encoder (~2.4 GB, ~2x slower, split into <2 GB pieces by `scripts/shard-fp32.py` so it fits the browser) for maximum quality; opt-in precisions stop with a clear message rather than silently downgrading when the model repo doesn't ship them. The decoder always runs int8 (on this model the int8 joiner is as accurate as fp32, while being smaller and faster). The model repo also ships an **fp16** encoder (~1.2 GB, built by `scripts/quantize-fp16.py` in the [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) model repo) for the WebGPU backend, but WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)) so fp16 is not used |
+| 📊 **One-click Benchmark** | A sidebar section measures every backend and precision your device can run, on a clip that ships with the app, and builds one anonymised report you can read, copy, or (if the instance collects them) send to help optimise the app for hardware like yours. See [Benchmark](#benchmark) |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
 | 🔌 **OpenAI-Compatible API** | Optional headless mode: serve the same pipeline over the OpenAI audio-transcription API (plus the whisper.cpp and whisper-asr-webservice dialects) so existing clients can transcribe locally, with phrase boosting and diarization exposed per request. See [OpenAI-Compatible API Server](#openai-compatible-api-server) |
 
@@ -357,6 +359,34 @@ What it gives you beyond a plain wrapper:
 It **imports** this repo's pipeline rather than reimplementing it, so its output is byte-identical to the `scripts/transcribe.mjs` CLI for the same options. See its [README](./scripts/openai-like-server/README.md) for the full API reference.
 
 Built with [Claude Code](https://claude.com/claude-code).
+
+## Benchmark
+
+The sidebar has a **Benchmark** section that measures, in one click, every backend and precision your device can actually run, and folds the result into a single report you can read, copy, or send to whoever runs the instance.
+
+Why it exists: the app's speed depends on hardware the maintainer does not own (how much SIMD your CPU exposes, how many cores are genuinely free, which GPU adapter your browser hands out, how your browser's WASM engine compiles the kernels). Real timings from real machines are the only way to decide what to optimise next.
+
+**What it does.** It transcribes a short clip that ships with the app (an 11 s public-domain excerpt of JFK's inaugural address) once per selected combination, through the exact same code path a normal transcription uses, so the numbers describe what you really get rather than a synthetic micro-benchmark. You can add a long-audio profile (the clip repeated to about 90 s, which exercises chunking, seam stitching and parallel encoding) and ask for up to 3 runs per combination, in which case the median is reported.
+
+**Before you start.** Only one model is kept in the browser cache at a time, so testing several precisions downloads them one after another, and the model you normally use is downloaded again afterwards. The estimated download is shown above the button, the row you already use costs nothing, and the ~2.3 GB fp32 rows are never pre-selected. The run finishes on your own combination, so the cache is left holding the model you actually use.
+
+**What the report contains:** the timings (model load, wall time, time-per-second-of-audio, encode/decode split), what your CPU and GPU support (core count, memory, WASM SIMD and threads, the WebGPU adapter with its features and limits, the ONNX Runtime configuration in force), the app settings that change speed (threads, beam width, chunk window, whether phrase boosting was active), and a similarity score of each transcript against the clip's known sentence, which is how a backend that silently returns nothing gets caught.
+
+**What it does not contain:** no audio, no transcript, no user agent, no time zone, no languages, no screen size, no storage estimate, and no identifier of any kind. The anonymiser is an allowlist rather than a blocklist, so a probe added later cannot leak into a report by accident, and both halves of that promise (what is kept, what must never appear) are asserted by the test suite, including against a real browser.
+
+**Sending is always a decision.** The full report text is shown before anything happens. Nothing is transmitted unless you press "Send to the developer"; a checkbox lets you opt into sending future reports automatically once you have seen what one looks like. If the instance does not collect reports, the send button does not exist at all and the section is copy-only.
+
+### Collecting reports (self-hosting)
+
+Report collection is off by default. To enable it on your own instance:
+
+1. Uncomment the `../benchmark_reports:/benchmark-reports` volume in `docker/docker-compose.yml`.
+2. Set `BENCHMARK_REPORTS_DIR=/benchmark-reports` in `docker/.env`.
+3. Make sure the host folder is owned by UID 1000 (the container writes as that user).
+
+The entrypoint probes the folder at startup and derives the client-side switch from it, so a folder it cannot write leaves the section copy-only with a warning in the container logs, instead of showing visitors a button that always fails.
+
+Reports arrive at `POST /api/signal/benchmark-report` on the signaling sidecar: rate-limited to 3 per minute per IP, capped at 32 KB each and at 20000 files total, format-checked, and stored one report per file under a name the server picks itself (nothing from the request reaches a path). Nothing about the sender is written next to the payload, because a report that is anonymous in the browser should not stop being anonymous on arrival.
 
 ## Resetting the app
 
