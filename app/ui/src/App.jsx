@@ -11,6 +11,7 @@ import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
 import { createCaptureQueue } from './lib/captureQueue.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
+import { workerReady } from './lib/workerInit.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
     deriveSharedKey, decrypt
@@ -2401,19 +2402,23 @@ export default function App() {
         else pending.reject(new Error(msg.message || 'decode failed'));
       }
     });
-    decodeWorkerReadyRef.current = new Promise((resolve) => {
-      const onReady = (ev) => {
-        const msg = ev.data || {};
-        if (msg.type === 'ready') { worker.removeEventListener('message', onReady); resolve(true); }
-        else if (msg.type === 'error' && msg.id == null) {
-          worker.removeEventListener('message', onReady);
-          console.warn('[Decode] worker init failed, falling back to in-thread decode:', msg.message);
-          resolve(false);
-        }
-      };
-      worker.addEventListener('message', onReady);
-      worker.postMessage(initParams);
+    // A crashed worker (error event) can never answer again: tear it down and
+    // reject in-flight decodes so the pipelined driver's failure path reruns
+    // the clip in-thread, instead of the pending promises hanging forever.
+    worker.addEventListener('error', (e) => {
+      if (decodeWorkerRef.current !== worker) return;
+      console.warn('[Decode] worker error, falling back to in-thread decode:', e?.message || e);
+      decodeWorkerRef.current = null;
+      decodeWorkerReadyRef.current = Promise.resolve(false);
+      try { worker.terminate(); } catch { /* ignore */ }
+      decodePendingRef.current.forEach(({ reject }) => reject(new Error('decode worker crashed')));
+      decodePendingRef.current.clear();
     });
+    // workerReady also settles false when the worker SCRIPT fails to load
+    // (only an error event fires, no message) or the init hangs; before it,
+    // that left this promise pending forever and every WebGPU transcription
+    // gated on it hung before chunk 1.
+    decodeWorkerReadyRef.current = workerReady(worker, initParams, { label: 'Decode' });
     return decodeWorkerReadyRef.current;
   }, []);
 
@@ -2514,37 +2519,18 @@ export default function App() {
         console.warn('[Encode] pool worker crashed:', ev?.message || ev);
         teardownEncodePool('encode pool worker crashed');
       });
-      return new Promise((resolve) => {
-        const onReady = (ev) => {
-          const msg = ev.data || {};
-          if (msg.type === 'ready') { worker.removeEventListener('message', onReady); resolve(true); }
-          else if (msg.type === 'error' && msg.id == null) {
-            worker.removeEventListener('message', onReady);
-            console.warn('[Encode] pool worker init failed, encoding on main thread:', msg.message);
-            resolve(false);
-          }
-        };
-        worker.addEventListener('message', onReady);
-        // Init-time crash: settle readiness too (the run-time listener above
-        // already tore the pool down).
-        worker.addEventListener('error', () => resolve(false));
-        worker.postMessage(initParams);
-      });
+      // workerReady folds in the init error message, the error EVENT (script
+      // failed to load / init crash; the run-time listener above already tore
+      // the pool down) and a watchdog for a HUNG init, so this always settles.
+      return workerReady(worker, initParams, { label: 'Encode' });
     });
-    // Watchdog: a worker whose init HANGS (neither ready nor error, seen with
-    // a wedged GPU session build) must not leave the ready promise pending
-    // forever, or a transcription gated on it would hang too. 120 s covers a
-    // slow cold init (fp32 = 2.4 GB of weights to stage) with margin.
-    const INIT_WATCHDOG_MS = 120000;
-    const watchdog = new Promise((resolve) => setTimeout(() => resolve(null), INIT_WATCHDOG_MS));
-    encodePoolReadyRef.current = Promise.race([Promise.all(readies), watchdog])
+    encodePoolReadyRef.current = Promise.all(readies)
       .then((oks) => {
-        if (oks === null) {
-          console.warn('[Encode] pool init watchdog fired; falling back');
-          if (encodePoolRef.current === pool) teardownEncodePool('encode pool init timed out');
-          return false;
-        }
-        return oks.every(Boolean) && encodePoolRef.current === pool;
+        const ok = oks.every(Boolean) && encodePoolRef.current === pool;
+        // A pool that failed init can never serve: reclaim its workers now so
+        // a dead pool does not sit around until the next model load.
+        if (!ok && encodePoolRef.current === pool) teardownEncodePool('encode pool init failed');
+        return ok;
       });
     return encodePoolReadyRef.current;
   }, [teardownEncodePool]);
