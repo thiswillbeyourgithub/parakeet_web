@@ -5,6 +5,9 @@
 //
 // The weights are read from PARAKEET_E2E_MODEL_DIR (default ./fallback_models).
 // CI populates that dir with the three int8 files via `npm run e2e:models`.
+// The app build itself can be overridden with PARAKEET_E2E_DIST_DIR (default
+// app/ui/dist): benchmark harnesses serve two builds side by side with it
+// (e.g. an ORT-version A/B, or the current tip against the deployed tip).
 // No external deps so the E2E webServer has nothing to install.
 //
 // Built with Claude Code.
@@ -16,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = resolve(fileURLToPath(import.meta.url), '..');
 const ROOT = resolve(here, '../..');
-const DIST = resolve(ROOT, 'app/ui/dist');
+const DIST = resolve(process.env.PARAKEET_E2E_DIST_DIR || resolve(ROOT, 'app/ui/dist'));
 const MODEL_DIR = resolve(process.env.PARAKEET_E2E_MODEL_DIR || join(ROOT, 'fallback_models'));
 // Curated boost-phrase lists (manifest.txt + <name>.txt + optional prebuilt
 // <name>.json), mirroring what Caddy serves at /boost-phrases/* in production.
