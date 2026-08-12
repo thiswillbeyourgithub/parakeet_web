@@ -907,12 +907,21 @@ export default function App() {
   // request so a superseded reply (after a debounce/model-swap race) is ignored.
   const boostWorkerRef = useRef(undefined);
   const boostReqIdRef = useRef(0);
-  // Decode worker (WebGPU-only): overlaps WASM decode with GPU encode. undefined
-  // = not created, null = unavailable/failed (fall back to in-thread decode).
+  // Decode worker: overlaps decode with encode. On WebGPU it hides WASM decode
+  // behind GPU encode; on WASM it runs only COMPOSED with the encode pool.
+  // undefined = not created, null = unavailable/failed (fall back to in-thread
+  // decode).
   const decodeWorkerRef = useRef(undefined);
   const decodeWorkerReadyRef = useRef(null);   // Promise<boolean> resolved on init
   const decodeReqIdRef = useRef(0);
   const decodePendingRef = useRef(new Map());  // decode id -> { resolve, reject }
+  // Init params stashed at model load so the parallelEncode toggle can start or
+  // stop the WASM composed worker without a model reload (same trick as the
+  // encode pool's). null = this model cannot run a decode worker.
+  const decodeWorkerInitParamsRef = useRef(null);
+  // True when THIS model's decode worker is the pool's WASM companion (so the
+  // toggle owns it); false for the independent WebGPU worker.
+  const composedDecodeEligibleRef = useRef(false);
   // Boost token-ids + params stashed for the decode worker to rebuild its trie
   // (the live BoostingTrie itself is not structured-cloneable). null = no boost.
   const boostEncodedRef = useRef(null);
@@ -2371,12 +2380,13 @@ export default function App() {
     if (boostWorkerRef.current) boostWorkerRef.current.terminate();
   }, []);
 
-  // --- Decode worker (WebGPU: overlap WASM decode with GPU encode) ----------
+  // --- Decode worker (WebGPU: overlap WASM decode with GPU encode; WASM:
+  // --- overlap worker decode with the encode pool, i.e. composed mode) ------
   // Lazily (re)create the decode worker and init it with the just-loaded model's
   // decoder + tokenizer bytes/URLs. Resolves true once the worker is ready to
   // decode, false if it is unavailable or init failed (the run then falls back
-  // to in-thread decode). Called after a successful WebGPU model load; a model
-  // swap terminates the previous worker first.
+  // to in-thread decode). Called after a successful model load; a model swap
+  // terminates the previous worker first.
   const initDecodeWorker = useCallback((initParams) => {
     if (decodeWorkerRef.current) { try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ } }
     decodePendingRef.current.forEach(({ reject }) => reject(new Error('decode worker reset')));
@@ -2569,6 +2579,9 @@ export default function App() {
   // Operator kill-switch: VITE_ORT_RELAXED_ENABLE='false' forces the vendored
   // stock runtime for every visitor (and hides the toggle) without a rebuild.
   const relaxedOperatorEnabled = CONFIG.VITE_ORT_RELAXED_ENABLE !== 'false';
+  // Operator kill-switch: VITE_WASM_DECODE_PIPELINE='false' keeps the decode
+  // worker WebGPU-only (WASM runs stay pool + in-thread decode), no rebuild.
+  const wasmDecodePipelineEnabled = CONFIG.VITE_WASM_DECODE_PIPELINE !== 'false';
   // Slow-browser heads-up: the WASM engine is ~9x slower outside the
   // Chromium family (SpiderMonkey SIMD codegen, measured 2026-08-10, see
   // lib/browserFamily.js). Dismissal is DELIBERATELY not persisted: the
@@ -2607,16 +2620,47 @@ export default function App() {
     }
   };
 
-  // React to the toggle without reloading the model: the pool is independent
-  // of the main-thread sessions, so tear it down / bring it up directly. A
-  // pooled run in flight when the user toggles off simply rejects and falls
-  // back to the serial path.
+  // Start (or skip) the decode worker for the stashed model. On WASM it only
+  // ever runs COMPOSED with the encode pool, so the same toggle that owns the
+  // pool owns it; on WebGPU it is independent of the pool and always starts.
+  // restart=true always re-inits (a freshly loaded model needs a worker built
+  // from ITS params, so a leftover worker from the previous model or backend
+  // must not be kept); the toggle path reuses a healthy worker instead.
+  const startDecodeWorker = ({ restart = false } = {}) => {
+    const params = decodeWorkerInitParamsRef.current;
+    if (!params || (decodeWorkerRef.current && !restart)) return;
+    try {
+      initDecodeWorker(params);
+    } catch (e) {
+      console.warn('[Decode] failed to start decode worker:', e);
+      decodeWorkerRef.current = null;
+      decodeWorkerReadyRef.current = Promise.resolve(false);
+    }
+  };
+  const stopDecodeWorker = (reason) => {
+    if (!decodeWorkerRef.current) return;
+    try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ }
+    decodeWorkerRef.current = null;
+    decodeWorkerReadyRef.current = Promise.resolve(false);
+    decodePendingRef.current.forEach(({ reject }) => reject(new Error(`decode worker stopped: ${reason}`)));
+    decodePendingRef.current.clear();
+    console.log(`[Decode] worker stopped: ${reason}`);
+  };
+
+  // React to the toggle without reloading the model: the pool (and, on WASM,
+  // the decode worker that composes with it) is independent of the main-thread
+  // sessions, so tear it down / bring it up directly. A pooled run in flight
+  // when the user toggles off simply rejects and falls back to the serial path.
   useEffect(() => {
     if (!settingsLoaded) return;
     if (parallelEncode) {
       if (!encodePoolRef.current.length) startEncodePool();
-    } else if (encodePoolRef.current.length) {
-      teardownEncodePool('parallel encode toggled off');
+      if (composedDecodeEligibleRef.current) startDecodeWorker();
+    } else {
+      if (encodePoolRef.current.length) teardownEncodePool('parallel encode toggled off');
+      // Only the WASM composed worker follows the toggle; a WebGPU worker is
+      // not the pool's companion and must survive it.
+      if (composedDecodeEligibleRef.current) stopDecodeWorker('parallel encode toggled off');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parallelEncode, settingsLoaded]);
@@ -3030,30 +3074,6 @@ export default function App() {
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });
-        // WebGPU only: spin up the decode worker so chunked runs can overlap
-        // WASM decode with GPU encode. Best-effort: any failure falls back to
-        // in-thread decode. On WASM there is no overlap to win, so skip it (and
-        // tear down any worker left over from a prior WebGPU session).
-        if (backend.startsWith('webgpu')) {
-          try {
-            initDecodeWorker({
-              type: 'init',
-              decoderUrl: modelUrls.urls.decoderUrl,
-              decoderDataUrl: modelUrls.urls.decoderDataUrl,
-              tokenizerUrl: modelUrls.urls.tokenizerUrl,
-              filenames: modelUrls.filenames,
-              numThreads: cpuThreads,
-              wasmPaths: ortVariant.wasmPaths,
-              wasmSimd: ortVariant.wasmSimd,
-            });
-          } catch (e) {
-            console.warn('[Decode] failed to start decode worker:', e);
-            decodeWorkerRef.current = null;
-          }
-        } else if (decodeWorkerRef.current) {
-          try { decodeWorkerRef.current.terminate(); } catch { /* ignore */ }
-          decodeWorkerRef.current = null;
-        }
         // Chunk-parallel encode pool (WASM only). Stash the worker init params
         // whenever the loaded model is pool-eligible, so the sidebar toggle can
         // start/stop the pool later without a model reload, and start it now
@@ -3088,6 +3108,45 @@ export default function App() {
         } else {
           teardownEncodePool(encodePoolInitParamsRef.current
             ? 'parallel encode disabled' : 'encode pool unsupported for this model');
+        }
+        // Decode worker. On WebGPU it overlaps WASM decode with GPU encode; on
+        // WASM it only ever engages COMPOSED with the encode pool (pooled
+        // encodes feed worker decodes, this thread just orchestrates and
+        // stitches), so it is created only when the model is pool-eligible and
+        // the hardware clears the pool gate (VITE_WASM_DECODE_PIPELINE='false'
+        // is the operator kill-switch). It starts even while the pool toggle
+        // is off so toggling parallel encode later composes without a model
+        // reload. numThreads differs on purpose: the decode loop's joiner
+        // GEMMs are too small to scale with threads, and on WASM the pool
+        // already budgets ~all cores, so the worker gets 2 threads instead of
+        // the user budget. Best-effort: any failure falls back to in-thread
+        // decode.
+        const wasmComposedEligible = backend === 'wasm' && wasmDecodePipelineEnabled
+          && !!encodePoolInitParamsRef.current
+          && encodePoolPlan({
+            cpuThreads,
+            maxCores,
+            deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined,
+          }).workers > 0;
+        composedDecodeEligibleRef.current = wasmComposedEligible;
+        decodeWorkerInitParamsRef.current = (backend.startsWith('webgpu') || wasmComposedEligible) ? {
+          type: 'init',
+          decoderUrl: modelUrls.urls.decoderUrl,
+          decoderDataUrl: modelUrls.urls.decoderDataUrl,
+          tokenizerUrl: modelUrls.urls.tokenizerUrl,
+          filenames: modelUrls.filenames,
+          numThreads: backend === 'wasm' ? 2 : cpuThreads,
+          wasmPaths: ortVariant.wasmPaths,
+          wasmSimd: ortVariant.wasmSimd,
+        } : null;
+        // The WASM worker follows the parallelEncode toggle (it is useless
+        // without the pool, and the user turning the feature off should get
+        // the memory back); the WebGPU one is independent and always starts.
+        if (decodeWorkerInitParamsRef.current && (!wasmComposedEligible || parallelEncode)) {
+          startDecodeWorker({ restart: true });
+        } else {
+          stopDecodeWorker(decodeWorkerInitParamsRef.current
+            ? 'parallel encode disabled' : 'decode pipeline unsupported for this model');
         }
       } catch (sessErr) {
         // A cached weight file that fails ONNX deserialization (truncated
@@ -4658,39 +4717,47 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 0));
       };
 
-      // WebGPU decode/encode pipeline: engage the decode worker only when it is
-      // ready, syncing its boost trie to the main thread's first. Best-effort:
-      // any setup failure just runs the in-thread path.
-      let pipelineDecodeChunk = null;
-      try {
-        if (backend.startsWith('webgpu') && decodeWorkerRef.current
-            && await (decodeWorkerReadyRef.current || Promise.resolve(false))) {
-          await syncDecodeWorkerBoost(decodeWorkerRef.current);
-          pipelineDecodeChunk = decodeChunkViaWorker;
-          // Positive marker so a run can confirm the GPU-encode || WASM-decode
-          // overlap actually engaged (vs. a silent fall-through to in-thread).
-          console.log('[Decode] pipeline engaged: GPU encode overlapping WASM decode in worker');
-        }
-      } catch (e) {
-        console.warn('[Decode] pipeline setup failed, using in-thread decode:', e);
-        pipelineDecodeChunk = null;
-      }
       // WASM chunk-parallel encode: engage the pool only when the clip will
       // actually chunk (a single-pass clip never calls encodeChunk, so awaiting
       // pool readiness would only delay it) and every worker is ready.
       let pipelineEncodeChunk = null;
       try {
-        if (!pipelineDecodeChunk && backend === 'wasm' && encodePoolRef.current.length
+        if (backend === 'wasm' && encodePoolRef.current.length
             && enableChunking && pcm.length > MAX_CHUNK_DURATION * 16000
             && await (encodePoolReadyRef.current || Promise.resolve(false))) {
           pipelineEncodeChunk = encodeChunkViaPool;
           // Positive marker (asserted by the e2e) that chunk-parallel encoding
           // actually engaged rather than silently falling through to serial.
-          console.log(`[Encode] pool engaged: ${encodePoolRef.current.length} workers encoding chunks in parallel with in-thread decode`);
+          console.log(`[Encode] pool engaged: ${encodePoolRef.current.length} workers encoding chunks in parallel`);
         }
       } catch (e) {
         console.warn('[Encode] pool setup failed, encoding in-thread:', e);
         pipelineEncodeChunk = null;
+      }
+      // Decode worker: engage it only when it is ready, syncing its boost trie
+      // to the main thread's first. On WebGPU it overlaps GPU encode with WASM
+      // decode; on WASM it engages only COMPOSED with the pool (pooled encodes
+      // feed worker decodes), so a short clip or a gated-off pool keeps the
+      // ground-truth in-thread decode. Best-effort: any setup failure just
+      // runs the in-thread path.
+      let pipelineDecodeChunk = null;
+      try {
+        const wantDecodeWorker = backend.startsWith('webgpu')
+          || (backend === 'wasm' && !!pipelineEncodeChunk && wasmDecodePipelineEnabled);
+        if (wantDecodeWorker && decodeWorkerRef.current
+            && await (decodeWorkerReadyRef.current || Promise.resolve(false))) {
+          await syncDecodeWorkerBoost(decodeWorkerRef.current);
+          pipelineDecodeChunk = decodeChunkViaWorker;
+          // Positive marker so a run can confirm the overlap actually engaged
+          // (vs. a silent fall-through to in-thread). The composed variant is
+          // asserted by the composed-pipeline e2e.
+          console.log(backend === 'wasm'
+            ? '[Decode] pipeline engaged: pooled encode overlapping WASM decode in worker (composed)'
+            : '[Decode] pipeline engaged: GPU encode overlapping WASM decode in worker');
+        }
+      } catch (e) {
+        console.warn('[Decode] pipeline setup failed, using in-thread decode:', e);
+        pipelineDecodeChunk = null;
       }
       // If a pipelined run fails mid-flight, reset progress accounting and retry
       // once on the in-thread path so the old sequential loop stays ground truth.
@@ -4698,7 +4765,17 @@ export default function App() {
         lastReportedProgress = -1; runningProcessingMs = 0; chunksCompleted = 0; totalDecodeMs = 0;
       };
       let res;
-      if (pipelineDecodeChunk) {
+      if (pipelineDecodeChunk && pipelineEncodeChunk) {
+        // Composed mode (WASM): pooled encodes feed worker decodes; a failure
+        // anywhere retries the whole clip on the fully in-thread ground truth.
+        try {
+          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk, encodeChunk: pipelineEncodeChunk }, onChunk);
+        } catch (e) {
+          console.warn('[Decode] composed run failed, retrying in-thread:', e);
+          resetProgressCounters();
+          res = await modelRef.current.transcribeChunked(pcm, 16000, chunkedOpts, onChunk);
+        }
+      } else if (pipelineDecodeChunk) {
         try {
           res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk }, onChunk);
         } catch (e) {
@@ -4949,6 +5026,15 @@ export default function App() {
         encodePool: {
           workers: encodePoolRef.current.length,
           plan: encodePoolPlan({ cpuThreads, maxCores, deviceMemory: navigator.deviceMemory }),
+        },
+        decodeWorker: {
+          // 'composed' = the WASM companion of the pool, 'webgpu' = the
+          // independent GPU-side one, false = this model runs decode in-thread.
+          mode: decodeWorkerInitParamsRef.current
+            ? (composedDecodeEligibleRef.current ? 'composed' : 'webgpu') : false,
+          running: !!decodeWorkerRef.current,
+          threads: decodeWorkerInitParamsRef.current?.numThreads ?? null,
+          operatorEnabled: wasmDecodePipelineEnabled,
         },
       },
       env,
