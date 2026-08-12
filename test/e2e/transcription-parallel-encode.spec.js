@@ -7,6 +7,13 @@
 // the golden. Unlike the WebGPU decode worker (untestable headless), the pool
 // is a pure-WASM feature, so headless Chromium covers it fully.
 //
+// This spec pins the POOL-ONLY shape (pooled encode, in-thread decode) by
+// setting the operator kill-switch VITE_WASM_DECODE_PIPELINE='false', which is
+// therefore covered end to end here; the composed shape (pool + decode worker,
+// the default on WASM) is covered by transcription-composed-pipeline.spec.js.
+// Without the switch both specs would exercise the same composed path and the
+// pool-only driver would silently lose its only e2e coverage.
+//
 // Reuses the chunking.spec.js recipe: WASM-int8 local weights (serve.mjs),
 // chunkDuration seeded to 10 s so the ~11 s JFK clip splits into >1 chunk (a
 // single-pass clip never calls encodeChunk). The pool is hardware-gated
@@ -37,6 +44,7 @@ test('encode pool engages on a chunked run and the stitched transcript matches',
   const chunkTotals = new Set();
   let chunkLogs = 0;
   let poolEngaged = false;
+  let decodeEngaged = false;
   const poolTrouble = [];
   page.on('console', (m) => {
     const mt = m.text();
@@ -44,11 +52,19 @@ test('encode pool engages on a chunked run and the stitched transcript matches',
     const hit = /\[Transcribe\] Completed chunk (\d+)\/(\d+)/.exec(mt);
     if (hit) { chunkLogs += 1; chunkTotals.add(Number(hit[2])); }
     if (mt.includes('[Encode] pool engaged')) poolEngaged = true;
+    if (mt.includes('[Decode] pipeline engaged')) decodeEngaged = true;
     // Any of these means the pool broke and the serial fallback (or the gate)
     // masked it; the transcript below would still look healthy, so fail here.
     if (/\[Encode\] (pool worker (crashed|init failed)|pooled run failed|pool setup failed|failed to start|pool unavailable|pool disabled)/.test(mt)) {
       poolTrouble.push(mt);
     }
+  });
+
+  // Operator kill-switch, injected the way docker's entrypoint writes it
+  // (window.__CONFIG__, before any app script runs): keeps the decode worker
+  // WebGPU-only so this run is pool encode + in-thread decode.
+  await page.addInitScript(() => {
+    window.__CONFIG__ = { ...(window.__CONFIG__ || {}), VITE_WASM_DECODE_PIPELINE: 'false' };
   });
 
   await page.goto('/');
@@ -89,6 +105,10 @@ test('encode pool engages on a chunked run and the stitched transcript matches',
   // The whole point of this spec: chunk-parallel encoding really ran.
   expect(poolTrouble, `pool trouble logs:\n${poolTrouble.join('\n')}`).toHaveLength(0);
   expect(poolEngaged, 'expected the "[Encode] pool engaged" marker').toBe(true);
+  // ...and the kill-switch really kept decode in-thread, so this is the
+  // pool-only driver and not the composed one wearing its marker.
+  expect(decodeEngaged,
+    'VITE_WASM_DECODE_PIPELINE=false must keep the decode worker out of the run').toBe(false);
 
   // Stitched transcript recovered the content (same thresholds as
   // chunking.spec.js: the pooled path must not cost quality either).
