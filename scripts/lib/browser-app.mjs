@@ -47,10 +47,13 @@ export async function waitForServer(baseURL, timeoutMs = 30000) {
 // Spawn the tier-3 static server (test/e2e/serve.mjs) on `port`, serving the
 // built app plus the local /models weights (from PARAKEET_E2E_MODEL_DIR, default
 // ./fallback_models). Returns the child process and the baseURL; call
-// waitForServer(baseURL) before driving it. `modelDir` overrides the weights dir.
-export function spawnAppServer({ port, modelDir } = {}) {
+// waitForServer(baseURL) before driving it. `modelDir` overrides the weights dir;
+// `distDir` overrides the served app build (PARAKEET_E2E_DIST_DIR), which is how
+// an A/B harness serves two builds side by side on two ports.
+export function spawnAppServer({ port, modelDir, distDir } = {}) {
   const env = { ...process.env, PORT: String(port) };
   if (modelDir) env.PARAKEET_E2E_MODEL_DIR = modelDir;
+  if (distDir) env.PARAKEET_E2E_DIST_DIR = distDir;
   const proc = spawn('node', [SERVE], { cwd: ROOT, env, stdio: 'inherit' });
   return { proc, baseURL: `http://127.0.0.1:${port}` };
 }
