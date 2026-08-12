@@ -2579,9 +2579,17 @@ export default function App() {
   // Operator kill-switch: VITE_ORT_RELAXED_ENABLE='false' forces the vendored
   // stock runtime for every visitor (and hides the toggle) without a rebuild.
   const relaxedOperatorEnabled = CONFIG.VITE_ORT_RELAXED_ENABLE !== 'false';
-  // Operator kill-switch: VITE_WASM_DECODE_PIPELINE='false' keeps the decode
-  // worker WebGPU-only (WASM runs stay pool + in-thread decode), no rebuild.
-  const wasmDecodePipelineEnabled = CONFIG.VITE_WASM_DECODE_PIPELINE !== 'false';
+  // Operator OPT-IN: VITE_WASM_DECODE_PIPELINE='true' lets the decode worker
+  // also run on WASM (composed with the encode pool). Default OFF on measured
+  // evidence: an in-browser A/B on the 3-min clip (2026-08-12, medians over 4
+  // interleaved verified reps) put composed at +1.6% wall at beam 1 and +0.3%
+  // at beam 5 versus pool-only, i.e. a wash to slight loss, because the pool
+  // ALREADY overlaps decode with encode (the main thread decodes chunk i while
+  // workers encode i+1..), so off-loading decode only adds transfer overhead
+  // and a second decoder session (~100 MB). It stays available because it buys
+  // main-thread responsiveness during long WASM runs, which wall clock does
+  // not measure. On WebGPU the worker is unconditional and unaffected.
+  const wasmDecodePipelineEnabled = CONFIG.VITE_WASM_DECODE_PIPELINE === 'true';
   // Slow-browser heads-up: the WASM engine is ~9x slower outside the
   // Chromium family (SpiderMonkey SIMD codegen, measured 2026-08-10, see
   // lib/browserFamily.js). Dismissal is DELIBERATELY not persisted: the
@@ -3112,9 +3120,9 @@ export default function App() {
         // Decode worker. On WebGPU it overlaps WASM decode with GPU encode; on
         // WASM it only ever engages COMPOSED with the encode pool (pooled
         // encodes feed worker decodes, this thread just orchestrates and
-        // stitches), so it is created only when the model is pool-eligible and
-        // the hardware clears the pool gate (VITE_WASM_DECODE_PIPELINE='false'
-        // is the operator kill-switch). It starts even while the pool toggle
+        // stitches), so it is created only when the model is pool-eligible,
+        // the hardware clears the pool gate, and the operator opted in with
+        // VITE_WASM_DECODE_PIPELINE='true'. It starts even while the pool toggle
         // is off so toggling parallel encode later composes without a model
         // reload. numThreads differs on purpose: the decode loop's joiner
         // GEMMs are too small to scale with threads, and on WASM the pool
