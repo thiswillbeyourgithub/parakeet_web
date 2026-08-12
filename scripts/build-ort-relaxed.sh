@@ -26,6 +26,7 @@
 #
 # Usage:
 #   ./scripts/build-ort-relaxed.sh [-j N] [--src DIR] [--keep-src]
+#                                  [--ort-version V] [--skip-app-build]
 #     -j N        parallel build jobs (default: nproc)
 #     --src DIR   reuse/clone the onnxruntime source tree there instead of the
 #                 default .ort-src/ in the repo root. A user-supplied tree is
@@ -33,6 +34,15 @@
 #     --keep-src  keep the default source tree after a successful install
 #                 (for iterating on build flags; default is to delete it, the
 #                 tree is ~10 GB of ephemeral build state).
+#     --ort-version V   EVALUATION ONLY: build ORT tag vV instead of the
+#                 vendored onnxruntime-web version. The emitted pair is
+#                 loadable only by a version-matched JS bundle, NOT by the
+#                 vendored one, so never ship it under app/ui/public/; use it
+#                 for benchmarking a candidate ORT (e.g. the TODO.md v1.29
+#                 question) before any vendoring decision.
+#     --skip-app-build  do not rebuild app/ui/dist after installing the pair
+#                 (an evaluation build must not wire itself into the served
+#                 tree; also useful when the caller rebuilds dist itself).
 #
 # Cleanup contract: on SUCCESS the default .ort-src/ tree is removed (nothing
 # to gitignore, nothing hoarded); on FAILURE it is kept so a rerun resumes
@@ -54,19 +64,32 @@ JOBS="$(nproc)"
 SRC_DIR="$REPO_ROOT/.ort-src"
 USER_SRC=0
 KEEP_SRC=0
+ORT_VERSION_OVERRIDE=""
+SKIP_APP_BUILD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -j) JOBS="$2"; shift 2 ;;
     --src) SRC_DIR="$2"; USER_SRC=1; shift 2 ;;
     --keep-src) KEEP_SRC=1; shift ;;
+    --ort-version) ORT_VERSION_OVERRIDE="$2"; shift 2 ;;
+    --skip-app-build) SKIP_APP_BUILD=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 # Version-lock to the vendored runtime: the .mjs/.wasm pair we produce is
 # loaded by the vendored JS bundle at runtime, so the interface must match.
-ORT_VERSION="$(node -p "require('$REPO_ROOT/app/ui/vendor/onnxruntime-web/package.json').version")"
+# --ort-version deliberately breaks that lock for evaluation builds; shout
+# about it so a mismatched pair can never look like a routine build in logs.
+if [[ -n "$ORT_VERSION_OVERRIDE" ]]; then
+  ORT_VERSION="$ORT_VERSION_OVERRIDE"
+  VENDORED_VERSION="$(node -p "require('$REPO_ROOT/app/ui/vendor/onnxruntime-web/package.json').version")"
+  echo "*** EVALUATION BUILD: ORT v$ORT_VERSION (vendored JS bundle is v$VENDORED_VERSION)."
+  echo "*** This pair only works with a version-matched JS bundle. Do NOT ship it."
+else
+  ORT_VERSION="$(node -p "require('$REPO_ROOT/app/ui/vendor/onnxruntime-web/package.json').version")"
+fi
 echo "==> Building ONNX Runtime WASM v$ORT_VERSION with Relaxed SIMD (jobs: $JOBS)"
 
 if [[ ! -d "$SRC_DIR/.git" ]]; then
@@ -158,7 +181,9 @@ echo "    (from $(basename "$SRC_MJS") / $(basename "$SRC_WASM"))"
 # One-shot serve: rebuild the app so dist/ actually ships the pair
 # (postbuild.mjs writes dist/ort-relaxed/manifest.json when it is present).
 # The dev server serves public/ directly, so this only matters for dist.
-if [[ -d "$REPO_ROOT/app/ui/node_modules" ]]; then
+if [[ "$SKIP_APP_BUILD" -eq 1 ]]; then
+  echo "==> Skipping the app rebuild (--skip-app-build)"
+elif [[ -d "$REPO_ROOT/app/ui/node_modules" ]]; then
   echo "==> Rebuilding the app so dist/ serves the relaxed pair"
   (cd "$REPO_ROOT/app/ui" && npm run build)
 else
