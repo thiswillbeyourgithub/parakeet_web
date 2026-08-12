@@ -27,6 +27,7 @@
 # Usage:
 #   ./scripts/build-ort-relaxed-docker.sh [-j N] [--repro-check] [--dry-run]
 #                                         [--tag NAME] [--nice N]
+#                                         [--ort-version V] [--out DIR]
 #     -j N            parallelism forwarded to the inner builder
 #                     (default: the container's nproc)
 #     --repro-check   build TWICE into two throwaway directories, in two fresh
@@ -38,6 +39,15 @@
 #     --tag NAME      image tag to build/run (default: parakeet-ort-relaxed-builder)
 #     --nice N        niceness inside the container (default: 19, be polite:
 #                     this box usually has a benchmark running)
+#     --ort-version V EVALUATION ONLY, forwarded to the inner builder: build
+#                     ORT tag vV instead of the vendored version. Requires
+#                     --out (a mismatched pair must never land in the repo)
+#                     and is refused with --repro-check (provenance files are
+#                     for shippable vendored builds only).
+#     --out DIR       install the pair into DIR instead of
+#                     app/ui/public/ort-relaxed/, leaving the shipped pair and
+#                     dist/ untouched (the inner app rebuild is skipped). For
+#                     benchmarking candidate runtimes.
 #
 # Side effects on the bind-mounted repo (the container writes through the
 # mount, as the invoking user, not root):
@@ -72,6 +82,8 @@ JOBS=""
 NICE_LEVEL=19
 REPRO_CHECK=0
 DRY_RUN=0
+ORT_OVERRIDE=""
+OUT_DIR=""
 
 # Docker needs root on this box (see CLAUDE.md). Overridable for hosts where
 # the invoking user is already in the docker group: DOCKER_CMD="docker".
@@ -88,10 +100,28 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; shift ;;
     --tag) IMAGE="$2"; shift 2 ;;
     --nice) NICE_LEVEL="$2"; shift 2 ;;
+    --ort-version) ORT_OVERRIDE="$2"; shift 2 ;;
+    --out) OUT_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# Evaluation-mode guardrails. A version-overridden pair is loadable only by a
+# version-matched JS bundle, so it must never be installed where the app or
+# the provenance flow could pick it up: force an --out dir and keep
+# --repro-check (whose PASS writes shippable-looking SHA256SUMS/BUILD-INFO)
+# out of reach.
+if [[ -n "$ORT_OVERRIDE" && -z "$OUT_DIR" ]]; then
+  echo "ERROR: --ort-version requires --out DIR (an evaluation pair must not" >&2
+  echo "       land in app/ui/public/ort-relaxed/)" >&2
+  exit 2
+fi
+if [[ "$REPRO_CHECK" -eq 1 && ( -n "$ORT_OVERRIDE" || -n "$OUT_DIR" ) ]]; then
+  echo "ERROR: --repro-check writes provenance for the SHIPPED pair; it cannot" >&2
+  echo "       be combined with --ort-version/--out evaluation builds" >&2
+  exit 2
+fi
 
 [[ -f "$BUILDER_DIR/Dockerfile" ]] || {
   echo "ERROR: $BUILDER_DIR/Dockerfile not found" >&2; exit 1; }
@@ -129,6 +159,14 @@ docker_build_run() {
   if [[ -n "$JOBS" ]]; then
     args+=(-j "$JOBS")
   fi
+  # Evaluation builds: forward the version override, and never let the inner
+  # script rebuild dist/ against a pair that is not the shipped one.
+  if [[ -n "$ORT_OVERRIDE" ]]; then
+    args+=(--ort-version "$ORT_OVERRIDE")
+  fi
+  if [[ -n "$OUT_DIR" ]]; then
+    args+=(--skip-app-build)
+  fi
   run "${DOCKER[@]}" "${args[@]}"
 }
 
@@ -156,19 +194,28 @@ BASE_DIGEST="$(grep -m1 -oE '^FROM ubuntu:[^@]+@sha256:[0-9a-f]+' "$BUILDER_DIR/
 NODE_VERSION="$(grep -m1 -E '^ARG NODE_VERSION=' "$BUILDER_DIR/Dockerfile" | cut -d= -f2)"
 
 if [[ "$REPRO_CHECK" -eq 0 ]]; then
-  echo "==> Running the containerised build (installs into $DEST)"
+  INSTALL_DIR="${OUT_DIR:-$DEST}"
+  if [[ -n "$ORT_OVERRIDE" ]]; then
+    echo "==> EVALUATION build of ORT v$ORT_OVERRIDE (installs into $INSTALL_DIR)"
+  else
+    echo "==> Running the containerised build (installs into $INSTALL_DIR)"
+  fi
   # Pre-create the bind target as the invoking user; letting docker create a
   # missing mount destination would leave a root-owned directory behind.
   # (Under --dry-run nothing is mounted, so touch nothing.)
-  [[ "$DRY_RUN" -eq 1 ]] || mkdir -p "$DEST"
-  docker_build_run ""
+  [[ "$DRY_RUN" -eq 1 ]] || mkdir -p "$INSTALL_DIR"
+  docker_build_run "$OUT_DIR"
   if [[ "$DRY_RUN" -eq 0 ]]; then
     echo
     echo "==> Installed pair:"
-    hash_pair "$DEST"
+    hash_pair "$INSTALL_DIR"
     echo
-    echo "Re-run with --repro-check to prove the build is bit-reproducible and"
-    echo "to write the SHA256SUMS/BUILD-INFO provenance files."
+    if [[ -n "$OUT_DIR" ]]; then
+      echo "Evaluation pair only: nothing in the repo was touched."
+    else
+      echo "Re-run with --repro-check to prove the build is bit-reproducible and"
+      echo "to write the SHA256SUMS/BUILD-INFO provenance files."
+    fi
   fi
   exit 0
 fi
