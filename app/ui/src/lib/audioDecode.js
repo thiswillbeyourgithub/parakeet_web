@@ -140,3 +140,22 @@ export async function decodeToPcm16kWebAudio(input) {
   decoded = null;
   return pcm;
 }
+
+// ── Shared entry point ─────────────────────────────────────────────────────
+
+// Decode anything the app has to transcribe into 16 kHz mono float32: ffmpeg
+// first (byte-identical to the CLI, including the AAC priming trim), Web Audio
+// when the ~31 MB core cannot load or the decode throws. Both decoders read the
+// input themselves and a File stays re-readable, so a failed ffmpeg attempt
+// cannot corrupt the fallback's input. Returns the PCM plus which decoder
+// produced it, because every caller logs that. Shared by the upload path
+// (App.jsx processAudioFile) and the sidebar benchmark, so the benchmark
+// measures exactly the decode a real upload gets.
+export async function decodeToPcm16k(input) {
+  try {
+    return { pcm: await decodeToPcm16kFfmpeg(input), via: 'ffmpeg.wasm' };
+  } catch (err) {
+    console.warn('[Audio] ffmpeg.wasm decode unavailable/failed; falling back to Web Audio single-pass:', err);
+    return { pcm: await decodeToPcm16kWebAudio(input), via: 'web-audio' };
+  }
+}
