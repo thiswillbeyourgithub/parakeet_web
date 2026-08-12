@@ -64,3 +64,7 @@ scripts/openai-like-server/node_modules/
 data/
 deploy.sh
 TODO.md
+# Benchmark reports synced down from the instance by deploy.sh: local analysis
+# data that would otherwise be shipped into every build context (and grow it
+# without bound). The container reaches them through a bind mount, never a COPY.
+benchmark_reports/

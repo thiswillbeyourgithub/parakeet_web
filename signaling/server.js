@@ -10,6 +10,8 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const fsp = require('fs/promises');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 
 const app = express();
@@ -36,6 +38,19 @@ if (TEST_DISABLE_RATE_LIMIT) {
 }
 
 // ============ ICE Server Configuration ============
+// Benchmark-report collection (POST /api/benchmark-report). Off unless the
+// operator mounts a writable folder and points this at it; docker-compose then
+// derives the client-side VITE_BENCHMARK_UPLOAD from the same variable, so the
+// send button and this receiver appear and disappear together.
+const BENCHMARK_REPORTS_DIR = process.env.BENCHMARK_REPORTS_DIR || '';
+const BENCHMARK_REPORT_FORMAT = 'parakeetweb-benchmark-report/1';
+// Well under the 50 KB express.json cap: a real report is ~5-10 KB, and a
+// tighter route-level bound keeps a padded one from being stored.
+const BENCHMARK_REPORT_MAX_BYTES = 32 * 1024;
+// Disk backstop behind the per-IP rate limit: at 32 KB each, 20k reports cap
+// the folder around 640 MB.
+const BENCHMARK_REPORTS_MAX_FILES = parseInt(process.env.BENCHMARK_REPORTS_MAX_FILES, 10) || 20000;
+
 const STUN_SERVER = process.env.STUN_SERVER || '';
 const STUN_GOOGLE_FALLBACK = process.env.STUN_GOOGLE_FALLBACK !== 'false';
 const TURN_SERVER = process.env.TURN_SERVER || '';
@@ -253,6 +268,10 @@ const RATE_LIMIT_CONFIG = {
     // well below roomCreation to make harvesting visibly noisier than
     // legitimate use.
     iceConfig: { windowMs: 60 * 1000, maxRequests: 10 },
+    // A benchmark run takes minutes, so a legitimate visitor posts at most one
+    // report every few minutes. 3/min leaves room for a retry after a network
+    // blip while keeping a scripted client from filling the report folder.
+    benchmarkReport: { windowMs: 60 * 1000, maxRequests: 3 },
     // relayData covers /relay/up and /relay/down, which carry the
     // audio stream when WebRTC and the WebSocket relay both fail.
     // The PCM worklet emits one frame per render quantum (128 samples
@@ -1210,6 +1229,68 @@ app.get('/api/stats', rateLimitMiddleware('general'), (req, res) => {
     res.json({ activeRooms: rooms.size });
 });
 
+// ============ Benchmark reports ============
+//
+// Receives the anonymised performance reports produced by the sidebar
+// Benchmark section, so an operator can find out where the time goes on
+// hardware they do not own. Disabled unless BENCHMARK_REPORTS_DIR points at a
+// writable folder; the entrypoint derives VITE_BENCHMARK_UPLOAD from the same
+// variable, so with it unset the client never even shows a send button and
+// this route answers 503.
+//
+// Deliberate properties:
+//  - ONE FILE PER REPORT, named entirely by this server (UTC stamp + random
+//    suffix). Nothing from the request reaches a path, and immutable files are
+//    what makes the operator's two-way rsync in deploy.sh safe.
+//  - No IP, no Origin, no user agent and no timestamp beyond the receive time
+//    is written next to the payload: the report is anonymous by design and
+//    logging the sender here would quietly undo that.
+//  - The body is re-serialised from the parsed JSON, so whatever is stored is
+//    valid JSON of a bounded size, never raw attacker bytes.
+//  - A directory-wide file cap keeps an abusive client from filling the disk;
+//    the per-IP rate limit (3/min) is the first line, this is the backstop.
+app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), async (req, res) => {
+    if (!BENCHMARK_REPORTS_DIR) {
+        return res.status(503).json({ error: 'Unavailable', message: 'Benchmark report collection is not enabled' });
+    }
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ error: 'Bad Request', message: 'Expected a JSON object' });
+    }
+    if (body.format !== BENCHMARK_REPORT_FORMAT) {
+        return res.status(400).json({ error: 'Bad Request', message: 'Unsupported report format' });
+    }
+    let payload;
+    try {
+        payload = JSON.stringify(body);
+    } catch {
+        return res.status(400).json({ error: 'Bad Request', message: 'Report is not serialisable' });
+    }
+    if (payload.length > BENCHMARK_REPORT_MAX_BYTES) {
+        return res.status(413).json({ error: 'Payload Too Large', message: 'Report exceeds the size limit' });
+    }
+
+    try {
+        await fsp.mkdir(BENCHMARK_REPORTS_DIR, { recursive: true });
+        const existing = (await fsp.readdir(BENCHMARK_REPORTS_DIR)).filter((f) => f.endsWith('.json'));
+        if (existing.length >= BENCHMARK_REPORTS_MAX_FILES) {
+            console.warn(`[benchmark] refusing report: ${existing.length} files already stored`);
+            return res.status(507).json({ error: 'Insufficient Storage', message: 'Report store is full' });
+        }
+        // Server-generated name only: no request-controlled component can ever
+        // reach the filesystem. `wx` refuses to overwrite, so a name collision
+        // fails loudly instead of destroying an earlier report.
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const name = `report-${stamp}-${crypto.randomBytes(4).toString('hex')}.json`;
+        await fsp.writeFile(path.join(BENCHMARK_REPORTS_DIR, name), payload, { flag: 'wx' });
+        console.log(`[benchmark] stored ${name} (${payload.length} bytes)`);
+        return res.status(204).send();
+    } catch (err) {
+        console.error('[benchmark] failed to store report:', err?.message || err);
+        return res.status(500).json({ error: 'Internal Server Error', message: 'Could not store the report' });
+    }
+});
+
 // ============ Start Server ============
 //
 // Slowloris-style request-body smuggling: Node's HTTP server has no
@@ -1236,6 +1317,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`  TURNS_PORT: ${TURNS_PORT || '(none)'}`);
     console.log(`  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS.join(', ')}`);
     console.log(`  RELAY_ENABLE: ${RELAY_ENABLE}`);
+    console.log(`  BENCHMARK_REPORTS_DIR: ${BENCHMARK_REPORTS_DIR || '(not set, report collection disabled)'}`);
     if (RELAY_ENABLE) {
         console.log(`  RELAY_MAX_TOTAL_SESSION_BYTES: ${RELAY_MAX_TOTAL_SESSION_BYTES}`);
         console.log(`  RELAY_MAX_CONTROL_MSG_BYTES: ${RELAY_MAX_CONTROL_MSG_BYTES}`);

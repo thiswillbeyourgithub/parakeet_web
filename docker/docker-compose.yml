@@ -55,6 +55,13 @@ services:
       # Custom dictation regex rules: uncomment and set the host path to a folder
       # containing your own CSV regex files (overrides the default Murmure download).
       # - /path/to/my/regex-csvs:/custom-regex:ro
+
+      # Benchmark reports: uncomment (together with BENCHMARK_REPORTS_DIR below)
+      # to let visitors send the anonymised report the sidebar Benchmark section
+      # produces. One JSON file per report, named by the server. Writable, and
+      # the host folder must be owned by UID 1000 or the entrypoint disables the
+      # feature with a warning (`deploy.sh` creates and chowns it for you).
+      # - ../benchmark_reports:/benchmark-reports
     # Resource limits to mitigate denial-of-service risk.
     deploy:
       resources:
@@ -97,6 +104,17 @@ services:
       # alongside the encode pool). Unset leaves the decode worker WebGPU-only,
       # which is the default because composed measured as a wash on wall clock.
       - VITE_WASM_DECODE_PIPELINE=${VITE_WASM_DECODE_PIPELINE:-}
+      # Benchmark report collection. Set this to the in-container path of a
+      # WRITABLE bind-mounted folder (see the ./benchmark_reports volume above)
+      # to let visitors send the anonymised report the sidebar Benchmark
+      # section produces. The entrypoint probes the folder and derives the
+      # client-side VITE_BENCHMARK_UPLOAD from it, so unset means the section
+      # still benchmarks but never offers to send anything. The folder must be
+      # owned by UID 1000 (deploy.sh chowns it, like fallback_models).
+      - BENCHMARK_REPORTS_DIR=${BENCHMARK_REPORTS_DIR:-}
+      # Disk backstop: refuse new reports once the folder holds this many
+      # files (~32 KB each, so the default caps it around 640 MB).
+      - BENCHMARK_REPORTS_MAX_FILES=${BENCHMARK_REPORTS_MAX_FILES:-}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}

@@ -232,6 +232,30 @@ echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defau
 echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
 echo "[entrypoint] VITE_ORT_RELAXED_ENABLE=${VITE_ORT_RELAXED_ENABLE:-(not set, relaxed-SIMD ORT gate stays user-toggleable)}"
 echo "[entrypoint] VITE_WASM_DECODE_PIPELINE=${VITE_WASM_DECODE_PIPELINE:-(not set, decode worker stays WebGPU-only)}"
+echo "[entrypoint] BENCHMARK_REPORTS_DIR=${BENCHMARK_REPORTS_DIR:-(not set, benchmark report collection disabled)}"
+
+# Benchmark report collection: the sidebar Benchmark section only offers to
+# SEND a report when a receiver exists, so the client-side switch is derived
+# from the server-side folder instead of being a second thing to set (and to
+# get wrong). The folder must be writable by this container's UID 1000; a
+# freshly bind-mounted host directory is root-owned, which would turn every
+# send into a 500, so probe it here and degrade to copy-only (loudly) rather
+# than shipping a button that always fails.
+if [ -n "${BENCHMARK_REPORTS_DIR:-}" ]; then
+  if mkdir -p "$BENCHMARK_REPORTS_DIR" 2>/dev/null && [ -w "$BENCHMARK_REPORTS_DIR" ]; then
+    VITE_BENCHMARK_UPLOAD="true"
+    echo "[entrypoint] benchmark reports will be stored in $BENCHMARK_REPORTS_DIR"
+  else
+    echo "[entrypoint] WARNING: BENCHMARK_REPORTS_DIR=$BENCHMARK_REPORTS_DIR is not writable by UID $(id -u)."
+    echo "[entrypoint] WARNING: benchmark reports cannot be received; chown the host folder to 1000:1000 to enable it."
+    echo "[entrypoint] WARNING: the Benchmark section still works, it just will not offer to send anything."
+    BENCHMARK_REPORTS_DIR=""
+    VITE_BENCHMARK_UPLOAD=""
+  fi
+else
+  VITE_BENCHMARK_UPLOAD=""
+fi
+export BENCHMARK_REPORTS_DIR VITE_BENCHMARK_UPLOAD
 echo "[entrypoint] VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-(not set, no default curated list)}"
 # F-142: surface the resolved HSTS / CSP override values so operators can
 # confirm at startup that their docker/.env overrides are actually in the
@@ -521,6 +545,7 @@ VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
 VITE_RELAY_ENABLE="${VITE_RELAY_ENABLE:-}" \
 VITE_ORT_RELAXED_ENABLE="${VITE_ORT_RELAXED_ENABLE:-}" \
 VITE_WASM_DECODE_PIPELINE="${VITE_WASM_DECODE_PIPELINE:-}" \
+VITE_BENCHMARK_UPLOAD="${VITE_BENCHMARK_UPLOAD:-}" \
 VITE_PHRASE_BOOST_DEFAULT="${VITE_PHRASE_BOOST_DEFAULT:-}" \
 VITE_DIARIZATION_SEG_REPO="${VITE_DIARIZATION_SEG_REPO:-}" \
 VITE_DIARIZATION_SEG_FILE="${VITE_DIARIZATION_SEG_FILE:-}" \
@@ -539,6 +564,7 @@ node -e '
     "VITE_RELAY_ENABLE",
     "VITE_ORT_RELAXED_ENABLE",
     "VITE_WASM_DECODE_PIPELINE",
+    "VITE_BENCHMARK_UPLOAD",
     "VITE_PHRASE_BOOST_DEFAULT",
     "VITE_DIARIZATION_SEG_REPO",
     "VITE_DIARIZATION_SEG_FILE",
