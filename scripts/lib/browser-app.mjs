@@ -59,10 +59,19 @@ export function spawnAppServer({ port, modelDir } = {}) {
 // for real WebGPU on a GPU box (see webgpu-check.mjs). `channel` selects the
 // browser build: 'chromium' (the always-present bundled Playwright browser) or
 // 'chrome' (a system Google Chrome, if installed).
+//
+// 'chromium' is mapped to undefined (same as webgpu-check.mjs) instead of being
+// passed literally: with channel:'chromium' Playwright runs the FULL Chromium
+// binary even for headless, and that binary's blob-storage paging is broken
+// under multi-GB blob traffic here (paged blob files come back NotReadableError
+// / net::ERR_BLOB_REFERENCED_BLOB_BROKEN, killing every int8/fp16 model load
+// at ORT session create; reproduced app-free, 2026-08-12). The default launch
+// uses the headless shell for headless runs, which never hits it, and headed
+// runs use the full binary either way.
 export function launchWebGpuBrowser({ headless = false, channel = 'chromium' } = {}) {
   return chromium.launch({
     headless,
-    channel,
+    channel: channel === 'chromium' ? undefined : channel,
     args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan'],
   });
 }
@@ -83,7 +92,9 @@ export async function bootApp(page, { baseURL, settings = {}, modelSource = 'loc
 }
 
 // Click the "Load model" button and wait for the ready check mark (✔). Throws if
-// the tab dies (OOM / GPU device lost) or the model never becomes ready.
+// the tab dies (OOM / GPU device lost), the app lands on the Failed status
+// (surfaced immediately with the on-page error text instead of masking the
+// real failure as a slow timeout), or the model never becomes ready.
 export async function loadModelAndWaitReady(page, { timeoutMs = 6 * 60 * 1000 } = {}) {
   await page.locator('[data-umami-event="load_model_button"]').click();
   const deadline = Date.now() + timeoutMs;
@@ -91,6 +102,12 @@ export async function loadModelAndWaitReady(page, { timeoutMs = 6 * 60 * 1000 } 
     const body = await page.locator('body').innerText().catch(() => null);
     if (body === null) throw new Error('tab closed during model load (OOM / GPU device lost?)');
     if (body.includes('✔')) return;
+    // The status line reads "Status: Failed" (en) / "Statut : Échec" (fr); the
+    // banner under it (modelLoadError / quantUnavailable) carries the reason.
+    if (/Failed|Échec/.test(body)) {
+      const reason = (body.match(/^.*(?:Failed|Échec).*$/m) || [''])[0].trim();
+      throw new Error(`model load FAILED${reason ? ` (${reason})` : ''}; see the page console for the underlying error`);
+    }
     await sleep(500);
   }
   throw new Error(`model did not become ready within ${timeoutMs}ms`);
