@@ -43,6 +43,9 @@
 #     --skip-app-build  do not rebuild app/ui/dist after installing the pair
 #                 (an evaluation build must not wire itself into the served
 #                 tree; also useful when the caller rebuilds dist itself).
+#     --dest DIR  install the pair into DIR instead of
+#                 app/ui/public/ort-relaxed/ (host-run evaluation builds; the
+#                 docker wrapper achieves the same with an --out bind mount).
 #
 # Cleanup contract: on SUCCESS the default .ort-src/ tree is removed (nothing
 # to gitignore, nothing hoarded); on FAILURE it is kept so a rerun resumes
@@ -66,6 +69,7 @@ USER_SRC=0
 KEEP_SRC=0
 ORT_VERSION_OVERRIDE=""
 SKIP_APP_BUILD=0
+DEST_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -74,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --keep-src) KEEP_SRC=1; shift ;;
     --ort-version) ORT_VERSION_OVERRIDE="$2"; shift 2 ;;
     --skip-app-build) SKIP_APP_BUILD=1; shift ;;
+    --dest) DEST_OVERRIDE="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -154,7 +159,7 @@ echo "==> Collecting artifacts"
 # flavour filename inside the .mjs (emscripten resolves its .wasm by that
 # literal), keeping every load path consistent: the app's verified-blob path,
 # the plain wasmPaths-prefix path, and transcribe.mjs --wasm-paths under Node.
-DEST="$REPO_ROOT/app/ui/public/ort-relaxed"
+DEST="${DEST_OVERRIDE:-$REPO_ROOT/app/ui/public/ort-relaxed}"
 mkdir -p "$DEST"
 SRC_MJS="$(find "$BUILD_DIR" -name 'ort-wasm-*simd-threaded.jsep.mjs' | head -n 1)"
 SRC_WASM="$(find "$BUILD_DIR" -name 'ort-wasm-*simd-threaded.jsep.wasm' | head -n 1)"
