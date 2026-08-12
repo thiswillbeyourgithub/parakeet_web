@@ -28,6 +28,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Microphone distant (téléphone comme micro)](#microphone-distant-téléphone-comme-micro)
 - [Modèle local de secours](#modèle-local-de-secours)
 - [Serveur d'API compatible OpenAI](#serveur-dapi-compatible-openai)
+- [Banc d'essai](#banc-dessai)
 - [Réinitialiser l'application](#réinitialiser-lapplication)
 - [Débogage mobile](#débogage-mobile)
 - [Architecture](#architecture)
@@ -59,6 +60,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | 🎚️ **Contrôles de capture** | Bascules par enregistrement pour la suppression de bruit et le contrôle automatique du gain |
 | 🌐 **Interface bilingue** | Interface disponible en anglais et en français, sélectionnée automatiquement selon la langue de votre navigateur (le modèle sous-jacent est lui-même multilingue) |
 | 📦 **Encodeur int8 SmoothQuant** | L'encodeur tourne en int8 SmoothQuant par défaut, recalibré pour que sa précision suive celle de fp32 même sur de l'audio long (contrairement à une conversion int8 standard qui se dégrade fortement au-delà d'environ 30 s). Depuis le sélecteur de précision de l'encodeur, vous pouvez opter pour un encodeur `int8 lite` plus léger (~757 Mo contre ~841 Mo par défaut : il garde davantage de couches en fp32), ou pour l'encodeur **fp32 fragmenté** complet (~2,4 Go, environ 2x plus lent, découpé en morceaux de moins de 2 Go par `scripts/shard-fp32.py` pour qu'il tienne dans le navigateur) pour une qualité maximale ; les précisions optionnelles s'arrêtent avec un message clair plutôt qu'une rétrogradation silencieuse lorsque le dépôt du modèle ne les fournit pas. Le décodeur tourne toujours en int8 (sur ce modèle, le joiner int8 est aussi précis que fp32, tout en étant plus léger et plus rapide). Le dépôt du modèle fournit aussi un encodeur **fp16** (~1,2 Go, généré par `scripts/quantize-fp16.py` dans le dépôt [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) pour le backend WebGPU, mais WebGPU est actuellement désactivé ([Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)) donc fp16 n'est pas utilisé |
+| 📊 **Banc d'essai en un clic** | Une section de la barre latérale mesure tous les moteurs et toutes les précisions que votre appareil peut réellement exécuter, sur un extrait audio livré avec l'application, et produit un rapport anonymisé unique que vous pouvez lire, copier ou (si l'instance les collecte) envoyer pour aider à optimiser l'application pour du matériel comme le vôtre. Voir [Banc d'essai](#banc-dessai) |
 | 🐳 **Prêt pour Docker** | Déploiement auto-hébergé en une seule commande |
 | 🔌 **API compatible OpenAI** | Mode sans interface optionnel : servez le même pipeline via l'API de transcription audio d'OpenAI (ainsi que les dialectes whisper.cpp et whisper-asr-webservice) pour que des clients existants transcrivent en local, avec le renforcement de phrases et l'identification des locuteurs pilotables par requête. Voir [Serveur d'API compatible OpenAI](#serveur-dapi-compatible-openai) |
 
@@ -363,6 +365,34 @@ Ce qu'il apporte de plus qu'une simple encapsulation :
 Il **importe** le pipeline de ce dépôt au lieu de le réimplémenter : sa sortie est donc identique octet pour octet à celle de la CLI `scripts/transcribe.mjs` à options égales. Voir son [README](./scripts/openai-like-server/README.md) pour la référence complète de l'API.
 
 Construit avec [Claude Code](https://claude.com/claude-code).
+
+## Banc d'essai
+
+La barre latérale contient une section **Banc d'essai** qui mesure, en un clic, tous les moteurs et toutes les précisions que votre appareil peut réellement exécuter, et rassemble le résultat dans un rapport unique que vous pouvez lire, copier ou envoyer à la personne qui héberge l'instance.
+
+Pourquoi elle existe : la vitesse de l'application dépend de matériel que le mainteneur ne possède pas (le niveau de SIMD exposé par votre processeur, le nombre de cœurs réellement libres, l'adaptateur GPU que votre navigateur expose, la façon dont le moteur WASM de votre navigateur compile les noyaux de calcul). Des mesures réelles sur des machines réelles sont le seul moyen de décider quoi optimiser ensuite.
+
+**Ce qu'elle fait.** Elle transcrit un court extrait livré avec l'application (11 s du discours d'investiture de JFK, dans le domaine public) une fois par combinaison sélectionnée, en passant exactement par le même code qu'une transcription normale : les chiffres décrivent donc ce que vous obtenez vraiment, et non un micro-banc d'essai synthétique. Vous pouvez ajouter un profil audio long (l'extrait répété jusqu'à environ 90 s, ce qui sollicite le découpage en morceaux, le recollement des coutures et l'encodage parallèle) et demander jusqu'à 3 exécutions par combinaison, auquel cas la médiane est rapportée.
+
+**Avant de commencer.** Un seul modèle est conservé dans le cache du navigateur à la fois : tester plusieurs précisions les télécharge donc l'une après l'autre, et le modèle que vous utilisez habituellement est retéléchargé ensuite. Le téléchargement estimé est affiché au-dessus du bouton, la ligne que vous utilisez déjà ne coûte rien, et les lignes fp32 (~2,3 Go) ne sont jamais présélectionnées. L'exécution se termine sur votre propre combinaison, de sorte que le cache conserve à la fin le modèle que vous utilisez vraiment.
+
+**Ce que contient le rapport :** les mesures de temps (chargement du modèle, temps total, temps par seconde d'audio, répartition encodage/décodage), ce que votre processeur et votre GPU prennent en charge (nombre de cœurs, mémoire, SIMD et threads WASM, l'adaptateur WebGPU avec ses fonctionnalités et ses limites, la configuration ONNX Runtime en vigueur), les réglages de l'application qui changent la vitesse (threads, largeur du faisceau, fenêtre de découpage, renforcement de phrases actif ou non), et un score de similarité de chaque transcription avec la phrase connue de l'extrait, ce qui permet de détecter un moteur qui renvoie silencieusement du vide.
+
+**Ce qu'il ne contient pas :** aucun audio, aucune transcription, aucun user agent, aucun fuseau horaire, aucune langue, aucune taille d'écran, aucune estimation de stockage, et aucun identifiant d'aucune sorte. L'anonymisation fonctionne par liste blanche et non par liste noire : une sonde ajoutée plus tard ne peut donc pas se retrouver par accident dans un rapport, et les deux moitiés de cette promesse (ce qui est conservé, ce qui ne doit jamais apparaître) sont vérifiées par la suite de tests, y compris dans un vrai navigateur.
+
+**L'envoi est toujours une décision.** Le texte complet du rapport est affiché avant que quoi que ce soit ne se produise. Rien n'est transmis tant que vous n'appuyez pas sur « Envoyer au développeur » ; une case à cocher permet d'accepter l'envoi automatique des rapports suivants, une fois que vous avez vu à quoi l'un d'eux ressemble. Si l'instance ne collecte pas de rapports, le bouton d'envoi n'existe pas du tout et la section se limite à la copie.
+
+### Collecter les rapports (auto-hébergement)
+
+La collecte des rapports est désactivée par défaut. Pour l'activer sur votre propre instance :
+
+1. Décommentez le volume `../benchmark_reports:/benchmark-reports` dans `docker/docker-compose.yml`.
+2. Définissez `BENCHMARK_REPORTS_DIR=/benchmark-reports` dans `docker/.env`.
+3. Assurez-vous que le dossier hôte appartient à l'UID 1000 (le conteneur écrit sous cet utilisateur).
+
+Le point d'entrée teste l'accès en écriture au démarrage et en déduit l'interrupteur côté client : un dossier dans lequel il ne peut pas écrire laisse donc la section en mode copie seule, avec un avertissement dans les journaux du conteneur, plutôt que de montrer aux visiteurs un bouton qui échoue toujours.
+
+Les rapports arrivent sur `POST /api/signal/benchmark-report` du service de signalisation : limité à 3 par minute et par IP, plafonné à 32 Ko chacun et à 20000 fichiers au total, avec vérification du format, et stocké à raison d'un rapport par fichier sous un nom choisi par le serveur lui-même (rien venant de la requête n'atteint un chemin). Rien concernant l'expéditeur n'est écrit à côté du contenu, car un rapport anonyme dans le navigateur ne doit pas cesser de l'être à l'arrivée.
 
 ## Réinitialiser l'application
 
