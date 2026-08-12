@@ -9,10 +9,8 @@
 
 const dbPromises = new Map();
 
-export function openIdb(dbName, storeName, version = 1) {
-  const key = `${dbName}::${storeName}::${version}`;
-  if (dbPromises.has(key)) return dbPromises.get(key);
-  const p = new Promise((resolve, reject) => {
+function openIdbOnce(dbName, storeName, version) {
+  return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, version);
     request.onerror = () => reject(request.error || new Error(`Error opening IndexedDB ${dbName}`));
     request.onsuccess = () => resolve(request.result);
@@ -23,6 +21,26 @@ export function openIdb(dbName, storeName, version = 1) {
       }
     };
   });
+}
+
+export function openIdb(dbName, storeName, version = 1) {
+  const key = `${dbName}::${storeName}::${version}`;
+  if (dbPromises.has(key)) return dbPromises.get(key);
+  const p = (async () => {
+    let db = await openIdbOnce(dbName, storeName, version);
+    // Self-heal a DB that exists WITHOUT the expected store. That state arises
+    // when a bare `indexedDB.open(name)` (no version) races a deleteDatabase:
+    // the versionless open recreates the DB empty at version 1, after which a
+    // versioned open never fires onupgradeneeded again, and every transaction
+    // on the store throws NotFoundError forever. Bumping to version+1 forces
+    // an upgrade transaction that creates the missing store.
+    if (!db.objectStoreNames.contains(storeName)) {
+      const bumped = db.version + 1;
+      db.close();
+      db = await openIdbOnce(dbName, storeName, bumped);
+    }
+    return db;
+  })();
   dbPromises.set(key, p);
   return p;
 }

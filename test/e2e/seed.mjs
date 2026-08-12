@@ -78,23 +78,37 @@ export async function seedSettings(page, extra = {}) {
   // below absorbs the remainder. Polled in-page; opening the DB read-only each
   // tick is cheap for a short wait.
   await page.waitForFunction(
-    ({ DB, STORE, PREFIX, SENTINEL }) => new Promise((resolve) => {
-      const req = indexedDB.open(DB);
-      req.onsuccess = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(false); return; }
-        const tx = db.transaction([STORE], 'readonly');
-        const os = tx.objectStore(STORE);
-        const version = os.get(PREFIX + 'version');
-        const sentinel = os.get(PREFIX + SENTINEL);
-        tx.oncomplete = () => {
-          db.close();
-          resolve(version.result !== undefined && sentinel.result !== undefined);
+    async ({ DB, STORE, PREFIX, SENTINEL }) => {
+      // Existence gate: a bare indexedDB.open(name) CREATES a missing DB as an
+      // empty version-1 shell with no store. This poll can land exactly in the
+      // first boot's purge window (deleteDatabase just completed, store not yet
+      // recreated), and the shell it left behind then never fires
+      // onupgradeneeded for the app's versioned open again: every transaction
+      // throws NotFoundError and the whole harness run dies (seen live from
+      // scripts/transcribe-browser.mjs, which seeds right after goto). So only
+      // open once the DB is listed. The open stays versionLESS on purpose: the
+      // app's openIdb self-heal can bump the DB past version 1, and a stale
+      // open(DB, 1) would then reject with VersionError forever.
+      const listed = await indexedDB.databases().catch(() => null);
+      if (!listed || !listed.some((d) => d.name === DB)) return false;
+      return new Promise((resolve) => {
+        const req = indexedDB.open(DB);
+        req.onsuccess = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE)) { db.close(); resolve(false); return; }
+          const tx = db.transaction([STORE], 'readonly');
+          const os = tx.objectStore(STORE);
+          const version = os.get(PREFIX + 'version');
+          const sentinel = os.get(PREFIX + SENTINEL);
+          tx.oncomplete = () => {
+            db.close();
+            resolve(version.result !== undefined && sentinel.result !== undefined);
+          };
+          tx.onerror = () => { db.close(); resolve(false); };
         };
-        tx.onerror = () => { db.close(); resolve(false); };
-      };
-      req.onerror = () => resolve(false);
-    }),
+        req.onerror = () => resolve(false);
+      });
+    },
     {
       DB: SETTINGS_DB,
       STORE: SETTINGS_STORE,
@@ -109,8 +123,15 @@ export async function seedSettings(page, extra = {}) {
   await page.waitForFunction(
     async ({ extra, version, DB, STORE, PREFIX, STABLE_CHECKS }) => {
       const settings = { version, modelSource: 'local', backend: 'wasm', ...extra };
+      // VersionLESS open: the app's openIdb self-heal can bump the DB past
+      // version 1, and an open(DB, 1) against that rejects with VersionError.
+      // The upgrade handler only fires if this open itself created the DB
+      // (a purge racing us), in which case creating the store right here is
+      // the correct recovery. Any residual store-less shell makes the
+      // transaction below throw; return false so the poll retries instead of
+      // rejecting the whole seed (that reject was a live harness crash).
       const db = await new Promise((res, rej) => {
-        const req = indexedDB.open(DB, 1);
+        const req = indexedDB.open(DB);
         req.onupgradeneeded = (e) => {
           const d = e.target.result;
           if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
@@ -119,6 +140,7 @@ export async function seedSettings(page, extra = {}) {
         req.onerror = () => rej(req.error);
       });
       try {
+        if (!db.objectStoreNames.contains(STORE)) return false;
         await new Promise((res, rej) => {
           const tx = db.transaction([STORE], 'readwrite');
           const os = tx.objectStore(STORE);
