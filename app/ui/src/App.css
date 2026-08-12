@@ -407,6 +407,28 @@ body {
   cursor: not-allowed;
 }
 
+/* Benchmark section results table (sidebar). Compact on purpose: it sits in a
+   narrow panel and has to stay readable with four columns. */
+.benchmark-results {
+  width: 100%;
+  margin-top: 0.6rem;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.benchmark-results th,
+.benchmark-results td {
+  text-align: left;
+  padding: 0.2rem 0.3rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.benchmark-results th {
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
 .settings-content {
   margin-top: 1rem;
 }

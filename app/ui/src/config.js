@@ -30,6 +30,13 @@ export const CONFIG = {
   // Anything else (or unset) keeps it WebGPU-only, which is the default
   // because the composed shape measured as a wash on wall clock.
   VITE_WASM_DECODE_PIPELINE: runtime.VITE_WASM_DECODE_PIPELINE ?? import.meta.env.VITE_WASM_DECODE_PIPELINE,
+  // 'true' enables the "send this benchmark report to the maintainer" button in
+  // the sidebar Benchmark section. The entrypoint derives it from the operator
+  // setting BENCHMARK_REPORTS_DIR (the folder the signaling sidecar writes
+  // reports into), so the button only exists where a receiver exists. Anything
+  // else (or unset) leaves the section copy-only: it still benchmarks, it just
+  // never offers to transmit anything.
+  VITE_BENCHMARK_UPLOAD: runtime.VITE_BENCHMARK_UPLOAD ?? import.meta.env.VITE_BENCHMARK_UPLOAD,
   // Default curated phrase-boost list to pre-select for a fresh visitor (no
   // saved boost choice yet). A bare name or a "<name>.txt"; the UI normalises
   // and validates it against the served manifest. Overridable per-link via the

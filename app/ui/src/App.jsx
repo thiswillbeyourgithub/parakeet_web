@@ -6,7 +6,7 @@ import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, AUDIO_FILE_ACCEPT } from './lib/audio.js';
-import { decodeToPcm16kFfmpeg, decodeToPcm16kWebAudio } from './lib/audioDecode.js';
+import { decodeToPcm16k } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
 import { createCaptureQueue } from './lib/captureQueue.js';
@@ -41,6 +41,16 @@ import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
+import {
+  BENCHMARK_CLIP,
+  LONG_PROFILE_TARGET_SEC,
+  buildBenchmarkReport,
+  estimatedDownloadMB,
+  formatBenchmarkReport,
+  planBenchmark,
+  runBenchmarkPlan,
+  tilePcm,
+} from './lib/benchmark.js';
 import { resolveOrtVariant } from './lib/ortVariant.js';
 import { benchRelaxedAutoPick } from './lib/relaxedAutoPick.js';
 import { isChromiumFamily } from './lib/browserFamily.js';
@@ -476,6 +486,16 @@ const WEBGPU_DISABLED = !(typeof location !== 'undefined'
 // or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
 const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') ? 'wasm' : b);
 
+// Where a benchmark report is POSTed, and whether the "send it to the
+// maintainer" half of the Benchmark section exists at all. The operator opts in
+// by pointing BENCHMARK_REPORTS_DIR at a writable folder, which makes the
+// entrypoint set VITE_BENCHMARK_UPLOAD=true; with it unset the section still
+// benchmarks and still lets the user copy the report, it just never offers to
+// send anything. Same origin (Caddy proxies /api/signal/* to the sidecar), so
+// no CSP connect-src host is involved.
+const BENCHMARK_UPLOAD_PATH = '/api/signal/benchmark-report';
+const BENCHMARK_UPLOAD_ENABLED = CONFIG.VITE_BENCHMARK_UPLOAD === 'true';
+
 // Normalise a curated-list name to a manifest entry: manifest entries all end
 // in `.txt`, so a bare name (e.g. "medical", as supplied via the
 // ?phrase_boost= query param or the VITE_PHRASE_BOOST_DEFAULT env default) gets
@@ -752,6 +772,27 @@ export default function App() {
   // never persisted.
   const [supportReport, setSupportReport] = useState('');
   const [supportReportCopied, setSupportReportCopied] = useState(false);
+  // Sidebar Benchmark section (lib/benchmark.js): one click measures every
+  // backend/precision this machine can run on a fixed clip that ships with the
+  // app, then folds the timings into one anonymised report the user can read,
+  // copy, and optionally send to the maintainer. All in-memory except the
+  // "always send" opt-in, which is persisted and defaults to OFF.
+  const [benchmarkPlan, setBenchmarkPlan] = useState([]);
+  const [benchmarkSelected, setBenchmarkSelected] = useState({});
+  const [benchmarkLongProfile, setBenchmarkLongProfile] = useState(false);
+  const [benchmarkRepeats, setBenchmarkRepeats] = useState(1);
+  const [benchmarkRunning, setBenchmarkRunning] = useState(false);
+  const [benchmarkProgress, setBenchmarkProgress] = useState('');
+  const [benchmarkResults, setBenchmarkResults] = useState([]);
+  const [benchmarkReport, setBenchmarkReport] = useState('');
+  const [benchmarkCopied, setBenchmarkCopied] = useState(false);
+  // idle | sending | sent | failed
+  const [benchmarkSendState, setBenchmarkSendState] = useState('idle');
+  const [benchmarkAutoSend, setBenchmarkAutoSend] = useState(false);
+  const benchmarkCancelRef = useRef(false);
+  // Set after every successful benchmark load so the run can put the user's
+  // own model back only when the last combination left something else loaded.
+  const benchmarkLoadedComboRef = useRef(null);
   const [frameStride, setFrameStride] = useState(1);
   // Beam search width. 1 = greedy (fastest). Higher widths explore alternative
   // hypotheses (~Nx decode cost) and let phrase boosting recover phrases greedy
@@ -1488,6 +1529,7 @@ export default function App() {
           savedBoostSource,
           savedBoostCustomText,
           savedSectionsOpen,
+          savedBenchmarkAutoSend,
         ] = await Promise.all([
           loadSetting('backend', null),
           loadSetting('wasmEncoderQuant', 'int8'),
@@ -1542,6 +1584,9 @@ export default function App() {
           loadSetting('boostSource', null),
           loadSetting('boostCustomText', ''),
           loadSetting('settingsSectionsOpen', {}),
+          // Benchmark reports are never sent without a decision: this is the
+          // "stop asking, always send" opt-in, and it defaults to OFF.
+          loadSetting('benchmarkAutoSend', false),
         ]);
         if (booted) return; // watchdog won while we awaited; skip the stale restore
 
@@ -1680,6 +1725,7 @@ export default function App() {
         if (savedSectionsOpen && typeof savedSectionsOpen === 'object') {
           setSectionsOpen(savedSectionsOpen);
         }
+        setBenchmarkAutoSend(savedBenchmarkAutoSend === true);
         // Scalar settings are in; boot the app now so the UI is configured and
         // persistence/boost-init can proceed, and stop the watchdog.
         booted = true;
@@ -2065,6 +2111,7 @@ export default function App() {
   usePersistedSetting('maesPrefixAlpha', maesPrefixAlpha, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('parallelEncode', parallelEncode, settingsLoaded);
+  usePersistedSetting('benchmarkAutoSend', benchmarkAutoSend, settingsLoaded);
   usePersistedSetting('relaxedSimd', relaxedSimd, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
@@ -4209,6 +4256,15 @@ export default function App() {
   // latest closure (fresh state) rather than a stale first-render one.
   const runTranscriptionRef = useRef(null);
   runTranscriptionRef.current = runTranscription;
+  // Same mirroring for the benchmark driver: it changes backend/precision
+  // state, waits for the change to be LIVE (liveSettingsRef, refreshed on every
+  // render just like these function refs), then calls through the ref so it
+  // always runs the closure that sees the new settings. Without this the driver
+  // would reload the model with the previous render's backend.
+  const loadModelRef = useRef(null);
+  loadModelRef.current = loadModel;
+  const liveSettingsRef = useRef({});
+  liveSettingsRef.current = { backend, wasmEncoderQuant, webgpuEncoderQuant };
   // Created once; canRun/runJob read live values through refs, so a single
   // stable instance stays correct across renders. A job may start only when a
   // model is loaded, no local recording is live, and no transcription is
@@ -4482,16 +4538,7 @@ export default function App() {
         setProgressText(t('resamplingTo16k'));
       }
 
-      let pcm;
-      let decodedVia;
-      try {
-        pcm = await decodeToPcm16kFfmpeg(file);
-        decodedVia = 'ffmpeg.wasm';
-      } catch (err) {
-        console.warn('[Transcribe] ffmpeg.wasm decode unavailable/failed; falling back to Web Audio single-pass:', err);
-        pcm = await decodeToPcm16kWebAudio(file);
-        decodedVia = 'web-audio';
-      }
+      const { pcm, via: decodedVia } = await decodeToPcm16k(file);
 
       // Yield to UI after the heavy decode.
       await new Promise(resolve => setTimeout(resolve, 0));
@@ -4615,7 +4662,14 @@ export default function App() {
     }
   }
 
-  async function runTranscription(pcm, { safeName, audioDuration, audioBlob = null, replaceId = null }) {
+  // `benchmark: true` (sidebar Benchmark section) runs the very same pipeline
+  // but keeps its output out of the user's way: no history entry, no clipboard
+  // copy, no transcript replacement, and failures are RETHROWN instead of
+  // alerted so the benchmark driver can record them as a result row. Everything
+  // that decides speed (boost wait, chunking, pools, pipelines, metrics) is
+  // untouched, which is the whole point: the benchmark must measure the real
+  // path, not a private copy of it.
+  async function runTranscription(pcm, { safeName, audioDuration, audioBlob = null, replaceId = null, benchmark = false }) {
     setTranscribing(true);
     setStatus(`${t('transcribingFile')} "${safeName}"…`);
     // WebGPU rendering-coupling guard: pause every CSS animation for the whole
@@ -4662,6 +4716,7 @@ export default function App() {
       let lastReportedProgress = -1; // update UI only when the % actually moves
       let runningProcessingMs = 0;   // sum of per-chunk model time for the ETA
       let chunksCompleted = 0;
+      let observedChunks = 1;        // how many chunks the planner actually made
 
       const chunkedOpts = {
         enableChunking,
@@ -4697,6 +4752,7 @@ export default function App() {
         totalDecodeMs += result.metrics?.decode_ms || 0;
         runningProcessingMs += result.metrics?.total_ms || 0;
         chunksCompleted += 1;
+        if (totalChunks > 0) observedChunks = totalChunks;
 
         // Single-pass (no chunking): no incremental UI, only metrics bookkeeping.
         if (totalChunks <= 1) return;
@@ -4839,6 +4895,18 @@ export default function App() {
 
       setLatestMetrics(res.metrics);
 
+      if (benchmark) {
+        // Hand the numbers back to the benchmark driver and leave the history,
+        // the visible transcript and the clipboard exactly as the user left them.
+        setStatus('modelReady');
+        return {
+          text: res.utterance_text,
+          metrics: res.metrics,
+          chunks: observedChunks,
+          wallMs: transcribeElapsedMs,
+        };
+      }
+
       // Fields refreshed on every run, whether we append or replace in place.
       const resultFields = {
         filename: safeName,
@@ -4905,6 +4973,9 @@ export default function App() {
         errorObject: error
       });
       setStatus('transcriptionFailed');
+      // The benchmark expects failures as data (a "failed" row for that
+      // backend), not as a modal the user has to dismiss mid-run.
+      if (benchmark) throw error;
       alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
     } finally {
       if (gpuRun) {
@@ -5074,6 +5145,212 @@ export default function App() {
       .catch((err) => { if (!cancelled) setSupportReport(`support report failed: ${err?.message || err}`); });
     return () => { cancelled = true; };
   }, [sectionsOpen.debug, status, backend]);
+
+  // ── Sidebar benchmark (lib/benchmark.js) ────────────────────────────────
+  // Rebuild the candidate matrix whenever the section is open and something
+  // that decides what this device can run changes. Selections the user already
+  // made are kept; new rows arrive with the planner's default.
+  useEffect(() => {
+    if (!sectionsOpen.benchmark || benchmarkRunning) return;
+    const plan = planBenchmark({
+      webgpuAvailable: webgpuAvailable !== false,
+      webgpuDisabled: WEBGPU_DISABLED,
+      shaderF16: webgpuShaderF16,
+      currentBackend: backend,
+      currentWasmQuant: wasmEncoderQuant,
+      currentWebgpuQuant: webgpuEncoderQuant,
+    });
+    setBenchmarkPlan(plan);
+    setBenchmarkSelected((prev) => {
+      const next = {};
+      for (const row of plan) next[row.id] = row.id in prev ? prev[row.id] : row.defaultSelected;
+      return next;
+    });
+  }, [sectionsOpen.benchmark, benchmarkRunning, webgpuAvailable, webgpuShaderF16,
+      backend, wasmEncoderQuant, webgpuEncoderQuant]);
+
+  // Push one combination into the settings and wait until the change is LIVE.
+  // React state lands on the next render, and loadModel/runTranscription read
+  // the backend from their closure, so calling them in the same tick would
+  // silently benchmark the PREVIOUS combination. liveSettingsRef is refreshed
+  // during render, so polling it (with a real sleep, never a spin) is the
+  // point at which the fresh closures exist.
+  async function applyBenchmarkCombo(combo, capMs = 5000) {
+    const wantBackend = coerceBackend(combo.backend);
+    setBackend(wantBackend);
+    if (wantBackend.startsWith('webgpu')) setWebgpuEncoderQuant(combo.quant);
+    else setWasmEncoderQuant(combo.quant);
+    const t0 = performance.now();
+    for (;;) {
+      const live = liveSettingsRef.current;
+      const liveQuant = wantBackend.startsWith('webgpu') ? live.webgpuEncoderQuant : live.wasmEncoderQuant;
+      if (live.backend === wantBackend && liveQuant === combo.quant) return;
+      if (performance.now() - t0 > capMs) {
+        throw new Error(`benchmark could not apply ${combo.id} (settings still ${live.backend}/${liveQuant})`);
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  async function sendBenchmarkReport(reportText) {
+    setBenchmarkSendState('sending');
+    try {
+      const res = await fetch(BENCHMARK_UPLOAD_PATH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: reportText,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      console.log('[Benchmark] Report sent to the instance operator');
+      setBenchmarkSendState('sent');
+      return true;
+    } catch (err) {
+      console.error('[Benchmark] Sending the report failed:', err);
+      setBenchmarkSendState('failed');
+      return false;
+    }
+  }
+
+  async function copyBenchmarkReport() {
+    if (!benchmarkReport) return;
+    try {
+      await navigator.clipboard.writeText(sanitizeClipboardText(benchmarkReport));
+      setBenchmarkCopied(true);
+      setTimeout(() => setBenchmarkCopied(false), 2000);
+    } catch (err) {
+      console.error('[Benchmark] Failed to copy the report:', err);
+      alert(t('failedCopyClipboard'));
+    }
+  }
+
+  // Run the selected matrix end to end. Everything is driven through the app's
+  // own loading and transcription paths (loadModelRef / runTranscriptionRef),
+  // so the timings describe what a real user gets on this machine, and the
+  // driver in lib/benchmark.js owns the sequencing, timing and error handling.
+  async function runBenchmark() {
+    if (benchmarkRunning || isTranscribingRef.current) return;
+    const combos = benchmarkPlan.filter((c) => benchmarkSelected[c.id]);
+    if (!combos.length) return;
+
+    benchmarkCancelRef.current = false;
+    benchmarkLoadedComboRef.current = null;
+    setBenchmarkRunning(true);
+    setBenchmarkResults([]);
+    setBenchmarkReport('');
+    setBenchmarkSendState('idle');
+    setBenchmarkProgress(t('benchmarkPreparing'));
+
+    // What to put back afterwards: the settings the user had, and whether they
+    // had a model loaded at all (the run swaps models and the cache only holds
+    // one at a time, so anything else would leave them worse off).
+    const restore = {
+      id: `${backend}:${backend.startsWith('webgpu') ? webgpuEncoderQuant : wasmEncoderQuant}`,
+      backend,
+      quant: backend.startsWith('webgpu') ? webgpuEncoderQuant : wasmEncoderQuant,
+    };
+    const hadModel = !!modelRef.current;
+    console.log(`[Benchmark] Starting: ${combos.map((c) => c.id).join(', ')}`);
+
+    try {
+      // One fetch + one decode, shared by every combination and both profiles,
+      // so decode cost never lands in a backend's numbers.
+      const clipUrl = new URL(BENCHMARK_CLIP.url, document.baseURI).toString();
+      const res = await fetch(clipUrl);
+      if (!res.ok) throw new Error(`benchmark clip: HTTP ${res.status}`);
+      const blob = await res.blob();
+      const { pcm } = await decodeToPcm16k(new File([blob], 'benchmark.mp3', { type: 'audio/mpeg' }));
+      const longPcm = benchmarkLongProfile ? tilePcm(pcm, LONG_PROFILE_TARGET_SEC) : null;
+      const profiles = benchmarkLongProfile ? ['short', 'long'] : ['short'];
+
+      const results = await runBenchmarkPlan(combos, {
+        profiles,
+        repeats: benchmarkRepeats,
+        now: () => performance.now(),
+        shouldCancel: () => benchmarkCancelRef.current,
+        onProgress: ({ phase, combo, profile, step, totalSteps }) => {
+          if (phase === 'done') return setBenchmarkProgress('');
+          const what = phase === 'load' ? t('benchmarkLoading') : t('benchmarkTranscribing');
+          setBenchmarkProgress(`${what} ${combo.backend} / ${combo.quant}`
+            + (profile ? ` (${profile})` : '') + ` — ${Math.min(step + 1, totalSteps)}/${totalSteps}`);
+        },
+        applyCombo: (combo) => applyBenchmarkCombo(combo),
+        loadModel: async (combo) => {
+          await loadModelRef.current();
+          if (!modelRef.current) throw new Error('model failed to load');
+          benchmarkLoadedComboRef.current = combo.id;
+        },
+        transcribe: async ({ profile }) => {
+          const audio = profile === 'long' ? longPcm : pcm;
+          const audioSec = audio.length / 16000;
+          const out = await runTranscriptionRef.current(audio, {
+            safeName: `benchmark (${profile})`,
+            audioDuration: audioSec,
+            benchmark: true,
+          });
+          return { ...out, audioSec };
+        },
+      });
+
+      setBenchmarkResults(results);
+      const env = await collectEnvironment();
+      const report = buildBenchmarkReport({
+        reportId: (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
+        generatedAt: new Date().toISOString(),
+        app: {
+          version: VERSION,
+          modelRepo: repoId,
+          modelSource,
+          ortVariant: ortVariantRef.current
+            ? { engaged: !!ortVariantRef.current.engaged, reason: ortVariantRef.current.reason ?? null }
+            : null,
+        },
+        // Settings that change the numbers. Recorded rather than forced, so a
+        // report describes a real configuration and rows inside one report stay
+        // comparable with each other.
+        settings: {
+          cpuThreads,
+          parallelEncode,
+          relaxedSimd,
+          enableChunking,
+          chunkDurationSec: chunkDuration,
+          beamWidth,
+          phraseBoostActive: !!phraseBoostRef.current,
+          boostStrength: phraseBoostRef.current ? boostStrength : null,
+        },
+        clip: {
+          source: BENCHMARK_CLIP.source,
+          shortSec: +(pcm.length / 16000).toFixed(2),
+          longSec: longPcm ? +(longPcm.length / 16000).toFixed(2) : null,
+          repeats: benchmarkRepeats,
+        },
+        results,
+        env,
+      });
+      const reportText = formatBenchmarkReport(report);
+      setBenchmarkReport(reportText);
+      if (BENCHMARK_UPLOAD_ENABLED && benchmarkAutoSend) await sendBenchmarkReport(reportText);
+    } catch (err) {
+      console.error('[Benchmark] Run failed:', err);
+      setBenchmarkProgress('');
+      alert(`${t('benchmarkFailed')}: ${transcribeErrorMessage(err)}`);
+    } finally {
+      setBenchmarkRunning(false);
+      setBenchmarkProgress('');
+      // Put the user's own configuration back. The plan runs their combination
+      // last, so this is usually a settings-only no-op; it only reloads when
+      // the run ended on someone else's model (they deselected their own row,
+      // it failed, or they cancelled).
+      try {
+        await applyBenchmarkCombo(restore);
+        if (hadModel && benchmarkLoadedComboRef.current !== restore.id) {
+          console.log(`[Benchmark] Restoring ${restore.id} (run ended on ${benchmarkLoadedComboRef.current || 'nothing'})`);
+          await loadModelRef.current();
+        }
+      } catch (err) {
+        console.error('[Benchmark] Could not restore the previous configuration:', err);
+      }
+    }
+  }
 
   async function copyToClipboard() {
     if (!text) return;
@@ -6733,6 +7010,217 @@ export default function App() {
               </>
             )}
 
+          </CollapsibleSection>
+
+          {/* Benchmark: one click measures every backend/precision this device
+              can run on a clip that ships with the app, then builds one
+              anonymised report the user can read before copying or sending it.
+              Nothing leaves the browser without an explicit action. */}
+          <CollapsibleSection id="benchmark" title={t('settingsGroupBenchmark')} open={!!sectionsOpen.benchmark} onToggle={toggleSection}>
+            <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--text-subtle)' }}>
+              {t('benchmarkIntro')}
+            </p>
+            <Banner tone="warning" style={{ fontSize: '0.78rem', marginBottom: '0.5rem' }}>
+              {t('benchmarkCacheWarning')}
+            </Banner>
+
+            <div className="setting-row">
+              <span className="setting-label">
+                {t('benchmarkCombos')}:
+                <InfoTooltip text={t('tooltipBenchmarkCombos')} />
+              </span>
+              <div className="setting-options">
+                {benchmarkPlan.length === 0 && (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-subtle)' }}>{t('benchmarkNoCombos')}</span>
+                )}
+                {benchmarkPlan.map(row => (
+                  <label key={row.id} className={benchmarkRunning ? 'disabled-option' : ''}>
+                    <input
+                      type="checkbox"
+                      name={`benchmark-combo-${row.id}`}
+                      checked={!!benchmarkSelected[row.id]}
+                      disabled={benchmarkRunning}
+                      onChange={e => setBenchmarkSelected(prev => ({ ...prev, [row.id]: e.target.checked }))}
+                    />
+                    {row.backend === 'wasm' ? t('wasmCpu') : t('webgpu')} / {row.quant}
+                    <span style={{ color: 'var(--text-subtle)' }}>
+                      {row.isCurrent ? ` (${t('benchmarkAlreadyDownloaded')})` : ` (~${row.downloadMB} MB)`}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <label className={benchmarkRunning ? 'disabled-option' : ''}>
+                <input
+                  type="checkbox"
+                  name="benchmarkLongProfile"
+                  checked={benchmarkLongProfile}
+                  disabled={benchmarkRunning}
+                  onChange={e => setBenchmarkLongProfile(e.target.checked)}
+                />
+                {t('benchmarkLongProfile')}
+                <InfoTooltip text={t('tooltipBenchmarkLongProfile')} />
+              </label>
+            </div>
+
+            <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+              <span className="setting-label" style={{ flex: '1 1 auto' }}>
+                {t('benchmarkRepeats')} (1-3):
+                <InfoTooltip text={t('tooltipBenchmarkRepeats')} />
+              </span>
+              <input
+                type="number"
+                name="benchmarkRepeats"
+                inputMode="numeric"
+                min="1"
+                max="3"
+                value={benchmarkRepeats}
+                disabled={benchmarkRunning}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setBenchmarkRepeats(Math.max(1, Math.min(3, Math.round(v))));
+                }}
+                style={{ width: '4rem' }}
+              />
+            </div>
+
+            {(() => {
+              const selected = benchmarkPlan.filter(c => benchmarkSelected[c.id]);
+              const mb = estimatedDownloadMB(selected, benchmarkPlan.filter(c => c.isCurrent).map(c => c.id));
+              return (
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-subtle)', margin: '0.25rem 0 0.5rem' }}>
+                  {t('benchmarkEstimatedDownload')}: {mb >= 1000 ? `~${(mb / 1000).toFixed(1)} GB` : `~${mb} MB`}
+                </p>
+              );
+            })()}
+
+            <button
+              type="button"
+              className="primary"
+              style={{ width: '100%' }}
+              data-umami-event="benchmark_run"
+              disabled={benchmarkRunning || isTranscribing || !benchmarkPlan.some(c => benchmarkSelected[c.id])}
+              onClick={runBenchmark}
+            >
+              {benchmarkRunning ? t('benchmarkRunning') : t('benchmarkRun')}
+            </button>
+            {benchmarkRunning && (
+              <button
+                type="button"
+                style={{ width: '100%', marginTop: '0.35rem' }}
+                onClick={() => { benchmarkCancelRef.current = true; setBenchmarkProgress(t('benchmarkCancelling')); }}
+              >
+                {t('cancel')}
+              </button>
+            )}
+            {benchmarkProgress && (
+              <p style={{ fontSize: '0.78rem', margin: '0.4rem 0 0' }}>{benchmarkProgress}</p>
+            )}
+
+            {benchmarkResults.length > 0 && (
+              <table className="benchmark-results">
+                <thead>
+                  <tr>
+                    <th>{t('benchmarkColBackend')}</th>
+                    <th>{t('benchmarkColProfile')}</th>
+                    <th>{t('benchmarkColSpeed')}</th>
+                    <th>{t('benchmarkColLoad')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {benchmarkResults.map((r, i) => (
+                    <tr key={`${r.id}-${r.profile || 'na'}-${i}`}>
+                      <td>{r.backend} / {r.quant}</td>
+                      <td>{r.profile || '-'}</td>
+                      <td>
+                        {r.status === 'ok'
+                          ? `${r.rtf != null ? `${r.rtf}x` : '-'} (${formatDuration((r.wallMs || 0) / 1000)})`
+                          : t(`benchmarkStatus_${r.status}`)}
+                        {r.status === 'ok' && r.similarity != null && r.similarity < 0.8 && (
+                          <span style={{ color: 'var(--danger)' }}> ⚠</span>
+                        )}
+                      </td>
+                      <td>{r.loadMs != null ? formatDuration(r.loadMs / 1000) : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {benchmarkReport && (
+              <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.35rem', marginTop: '0.5rem' }}>
+                <span className="setting-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>
+                    {t('benchmarkReport')}
+                    <InfoTooltip text={t('tooltipBenchmarkReport')} />
+                  </span>
+                  <button
+                    type="button"
+                    className="benchmark-report-copy"
+                    onClick={copyBenchmarkReport}
+                    style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem' }}
+                  >
+                    {benchmarkCopied ? t('copied') : t('supportReportCopy')}
+                  </button>
+                </span>
+                <textarea
+                  className="benchmark-report-text"
+                  readOnly
+                  value={benchmarkReport}
+                  spellCheck={false}
+                  wrap="off"
+                  aria-label={t('benchmarkReport')}
+                  style={{
+                    width: '100%',
+                    minHeight: '6rem',
+                    maxHeight: '11rem',
+                    overflow: 'auto',
+                    resize: 'vertical',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                    fontSize: '0.68rem',
+                    lineHeight: 1.35,
+                    whiteSpace: 'pre',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '4px',
+                    padding: '0.4rem',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                {BENCHMARK_UPLOAD_ENABLED && (
+                  <>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-subtle)', margin: 0 }}>
+                      {t('benchmarkSendExplainer')}
+                    </p>
+                    <button
+                      type="button"
+                      className="primary"
+                      data-umami-event="benchmark_send"
+                      disabled={benchmarkSendState === 'sending' || benchmarkSendState === 'sent'}
+                      onClick={() => sendBenchmarkReport(benchmarkReport)}
+                    >
+                      {benchmarkSendState === 'sent' ? t('benchmarkSent')
+                        : benchmarkSendState === 'sending' ? t('benchmarkSending')
+                        : t('benchmarkSend')}
+                    </button>
+                    {benchmarkSendState === 'failed' && (
+                      <p style={{ fontSize: '0.78rem', color: 'var(--danger)', margin: 0 }}>{t('benchmarkSendFailed')}</p>
+                    )}
+                    <label>
+                      <input
+                        type="checkbox"
+                        name="benchmarkAutoSend"
+                        checked={benchmarkAutoSend}
+                        onChange={e => setBenchmarkAutoSend(e.target.checked)}
+                      />
+                      {t('benchmarkAutoSend')}
+                      <InfoTooltip text={t('tooltipBenchmarkAutoSend')} />
+                    </label>
+                  </>
+                )}
+              </div>
+            )}
           </CollapsibleSection>
 
           <CollapsibleSection id="debug" title={t('settingsGroupDebug')} open={!!sectionsOpen.debug} onToggle={toggleSection}>
