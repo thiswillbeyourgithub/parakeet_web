@@ -1327,7 +1327,12 @@ html.gpu-run *::after {
   animation-play-state: paused !important;
 }
 
-/* Pulsing dots: softer indicator used while live transcription is streaming */
+/* Listening dots: softer indicator used while live transcription is streaming.
+   Deliberately STATIC (a rising-opacity ellipsis, no keyframes): live decoding
+   runs WebGPU session.runs too, and any continuous animation would gate their
+   callback delivery exactly like the spinner did (see the html.gpu-run note
+   above). The live path has no gpu-run toggle, so the indicator itself must
+   not produce frames. */
 .live-dots {
   display: inline-flex;
   align-items: center;
@@ -1342,21 +1347,14 @@ html.gpu-run *::after {
   height: 0.42em;
   border-radius: 50%;
   background: currentColor;
-  opacity: 0.35;
-  animation: live-dot-pulse 1.2s ease-in-out infinite;
+  opacity: 0.3;
 }
 
-.live-dots > span:nth-child(2) { animation-delay: 0.15s; }
-.live-dots > span:nth-child(3) { animation-delay: 0.3s; }
-
-@keyframes live-dot-pulse {
-  0%, 100% { opacity: 0.25; transform: scale(0.85); }
-  50%      { opacity: 1;    transform: scale(1.1); }
-}
+.live-dots > span:nth-child(2) { opacity: 0.6; }
+.live-dots > span:nth-child(3) { opacity: 0.95; }
 
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation-duration: 1.6s; }
-  .live-dots > span { animation: none; opacity: 0.7; }
 }
 
 /* --- Speaker diarization (Speakers view): turns + colour ----------------- */
