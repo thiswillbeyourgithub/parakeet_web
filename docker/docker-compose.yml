@@ -93,6 +93,10 @@ services:
       # Defaults to the shipped french_medical list. Per-link override:
       # ?phrase_boost=<name>. Neither overrides a saved choice.
       - VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-french_medical}
+      # Opt into the composed WASM decode pipeline (decode worker running
+      # alongside the encode pool). Unset leaves the decode worker WebGPU-only,
+      # which is the default because composed measured as a wash on wall clock.
+      - VITE_WASM_DECODE_PIPELINE=${VITE_WASM_DECODE_PIPELINE:-}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}
