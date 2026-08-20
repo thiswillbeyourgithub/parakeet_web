@@ -106,8 +106,8 @@ describe('encodePoolPlan: chunk-parallel encode pool gate + thread split', () =>
     // Odd budgets round down so the pool never exceeds the user's budget.
     assert.deepEqual(encodePoolPlan({ cpuThreads: 5, maxCores: 8, deviceMemory: 8 }),
       { workers: 2, threadsPerWorker: 2, reason: null });
-    // 4-core floor machine: 2 single-thread workers still beat 1x2t.
-    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 4, deviceMemory: 8 }),
+    // 8-core floor machine with a small thread budget: 2 single-thread workers.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 8, deviceMemory: 8 }),
       { workers: 2, threadsPerWorker: 1, reason: null });
   });
 
@@ -117,6 +117,13 @@ describe('encodePoolPlan: chunk-parallel encode pool gate + thread split', () =>
 
   test('gates: small core counts, low memory, unsplittable thread budget', () => {
     assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 2, deviceMemory: 8 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'cores' });
+    // 4-7 logical cores are refused since the 2026-08 quiet-vs-loaded A/B:
+    // the pool's measured envelope is ~+4% quiet / ~-15% contended, so mid-size
+    // machines (where "quiet" is rarest) no longer gamble on it.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 4, deviceMemory: 8 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'cores' });
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 7, deviceMemory: 8 }),
       { workers: 0, threadsPerWorker: 0, reason: 'cores' });
     assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: 4 }),
       { workers: 0, threadsPerWorker: 0, reason: 'memory' });

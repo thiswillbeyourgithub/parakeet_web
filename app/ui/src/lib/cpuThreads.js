@@ -44,11 +44,17 @@ export function restoreCpuThreads({ stored, migrated, maxCores }) {
  * encoder's thread scaling saturates near the physical core count, but chunks
  * are independent, so two extra ORT instances in workers, each with about half
  * the user's thread budget, encode different chunks concurrently while the
- * main thread decodes (measured on a 6C/12T box: 2x3t vs 1x6t is ~+45%
- * encode throughput, 2x2t vs 1x4t ~+35% on 4 threads).
+ * main thread decodes. Measured end-to-end on the 6C/12T reference box
+ * (2026-08: interleaved in-browser A/B, default 4-thread budget): ~4% faster
+ * wall on a QUIET machine, ~15% SLOWER when the machine is already loaded,
+ * plus ~1.7 GB extra RAM for the two extra int8 encoder copies. The pool only
+ * converts genuinely idle cores, so it needs plenty of them to be a safe bet.
  *
  * Gates (any failure returns workers: 0 with the reason):
- * - 'cores': under 4 logical cores there is no headroom to convert.
+ * - 'cores': under 8 logical cores there is no reliable headroom to convert
+ *   (on smaller machines the split thread budget loses to the plain path as
+ *   soon as anything else runs; unknown hardwareConcurrency falls back to 8
+ *   and passes, matching the deviceMemory-undefined policy below).
  * - 'memory': each worker holds its own copy of the encoder weights
  *   (~850 MB for int8), so low-RAM devices must not pay 2 extra copies.
  *   navigator.deviceMemory is Chrome-only and caps its report at 8; undefined
@@ -69,7 +75,7 @@ export function encodePoolPlan({ cpuThreads, maxCores, deviceMemory }) {
   const cores = Number.isFinite(maxCores) && maxCores > 0 ? Math.floor(maxCores) : 8;
   const threads = Number.isFinite(cpuThreads) && cpuThreads >= 1
     ? Math.floor(cpuThreads) : defaultWasmThreads(cores);
-  if (cores < 4) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
+  if (cores < 8) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
   if (Number.isFinite(deviceMemory) && deviceMemory < 8) {
     return { workers: 0, threadsPerWorker: 0, reason: 'memory' };
   }
