@@ -14,10 +14,10 @@
 // itself: does the probe actually pick the GPU on a machine where the GPU is
 // genuinely faster, and does that choice reach the app? That is what this runs.
 //
-// It is also the tool for the open question the probe was built to answer.
-// App.jsx still pins everyone to WASM (WEBGPU_DISABLED) unless ?webgpu=1, on a
-// verdict that was later disproven; deciding whether to lift that needs the
-// probe's answer from GPUs other than the one reference box. Run this there.
+// It is also the tool for the question the probe was built to answer. WebGPU is
+// now on app-wide and the probe decides per machine, so the useful thing to
+// know is what it decides on GPUs other than the one reference box. Run it
+// there, and read the verdict it prints.
 //
 // Built with Claude Code.
 
@@ -85,7 +85,7 @@ try {
   // 2. A normal page load must prefetch both artifacts at idle, so the
   //    measurement itself never waits on the network.
   console.log('\n== prefetch on load ==');
-  await page.goto(`${baseURL}/?webgpu=1`);
+  await page.goto(baseURL);
   await page.locator('[data-umami-event="load_model_button"]').waitFor({ timeout: 30_000 });
   await sleep(6000);
   console.log(`  fetched: ${probeAssets.join(', ') || 'NOTHING'}`);
@@ -144,23 +144,23 @@ try {
     }
   }
 
-  // 5. The default build (no ?webgpu=1) must be untouched: nothing fetched,
-  //    nothing run, and the normal WASM load still starts.
-  console.log('\n== default build is untouched ==');
+  // 5. The ?webgpu=0 kill switch must still put a visitor fully back on the
+  //    CPU path: nothing fetched, nothing run, normal WASM load starts.
+  console.log('\n== ?webgpu=0 kill switch ==');
   const ctx2 = await browser.newContext();
   const page2 = await ctx2.newPage();
   const logs2 = [];
   const assets2 = [];
   page2.on('console', (m) => logs2.push(m.text()));
   page2.on('request', (r) => { if (r.url().includes('/probe/')) assets2.push(r.url()); });
-  await page2.goto(baseURL);
+  await page2.goto(`${baseURL}/?webgpu=0`);
   await page2.locator('[data-umami-event="load_model_button"]').waitFor({ timeout: 30_000 });
   await sleep(6000);
   await page2.locator('[data-umami-event="load_model_button"]').click();
   await sleep(8000);
   console.log(`  probe assets: ${assets2.length} | probe logs: ${logs2.filter((l) => l.includes('[Probe]')).length}`);
-  if (assets2.length) fail.push('probe artifacts were fetched with WebGPU disabled app-wide');
-  if (logs2.some((l) => l.includes('[Probe]'))) fail.push('the probe ran with WebGPU disabled app-wide');
+  if (assets2.length) fail.push('probe artifacts were fetched under ?webgpu=0');
+  if (logs2.some((l) => l.includes('[Probe]'))) fail.push('the probe ran under ?webgpu=0');
   if (!logs2.some((l) => l.includes('[Hub]') || l.includes('[Parakeet.js]'))) {
     fail.push('the normal WASM load did not start');
   }

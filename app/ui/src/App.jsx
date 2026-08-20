@@ -479,14 +479,26 @@ const BOOST_SOURCE_CUSTOM = '__custom__';
 // so switching to it from a very large curated list is instant.
 const BOOST_SOURCE_DISABLED = '__disabled__';
 
-// WebGPU is disabled app-wide. onnxruntime-web's WebGPU backend has no kernels
-// for this encoder's shape operators (Shape/ConstantOfShape/...), so the graph
-// fragments and runs mostly on the CPU anyway, SLOWER than the plain WASM int8
-// path (measured ~15x on an RTX 3090 Ti). Until a WebGPU-friendly encoder ships,
-// every user is pinned to WASM int8. The `?webgpu=1` query param re-enables the
-// backend for diagnostics (scripts/webgpu-check.mjs) and power users.
-const WEBGPU_DISABLED = !(typeof location !== 'undefined'
-  && /[?&]webgpu=1(?:&|$)/.test(location.search || ''));
+// WebGPU is available app-wide, and which backend a visitor actually gets is
+// decided by MEASURING their machine (lib/perfProbe.js), not by this constant.
+//
+// History worth keeping, because the obvious reading of this flag is wrong:
+// WebGPU used to be pinned off for everyone on a ~15x-slower measurement that
+// was blamed on the encoder's shape operators fragmenting the graph onto the
+// CPU. That diagnosis was refuted in 2026-08: the cost was the PAGE, whose
+// compositor activity gates JSEP's ~2000 per-run event-loop yields
+// process-wide. With the `html.gpu-run` animation pause in place the same clip
+// went 12m39s -> 8.5s, and WebGPU now measures ~5x FASTER than WASM int8 on
+// the reference box. The pin outlived its own evidence by a month.
+//
+// It is still not a blanket "GPU is better" claim, which is why the probe
+// exists: it only moves a visitor to WebGPU on a >=2x measured win on THEIR
+// hardware, and every failure resolves to WASM.
+//
+// `?webgpu=0` is the kill switch: it forces WASM for a page load, for support
+// ("does it work with ?webgpu=0?") and for the tests that pin this contract.
+const WEBGPU_DISABLED = typeof location !== 'undefined'
+  && /[?&]webgpu=0(?:&|$)/.test(location.search || '');
 
 // Map any WebGPU backend id to 'wasm' while WebGPU is disabled, so a persisted
 // or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
@@ -7082,9 +7094,9 @@ export default function App() {
               const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
               // int8 is the default everywhere. fp32 is an opt-in on BOTH paths:
               // on WASM via <2 GB shards (~2.4 GB, ~2x slower), and on WebGPU.
-              // fp16 is WebGPU-only, so with WebGPU disabled app-wide
-              // (WEBGPU_DISABLED) it is greyed out; with ?webgpu=1 the backend is
-              // selectable again and fp16 becomes available on WebGPU as before.
+              // fp16 is WebGPU-only, so it needs the WebGPU backend AND an
+              // adapter exposing shader-f16; under the ?webgpu=0 kill switch
+              // (WEBGPU_DISABLED) it is greyed out with its own note.
               const webgpuDisabledNote = t('precisionUnavailableWebgpuDisabled');
               const rows = [
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },

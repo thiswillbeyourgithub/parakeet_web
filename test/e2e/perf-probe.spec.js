@@ -3,7 +3,8 @@
 // this machine instead of guessing for it.
 //
 // What this tier CAN prove, and why it is the half worth pinning: the probe sits
-// in FRONT of the Load model button on every visit, so a regression that makes
+// in FRONT of the Load model button on every visit (WebGPU is on app-wide, so
+// this is now the path real visitors take), so a regression that makes
 // it fetch, run, or stall where it should not would cost every visitor time and
 // bandwidth before their download even starts. All three tests below are about
 // the probe staying out of the way, or failing towards WASM when it cannot
@@ -68,24 +69,24 @@ async function stallWeights(page) {
   await page.route(/huggingface\.co/, () => { /* keep pending forever */ });
 }
 
-test('the probe never fetches or runs while WebGPU is disabled app-wide', async ({ page }) => {
+test('the probe never fetches or runs when the ?webgpu=0 kill switch is used', async ({ page }) => {
   // The strong version of this check: the machine DOES have a GPU. Nothing may
-  // happen anyway, because WEBGPU_DISABLED means no verdict could be acted on.
+  // happen anyway, because the kill switch means no verdict could be acted on.
   await page.addInitScript(FAKE_ADAPTER);
   await stallWeights(page);
   const seen = watchProbe(page);
 
-  await page.goto('/');
+  await page.goto('/?webgpu=0');
   const loadBtn = page.locator('[data-umami-event="load_model_button"]');
   await expect(loadBtn).toBeVisible({ timeout: 15000 });
   // Outlast the idle-prefetch deadline (requestIdleCallback timeout 5000).
   await page.waitForTimeout(6500);
-  expect(seen.assets, 'probe artifacts prefetched while WebGPU is disabled').toEqual([]);
+  expect(seen.assets, 'probe artifacts prefetched under the kill switch').toEqual([]);
 
   await loadBtn.click();
   // The load must start immediately: no probe in front of it.
   await expect(page.locator('.controls')).toHaveCount(1, { timeout: 15000 });
-  expect(seen.logs, 'probe ran while WebGPU is disabled').toEqual([]);
+  expect(seen.logs, 'probe ran under the kill switch').toEqual([]);
   expect(seen.assets, 'probe artifacts fetched on the load click').toEqual([]);
 
   // The sidebar button is hidden too: there is nothing for it to configure.
@@ -96,14 +97,14 @@ test('the probe never fetches or runs while WebGPU is disabled app-wide', async 
   await expect(page.locator('[data-umami-event="autoconfigure_button"]')).toHaveCount(0);
 });
 
-test('with WebGPU selectable but no adapter, the probe stays silent', async ({ page }) => {
+test('with no adapter, the probe stays silent on a normal load', async ({ page }) => {
   // Nothing to measure on a machine that cannot select WebGPU either way, so
   // the ~5 MB of artifacts must not be spent.
   await page.addInitScript(NO_ADAPTER);
   await stallWeights(page);
   const seen = watchProbe(page);
 
-  await page.goto('/?webgpu=1');
+  await page.goto('/');
   const loadBtn = page.locator('[data-umami-event="load_model_button"]');
   await expect(loadBtn).toBeVisible({ timeout: 15000 });
   await page.waitForTimeout(6500);
@@ -123,7 +124,7 @@ test('an adapter that cannot run the graph keeps the visitor on WASM', async ({ 
   await stallWeights(page);
   const seen = watchProbe(page);
 
-  await page.goto('/?webgpu=1');
+  await page.goto('/');
   const loadBtn = page.locator('[data-umami-event="load_model_button"]');
   await expect(loadBtn).toBeVisible({ timeout: 15000 });
   await page.waitForTimeout(6500);
