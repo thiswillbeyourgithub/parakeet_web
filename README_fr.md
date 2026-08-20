@@ -19,6 +19,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
 - [Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)
+- [Configuration automatique : mesurer plutôt que supposer](#configuration-automatique--mesurer-plutôt-que-supposer)
 - [Moteur CPU plus rapide (Relaxed-SIMD)](#moteur-cpu-plus-rapide-relaxed-simd)
 - [Mode dictée](#mode-dictée)
 - [Identification des locuteurs](#identification-des-locuteurs)
@@ -47,7 +48,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 | Fonctionnalité | Détails |
 |---|---|
 | 🔒 **100% privé** | Fonctionne entièrement dans votre navigateur — aucun audio ne quitte jamais votre appareil |
-| ⚡ **Fonctionne partout (WASM int8)** | La transcription s'exécute sur le backend WASM (CPU) avec un encodeur int8 SmoothQuant, donc elle marche dans tout navigateur moderne sans GPU, confortablement plus vite que le temps réel sur une machine courante. WebGPU est actuellement désactivé ([Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)) : pour ce modèle, le moteur WebGPU du navigateur bascule sur le CPU pour l'encodeur et finit plus lent que WASM int8 |
+| ⚡ **Fonctionne partout (WASM int8)** | La transcription s'exécute sur le backend WASM (CPU) avec un encodeur int8 SmoothQuant, donc elle marche dans tout navigateur moderne sans GPU, confortablement plus vite que le temps réel sur une machine courante. WebGPU est actuellement désactivé par défaut ([Pourquoi WebGPU est-il désactivé ?](#pourquoi-webgpu-est-il-désactivé)), et lorsqu'il est disponible l'application mesure les deux voies sur votre machine au lieu de supposer ([Configuration automatique](#configuration-automatique--mesurer-plutôt-que-supposer)) |
 | 🧵 **Encodage parallèle** | Sur les enregistrements longs, les segments audio sont encodés en parallèle dans des workers en arrière-plan pendant que le fil principal décode, ce qui met à profit les cœurs inutilisés. Activé par défaut sur les machines capables (8 cœurs et plus, 8 Go de RAM et plus ; cela consomme plus de mémoire car chaque worker garde sa propre copie de l'encodeur) et désactivable dans les réglages. Le gain dépend du nombre de cœurs réellement libres : sur une machine chargée, répartir le budget de threads entre plusieurs workers peut finir plus lent que le chemin simple, donc testez les deux sur vos fichiers longs si les derniers pourcents comptent |
 | 🎙️ **Téléphone comme micro** | Utilisez votre téléphone comme microphone sans fil via WebRTC chiffré de bout en bout |
 | ⏱️ **Transcription en direct** | Mode streaming optionnel : le texte apparaît au fur et à mesure que vous parlez, les regex de dictée étant appliquées en temps réel |
@@ -80,11 +81,27 @@ sudo docker compose -f docker/docker-compose.yml up
 
 ## Pourquoi WebGPU est-il désactivé ?
 
-Choisir un backend GPU semble devoir être plus rapide, mais pour ce modèle ce n'est pas le cas, donc l'application fixe chaque utilisateur sur le backend WASM (CPU) avec l'encodeur int8. L'option WebGPU dans les paramètres est grisée (et tout ancien choix WebGPU enregistré est ramené vers WASM au chargement).
+L'application fixe chaque utilisateur sur le backend WASM (CPU) avec l'encodeur int8 : l'option WebGPU dans les paramètres est grisée, et tout ancien choix WebGPU enregistré est ramené vers WASM au chargement. La raison d'origine s'est depuis révélée fausse, et cela mérite d'être raconté correctement, car la mauvaise réponse a paru convaincante pendant un an.
 
-L'encodeur (un Conformer) émet des centaines d'opérateurs à forme dynamique (`Shape`, `ConstantOfShape`, et la tuyauterie de gather/concat/slice autour). Le moteur WebGPU du navigateur ([onnxruntime-web](https://onnxruntime.ai/)) n'a pas de noyaux GPU pour ces opérateurs : il les exécute donc sur le CPU et découpe l'encodeur en îlots GPU/CPU. Chaque frontière d'îlot est une synchronisation de périphérique, si bien que le GPU attend au lieu de calculer : les poids montent bien en VRAM, mais l'utilisation du GPU reste proche de 0 % et l'exécution de bout en bout finit environ 15x plus lente que la voie WASM int8 (mesuré sur une RTX 3090 Ti, en pleine précision fp32). C'est une limite de la couverture d'opérateurs du moteur, pas de votre GPU.
+WebGPU mesurait autrefois environ 15x plus lent que WASM int8 sur ce modèle. La faute en revenait à l'encodeur (un Conformer), qui émet des centaines d'opérateurs à forme dynamique pour lesquels le moteur WebGPU du navigateur ([onnxruntime-web](https://onnxruntime.ai/)) n'a pas de noyaux GPU : il les exécute sur le CPU, découpant l'encodeur en îlots GPU/CPU, et le GPU restait proche de 0 % d'utilisation alors que les poids étaient manifestement en VRAM. Cette explication collait au symptôme et était pourtant fausse.
 
-WASM int8 tourne déjà confortablement plus vite que le temps réel sur une machine courante, c'est donc de toute façon le meilleur choix par défaut. La voie de retour vers l'accélération GPU est un ré-export de l'encodeur à forme statique qui supprime entièrement ces opérateurs à forme dynamique ; s'il voit le jour, le backend GPU pourra être réactivé. Pour le diagnostic, vous pouvez encore forcer WebGPU avec le paramètre d'URL `?webgpu=1`. (Cette analyse, ainsi que l'application, ont été réalisées avec l'aide de [Claude Code](https://claude.com/claude-code).)
+La vraie cause était la page elle-même. Le moteur rend la main à la boucle d'événements environ 2000 fois par exécution de l'encodeur, et Chromium ne délivre ces rappels qu'au rythme où la page produit des images de composition, et ce pour tout le processus. Le simple indicateur d'attente animé taxait donc chacune de ces 2000 interruptions. Mettre en pause les animations de la page pendant toute la durée d'une exécution GPU a supprimé la totalité de cette taxe : le même extrait de 3 minutes est passé de 12 min 39 s à 8,5 s. Sur la machine de référence (une RTX 3090 Ti), WebGPU traite désormais un enregistrement de 6,5 minutes en environ 19 s contre environ 102 s pour WASM int8, soit environ 5x plus rapide au lieu de 15x plus lent.
+
+Alors pourquoi est-ce encore désactivé ? Parce que « le GPU est-il plus rapide ici » est une question sur votre machine, pas sur ce modèle, et que se tromper coûte cher dans un sens : la voie GPU télécharge 1,2 à 2,4 Go de poids au lieu d'environ 600 Mo. Un seul GPU a été mesuré depuis le correctif. Plutôt que d'extrapoler de celui-ci à tout le monde, l'application mesure maintenant la machine sur laquelle elle tourne (voir [Configuration automatique](#configuration-automatique--mesurer-plutôt-que-supposer) ci-dessous), et lever l'interrupteur global reste une décision de déploiement. Vous pouvez forcer WebGPU dès aujourd'hui avec le paramètre d'URL `?webgpu=1`. (Cette analyse, ainsi que l'application, ont été réalisées avec l'aide de [Claude Code](https://claude.com/claude-code).)
+
+## Configuration automatique : mesurer plutôt que supposer
+
+Savoir si un GPU bat le CPU pour ce travail dépend entièrement de la machine : l'application le mesure donc sur place au lieu de le supposer. Deux petits graphes ONNX (environ 5 Mo au total, livrés avec l'application) sont téléchargés discrètement en arrière-plan d'un chargement de page normal, et au premier chargement du modèle ils sont chronométrés sur les deux voies : celui en int8 via WASM, celui en fp32 via WebGPU, ce qui correspond à ce que chaque backend exécuterait réellement. Le plus rapide gagne et est sélectionné avant le début du téléchargement, si bien que le verdict décide des poids que vous récupérez.
+
+Quelques détails qui comptent plus qu'il n'y paraît :
+
+- **Le basculement vers le GPU n'a lieu qu'en cas de gain net** (au moins 2x). Un GPU à peine devant ne vaut pas 1,2 à 2,4 Go de téléchargement supplémentaire.
+- **Tout échec vous laisse sur le CPU.** Pas d'adaptateur, un GPU incapable d'exécuter le graphe, une mesure cassée ou une branche qui se bloque : tout cela aboutit à WASM, parce que c'est la réponse qui ne coûte rien.
+- **Cela ne remplace jamais un choix que vous avez fait.** Choisissez un backend vous-même et la mesure cesse de décider à votre place.
+- **Cela s'exécute une fois par machine.** Le verdict est conservé et réutilisé, et n'est remesuré qu'en cas de mise à jour de l'application, de changement de GPU, ou au bout de 90 jours, car une mise à jour de pilote peut modifier silencieusement la vitesse du GPU.
+- **Vous pouvez la relancer à tout moment** avec le bouton « Configurer automatiquement les performances » dans les paramètres.
+
+La mesure met les animations de la page en pause pendant son exécution, pour la même raison que les vraies exécutions GPU (voir ci-dessus). Tant que WebGPU est désactivé globalement, rien de tout cela ne s'exécute ni ne télécharge quoi que ce soit. (Réalisé avec l'aide de [Claude Code](https://claude.com/claude-code).)
 
 ## Moteur CPU plus rapide (Relaxed-SIMD)
 

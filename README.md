@@ -19,6 +19,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Why is WebGPU disabled?](#why-is-webgpu-disabled)
+- [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
 - [Faster CPU engine (Relaxed-SIMD)](#faster-cpu-engine-relaxed-simd)
 - [Dictation Mode](#dictation-mode)
 - [Speaker Diarization](#speaker-diarization)
@@ -47,7 +48,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | Feature | Details |
 |---|---|
 | 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
-| ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)): for this model the browser WebGPU runtime falls back to the CPU for the encoder and ends up slower than WASM int8 |
+| ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. WebGPU is currently off by default ([Why is WebGPU disabled?](#why-is-webgpu-disabled)), and when it is available the app measures both paths on your machine rather than guessing ([Autoconfigure](#autoconfigure-measuring-instead-of-guessing)) |
 | 🧵 **Parallel Encoding** | On long recordings, audio chunks are encoded concurrently in background workers while the main thread decodes, so idle CPU headroom does useful work. On by default on capable machines (8+ cores, 8+ GB RAM; it costs extra memory because each worker keeps its own copy of the encoder) and can be toggled off in Settings. How much it helps depends on how many cores are genuinely free: on a busy machine, splitting the thread budget across workers can end up slower than the plain path, so try it both ways on long files if you care about the last few percent |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
 | ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
@@ -80,11 +81,27 @@ sudo docker compose -f docker/docker-compose.yml up
 
 ## Why is WebGPU disabled?
 
-Picking a GPU backend sounds like it should be faster, but for this model it is not, so the app pins every user to the WASM (CPU) backend with the int8 encoder. The WebGPU option in the settings is greyed out (and any old saved WebGPU choice is coerced back to WASM on load).
+The app pins every user to the WASM (CPU) backend with the int8 encoder: the WebGPU option in the settings is greyed out, and any old saved WebGPU choice is coerced back to WASM on load. The original reason for that has since been proven wrong, which is worth telling properly, because the wrong answer sounded convincing for a year.
 
-The encoder (a Conformer) emits hundreds of dynamic-shape operators (`Shape`, `ConstantOfShape`, and the gather/concat/slice plumbing around them). The browser WebGPU runtime ([onnxruntime-web](https://onnxruntime.ai/)) has no GPU kernels for those operators, so it runs them on the CPU and splits the encoder into GPU/CPU islands. Every island boundary is a device synchronization, so the GPU mostly waits instead of computing: the weights do upload to VRAM, but GPU utilization stays near 0% and the end-to-end run comes out roughly 15x slower than the plain WASM int8 path (measured on an RTX 3090 Ti, running at full fp32 precision). This is a limitation of the runtime's operator coverage, not of your GPU.
+WebGPU used to measure roughly 15x slower than WASM int8 on this model. The blame fell on the encoder (a Conformer), which emits hundreds of dynamic-shape operators the browser WebGPU runtime ([onnxruntime-web](https://onnxruntime.ai/)) has no GPU kernels for: it runs those on the CPU, splitting the encoder into GPU/CPU islands, and the GPU sat near 0% utilization while the weights were plainly in VRAM. That story fit the symptom and was still wrong.
 
-WASM int8 already runs comfortably faster than real time on a typical machine, so it is the better default regardless. The path back to GPU acceleration is a static-shape re-export of the encoder that removes those dynamic-shape operators entirely; if that lands, the GPU backend can be re-enabled. For diagnostics you can still force WebGPU with the `?webgpu=1` URL parameter. (This analysis, and the app, were done with the help of [Claude Code](https://claude.com/claude-code).)
+The real cause turned out to be the page itself. The runtime yields to the event loop about 2000 times per encoder run, and Chromium delivers those callbacks no faster than the page produces compositor frames, process-wide. The transcribing spinner alone was therefore taxing every one of those 2000 yields. Pausing page animations for the duration of a GPU run removed the whole tax: the same 3-minute clip went from 12 min 39 s to 8.5 s. On the reference machine (an RTX 3090 Ti) WebGPU now finishes a 6.5-minute recording in about 19 s against about 102 s for WASM int8, roughly 5x faster rather than 15x slower.
+
+So why is it still off? Because "is the GPU faster here" is a question about your machine, not about this model, and getting it wrong is expensive in the wrong direction: the GPU path downloads 1.2-2.4 GB of weights instead of about 600 MB. One GPU has been measured since the fix. Rather than extrapolate from it to everyone, the app now measures the machine it is running on (see [Autoconfigure](#autoconfigure-measuring-instead-of-guessing) below), and lifting the app-wide switch is left as a deployment decision. You can force WebGPU today with the `?webgpu=1` URL parameter. (This analysis, and the app, were done with the help of [Claude Code](https://claude.com/claude-code).)
+
+## Autoconfigure: measuring instead of guessing
+
+Whether a GPU beats the CPU for this workload depends entirely on the machine, so the app measures it there instead of guessing. Two small ONNX graphs (about 5 MB together, shipped with the app) are downloaded quietly in the background of a normal page load, and the first time you load the model they are timed on both paths: the int8 one through WASM, the fp32 one through WebGPU, matching what each backend would really run. The faster one wins and is selected before the download starts, so the verdict decides which weights you fetch.
+
+Some details that matter more than they look:
+
+- **It only switches you to the GPU on a clear win** (at least 2x). A GPU that is merely a bit ahead is not worth 1.2-2.4 GB of extra download.
+- **Every failure keeps you on the CPU.** No adapter, a GPU that cannot run the graph, a broken measurement, or an arm that hangs: all of them resolve to WASM, because that is the answer that costs nothing.
+- **It never overrides a choice you made.** Pick a backend yourself and the probe stops deciding for you.
+- **It runs once per machine.** The verdict is stored and reused, and re-measured only when the app updates, the GPU changes, or 90 days pass, since a driver update can move GPU speed silently.
+- **You can re-run it at any time** with the "Autoconfigure optimal performance" button in Settings.
+
+The measurement pauses page animations while it runs, for the same reason the real GPU runs do (see above). While WebGPU is disabled app-wide, none of this runs or downloads anything at all. (Built with the help of [Claude Code](https://claude.com/claude-code).)
 
 ## Faster CPU engine (Relaxed-SIMD)
 
