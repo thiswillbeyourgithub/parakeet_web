@@ -15,6 +15,7 @@
     "fixture:bpe": "python scripts/gen-bpe-fixture.py > test/fixtures/bpe-fixture.json",
     "fixture:moon": "node scripts/gen-jfk-moon-fixtures.mjs",
     "transcribe:browser": "node scripts/transcribe-browser.mjs",
+    "probe:check": "node scripts/probe-check.mjs",
     "webgpu:check": "node scripts/webgpu-check.mjs",
     "webgpu:memcheck": "node scripts/webgpu-check.mjs --full",
     "webgpu:check:fp32": "node scripts/webgpu-check.mjs --fp32",
