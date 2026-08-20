@@ -7032,8 +7032,12 @@ export default function App() {
                       // An explicit run is the user asking the machine to
                       // decide, so its answer is applied like a hand pick
                       // (without claiming they picked it, which would stop
-                      // future automatic probes).
-                      if (verdict) {
+                      // future automatic probes). Arm the reload only when the
+                      // verdict actually moves the backend: the flag survives
+                      // until the next signature change, so arming it for a
+                      // verdict that confirms the current choice would leave a
+                      // later programmatic change to trip an unwanted reload.
+                      if (verdict && coerceBackend(verdict.backend) !== liveSettingsRef.current.backend) {
                         armModelReloadIfLoaded();
                         await applyProbeVerdict(verdict);
                       }
