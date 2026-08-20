@@ -235,13 +235,12 @@ async function main() {
     // source, hub.js HEAD-probes /models and resolves the fp16 encoder.
     await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
-    // WebGPU is disabled app-wide in the UI (App.jsx WEBGPU_DISABLED): the app
-    // greys out the WebGPU backend and coerces any persisted webgpu backend to
-    // WASM, because onnxruntime-web has no WebGPU kernels for this encoder's
-    // shape ops (it runs mostly on CPU, slower than WASM int8). The ?webgpu=1
-    // escape hatch re-enables it for exactly this diagnostic; without it the
-    // seeded 'webgpu-hybrid' below would be coerced to WASM and the run would
-    // (correctly) fail the "expected a WebGPU session" assertion further down.
+    // WebGPU is available app-wide now (App.jsx WEBGPU_DISABLED defaults false,
+    // and ?webgpu=0 is the kill switch), so the seeded 'webgpu-hybrid' below is
+    // honoured as-is. ?webgpu=1 is kept as a no-op guard: back when the app
+    // pinned everyone to WASM it coerced any persisted webgpu backend, and this
+    // run would then have failed the "expected a WebGPU session" assertion
+    // further down for a reason that had nothing to do with the GPU.
     await page.goto(`${baseURL}/?webgpu=1`);
 
     // Hard gate: a REAL WebGPU adapter, else SKIP. Chromium with

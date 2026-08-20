@@ -18,7 +18,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 - [Features](#features)
 - [Quick Start](#quick-start)
-- [Why is WebGPU disabled?](#why-is-webgpu-disabled)
+- [Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)
 - [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
 - [Faster CPU engine (Relaxed-SIMD)](#faster-cpu-engine-relaxed-simd)
 - [Dictation Mode](#dictation-mode)
@@ -48,7 +48,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | Feature | Details |
 |---|---|
 | 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
-| ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. WebGPU is currently off by default ([Why is WebGPU disabled?](#why-is-webgpu-disabled)), and when it is available the app measures both paths on your machine rather than guessing ([Autoconfigure](#autoconfigure-measuring-instead-of-guessing)) |
+| ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. If your machine has a GPU, the app measures both paths on it and switches to WebGPU only when that is clearly faster there ([Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)) |
 | 🧵 **Parallel Encoding** | On long recordings, audio chunks are encoded concurrently in background workers while the main thread decodes, so idle CPU headroom does useful work. On by default on capable machines (8+ cores, 8+ GB RAM; it costs extra memory because each worker keeps its own copy of the encoder) and can be toggled off in Settings. How much it helps depends on how many cores are genuinely free: on a busy machine, splitting the thread budget across workers can end up slower than the plain path, so try it both ways on long files if you care about the last few percent |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
 | ⏱️ **Live Transcription** | Optional streaming mode: text appears as you speak, dictation regex applied in real time |
@@ -60,7 +60,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone. Uploaded files are decoded to PCM by a locally-vendored **ffmpeg.wasm** (lazy-loaded on first upload), so the browser reproduces the command-line tool's decode byte-for-byte, including the AAC encoder-delay/priming trim the browser's native decoder skips (which otherwise mis-heard e.g. "Venlafaxine"). Falls back to the Web Audio decoder if ffmpeg cannot load |
 | 🎚️ **Capture Controls** | Per-recording toggles for noise suppression and auto gain control |
 | 🌐 **Bilingual UI** | Interface available in English and French, auto-selected from your browser language (the underlying model itself is multilingual) |
-| 📦 **SmoothQuant int8 Encoder** | The encoder runs as a SmoothQuant int8 model by default, recalibrated so its accuracy tracks fp32 even on long audio (unlike a stock int8 cast that degrades badly past ~30 s). From the encoder-precision picker you can opt into a lighter `int8 lite` encoder (~757 MB vs the default ~841 MB: it keeps more layers in fp32), or the full **sharded fp32** encoder (~2.4 GB, ~2x slower, split into <2 GB pieces by `scripts/shard-fp32.py` so it fits the browser) for maximum quality; opt-in precisions stop with a clear message rather than silently downgrading when the model repo doesn't ship them. The decoder always runs int8 (on this model the int8 joiner is as accurate as fp32, while being smaller and faster). The model repo also ships an **fp16** encoder (~1.2 GB, built by `scripts/quantize-fp16.py` in the [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) model repo) for the WebGPU backend, but WebGPU is currently disabled ([Why is WebGPU disabled?](#why-is-webgpu-disabled)) so fp16 is not used |
+| 📦 **SmoothQuant int8 Encoder** | The encoder runs as a SmoothQuant int8 model by default, recalibrated so its accuracy tracks fp32 even on long audio (unlike a stock int8 cast that degrades badly past ~30 s). From the encoder-precision picker you can opt into a lighter `int8 lite` encoder (~757 MB vs the default ~841 MB: it keeps more layers in fp32), or the full **sharded fp32** encoder (~2.4 GB, ~2x slower, split into <2 GB pieces by `scripts/shard-fp32.py` so it fits the browser) for maximum quality; opt-in precisions stop with a clear message rather than silently downgrading when the model repo doesn't ship them. The decoder always runs int8 (on this model the int8 joiner is as accurate as fp32, while being smaller and faster). The model repo also ships an **fp16** encoder (~1.2 GB, built by `scripts/quantize-fp16.py` in the [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx) model repo) for the WebGPU backend, used when the machine ends up on WebGPU and its GPU supports `shader-f16` (otherwise the sharded fp32 encoder is used instead) |
 | 📊 **One-click Benchmark** | A sidebar section measures every backend and precision your device can run, on a clip that ships with the app, and builds one anonymised report you can read, copy, or (if the instance collects them) send to help optimise the app for hardware like yours. See [Benchmark](#benchmark) |
 | 🐳 **Docker Ready** | One-command self-hosted deployment |
 | 🔌 **OpenAI-Compatible API** | Optional headless mode: serve the same pipeline over the OpenAI audio-transcription API (plus the whisper.cpp and whisper-asr-webservice dialects) so existing clients can transcribe locally, with phrase boosting and diarization exposed per request. See [OpenAI-Compatible API Server](#openai-compatible-api-server) |
@@ -79,15 +79,17 @@ sudo docker compose -f docker/docker-compose.yml up
 
 3. Then visit `http://localhost:5173`
 
-## Why is WebGPU disabled?
+## Choosing between CPU and GPU
 
-The app pins every user to the WASM (CPU) backend with the int8 encoder: the WebGPU option in the settings is greyed out, and any old saved WebGPU choice is coerced back to WASM on load. The original reason for that has since been proven wrong, which is worth telling properly, because the wrong answer sounded convincing for a year.
+The app used to pin every user to the WASM (CPU) backend with the int8 encoder, on a reason that has since been proven wrong. It is worth telling properly, because the wrong answer sounded convincing for a year.
 
 WebGPU used to measure roughly 15x slower than WASM int8 on this model. The blame fell on the encoder (a Conformer), which emits hundreds of dynamic-shape operators the browser WebGPU runtime ([onnxruntime-web](https://onnxruntime.ai/)) has no GPU kernels for: it runs those on the CPU, splitting the encoder into GPU/CPU islands, and the GPU sat near 0% utilization while the weights were plainly in VRAM. That story fit the symptom and was still wrong.
 
 The real cause turned out to be the page itself. The runtime yields to the event loop about 2000 times per encoder run, and Chromium delivers those callbacks no faster than the page produces compositor frames, process-wide. The transcribing spinner alone was therefore taxing every one of those 2000 yields. Pausing page animations for the duration of a GPU run removed the whole tax: the same 3-minute clip went from 12 min 39 s to 8.5 s. On the reference machine (an RTX 3090 Ti) WebGPU now finishes a 6.5-minute recording in about 19 s against about 102 s for WASM int8, roughly 5x faster rather than 15x slower.
 
-So why is it still off? Because "is the GPU faster here" is a question about your machine, not about this model, and getting it wrong is expensive in the wrong direction: the GPU path downloads 1.2-2.4 GB of weights instead of about 600 MB. One GPU has been measured since the fix. Rather than extrapolate from it to everyone, the app now measures the machine it is running on (see [Autoconfigure](#autoconfigure-measuring-instead-of-guessing) below), and lifting the app-wide switch is left as a deployment decision. You can force WebGPU today with the `?webgpu=1` URL parameter. (This analysis, and the app, were done with the help of [Claude Code](https://claude.com/claude-code).)
+So WebGPU is available again. It is not selected for everyone, though, because "is the GPU faster here" is a question about your machine, not about this model, and getting it wrong is expensive in one direction: the GPU path downloads 1.2-2.4 GB of weights instead of about 600 MB. Rather than extrapolate from one measured GPU to every visitor, the app measures the machine it is running on and only moves you to the GPU on a clear win (see [Autoconfigure](#autoconfigure-measuring-instead-of-guessing) below). A machine with no GPU, or with a GPU that cannot run the model, stays on the CPU path exactly as before.
+
+If you ever need to rule the GPU out (troubleshooting, or a driver that misbehaves), add `?webgpu=0` to the address and reload: that forces WASM for that page load without changing your settings. (This analysis, and the app, were done with the help of [Claude Code](https://claude.com/claude-code).)
 
 ## Autoconfigure: measuring instead of guessing
 
@@ -101,7 +103,7 @@ Some details that matter more than they look:
 - **It runs once per machine.** The verdict is stored and reused, and re-measured only when the app updates, the GPU changes, or 90 days pass, since a driver update can move GPU speed silently.
 - **You can re-run it at any time** with the "Autoconfigure optimal performance" button in Settings.
 
-The measurement pauses page animations while it runs, for the same reason the real GPU runs do (see above). While WebGPU is disabled app-wide, none of this runs or downloads anything at all. (Built with the help of [Claude Code](https://claude.com/claude-code).)
+The measurement pauses page animations while it runs, for the same reason the real GPU runs do (see above). On a machine with no GPU, and under `?webgpu=0`, none of this runs or downloads anything at all. (Built with the help of [Claude Code](https://claude.com/claude-code).)
 
 ## Faster CPU engine (Relaxed-SIMD)
 

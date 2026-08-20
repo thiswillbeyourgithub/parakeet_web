@@ -89,13 +89,13 @@ export async function bootApp(page, { baseURL, settings = {}, modelSource = 'loc
   // window.__CONFIG__ (NOT a settings-DB key), so inject it the same way before
   // any app script runs. With 'local', hub.js HEAD-probes /models.
   await page.addInitScript((src) => { window.__CONFIG__ = { VITE_MODEL_SOURCE: src }; }, modelSource);
-  // WebGPU is disabled app-wide (App.jsx WEBGPU_DISABLED coerces any persisted
-  // webgpu backend to WASM); the ?webgpu=1 escape hatch re-enables it, exactly
-  // as scripts/webgpu-check.mjs does. Without it a seeded webgpu-hybrid backend
-  // is deterministically coerced to wasm on every load, which the retry loop in
-  // transcribe-browser.mjs used to misread as an adapter-probe flake.
-  // page.reload() keeps the query string, so re-seed + reload retries stay on
-  // the hatch too.
+  // WebGPU is available app-wide now, so a seeded webgpu-hybrid backend is
+  // honoured without any query parameter. `?webgpu=1` is kept on the webgpu
+  // path purely as a no-op guard: if the app-wide pin ever came back (it
+  // coerced every persisted webgpu backend to wasm, which transcribe-browser's
+  // retry loop used to misread as an adapter-probe flake), this keeps these
+  // harnesses working. page.reload() preserves the query string, so re-seed +
+  // reload retries keep it too.
   const wantWebgpu = String(settings.backend || '').startsWith('webgpu');
   await page.goto(wantWebgpu ? `${baseURL}/?webgpu=1` : baseURL);
   await seedSettings(page, settings);
