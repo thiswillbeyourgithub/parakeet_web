@@ -16,7 +16,7 @@
 // Reuses the chunking.spec.js recipe: WASM-int8 local weights (serve.mjs),
 // chunkDuration seeded to 10 s so the ~11 s JFK clip splits into >1 chunk (a
 // single-pass clip never calls encodeChunk). The pool is hardware-gated
-// (encodePoolPlan: >= 4 cores, deviceMemory >= 8 when exposed), so on machines
+// (encodePoolPlan: >= 8 cores, deviceMemory >= 8 when exposed), so on machines
 // that cannot pass the gate the spec SKIPS rather than false-fails, mirroring
 // transcription-fp32-wasm.spec.js's self-skip precedent.
 //
@@ -67,7 +67,7 @@ test('encode pool engages on a chunked run and the stitched transcript matches',
     cores: navigator.hardwareConcurrency || 0,
     mem: navigator.deviceMemory,
   }));
-  test.skip(hw.cores < 4 || (Number.isFinite(hw.mem) && hw.mem < 8),
+  test.skip(hw.cores < 8 || (Number.isFinite(hw.mem) && hw.mem < 8),
     `machine cannot pass the encode-pool gate (cores ${hw.cores}, deviceMemory ${hw.mem})`);
 
   // Same seed ordering as chunking.spec.js: let the first boot's

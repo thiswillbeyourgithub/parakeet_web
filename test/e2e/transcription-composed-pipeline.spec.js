@@ -76,7 +76,7 @@ test('composed pipeline (pool encode + worker decode) engages and the stitched t
     cores: navigator.hardwareConcurrency || 0,
     mem: navigator.deviceMemory,
   }));
-  test.skip(hw.cores < 4 || (Number.isFinite(hw.mem) && hw.mem < 8),
+  test.skip(hw.cores < 8 || (Number.isFinite(hw.mem) && hw.mem < 8),
     `machine cannot pass the encode-pool gate (cores ${hw.cores}, deviceMemory ${hw.mem})`);
 
   // Same seed ordering as chunking.spec.js: let the first boot's
