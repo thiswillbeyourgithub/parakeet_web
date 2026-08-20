@@ -53,6 +53,12 @@ import {
 } from './lib/benchmark.js';
 import { resolveOrtVariant } from './lib/ortVariant.js';
 import { benchRelaxedAutoPick } from './lib/relaxedAutoPick.js';
+import {
+  PROBE_MODEL_PATHS, PROBE_SEQ, PROBE_DIM, PROBE_INPUT_NAME,
+  PROBE_WARMUP_RUNS, PROBE_INIT_TIMEOUT_MS, PROBE_RUN_TIMEOUT_MS,
+  pickBackendFromProbe, verdictStillValid, shouldAutoProbe,
+  buildVerdict, planTimedRuns, median as probeMedian,
+} from './lib/perfProbe.js';
 import { isChromiumFamily } from './lib/browserFamily.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
@@ -726,10 +732,28 @@ export default function App() {
   // saved setting or picked in the UI) vs. our automatic default. The automatic
   // default (always WASM int8) only applies when this is false.
   const backendChosenByUserRef = useRef(false);
+  // Distinct from backendChosenByUserRef on purpose. That ref goes true as soon
+  // as a SAVED backend is restored, and the app persists `backend` on every
+  // boot, so by the second page load it is true for everyone, whether or not a
+  // human ever touched the radios. The performance probe must not overrule a
+  // real choice, so it needs the narrower fact: did the user actually pick?
+  // Only chooseBackend (the radios) sets this, and it is persisted.
+  const [backendUserPicked, setBackendUserPicked] = useState(false);
   const chooseBackend = (value) => {
     backendChosenByUserRef.current = true;
+    setBackendUserPicked(true);
     setBackend(coerceBackend(value));
   };
+  // First-load performance probe (lib/perfProbe.js): prefetched artifacts, the
+  // stored verdict, and the in-flight guard. `probeState` drives the sidebar
+  // button ('idle' | 'running' | 'done' | 'failed').
+  const probeAssetsRef = useRef(null);      // Promise<{wasm,webgpu}> of ArrayBuffers
+  // Coarse GPU identity, filled by the WebGPU availability probe below; a
+  // stored verdict is only reused while the machine still reports this adapter.
+  const webgpuAdapterSigRef = useRef(null);
+  const probeRunningRef = useRef(false);
+  const [probeState, setProbeState] = useState('idle');
+  const [probeVerdict, setProbeVerdict] = useState(null);
   const [memoryInfo, setMemoryInfo] = useState(null);
   const [, startTransition] = useTransition();
   const [preprocessor, setPreprocessor] = useState('nemo128');
@@ -1492,6 +1516,8 @@ export default function App() {
         // restore or trip the watchdog.
         const [
           savedBackend,
+          savedBackendUserPicked,
+          savedPerfProbeVerdict,
           savedWasmEncoderQuant,
           savedWebgpuEncoderQuant,
           savedPreprocessor,
@@ -1532,6 +1558,8 @@ export default function App() {
           savedBenchmarkAutoSend,
         ] = await Promise.all([
           loadSetting('backend', null),
+          loadSetting('backendUserPicked', false),
+          loadSetting('perfProbeVerdict', null),
           loadSetting('wasmEncoderQuant', 'int8'),
           loadSetting('webgpuEncoderQuant', 'fp16'),
           loadSetting('preprocessor', 'nemo128'),
@@ -1594,6 +1622,10 @@ export default function App() {
         // honour it (subject to the WebGPU-availability override below). When
         // absent, leave `backend` at its initial value so the RAM-based default
         // heuristic can choose once the WebGPU probe resolves.
+        setBackendUserPicked(!!savedBackendUserPicked);
+        if (savedPerfProbeVerdict && typeof savedPerfProbeVerdict === 'object') {
+          setProbeVerdict(savedPerfProbeVerdict);
+        }
         if (savedBackend !== null) {
           backendChosenByUserRef.current = true;
           // Coerce a persisted 'webgpu-hybrid' to WASM: WebGPU is disabled
@@ -2053,9 +2085,18 @@ export default function App() {
           const adapter = await navigator.gpu.requestAdapter();
           available = !!adapter;
           if (!adapter) reason = 'noAdapter';
-          // fp16 compute needs the shader-f16 adapter feature; record it so the
-          // quant resolver can fall back to fp32 and the UI can grey out fp16.
-          else shaderF16 = adapter.features.has('shader-f16');
+          else {
+            // fp16 compute needs the shader-f16 adapter feature; record it so the
+            // quant resolver can fall back to fp32 and the UI can grey out fp16.
+            shaderF16 = adapter.features.has('shader-f16');
+            // Coarse identity of the GPU, used only to invalidate a stored
+            // performance-probe verdict when the machine's GPU changes (docked
+            // eGPU, switched integrated/discrete). Adapter info is deliberately
+            // vague in browsers, which is fine: this never leaves the device.
+            const info = adapter.info || {};
+            webgpuAdapterSigRef.current =
+              `${info.vendor || ''}/${info.architecture || ''}/${info.device || ''}`.trim() || 'unknown-adapter';
+          }
         }
       } catch {
         available = false;
@@ -2076,6 +2117,10 @@ export default function App() {
     saveSetting('backend', backend);
   }, [backend, settingsLoaded]);
 
+  // Whether a human ever picked the backend by hand, and the probe's stored
+  // verdict. Both gate whether the probe may run and act on its own.
+  usePersistedSetting('backendUserPicked', backendUserPicked, settingsLoaded);
+  usePersistedSetting('perfProbeVerdict', probeVerdict, settingsLoaded);
   // Persist the WASM encoder-precision choice (int8 / fp32).
   usePersistedSetting('wasmEncoderQuant', wasmEncoderQuant, settingsLoaded);
   // Persist the WebGPU encoder-precision choice (fp16 / fp32).
@@ -6096,11 +6141,209 @@ export default function App() {
     }
   }, [settingsLoaded, webgpuAvailable]);
 
+  // --- First-load performance probe -----------------------------------------
+  // Measures this machine instead of guessing for it: the two ~5 MB graphs in
+  // public/probe/ are timed through the WASM and WebGPU providers and the
+  // faster one wins, subject to a margin that prices the bigger GPU download
+  // (see lib/perfProbe.js for the whole rationale).
+
+  // Prefetch in the background of a normal page load so a later probe never
+  // waits on the network. Deliberately lazy and failure-tolerant: a blocked
+  // fetch just means the probe fetches on demand or, failing that, reports an
+  // error and the visitor stays on WASM.
+  useEffect(() => {
+    if (WEBGPU_DISABLED) return;             // nothing the probe could change
+    let cancelled = false;
+    const prefetch = () => {
+      if (cancelled || probeAssetsRef.current) return;
+      probeAssetsRef.current = (async () => {
+        const [wasmRes, gpuRes] = await Promise.all([
+          fetch(PROBE_MODEL_PATHS.wasm),
+          fetch(PROBE_MODEL_PATHS.webgpu),
+        ]);
+        if (!wasmRes.ok || !gpuRes.ok) throw new Error('probe assets unavailable');
+        return { wasm: await wasmRes.arrayBuffer(), webgpu: await gpuRes.arrayBuffer() };
+      })().catch((e) => {
+        probeAssetsRef.current = null;       // let a later explicit run retry
+        console.warn('[Probe] prefetch failed:', e?.message ?? e);
+        return null;
+      });
+    };
+    // Idle time if the browser offers it, a plain timeout otherwise: this must
+    // never compete with the page's own first paint.
+    const idle = typeof requestIdleCallback === 'function'
+      ? requestIdleCallback(prefetch, { timeout: 5000 })
+      : setTimeout(prefetch, 2000);
+    return () => {
+      cancelled = true;
+      if (typeof cancelIdleCallback === 'function' && typeof idle === 'number') cancelIdleCallback(idle);
+      else clearTimeout(idle);
+    };
+  }, []);
+
+  // Run ONE arm end to end in its own worker. Resolves to null (never throws)
+  // so a broken arm degrades into "stay on WASM" instead of a failed load.
+  async function probeArm(arm, bytes, { numThreads, wasmPaths, wasmSimd }) {
+    const worker = new Worker(new URL('./lib/perf.worker.js', import.meta.url), { type: 'module' });
+    const pending = new Map();
+    let nextId = 0;
+    worker.addEventListener('message', (ev) => {
+      const msg = ev.data || {};
+      if (msg.type === 'ran') pending.get(msg.id)?.resolve(msg.times);
+      // Init-scoped errors (no id) belong to workerReady; only route per-run ones.
+      else if (msg.type === 'error' && msg.id != null) pending.get(msg.id)?.reject(new Error(msg.message));
+    });
+    const run = (count) => new Promise((resolve, reject) => {
+      const id = nextId++;
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`${arm} run timed out after ${PROBE_RUN_TIMEOUT_MS} ms`));
+      }, PROBE_RUN_TIMEOUT_MS);
+      const done = (fn) => (v) => { clearTimeout(timer); pending.delete(id); fn(v); };
+      pending.set(id, { resolve: done(resolve), reject: done(reject) });
+      worker.postMessage({ type: 'run', id, count });
+    });
+    // The bytes are COPIED per arm (slice) rather than transferred: both arms
+    // need them, and a transferred buffer would be detached for the second.
+    // workerReady posts the init message and folds in every way an init can
+    // fail, watchdog included, so a wedged arm can never hold up the load.
+    const ready = workerReady(worker, {
+      type: 'init', arm, modelBytes: bytes.slice(0), numThreads, wasmPaths, wasmSimd,
+      seq: PROBE_SEQ, dim: PROBE_DIM, inputName: PROBE_INPUT_NAME,
+    }, { timeoutMs: PROBE_INIT_TIMEOUT_MS, label: `Probe ${arm}` });
+    return { worker, ready, run, dispose: () => { try { worker.postMessage({ type: 'dispose' }); } catch { /* gone */ } worker.terminate(); } };
+  }
+
+  /**
+   * Measure both arms and record the verdict. `trigger` is 'load' (automatic,
+   * from the Load model button) or 'manual' (the sidebar button).
+   * Returns the verdict, or null when the probe could not run.
+   */
+  async function runPerfProbe({ trigger = 'manual' } = {}) {
+    if (probeRunningRef.current) return null;
+    probeRunningRef.current = true;
+    setProbeState('running');
+    // Same WebGPU rendering-coupling guard the real runs use: an animating page
+    // gates JSEP callback delivery process-wide, which would tax every yield in
+    // the GPU arm and make this measurement a measurement of the spinner.
+    gpuRunDepthRef.current += 1;
+    document.documentElement.classList.add('gpu-run');
+    console.log('[Probe] animations paused (WebGPU rendering-coupling guard)');
+    let arms = [];
+    try {
+      if (!probeAssetsRef.current) {
+        probeAssetsRef.current = (async () => {
+          const [w, g] = await Promise.all([fetch(PROBE_MODEL_PATHS.wasm), fetch(PROBE_MODEL_PATHS.webgpu)]);
+          if (!w.ok || !g.ok) throw new Error('probe assets unavailable');
+          return { wasm: await w.arrayBuffer(), webgpu: await g.arrayBuffer() };
+        })().catch(() => null);
+      }
+      const assets = await probeAssetsRef.current;
+      if (!assets) throw new Error('probe assets unavailable');
+
+      // The WASM arm must time the runtime the app would actually use, so it
+      // gets the same binaries/SIMD mode the ORT-variant gate resolved (or
+      // would resolve) for this machine.
+      const artifactsPresent = await (relaxedArtifactsPromiseRef.current || Promise.resolve(false));
+      const variant = ortVariantRef.current || resolveOrtVariant({
+        relaxedSetting: relaxedSimd, probeSupported: relaxedSupported,
+        artifactsPresent, backend: 'wasm', operatorEnabled: relaxedOperatorEnabled,
+        autoPick: relaxedSimd === 'auto' ? benchRelaxedAutoPick().pick : null,
+      });
+      const cfg = { numThreads: cpuThreads, wasmPaths: variant.wasmPaths, wasmSimd: variant.wasmSimd };
+
+      const wasmArm = await probeArm('wasm', assets.wasm, cfg);
+      const gpuArm = await probeArm('webgpu', assets.webgpu, cfg);
+      arms = [wasmArm, gpuArm];
+      const [wasmReady, gpuReady] = [await wasmArm.ready, await gpuArm.ready];
+      if (!wasmReady) throw new Error('wasm arm did not initialise');
+
+      // Warm both (untimed), then INTERLEAVE timed runs so ambient load drifts
+      // across both arms instead of landing on whichever went second.
+      const wasmWarm = await wasmArm.run(PROBE_WARMUP_RUNS);
+      const gpuWarm = gpuReady ? await gpuArm.run(PROBE_WARMUP_RUNS).catch(() => null) : null;
+      const timed = Math.min(planTimedRuns(wasmWarm.at(-1)), planTimedRuns(gpuWarm?.at(-1)));
+      const wasmTimes = [];
+      const gpuTimes = [];
+      let gpuBroke = !gpuReady || !gpuWarm;
+      for (let i = 0; i < timed; i++) {
+        wasmTimes.push(...await wasmArm.run(1));
+        if (!gpuBroke) {
+          const t = await gpuArm.run(1).catch(() => null);
+          if (t) gpuTimes.push(...t); else gpuBroke = true;
+        }
+      }
+
+      const wasmMs = probeMedian(wasmTimes);
+      const gpuMs = gpuBroke ? NaN : probeMedian(gpuTimes);
+      const gpuReason = gpuBroke ? (webgpuAvailable === false ? 'no-adapter' : 'session-failed') : null;
+      const pick = pickBackendFromProbe({ wasmMs, gpuMs, gpuReason });
+      const verdict = buildVerdict({
+        pick, wasmMs, gpuMs, appVersion: VERSION,
+        adapter: webgpuAdapterSigRef.current, at: Date.now(), trigger,
+      });
+      console.log(`[Probe] ${verdict.backend} wins: wasm ${wasmMs.toFixed(1)} ms vs gpu `
+        + `${Number.isFinite(gpuMs) ? gpuMs.toFixed(1) + ' ms' : 'n/a'}`
+        + `${pick.speedup ? ` (${pick.speedup.toFixed(2)}x)` : ''}${pick.reason ? ` [${pick.reason}]` : ''}`);
+      setProbeVerdict(verdict);
+      setProbeState('done');
+      return verdict;
+    } catch (e) {
+      console.warn('[Probe] could not run:', e?.message ?? e);
+      setProbeState('failed');
+      return null;
+    } finally {
+      for (const a of arms) a.dispose();
+      probeRunningRef.current = false;
+      gpuRunDepthRef.current -= 1;
+      if (gpuRunDepthRef.current === 0) document.documentElement.classList.remove('gpu-run');
+    }
+  }
+
+  // Apply a verdict that differs from the current backend, then wait until the
+  // change is LIVE before the caller loads a model. React state lands on the
+  // next render and loadModel reads the backend from its closure, so calling
+  // it in the same tick would load the PREVIOUS backend's weights (the same
+  // trap applyBenchmarkCombo documents).
+  async function applyProbeVerdict(verdict, capMs = 5000) {
+    const want = coerceBackend(verdict.backend);
+    if (want === liveSettingsRef.current.backend) return;
+    setBackend(want);
+    const t0 = performance.now();
+    while (liveSettingsRef.current.backend !== want) {
+      if (performance.now() - t0 > capMs) {
+        console.warn(`[Probe] backend still ${liveSettingsRef.current.backend}, wanted ${want}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
   const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
-  const handleLoadModelClick = (opts) => {
+  const handleLoadModelClick = async (opts) => {
     if (isLowRam) {
       setShowLowRamConfirm(true);
       return;
+    }
+    // Probe before the download starts, so the verdict can still choose which
+    // weights to fetch. It stays out of the way of anyone who made their own
+    // choice, and runs once per machine (see shouldAutoProbe).
+    if (shouldAutoProbe({
+      settingsLoaded,
+      userPickedBackend: backendUserPicked,
+      webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
+      hasValidVerdict: verdictStillValid(probeVerdict, {
+        appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
+      }),
+      running: probeRunningRef.current,
+    })) {
+      const verdict = await runPerfProbe({ trigger: 'load' });
+      if (verdict) {
+        await applyProbeVerdict(verdict);
+        // Call through the ref so the closure sees the backend just applied.
+        loadModelRef.current(opts);
+        return;
+      }
     }
     loadModel(opts);
   };
@@ -6767,6 +7010,50 @@ export default function App() {
                 </label>
               </div>
             </div>
+
+            {/* Autoconfigure: time both providers on THIS machine and pick.
+                Offered whenever WebGPU could be selected here, because that is
+                the only case where the answer can change anything. */}
+            {!WEBGPU_DISABLED && webgpuAvailable !== false && (
+              <div className="setting-row">
+                <span className="setting-label">
+                  {t('autoconfigure')}: <InfoTooltip text={t('tooltipAutoconfigure')} />
+                </span>
+                <div className="setting-options">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={async () => {
+                      const verdict = await runPerfProbe({ trigger: 'manual' });
+                      // An explicit run is the user asking the machine to
+                      // decide, so its answer is applied like a hand pick
+                      // (without claiming they picked it, which would stop
+                      // future automatic probes).
+                      if (verdict) {
+                        armModelReloadIfLoaded();
+                        await applyProbeVerdict(verdict);
+                      }
+                    }}
+                    disabled={probeState === 'running' || modelSwapBlocked}
+                    data-umami-event="autoconfigure_button"
+                  >
+                    {probeState === 'running' ? t('autoconfigureRunning') : t('autoconfigureRun')}
+                  </button>
+                  {probeState !== 'running' && probeVerdict && (
+                    <span className="setting-hint">
+                      {probeVerdict.backend === 'webgpu-hybrid'
+                        ? t('autoconfigureResultGpu', { speedup: (probeVerdict.speedup ?? 0).toFixed(1) })
+                        : (probeVerdict.speedup
+                          ? t('autoconfigureResultCpu', { speedup: (probeVerdict.speedup ?? 0).toFixed(1) })
+                          : t('autoconfigureResultCpuOnly'))}
+                    </span>
+                  )}
+                  {probeState === 'failed' && (
+                    <span className="setting-hint">{t('autoconfigureFailed')}</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
               // Single fixed list (int8 / fp16 / fp32); only the greying moves
