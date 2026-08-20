@@ -51,6 +51,16 @@ export const PROBE_MIN_TIMED_RUNS = 3;
 // than a fast one just to be measured.
 export const PROBE_SLOW_RUN_MS = 200;
 
+// Watchdogs. The probe sits IN FRONT of the Load model button, so an arm that
+// never settles would wedge the load itself rather than merely lose a
+// measurement (the failure mode commit d8acf6e fixed for the decode/encode
+// workers). Both bounds are far above any legitimate cost for a ~5 MB graph
+// and only ever fire on a genuinely stuck runtime, in which case the arm is
+// abandoned and the visitor stays on WASM. Init is the looser of the two
+// because it may also pay a cold fetch of ORT's own WASM assets.
+export const PROBE_INIT_TIMEOUT_MS = 30000;
+export const PROBE_RUN_TIMEOUT_MS = 30000;
+
 // How much faster the GPU arm must be before the app switches a visitor onto
 // the WebGPU path. This is NOT a noise margin (the medians are far apart when
 // a real GPU is present); it prices the download. Choosing WebGPU commits the
