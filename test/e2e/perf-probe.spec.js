@@ -13,8 +13,8 @@
 // (the same limit that keeps fp16 and WebGPU generally out of the e2e tier), so
 // the GPU arm can never win here. The decision rule itself is unit-tested in
 // test/unit/perf-probe.test.mjs, and the full in-browser flow (prefetch, run on
-// click, backend switched and persisted) is validated on a real GPU by the
-// scripted headed check described in CLAUDE.md.
+// click, backend switched and persisted) is validated on a real GPU by
+// scripts/probe-check.mjs (`npm run probe:check`).
 //
 // navigator.gpu is stubbed rather than trusted, so each test pins one specific
 // machine shape regardless of what the CI box happens to have. Model-weight
