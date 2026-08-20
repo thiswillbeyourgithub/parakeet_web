@@ -709,6 +709,10 @@ export default function App() {
   // status so the user can tell WHY (e.g. fp32 requested on WASM but no shards
   // are hosted) instead of being silently downgraded to a different quant.
   const [modelLoadError, setModelLoadError] = useState(null);
+  // Non-fatal notice: the GPU backend could not be served by this model
+  // source, so the load fell back to WASM. Separate from modelLoadError
+  // because the load then SUCCEEDS, and loadModel clears that on entry.
+  const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~800 MB, fast,
   // good quality on long audio with the SmoothQuant encoder), 'int8-lite' (the
@@ -3013,7 +3017,8 @@ export default function App() {
    * @param {boolean} [opts.useLocalFallback=false] When true, download weights
    *   from this instance (/models/) instead of HuggingFace.
    */
-  async function loadModel({ useLocalFallback = forceLocalFallback, corruptionRetried = false } = {}) {
+  async function loadModel({ useLocalFallback = forceLocalFallback, corruptionRetried = false,
+                             gpuQuantFallbackTried = false } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');
@@ -3036,6 +3041,11 @@ export default function App() {
     setProgressPct(0);
     downloadRateRef.current = null;
     setModelLoadError(null);
+    // Clear the GPU-fallback notice only on a FRESH attempt. Both retry paths
+    // re-enter loadModel, and the GPU fallback sets this banner immediately
+    // before its own retry, so clearing unconditionally here would wipe the
+    // very notice that retry exists to explain.
+    if (!gpuQuantFallbackTried && !corruptionRetried) setGpuFallbackWarning(null);
     // The corrupt-cache retry re-enters loadModel; keep the original timer
     // running across it instead of restarting (which logs a duplicate-timer
     // warning) so console.timeEnd still reports the full load duration.
@@ -3281,7 +3291,7 @@ export default function App() {
         console.warn('[App] Session create failed (corrupt cached model?); evicting cached weights and re-downloading.', sessErr);
         await evictModelFiles(modelUrls.cacheInfo || { repoId })
           .catch((err) => console.warn('[App] evictModelFiles failed:', err));
-        return loadModel({ useLocalFallback, corruptionRetried: true });
+        return loadModel({ useLocalFallback, corruptionRetried: true, gpuQuantFallbackTried });
       }
 
       console.timeEnd('LoadModel');
@@ -3330,6 +3340,24 @@ export default function App() {
       // with no shards hosted). hub.js refuses to silently downgrade to int8, so
       // tell the user exactly why rather than leaving a bare "Failed".
       if (e instanceof QuantUnavailableError) {
+        // On a GPU backend that means this model source ships no encoder the
+        // GPU can run (no fp16 file, no fp32 shards). Retry on WASM instead of
+        // stranding the visitor on Failed: they may never have chosen WebGPU
+        // at all, since the performance probe can select it for them, and a
+        // deployment pointed at a repo without GPU weights would otherwise
+        // break for every visitor whose machine wins the probe.
+        //
+        // Deliberately NOT a general "GPU failed, use the CPU" net: this fires
+        // only for a quant that cannot be SERVED, which is a property of the
+        // deployment and is known before a single weight byte is fetched. A
+        // GPU that fails later (OOM, device lost) is a different problem and
+        // must stay visible rather than be silently absorbed here.
+        if (backend.startsWith('webgpu') && !gpuQuantFallbackTried) {
+          console.warn('[App] no GPU-capable encoder from this source; falling back to WASM');
+          setGpuFallbackWarning(t('gpuQuantFallback'));
+          await applyBackend('wasm');
+          return loadModelRef.current({ useLocalFallback, gpuQuantFallbackTried: true });
+        }
         setModelLoadError(e.requested?.encoder === 'int8-lite' ? t('quantUnavailableLite') : t('quantUnavailable'));
       }
       setStatus('failed');
@@ -6319,23 +6347,29 @@ export default function App() {
     }
   }
 
-  // Apply a verdict that differs from the current backend, then wait until the
-  // change is LIVE before the caller loads a model. React state lands on the
-  // next render and loadModel reads the backend from its closure, so calling
-  // it in the same tick would load the PREVIOUS backend's weights (the same
-  // trap applyBenchmarkCombo documents).
-  async function applyProbeVerdict(verdict, capMs = 5000) {
-    const want = coerceBackend(verdict.backend);
+  // Switch the backend, then wait until the change is LIVE before the caller
+  // loads a model. React state lands on the next render and loadModel reads the
+  // backend from its closure, so calling it in the same tick would load the
+  // PREVIOUS backend's weights (the same trap applyBenchmarkCombo documents).
+  // For the probe that would mean measuring the machine and then ignoring the
+  // answer; for the GPU-weights fallback it would mean retrying the very load
+  // that just failed. Never marks the backend as user-picked: nothing that
+  // comes through here is a human decision.
+  async function applyBackend(want, { label = 'App', capMs = 5000 } = {}) {
     if (want === liveSettingsRef.current.backend) return;
     setBackend(want);
     const t0 = performance.now();
     while (liveSettingsRef.current.backend !== want) {
       if (performance.now() - t0 > capMs) {
-        console.warn(`[Probe] backend still ${liveSettingsRef.current.backend}, wanted ${want}`);
+        console.warn(`[${label}] backend still ${liveSettingsRef.current.backend}, wanted ${want}`);
         return;
       }
       await new Promise((r) => setTimeout(r, 20));
     }
+  }
+
+  async function applyProbeVerdict(verdict, capMs = 5000) {
+    return applyBackend(coerceBackend(verdict.backend), { label: 'Probe', capMs });
   }
 
   const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
@@ -8009,6 +8043,18 @@ export default function App() {
         <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
           <p>⚠ {fallbackWarning}</p>
           <button onClick={() => setFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
+            {t('dismiss')}
+          </button>
+        </div>
+      )}
+
+      {/* Warning banner: the GPU backend could not be served by this model source
+          (no fp16 file, no fp32 shards), so the load fell back to WASM. The app
+          works normally after this, hence a warning rather than an error. */}
+      {gpuFallbackWarning && (
+        <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
+          <p>⚠ {gpuFallbackWarning}</p>
+          <button onClick={() => setGpuFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
             {t('dismiss')}
           </button>
         </div>
