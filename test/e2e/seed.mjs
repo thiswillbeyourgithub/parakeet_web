@@ -45,7 +45,10 @@ import { resolve, dirname } from 'node:path';
 // the one-shot default-persist storm. This is also self-healing if a pending
 // `deleteDatabase` (logged as "blocked by another tab") lands late and drops
 // the store.
-const APP_VERSION = JSON.parse(
+// Exported because a spec that seeds a stored perf-probe verdict has to stamp
+// the SAME version into it: verdictStillValid() rejects a verdict from another
+// app version, and a rejected verdict silently re-runs the probe.
+export const APP_VERSION = JSON.parse(
   readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../app/package.json'), 'utf-8'),
 ).version;
 
