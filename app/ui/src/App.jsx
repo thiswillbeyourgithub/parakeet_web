@@ -6127,14 +6127,17 @@ export default function App() {
 
   // Resolve the effective backend once both the WebGPU probe and settings load
   // have completed.
-  //   - WebGPU disabled app-wide (WEBGPU_DISABLED): always force WASM, coercing
-  //     any persisted/seeded webgpu backend. Checked BEFORE the probe guard so
-  //     it holds even if the (now-skippable) probe never resolves.
-  //   - WebGPU unavailable: force WASM, overriding any persisted choice (a
-  //     saved 'webgpu-hybrid' would otherwise fail at load).
-  //   - No explicit user choice yet: always default to WASM (int8 encoder,
-  //     ~800 MB) on every device. It downloads small and runs everywhere;
-  //     WebGPU stays opt-in via the backend radios. An explicit prior choice
+  //   - Kill switch used (?webgpu=0 / WEBGPU_DISABLED): always force WASM,
+  //     coercing any persisted/seeded webgpu backend. Checked BEFORE the probe
+  //     guard so it holds even if the (now-skippable) probe never resolves.
+  //   - WebGPU unavailable: force WASM, overriding any persisted choice. This
+  //     is what protects a profile that saved 'webgpu-hybrid' on a machine
+  //     whose GPU later disappeared (driver blocklist, changed hardware), which
+  //     would otherwise fetch GPU weights and fail, or run them on the CPU.
+  //   - No explicit user choice yet: default to WASM (int8, ~800 MB), which
+  //     downloads small and runs everywhere. WebGPU is never assumed from here;
+  //     a visitor only lands on it by picking it, or through the performance
+  //     probe MEASURING a clear win on this machine. An explicit prior choice
   //     (persisted setting or a UI pick, both of which set
   //     backendChosenByUserRef) is honoured and never overridden here.
   useEffect(() => {
