@@ -40,7 +40,7 @@ import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
-import { collectEnvironment, buildSupportReport, wasmRelaxedSimdSupported } from './lib/supportReport.js';
+import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
 import {
   BENCHMARK_CLIP,
   LONG_PROFILE_TARGET_SEC,
@@ -51,8 +51,6 @@ import {
   runBenchmarkPlan,
   tilePcm,
 } from './lib/benchmark.js';
-import { resolveOrtVariant } from './lib/ortVariant.js';
-import { benchRelaxedAutoPick } from './lib/relaxedAutoPick.js';
 import {
   PROBE_MODEL_PATHS, PROBE_SEQ, PROBE_DIM, PROBE_INPUT_NAME,
   PROBE_WARMUP_RUNS, PROBE_INIT_TIMEOUT_MS, PROBE_RUN_TIMEOUT_MS,
@@ -866,13 +864,6 @@ export default function App() {
   // encodePoolPlan additionally gates on hardware (cores/RAM/threads) at model
   // load, so weak machines never spawn the pool even with the toggle on.
   const [parallelEncode, setParallelEncode] = useState(true);
-  // Opt-in Relaxed-SIMD ORT runtime (PERF_PLAN #5). The toggle only renders
-  // when this deployment ships /ort-relaxed/ artifacts AND the engine passes
-  // the WebAssembly.validate relaxed probe; the choice is applied at the FIRST
-  // model load of the page and pinned (ORT's WASM runtime initialises once, so
-  // switching binaries or SIMD mode afterwards needs a page reload).
-  const [relaxedSimd, setRelaxedSimd] = useState('auto');
-  const [relaxedAvailable, setRelaxedAvailable] = useState(false);
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
   const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
@@ -1549,7 +1540,6 @@ export default function App() {
           savedCpuThreads,
           savedCpuThreadsMigrated,
           savedParallelEncode,
-          savedRelaxedSimd,
           savedNoiseSuppression,
           savedAutoGainControl,
           savedRemoteMicGain,
@@ -1596,7 +1586,6 @@ export default function App() {
           loadSetting('cpuThreads', null),
           loadSetting('cpuThreadsMigrated', false),
           loadSetting('parallelEncode', true),
-          loadSetting('relaxedSimd', 'auto'),
           loadSetting('noiseSuppression', true),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
@@ -1679,14 +1668,6 @@ export default function App() {
           if (!savedCpuThreadsMigrated || migrationApplied) saveSetting('cpuThreadsMigrated', true);
         }
         setParallelEncode(savedParallelEncode !== false);
-        // Tri-state with legacy-boolean migration: a persisted true was a real
-        // opt-in and stays 'on'; a persisted false becomes 'auto' because the
-        // toggle never shipped publicly (no /ort-relaxed/ artifacts were ever
-        // deployed), so every stored false is the old default-persist value,
-        // not a user's choice. Explicit 'off' is representable from now on.
-        setRelaxedSimd(
-          savedRelaxedSimd === true || savedRelaxedSimd === 'on' ? 'on'
-            : savedRelaxedSimd === 'off' ? 'off' : 'auto');
         setNoiseSuppression(savedNoiseSuppression);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
@@ -2173,7 +2154,6 @@ export default function App() {
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('parallelEncode', parallelEncode, settingsLoaded);
   usePersistedSetting('benchmarkAutoSend', benchmarkAutoSend, settingsLoaded);
-  usePersistedSetting('relaxedSimd', relaxedSimd, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
   usePersistedSetting('remoteMicGain', remoteMicGain, settingsLoaded);
@@ -2678,15 +2658,6 @@ export default function App() {
   // thread count), so the toggle below can start the pool without a full model
   // reload. Cleared on WebGPU loads (the pool is a WASM-only feature).
   const encodePoolInitParamsRef = useRef(null);
-  // ORT runtime-variant selection (PERF_PLAN #5): the /ort-relaxed/ presence
-  // probe starts at mount; resolveOrtVariant runs once at the first model load
-  // and the result is pinned for the page lifetime.
-  const relaxedArtifactsPromiseRef = useRef(null);
-  const ortVariantRef = useRef(null);
-  const relaxedSupported = useMemo(() => wasmRelaxedSimdSupported(), []);
-  // Operator kill-switch: VITE_ORT_RELAXED_ENABLE='false' forces the vendored
-  // stock runtime for every visitor (and hides the toggle) without a rebuild.
-  const relaxedOperatorEnabled = CONFIG.VITE_ORT_RELAXED_ENABLE !== 'false';
   // Operator OPT-IN: VITE_WASM_DECODE_PIPELINE='true' lets the decode worker
   // also run on WASM (composed with the encode pool). Default OFF on measured
   // evidence: an in-browser A/B on the 3-min clip (2026-08-12, medians over 4
@@ -2704,15 +2675,6 @@ export default function App() {
   // slowness is real on every visit, so the popup returns on every reload.
   const slowBrowser = useMemo(() => !isChromiumFamily(typeof navigator !== 'undefined' ? navigator : null), []);
   const [slowBrowserDismissed, setSlowBrowserDismissed] = useState(false);
-  useEffect(() => {
-    if (!relaxedArtifactsPromiseRef.current) {
-      relaxedArtifactsPromiseRef.current = fetch('/ort-relaxed/manifest.json', { method: 'HEAD' })
-        .then((r) => r.ok)
-        .catch(() => false);
-      relaxedArtifactsPromiseRef.current.then((ok) => setRelaxedAvailable(ok));
-    }
-  }, []);
-
   // Compute the hardware plan and start (or skip) the pool for the stashed
   // model. Shared by loadModel and the toggle effect so the gate and logging
   // cannot drift between them.
@@ -3153,46 +3115,12 @@ export default function App() {
       // Determine mel bin count from model config (nemo128 → 128, nemo80 → 80)
       const nMels = modelUrls.modelConfig?.featuresSize || 128;
       try {
-        // Pin the ORT runtime variant on the page's FIRST model load: ORT's
-        // WASM runtime initialises once, so later loads reuse the same
-        // binaries/SIMD mode regardless of toggle churn (reload to change).
-        if (!ortVariantRef.current) {
-          const artifactsPresent = await (relaxedArtifactsPromiseRef.current || Promise.resolve(false));
-          // In 'auto' mode (the default), a ~40 ms micro-bench of the int8
-          // dot-product instruction decides per engine+CPU: V8 profits from
-          // the relaxed build, SpiderMonkey validates it but runs it slower
-          // (PERF_PLAN #5). Run it only when every other gate could pass, so
-          // most loads (no artifacts, WebGPU, kill-switch) never pay it.
-          let autoPick = null;
-          if (relaxedSimd === 'auto' && backend === 'wasm' && relaxedSupported
-              && artifactsPresent && relaxedOperatorEnabled) {
-            const bench = benchRelaxedAutoPick();
-            autoPick = bench.pick;
-            console.log(`[ORT] Relaxed-SIMD auto-pick: ${bench.pick}`
-              + (bench.reason ? ` (${bench.reason})`
-                : ` (plain ${bench.plainMs.toFixed(1)} ms, relaxed ${bench.relaxedMs.toFixed(1)} ms)`));
-          }
-          ortVariantRef.current = resolveOrtVariant({
-            relaxedSetting: relaxedSimd,
-            probeSupported: relaxedSupported,
-            artifactsPresent,
-            backend,
-            operatorEnabled: relaxedOperatorEnabled,
-            autoPick,
-          });
-          if (ortVariantRef.current.engaged) {
-            console.log('[ORT] Relaxed-SIMD runtime variant engaged (/ort-relaxed/)');
-          }
-        }
-        const ortVariant = ortVariantRef.current;
         modelRef.current = await ParakeetModel.fromUrls({
           ...modelUrls.urls,
           filenames: modelUrls.filenames,
           backend,
           verbose: verboseLog,
           cpuThreads,
-          wasmPaths: ortVariant.wasmPaths,
-          wasmSimd: ortVariant.wasmSimd,
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });
@@ -3208,8 +3136,6 @@ export default function App() {
           encoderUrl: modelUrls.urls.encoderUrl,
           encoderDataUrl: modelUrls.urls.encoderDataUrl,
           filenames: modelUrls.filenames,
-          wasmPaths: ortVariant.wasmPaths,
-          wasmSimd: ortVariant.wasmSimd,
           nMels,
           preprocessorBackend: modelUrls.preprocessorBackend,
           preprocessorUrl: modelUrls.urls.preprocessorUrl,
@@ -3258,8 +3184,6 @@ export default function App() {
           tokenizerUrl: modelUrls.urls.tokenizerUrl,
           filenames: modelUrls.filenames,
           numThreads: backend === 'wasm' ? 2 : cpuThreads,
-          wasmPaths: ortVariant.wasmPaths,
-          wasmSimd: ortVariant.wasmSimd,
         } : null;
         // The WASM worker follows the parallelEncode toggle (it is useless
         // without the pool, and the user turning the feature off should get
@@ -5176,7 +5100,6 @@ export default function App() {
         webgpuEncoderQuant,
         cpuThreads,
         parallelEncode,
-        relaxedSimd,
         enableChunking,
         chunkDurationSec: chunkDuration,
         beamWidth,
@@ -5185,7 +5108,6 @@ export default function App() {
       model: {
         loaded: !!modelRef.current,
         status,
-        ortVariant: ortVariantRef.current,
         maxEncoderBatch: modelRef.current?.maxEncoderBatch ?? null,
         encodePool: {
           workers: encodePoolRef.current.length,
@@ -5385,9 +5307,6 @@ export default function App() {
           version: VERSION,
           modelRepo: repoId,
           modelSource,
-          ortVariant: ortVariantRef.current
-            ? { engaged: !!ortVariantRef.current.engaged, reason: ortVariantRef.current.reason ?? null }
-            : null,
         },
         // Settings that change the numbers. Recorded rather than forced, so a
         // report describes a real configuration and rows inside one report stay
@@ -5395,7 +5314,6 @@ export default function App() {
         settings: {
           cpuThreads,
           parallelEncode,
-          relaxedSimd,
           enableChunking,
           chunkDurationSec: chunkDuration,
           beamWidth,
@@ -6230,7 +6148,7 @@ export default function App() {
 
   // Run ONE arm end to end in its own worker. Resolves to null (never throws)
   // so a broken arm degrades into "stay on WASM" instead of a failed load.
-  async function probeArm(arm, bytes, { numThreads, wasmPaths, wasmSimd }) {
+  async function probeArm(arm, bytes, { numThreads }) {
     const worker = new Worker(new URL('./lib/perf.worker.js', import.meta.url), { type: 'module' });
     const pending = new Map();
     let nextId = 0;
@@ -6255,7 +6173,7 @@ export default function App() {
     // workerReady posts the init message and folds in every way an init can
     // fail, watchdog included, so a wedged arm can never hold up the load.
     const ready = workerReady(worker, {
-      type: 'init', arm, modelBytes: bytes.slice(0), numThreads, wasmPaths, wasmSimd,
+      type: 'init', arm, modelBytes: bytes.slice(0), numThreads,
       seq: PROBE_SEQ, dim: PROBE_DIM, inputName: PROBE_INPUT_NAME,
     }, { timeoutMs: PROBE_INIT_TIMEOUT_MS, label: `Probe ${arm}` });
     return { worker, ready, run, dispose: () => { try { worker.postMessage({ type: 'dispose' }); } catch { /* gone */ } worker.terminate(); } };
@@ -6288,16 +6206,7 @@ export default function App() {
       const assets = await probeAssetsRef.current;
       if (!assets) throw new Error('probe assets unavailable');
 
-      // The WASM arm must time the runtime the app would actually use, so it
-      // gets the same binaries/SIMD mode the ORT-variant gate resolved (or
-      // would resolve) for this machine.
-      const artifactsPresent = await (relaxedArtifactsPromiseRef.current || Promise.resolve(false));
-      const variant = ortVariantRef.current || resolveOrtVariant({
-        relaxedSetting: relaxedSimd, probeSupported: relaxedSupported,
-        artifactsPresent, backend: 'wasm', operatorEnabled: relaxedOperatorEnabled,
-        autoPick: relaxedSimd === 'auto' ? benchRelaxedAutoPick().pick : null,
-      });
-      const cfg = { numThreads: cpuThreads, wasmPaths: variant.wasmPaths, wasmSimd: variant.wasmSimd };
+      const cfg = { numThreads: cpuThreads };
 
       const wasmArm = await probeArm('wasm', assets.wasm, cfg);
       const gpuArm = await probeArm('webgpu', assets.webgpu, cfg);
@@ -7207,24 +7116,6 @@ export default function App() {
                   {' '}{t('parallelEncode')}
                   <InfoTooltip text={t('tooltipParallelEncode')} />
                 </label>
-              </div>
-            )}
-
-            {backend === 'wasm' && relaxedAvailable && relaxedSupported && relaxedOperatorEnabled && (
-              <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
-                <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                  {t('relaxedSimd')}:
-                  <InfoTooltip text={t('tooltipRelaxedSimd')} />
-                </span>
-                <select
-                  name="relaxedSimd"
-                  value={relaxedSimd}
-                  onChange={e => setRelaxedSimd(e.target.value)}
-                >
-                  <option value="auto">{t('relaxedSimdAuto')}</option>
-                  <option value="on">{t('relaxedSimdOn')}</option>
-                  <option value="off">{t('relaxedSimdOff')}</option>
-                </select>
               </div>
             )}
 

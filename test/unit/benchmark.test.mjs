@@ -286,7 +286,7 @@ describe('anonymizeEnvironment', () => {
       screen: { width: 3840, height: 2160, devicePixelRatio: 1.5 },
       jsHeap: { limitMB: 4096, usedMB: 512 },
     },
-    capabilities: { wasm: { simd: true, threads: true, relaxedSimd: true }, webgpu: true },
+    capabilities: { wasm: { simd: true, threads: true }, webgpu: true },
     webgpu: { adapter: { vendor: 'nvidia', architecture: 'ampere' }, features: ['depth-clip-control'], limits: { maxBufferSize: 2147483648 } },
     ort: { versions: { web: '1.27.0' }, wasm: { numThreads: 4, simd: true } },
     connection: { effectiveType: '4g', downlink: 10, rtt: 50 },

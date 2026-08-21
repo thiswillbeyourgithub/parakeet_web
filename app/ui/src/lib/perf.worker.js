@@ -6,8 +6,7 @@
 // runtime exactly once per JS context and picks a single binary while doing it
 // (the plain build for the wasm EP, the JSEP build for WebGPU). Probing on the
 // main thread would therefore pin that choice before the real model load and
-// silently cost the visitor the Relaxed-SIMD runtime the auto-pick may have
-// earned them (-18.6% wall on this project's reference box), and probing both
+// silently pin the real model load's runtime, and probing both
 // arms in ONE worker would force the second arm to reuse the first arm's
 // binary. A throwaway worker per arm keeps the main thread's ORT state
 // untouched and gives each measurement its own cold, uncontaminated runtime.
@@ -27,7 +26,7 @@
 //
 // Message contract:
 //   -> {type:'init', arm:'wasm'|'webgpu', modelBytes:ArrayBuffer, numThreads,
-//                    wasmPaths, wasmSimd, seq, dim, inputName}
+//                    wasmPaths, seq, dim, inputName}
 //   <- {type:'ready', arm, buildMs} | {type:'error', arm, message}
 //   -> {type:'run', id, count}            // count runs, timed individually
 //   <- {type:'ran', id, times:[…]} | {type:'error', id, arm, message}
@@ -43,18 +42,15 @@ let feeds = null;
 let arm = null;
 
 async function init(msg) {
-  const { modelBytes, numThreads, wasmPaths, wasmSimd, seq, dim, inputName } = msg;
+  const { modelBytes, numThreads, wasmPaths, seq, dim, inputName } = msg;
   arm = msg.arm;
 
-  // The WASM arm must mirror the main thread's runtime choice (binaries and
-  // SIMD mode) or it would time a runtime the app is not going to use. The GPU
-  // arm ignores wasmSimd: relaxed kernels are CPU code and resolveOrtVariant
-  // already keeps non-wasm backends on the stock build.
+  // The WASM arm must mirror the main thread's runtime choice or it would time
+  // a runtime the app is not going to use.
   const ort = await initOrt({
     backend: arm === 'webgpu' ? 'webgpu' : 'wasm',
     wasmPaths,
     numThreads,
-    simd: arm === 'webgpu' ? undefined : wasmSimd,
   });
 
   // STRICT webgpu on purpose (no 'wasm' fallback in the list, unlike the app's

@@ -14,26 +14,11 @@
 // WebAssembly feature probes: tiny pre-compiled modules using one instruction
 // from each feature (byte sequences from GoogleChromeLabs/wasm-feature-detect,
 // MIT). WebAssembly.validate returns false on engines lacking the feature and
-// never throws on unknown opcodes, so this is a safe capability check. The
-// relaxedSimd probe matters most here: it decides whether a Relaxed-SIMD ORT
-// WASM build (PERF_PLAN #5) could run on the reporting machine.
+// never throws on unknown opcodes, so this is a safe capability check.
 const WASM_PROBES = {
   simd: [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11],
-  relaxedSimd: [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 15, 1, 13, 0, 65, 1, 253, 15, 65, 2, 253, 15, 253, 128, 2, 11],
   threads: [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 4, 1, 3, 1, 1, 10, 11, 1, 9, 0, 65, 0, 254, 16, 2, 0, 26, 11],
 };
-
-// Standalone Relaxed-SIMD capability check, reused by the ORT-variant
-// selection (lib/ortVariant.js): a Relaxed-SIMD ORT build may only be engaged
-// when this returns true (ORT enforces the same condition at init with its own
-// probe and throws; this pre-gate keeps that throw from ever firing).
-export function wasmRelaxedSimdSupported() {
-  try {
-    return typeof WebAssembly !== 'undefined' && WebAssembly.validate(new Uint8Array(WASM_PROBES.relaxedSimd));
-  } catch {
-    return false;
-  }
-}
 
 // Walk an object's readable attributes (own or inherited, which is how Web IDL
 // exposes GPUAdapterInfo/GPUSupportedLimits: enumerable getters on the

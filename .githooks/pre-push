@@ -136,15 +136,3 @@ if [ "$run_webgpu" = y ]; then
 fi
 
 echo "[pre-push] All requested checks passed."
-
-# Git LFS: upload the pointer'd objects (the relaxed-SIMD ORT wasm pair under
-# app/ui/public/ort-relaxed/) along with the push. Runs LAST so an aborted
-# test gate never uploads anything. Soft-gated: a clone without git-lfs can
-# still push pure-code changes (the server rejects a push that needs missing
-# LFS objects, so nothing can be silently lost). The ref list arrives on
-# stdin, which nothing above consumes (the tier-3 prompt reads /dev/tty).
-if command -v git-lfs >/dev/null 2>&1; then
-  git lfs pre-push "$@"
-else
-  echo "[pre-push] git-lfs not installed; skipped LFS upload (a push touching app/ui/public/ort-relaxed/*.wasm would be incomplete server-side)." >&2
-fi

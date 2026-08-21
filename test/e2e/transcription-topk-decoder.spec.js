@@ -135,7 +135,7 @@ test('a phrase-boosted run keeps the full logit row (fast path must NOT engage)'
 
   await forceLocalSource(page);
   await page.goto('/');
-  // Same seed ordering as transcription-relaxed-simd.spec.js: let the first
+  // Seed ordering matters: let the first
   // boot's default-persist storm flush before seeding, or the write is
   // clobbered and the reload silently reads the defaults back. beamWidth 1 with
   // beamWidthAuto false keeps this on the GREEDY path, so the ONLY reason the

@@ -133,10 +133,6 @@ services:
       # unless explicitly set.
       - RELAY_ENABLE=${RELAY_ENABLE:-}
       - VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-}
-      # Operator kill-switch for the Relaxed-SIMD ORT WASM runtime: set to
-      # "false" to force the vendored stock runtime for every visitor (and
-      # hide the sidebar toggle) without rebuilding the image.
-      - VITE_ORT_RELAXED_ENABLE=${VITE_ORT_RELAXED_ENABLE:-}
       - RELAY_MAX_TOTAL_SESSION_BYTES=${RELAY_MAX_TOTAL_SESSION_BYTES:-}
       - RELAY_MAX_CONTROL_MSG_BYTES=${RELAY_MAX_CONTROL_MSG_BYTES:-}
       - RELAY_LP_DOWN_TIMEOUT_MS=${RELAY_LP_DOWN_TIMEOUT_MS:-}

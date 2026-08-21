@@ -230,7 +230,6 @@ echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boo
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
 echo "[entrypoint] VITE_RELAY_ENABLE=${VITE_RELAY_ENABLE:-(not set, client defaults to enabled)}"
-echo "[entrypoint] VITE_ORT_RELAXED_ENABLE=${VITE_ORT_RELAXED_ENABLE:-(not set, relaxed-SIMD ORT gate stays user-toggleable)}"
 echo "[entrypoint] VITE_WASM_DECODE_PIPELINE=${VITE_WASM_DECODE_PIPELINE:-(not set, decode worker stays WebGPU-only)}"
 echo "[entrypoint] BENCHMARK_REPORTS_DIR=${BENCHMARK_REPORTS_DIR:-(not set, benchmark report collection disabled)}"
 
@@ -543,7 +542,6 @@ VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
 VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
 VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
 VITE_RELAY_ENABLE="${VITE_RELAY_ENABLE:-}" \
-VITE_ORT_RELAXED_ENABLE="${VITE_ORT_RELAXED_ENABLE:-}" \
 VITE_WASM_DECODE_PIPELINE="${VITE_WASM_DECODE_PIPELINE:-}" \
 VITE_BENCHMARK_UPLOAD="${VITE_BENCHMARK_UPLOAD:-}" \
 VITE_PHRASE_BOOST_DEFAULT="${VITE_PHRASE_BOOST_DEFAULT:-}" \
@@ -562,7 +560,6 @@ node -e '
     "VITE_ANALYTICS_WEBSITE_ID",
     "VITE_ANALYTICS_SRI",
     "VITE_RELAY_ENABLE",
-    "VITE_ORT_RELAXED_ENABLE",
     "VITE_WASM_DECODE_PIPELINE",
     "VITE_BENCHMARK_UPLOAD",
     "VITE_PHRASE_BOOST_DEFAULT",

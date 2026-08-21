@@ -1,10 +1,10 @@
 // Tier-3 E2E for the Debug-section support report: a modelless spec (no
 // weights, runs in seconds) that opens the sidebar, expands Debug, and asserts
 // the report textarea fills with valid JSON describing this very browser.
-// Chromium is the reference engine for the WASM feature probes: simd, threads
-// (the test server sends COOP/COEP, so crossOriginIsolated is true) and
-// relaxedSimd must all read true here, which validates the probe byte-modules
-// against a real engine, not just against WebAssembly.validate's signature.
+// Chromium is the reference engine for the WASM feature probes: simd and
+// threads (the test server sends COOP/COEP, so crossOriginIsolated is true)
+// must both read true here, which validates the probe byte-modules against a
+// real engine, not just against WebAssembly.validate's signature.
 // Also covers the copy button end to end via a granted clipboard permission.
 // Written with the help of Claude Code.
 import { test, expect } from '@playwright/test';
@@ -33,7 +33,6 @@ test('support report fills with valid JSON and copies to clipboard', async ({ pa
   expect(report.browser.userAgent).toContain('Chrome');
   expect(report.hardware.hardwareConcurrency).toBeGreaterThan(0);
   expect(report.capabilities.wasm.simd).toBe(true);
-  expect(report.capabilities.wasm.relaxedSimd).toBe(true);
   expect(report.capabilities.wasm.threads).toBe(true);
   expect(report.capabilities.crossOriginIsolated).toBe(true);
   expect(report.capabilities.sharedArrayBuffer).toBe(true);

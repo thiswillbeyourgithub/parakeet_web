@@ -3,7 +3,7 @@
 // never throw, in bare Node (every browser API absent) as well as against a
 // stubbed browser, and the builder must emit stable, parseable JSON even when
 // probes return exotic values (BigInt). The probe byte-modules' TRUTH on a
-// real engine (simd/relaxedSimd/threads all true in Chromium) is asserted by
+// real engine (simd/threads both true in Chromium) is asserted by
 // test/e2e/support-report.spec.js; here we only require booleans.
 // Written with the help of Claude Code.
 import { test } from 'node:test';
@@ -19,7 +19,6 @@ test('collectEnvironment survives bare Node (no navigator/window)', async () => 
   assert.equal(env.hardware.hardwareConcurrency, null);
   assert.equal(env.hardware.screen, null);
   assert.equal(typeof env.capabilities.wasm.simd, 'boolean');
-  assert.equal(typeof env.capabilities.wasm.relaxedSimd, 'boolean');
   assert.equal(typeof env.capabilities.wasm.threads, 'boolean');
   // Node has had SIMD-in-WASM for years; if this reads false the probe bytes
   // are broken, not the engine.
