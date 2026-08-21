@@ -87,9 +87,9 @@ describe('resolveWasmEnvOverrides: --wasm-paths / --wasm-simd -> ort.env.wasm', 
   // so the prefix MUST end in a slash and be absolute (the CLI's cwd is not the
   // repo root in general).
   test('wasmPaths becomes an absolute prefix with a trailing slash', () => {
-    const { wasmPaths } = resolveWasmEnvOverrides({ wasmPaths: '/opt/ort-relaxed' });
-    assert.equal(wasmPaths, '/opt/ort-relaxed/');
-    assert.equal(resolveWasmEnvOverrides({ wasmPaths: '/opt/ort-relaxed/' }).wasmPaths, '/opt/ort-relaxed/');
+    const { wasmPaths } = resolveWasmEnvOverrides({ wasmPaths: '/opt/ort-custom' });
+    assert.equal(wasmPaths, '/opt/ort-custom/');
+    assert.equal(resolveWasmEnvOverrides({ wasmPaths: '/opt/ort-custom/' }).wasmPaths, '/opt/ort-custom/');
     // Relative input is resolved against cwd, never passed through raw.
     assert.equal(resolveWasmEnvOverrides({ wasmPaths: 'rel/dir' }).wasmPaths.startsWith('/'), true);
   });
