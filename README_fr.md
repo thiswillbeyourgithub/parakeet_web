@@ -49,7 +49,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 
 | Fonctionnalité | Détails |
 |---|---|
-| 🔒 **100% privé** | Fonctionne entièrement dans votre navigateur — aucun audio ne quitte jamais votre appareil |
+| 🔒 **100% privé** | Fonctionne entièrement dans votre navigateur, et aucun audio ne quitte jamais votre appareil |
 | ⚡ **Fonctionne partout (WASM int8)** | La transcription s'exécute sur le backend WASM (CPU) avec un encodeur int8 SmoothQuant, donc elle marche dans tout navigateur moderne sans GPU, confortablement plus vite que le temps réel sur une machine courante. Si votre machine a un GPU, l'application mesure les deux voies dessus et ne bascule vers WebGPU que si c'est nettement plus rapide ([Choisir entre CPU et GPU](#choisir-entre-cpu-et-gpu)) |
 | 🧵 **Encodage parallèle** | Sur les enregistrements longs, les segments audio sont encodés en parallèle dans des workers en arrière-plan pendant que le fil principal décode, ce qui met à profit les cœurs inutilisés. Activé par défaut sur les machines capables (8 cœurs et plus, 8 Go de RAM et plus ; cela consomme plus de mémoire car chaque worker garde sa propre copie de l'encodeur) et désactivable dans les réglages. Le gain dépend du nombre de cœurs réellement libres : sur une machine chargée, répartir le budget de threads entre plusieurs workers peut finir plus lent que le chemin simple, donc testez les deux sur vos fichiers longs si les derniers pourcents comptent |
 | 🎙️ **Téléphone comme micro** | Utilisez votre téléphone comme microphone sans fil via WebRTC chiffré de bout en bout |
@@ -195,20 +195,20 @@ Cette intégration a été mise en place avec [Claude Code](https://www.anthropi
 
 Par défaut, la transcription s'exécute une fois lorsque vous arrêtez l'enregistrement. Si vous préférez voir le texte apparaître au fur et à mesure que vous parlez, activez la **Transcription en direct** dans le panneau des paramètres. Le modèle est alors ré-exécuté toutes les quelques secondes sur une fenêtre glissante d'audio récent, et la transcription se met à jour de façon incrémentale pendant l'enregistrement. La regex de dictée (si chargée) est appliquée à tout le texte visible à chaque mise à jour, donc des corrections comme « point virgule » → « ; » se produisent aussi en direct.
 
-Cela fonctionne à la fois pour le microphone local et pour le chemin [téléphone-comme-micro](#microphone-distant-téléphone-comme-micro) — le transcripteur en direct consomme le même tampon audio dans les deux cas.
+Cela fonctionne à la fois pour le microphone local et pour le chemin [téléphone-comme-micro](#microphone-distant-téléphone-comme-micro), car le transcripteur en direct consomme le même tampon audio dans les deux cas.
 
 ### Comment ça marche
 
 L'encodeur de Parakeet n'est pas en streaming (il voit toute la fenêtre d'un coup avec auto-attention), donc la précision dépend fortement de la présence de suffisamment de contexte acoustique. Le transcripteur en direct maintient une **fenêtre de contexte** glissante des *N* dernières secondes d'audio et ré-exécute le modèle dessus toutes les quelques secondes. Les mots proches du bord arrière de la fenêtre sont « en attente » (peuvent être révisés par la fenêtre suivante, à contexte plus large) et les mots passés au-delà d'une frontière de validation de 3 secondes sont figés définitivement. Résultat : chaque mot finit par être transcrit avec au moins 3 secondes de contexte droit, tout en vous laissant voir les mises à jour pendant que vous parlez.
 
-Lorsque vous appuyez sur stop, la passe de transcription canonique sur l'audio complet s'exécute comme toujours, et son résultat remplace celui en direct — le mode direct n'affecte donc jamais la précision finale.
+Lorsque vous appuyez sur stop, la passe de transcription canonique sur l'audio complet s'exécute comme toujours, et son résultat remplace celui en direct, si bien que le mode direct n'affecte donc jamais la précision finale.
 
 ### Paramètres
 
 - **Transcription en direct** (désactivée par défaut) : active ou désactive le mode streaming.
 - **Fenêtre de contexte** : combien de secondes d'audio récent l'encodeur voit à chaque mise à jour.
   - **Auto** (recommandé) : commence à 15 s et s'adapte d'elle-même entre **10 s et 60 s** selon la vitesse réelle de transcription de votre machine. Les machines plus rapides obtiennent une fenêtre plus large (plus de contexte, meilleure précision) ; les machines plus lentes en obtiennent une plus petite (pour que les mises à jour suivent).
-  - Ou choisissez une valeur fixe (10/15/20/30/45/60 s) si vous voulez surcharger l'adaptateur auto — par exemple, choisissez 60 s sur un ordinateur de bureau rapide pour maximiser la précision, ou 10 s sur un téléphone pour maintenir une latence faible.
+  - Ou choisissez une valeur fixe (10/15/20/30/45/60 s) si vous voulez surcharger l'adaptateur auto : par exemple, choisissez 60 s sur un ordinateur de bureau rapide pour maximiser la précision, ou 10 s sur un téléphone pour maintenir une latence faible.
 
 La cadence (à quelle fréquence la transcription en direct se met à jour) est toujours auto-adaptée : si une passe de transcription prend plus de temps que prévu, les mises à jour ralentissent pour que la file ne grossisse jamais. Activez **Afficher plus de détails** dans les paramètres pour voir la taille de fenêtre actuelle, l'intervalle de pas et le temps de traitement par tick sous la transcription en direct.
 
@@ -269,14 +269,14 @@ Cette fonctionnalité a été implémentée avec [Claude Code](https://www.anthr
 
 ## Microphone distant (téléphone comme micro)
 
-**Pas de microphone ? Pas de problème !** Utilisez votre téléphone comme micro sans fil via WebRTC. L'audio est chiffré de bout en bout (ECDH P-256 + AES-GCM-256) — le serveur ne relaie que des données chiffrées et ne voit jamais l'audio en clair.
+**Pas de microphone ? Pas de problème !** Utilisez votre téléphone comme micro sans fil via WebRTC. L'audio est chiffré de bout en bout (ECDH P-256 + AES-GCM-256) : le serveur ne relaie que des données chiffrées et ne voit jamais l'audio en clair.
 
 1. Cliquez sur le bouton **Micro téléphone** dans l'application
-2. Un QR code apparaît — scannez-le avec votre téléphone
+2. Un QR code apparaît, scannez-le avec votre téléphone
 3. Accordez l'autorisation du microphone sur le téléphone
-4. **Vérifiez que le code court** qui apparaît sur les deux écrans correspond — lisez-le à voix haute ou comparez visuellement. Si les codes diffèrent, cliquez sur **Les codes diffèrent – abandonner** sur l'un ou l'autre appareil. Cette étape protège contre un serveur de signalisation malveillant qui pourrait sinon échanger les clés de chiffrement pour intercepter (MITM) le canal supposé chiffré de bout en bout. Le bouton Confirmer est désactivé pendant 3 secondes (avec un compte à rebours visible) afin qu'une pression réflexe sur Entrée/Espace ne puisse pas auto-accepter un code falsifié sans que vous l'ayez réellement lu.
-5. Parlez — l'audio chiffré est diffusé vers l'ordinateur en temps réel
-6. Cliquez sur **Stop** sur l'un ou l'autre appareil — l'audio est transcrit normalement
+4. **Vérifiez que le code court** qui apparaît sur les deux écrans correspond : lisez-le à voix haute ou comparez visuellement. Si les codes diffèrent, cliquez sur **Les codes diffèrent – abandonner** sur l'un ou l'autre appareil. Cette étape protège contre un serveur de signalisation malveillant qui pourrait sinon échanger les clés de chiffrement pour intercepter (MITM) le canal supposé chiffré de bout en bout. Le bouton Confirmer est désactivé pendant 3 secondes (avec un compte à rebours visible) afin qu'une pression réflexe sur Entrée/Espace ne puisse pas auto-accepter un code falsifié sans que vous l'ayez réellement lu.
+5. Parlez, et l'audio chiffré est diffusé vers l'ordinateur en temps réel
+6. Cliquez sur **Stop** sur l'un ou l'autre appareil, et l'audio est transcrit normalement
 
 ### Envoyer un fichier audio enregistré depuis le téléphone
 
@@ -285,7 +285,7 @@ un fichier audio**. Choisissez n'importe quel fichier audio sur le téléphone
 (mp3, m4a, wav, ...) : il est décodé en PCM **sur le téléphone**, puis diffusé
 par le même tunnel chiffré de bout en bout que le micro en direct. L'ordinateur
 le découpe, le rééchantillonne et le transcrit exactement comme un
-enregistrement, y compris le découpage reprenable des longs audios — il n'y a
+enregistrement, y compris le découpage reprenable des longs audios, et il n'y a
 pas de chemin d'envoi distinct et le relais ne voit toujours que du chiffré.
 Une barre de progression affiche le transfert (plus rapide que le temps réel),
 que vous pouvez annuler. Les fichiers très longs sont tronqués sur le téléphone
@@ -311,7 +311,7 @@ tout recommencer. Deux niveaux de récupération couvrent ce scénario :
   n'aboutit pas (trop d'échecs, ou la page du téléphone a été rechargée et a
   perdu le lien), touchez **📷 Scanner le QR code** sur le téléphone. La caméra
   arrière s'ouvre directement dans la page et vous scannez le QR toujours
-  affiché sur l'ordinateur pour vous ré-appairer — sans quitter la page ni
+  affiché sur l'ordinateur pour vous ré-appairer, sans avoir à quitter la page ni
   ouvrir une application de scan séparée. (Un ré-appairage relance toujours la
   vérification du code court, la garantie de bout en bout reste donc
   inchangée.)
@@ -323,7 +323,7 @@ il vous faudra un nouveau QR. Réalisé avec l'aide de Claude Code.
 ### Prérequis
 
 - **Réseau local uniquement** : fonctionne d'emblée sans configuration supplémentaire (STUN seul / P2P direct).
-- **Par Internet** : nécessite un relais TURN [coturn](https://github.com/coturn/coturn). Un service coturn commenté est inclus dans `docker/docker-compose.yml` — décommentez-le et définissez `TURN_SERVER`, `TURN_SECRET` et `TURN_EXTERNAL_IP` dans `docker/.env`. Si vous faites déjà tourner coturn (par ex. pour [WebSend](https://github.com/nicMusic/websend) ou Nextcloud Talk), pointez vers lui et réutilisez le même `TURN_SECRET`.
+- **Par Internet** : nécessite un relais TURN [coturn](https://github.com/coturn/coturn). Un service coturn commenté est inclus dans `docker/docker-compose.yml` : décommentez-le et définissez `TURN_SERVER`, `TURN_SECRET` et `TURN_EXTERNAL_IP` dans `docker/.env`. Si vous faites déjà tourner coturn (par ex. pour [WebSend](https://github.com/nicMusic/websend) ou Nextcloud Talk), pointez vers lui et réutilisez le même `TURN_SECRET`.
 - **Réseaux restrictifs (en dernier recours)** : lorsque WebRTC direct et TURN/TURNS sont tous deux bloqués (certains proxys d'entreprise suppriment l'UDP et la mise à niveau TURNS CONNECT), le sidecar de signalisation peut transférer lui-même les trames audio chiffrées, par WebSocket (préféré) ou HTTP long-poll. Après l'échange SDP, le client fait courir en parallèle WebRTC et le relais pendant ~10 s : WebRTC l'emporte s'il passe, sinon le relais prend le relais et la connexion pair-à-pair est démontée. L'audio reste chiffré de bout en bout en AES-256-GCM, donc le relais ne voit jamais que du texte chiffré (c'est purement un repli de transport). Activé par défaut ; basculez avec `RELAY_ENABLE` (serveur) et `VITE_RELAY_ENABLE` (client).
 
 Voir `docker/env.example` pour toutes les options de configuration.
@@ -443,7 +443,7 @@ Construit avec [Claude Code](https://claude.com/claude-code).
 ## Débogage mobile
 
 Ajoutez `?debug=1` à n'importe quelle URL pour charger les outils de développement [eruda](https://github.com/liriliri/eruda)
-intégrés à la page — utiles pour inspecter les journaux de la console et les requêtes réseau sur un téléphone
+intégrés à la page, utiles pour inspecter les journaux de la console et les requêtes réseau sur un téléphone
 où vous ne pouvez pas ouvrir les devtools de bureau. Eruda est vendorisé localement (servi
 depuis la même origine avec SRI), donc rien n'est récupéré depuis un CDN à l'exécution.
 
