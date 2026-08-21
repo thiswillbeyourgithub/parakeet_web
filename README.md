@@ -49,7 +49,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 
 | Feature | Details |
 |---|---|
-| 🔒 **100% Private** | Runs entirely in your browser — no audio ever leaves your device |
+| 🔒 **100% Private** | Runs entirely in your browser, and no audio ever leaves your device |
 | ⚡ **Runs Everywhere (WASM int8)** | Transcription runs on the WASM (CPU) backend with a SmoothQuant int8 encoder, so it works in any modern browser with no GPU required, comfortably faster than real time on a typical machine. If your machine has a GPU, the app measures both paths on it and switches to WebGPU only when that is clearly faster there ([Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)) |
 | 🧵 **Parallel Encoding** | On long recordings, audio chunks are encoded concurrently in background workers while the main thread decodes, so idle CPU headroom does useful work. On by default on capable machines (8+ cores, 8+ GB RAM; it costs extra memory because each worker keeps its own copy of the encoder) and can be toggled off in Settings. How much it helps depends on how many cores are genuinely free: on a busy machine, splitting the thread budget across workers can end up slower than the plain path, so try it both ways on long files if you care about the last few percent |
 | 🎙️ **Phone as Mic** | Use your phone as a wireless microphone via end-to-end encrypted WebRTC |
@@ -145,7 +145,7 @@ This feature is very early and will improve rapidly.
 
 ## Speaker Diarization
 
-Parakeet Web can answer **"who spoke when"**: it splits a transcription into per-speaker turns, grouping the words into colour-coded `First:`, `Second:`, `Third:` ... blocks (speakers beyond the twelfth fall back to `Speaker 13:` and up). Everything runs **locally in your browser** — no audio leaves your device, exactly like the transcription itself.
+Parakeet Web can answer **"who spoke when"**: it splits a transcription into per-speaker turns, grouping the words into colour-coded `First:`, `Second:`, `Third:` ... blocks (speakers beyond the twelfth fall back to `Speaker 13:` and up). Everything runs **locally in your browser**: no audio leaves your device, exactly like the transcription itself.
 
 Diarization is fully **opt-in** and never runs unless you ask for it:
 
@@ -195,20 +195,20 @@ This integration was wired up with [Claude Code](https://www.anthropic.com/claud
 
 By default, transcription runs once when you stop recording. If you'd rather see the text appear as you speak, enable **Live transcription** in the settings panel. The model is then re-run every few seconds on a sliding window of recent audio, and the transcript updates incrementally during the recording. The dictation regex (if loaded) is applied to the entire visible text on every update, so corrections like "point virgule" → ";" happen live too.
 
-This works for both the local microphone and the [phone-as-mic](#remote-microphone-phone-as-mic) path — the live transcriber consumes the same audio buffer either way.
+This works for both the local microphone and the [phone-as-mic](#remote-microphone-phone-as-mic) path, since the live transcriber consumes the same audio buffer either way.
 
 ### How it works
 
 Parakeet's encoder is non-streaming (it sees the whole window at once with self-attention), so accuracy depends heavily on having enough acoustic context. The live transcriber maintains a sliding **context window** of the last *N* seconds of audio and re-runs the model on it every few seconds. Words near the trailing edge of the window are "pending" (may be revised by the next, larger-context window) and words past a 3-second commit boundary are frozen for good. The result: every word is eventually transcribed with at least 3 seconds of right-context, while you still see updates as you speak.
 
-When you hit stop, the canonical full-audio transcription pass runs as it always has, and its result replaces the live one — so the live mode never affects the final accuracy.
+When you hit stop, the canonical full-audio transcription pass runs as it always has, and its result replaces the live one, so the live mode never affects the final accuracy.
 
 ### Settings
 
 - **Live transcription** (off by default): toggle the streaming mode on or off.
 - **Context window**: how many seconds of recent audio the encoder sees on each update.
   - **Auto** (recommended): starts at 15 s and adapts itself between **10 s and 60 s** based on how fast your machine actually transcribes. Faster machines get a larger window (more context, better accuracy); slower machines get a smaller one (so updates can keep up).
-  - Or pick a fixed value (10/15/20/30/45/60 s) if you want to override the auto-adapter — for example, choose 60 s on a fast desktop to maximize accuracy, or 10 s on a phone to keep latency low.
+  - Or pick a fixed value (10/15/20/30/45/60 s) if you want to override the auto-adapter: for example, choose 60 s on a fast desktop to maximize accuracy, or 10 s on a phone to keep latency low.
 
 The cadence (how often the live transcript updates) is always auto-adapted: if a transcription pass takes longer than expected, updates back off so the queue never grows. Enable **Display more details** in settings to see the current window size, step interval, and per-tick processing time below the live transcript.
 
@@ -269,14 +269,14 @@ This feature was implemented with [Claude Code](https://www.anthropic.com/claude
 
 ## Remote Microphone (Phone as Mic)
 
-**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256) — the server only relays encrypted data and never sees the plaintext audio.
+**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256): the server only relays encrypted data and never sees the plaintext audio.
 
 1. Click the **Phone Mic** button in the app
-2. A QR code appears — scan it with your phone
+2. A QR code appears, scan it with your phone
 3. Grant microphone permission on the phone
-4. **Verify the short code** that appears on both screens matches — read it aloud or compare visually. If the codes differ, click **Codes differ – abort** on either device. This step defends against a malicious signaling server that could otherwise swap encryption keys to MITM the supposedly end-to-end channel. The Confirm button is disabled for 3 seconds (with a visible countdown) so a reflexive Enter/Space press cannot auto-accept a tampered code without you actually reading it.
-5. Speak — encrypted audio streams to the computer in real time
-6. Click **Stop** on either device — the audio is transcribed normally
+4. **Verify the short code** that appears on both screens matches: read it aloud or compare visually. If the codes differ, click **Codes differ – abort** on either device. This step defends against a malicious signaling server that could otherwise swap encryption keys to MITM the supposedly end-to-end channel. The Confirm button is disabled for 3 seconds (with a visible countdown) so a reflexive Enter/Space press cannot auto-accept a tampered code without you actually reading it.
+5. Speak, and encrypted audio streams to the computer in real time
+6. Click **Stop** on either device, and the audio is transcribed normally
 
 ### Send a saved audio file from the phone
 
@@ -284,7 +284,7 @@ Once paired, the phone page also offers **📁 Send an audio file**. Pick any
 audio file on the phone (mp3, m4a, wav, ...) and it is decoded to PCM **on the
 phone**, then streamed through the exact same end-to-end encrypted tunnel the
 live mic uses. The computer chunks, resamples and transcribes it identically
-to a recording, including resumable long-audio chunking — there is no separate
+to a recording, including resumable long-audio chunking, and there is no separate
 upload path and the relay still only ever sees ciphertext. A progress bar
 shows the (faster-than-real-time) transfer, which you can cancel. Very long
 files are truncated on the phone with a warning (the session limit is roughly
@@ -307,7 +307,7 @@ of recovery cover it:
 - **In-page camera re-scan.** If auto-reconnect can't recover (too many
   failures, or the phone page was reloaded and lost the link), tap **📷 Scan QR
   code** on the phone. The rear camera opens right in the page and you scan the
-  QR still shown on the computer to re-pair — no need to leave the page or open
+  QR still shown on the computer to re-pair, with no need to leave the page or open
   a separate barcode app. (Re-pairing always runs a fresh short-code
   verification, so the end-to-end guarantee is unchanged.)
 
@@ -318,7 +318,7 @@ Built with the help of Claude Code.
 ### Requirements
 
 - **Local network only**: works out of the box with no extra config (STUN-only / direct P2P).
-- **Over the internet**: requires a [coturn](https://github.com/coturn/coturn) TURN relay. A commented-out coturn service is included in `docker/docker-compose.yml` — uncomment it and set `TURN_SERVER`, `TURN_SECRET`, and `TURN_EXTERNAL_IP` in `docker/.env`. If you already run coturn (e.g. for [WebSend](https://github.com/nicMusic/websend) or Nextcloud Talk), point to it and reuse the same `TURN_SECRET`.
+- **Over the internet**: requires a [coturn](https://github.com/coturn/coturn) TURN relay. A commented-out coturn service is included in `docker/docker-compose.yml`: uncomment it and set `TURN_SERVER`, `TURN_SECRET`, and `TURN_EXTERNAL_IP` in `docker/.env`. If you already run coturn (e.g. for [WebSend](https://github.com/nicMusic/websend) or Nextcloud Talk), point to it and reuse the same `TURN_SECRET`.
 - **Restrictive networks (last resort)**: when both direct WebRTC and TURN/TURNS are blocked (some corporate proxies strip UDP and the TURNS CONNECT upgrade), the signaling sidecar can forward the encrypted audio frames itself, over WebSocket (preferred) or HTTP long-poll. After the SDP exchange the client races WebRTC and the relay in parallel for ~10 s: WebRTC wins if it gets through, otherwise the relay takes over and the peer connection is torn down. Audio stays AES-256-GCM end-to-end, so the relay only ever sees ciphertext (it is purely a transport fallback). Enabled by default; toggle with `RELAY_ENABLE` (server) and `VITE_RELAY_ENABLE` (client).
 
 See `docker/env.example` for all configuration options.
@@ -435,7 +435,7 @@ Built with [Claude Code](https://claude.com/claude-code).
 ## Mobile debugging
 
 Append `?debug=1` to any URL to load the in-page [eruda](https://github.com/liriliri/eruda)
-devtools — useful for inspecting console logs and network requests on a phone
+devtools, useful for inspecting console logs and network requests on a phone
 where you cannot open desktop devtools. Eruda is vendored locally (served
 from same-origin with SRI), so nothing is fetched from a CDN at runtime.
 
