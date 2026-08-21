@@ -21,7 +21,6 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Performances sur du matériel ordinaire](#performances-sur-du-matériel-ordinaire)
 - [Choisir entre CPU et GPU](#choisir-entre-cpu-et-gpu)
 - [Configuration automatique : mesurer plutôt que supposer](#configuration-automatique--mesurer-plutôt-que-supposer)
-- [Moteur CPU plus rapide (Relaxed-SIMD)](#moteur-cpu-plus-rapide-relaxed-simd)
 - [Mode dictée](#mode-dictée)
 - [Identification des locuteurs](#identification-des-locuteurs)
 - [Appareils de dictée (SpeechMike)](#appareils-de-dictée-speechmike)
@@ -85,7 +84,7 @@ sudo docker compose -f docker/docker-compose.yml up
 
 Cette application est faite pour tourner sur la machine que vous possédez déjà, le plus souvent un portable sans GPU utilisable. Une grande part du travail consiste donc à tirer le maximum de vitesse d'un matériel ordinaire, et à ne jamais faire payer à votre machine un choix qui ne lui convient pas.
 
-Concrètement : une seconde compilation d'ONNX Runtime utilisant les instructions relaxed-SIMD, retenue seulement lorsqu'elle se révèle réellement plus rapide dans votre navigateur ([Moteur CPU plus rapide](#moteur-cpu-plus-rapide-relaxed-simd)) ; des graphes de décodeur qui ne renvoient que les logits top-K, pour que chaque étape de décodage cesse de recopier une ligne de vocabulaire entière hors du modèle ; une fenêtre de découpage de 60 secondes choisie par la mesure et non par habitude ; un encodage réparti sur des workers d'arrière-plan quand, et seulement quand, la machine a des cœurs réellement libres ; et un backend choisi en chronométrant les deux voies sur votre propre matériel plutôt qu'en se fiant à un chiffre obtenu sur le GPU de quelqu'un d'autre ([Configuration automatique](#configuration-automatique--mesurer-plutôt-que-supposer)).
+Concrètement : des graphes de décodeur qui ne renvoient que les logits top-K, pour que chaque étape de décodage cesse de recopier une ligne de vocabulaire entière hors du modèle ; une fenêtre de découpage de 60 secondes choisie par la mesure et non par habitude ; un encodage réparti sur des workers d'arrière-plan quand, et seulement quand, la machine a des cœurs réellement libres ; et un backend choisi en chronométrant les deux voies sur votre propre matériel plutôt qu'en se fiant à un chiffre obtenu sur le GPU de quelqu'un d'autre ([Configuration automatique](#configuration-automatique--mesurer-plutôt-que-supposer)).
 
 La règle derrière tout cela : une affirmation ne survit que si elle a été mesurée sur une vraie machine, à travers la vraie application. C'est aussi ainsi qu'a été trouvé le plus gros gain de cette version : WebGPU était désactivé depuis un mois sur un diagnostic qui s'est révélé faux (voir la section suivante), et le correctif réel a fait passer un extrait de 3 minutes de 12 min 39 s à 8,5 s.
 
@@ -118,14 +117,6 @@ Quelques détails qui comptent plus qu'il n'y paraît :
 - **Vous pouvez la relancer à tout moment** avec le bouton « Configurer automatiquement les performances » dans les paramètres.
 
 La mesure met les animations de la page en pause pendant son exécution, pour la même raison que les vraies exécutions GPU (voir ci-dessus). Sur une machine sans GPU, et sous `?webgpu=0`, rien de tout cela ne s'exécute ni ne télécharge quoi que ce soit. (Réalisé avec l'aide de [Claude Code](https://claude.com/claude-code).)
-
-## Moteur CPU plus rapide (Relaxed-SIMD)
-
-L'application embarque une seconde version du moteur WASM de ONNX Runtime, compilée avec [Relaxed SIMD](https://github.com/WebAssembly/relaxed-simd), dont l'instruction de produit scalaire int8 compacté accélère nettement le calcul matriciel quantifié sur les navigateurs dont le moteur en tire profit (environ 19 % plus rapide de bout en bout mesuré sur les navigateurs de la famille Chromium avec le modèle int8 ; Firefox valide ces instructions mais ne les exécute pas plus vite, il reste donc sur le moteur standard).
-
-Par défaut le réglage est Auto : au premier chargement du modèle, l'application exécute un micro-benchmark d'environ 40 ms du motif d'instructions exact dans votre navigateur et choisit le moteur le plus rapide, si bien que les utilisateurs de Chrome/Brave/Edge profitent de l'accélération et tous les autres gardent la version standard. Vous pouvez forcer Activé ou Désactivé dans les réglages (appliqué au prochain chargement de page). La qualité de transcription est inchangée dans tous les cas (vérifié par un benchmark WER/CER sur l'intégralité des jeux de validation FLEURS français+anglais).
-
-Comme il s'agit d'un binaire compilé maison plutôt que celui publié sur npm, il est produit par un builder Docker reproductible à chaîne d'outils épinglée (`scripts/build-ort-relaxed-docker.sh --repro-check`, qui le compile deux fois dans des conteneurs neufs et n'installe qu'un résultat identique au bit près) et il est livré avec ses fichiers de provenance `SHA256SUMS` et `BUILD-INFO`, pour que chacun puisse le recompiler et comparer. Les auto-hébergeurs peuvent à tout moment ramener tous les visiteurs sur le moteur standard de npm avec la variable d'environnement `VITE_ORT_RELAXED_ENABLE=false`, sans reconstruction. (Réalisé et mesuré avec l'aide de [Claude Code](https://claude.com/claude-code).)
 
 ## Mode dictée
 

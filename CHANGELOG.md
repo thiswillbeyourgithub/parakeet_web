@@ -25,7 +25,7 @@ The numbers below come from an interleaved A/B of the shipped 9.9.0 build agains
 
 **This is a GPU release.** In 9.9.0 the GPU path was switched off because it measured about 10x slower than the CPU path. In 10.0.0 it is about 3.5x faster than the CPU path on the same machine, which is the difference between a path nobody could use and the fastest one available.
 
-The CPU path is the honest disappointment. Several changes that measured well on their own (the relaxed-SIMD engine, top-K decoder outputs, the optimized encoder graph, the 60-second window) do not compose into a gain this machine can tell apart from noise. Its resident load produces a 5 to 8 % run-to-run spread, so resolving a real 4 % improvement would need roughly 41 repetitions per arm, and 13 were run. The result is bounded rather than zero: any end-to-end CPU change larger than about 10 %, in either direction, is ruled out.
+The CPU path is the honest disappointment. Several changes that measured well on their own (top-K decoder outputs, the optimized encoder graph, the 60-second window) do not compose into a gain this machine can tell apart from noise. Its resident load produces a 5 to 8 % run-to-run spread, so resolving a real 4 % improvement would need roughly 41 repetitions per arm, and 13 were run. The result is bounded rather than zero: any end-to-end CPU change larger than about 10 %, in either direction, is ruled out.
 
 Per change, where a number exists:
 
@@ -33,12 +33,11 @@ Per change, where a number exists:
 |---|---|
 | Pausing page animations during a GPU run | essentially the entire GPU gain; a 3-minute clip went from 12 min 39 s to 8.5 s |
 | 60-second chunk window (was 20 s) | 1.41x on the GPU path; no measurable change on the CPU path |
-| Relaxed-SIMD CPU engine | 2.7 % faster on the shipped build, not distinguishable from noise (95 % CI 0.90 to 1.05, n=11 per arm, forced on against forced off). The 18.6 % measured in August was against a different encoder than 10.0.0 ships, and is decisively excluded here |
 | Parallel encode pool | +4.2 % on an idle machine, 14.6 % worse on a busy one, which is why its hardware gate was raised |
 
 ### What it costs
 
-First model load on the CPU path went from 11.5 s to 15.5 s, and peak memory from 10.5 GB to 11.3 GB. The GPU path is unaffected on both counts. The app also ships about 19 MB more static assets (13 MB for the relaxed-SIMD runtime, 6 MB for the probe graphs).
+First model load on the CPU path went from 11.5 s to 15.5 s, and peak memory from 10.5 GB to 11.3 GB. The GPU path is unaffected on both counts. The app also ships about 5 MB more static assets, for the probe graphs.
 
 The slower first load is a deliberate trade: after writing the model to IndexedDB the app now re-reads it from there instead of reusing the in-memory copy, which costs a full extra read of an 833 MB file but avoids a class of corrupted-blob load failures. Loads after the first one read from the cache either way and are unchanged.
 
@@ -46,7 +45,6 @@ The slower first load is a deliberate trade: after writing the model to IndexedD
 
 - **Autoconfigure: the app measures your machine instead of guessing.** Two roughly 5 MB ONNX graphs are timed through both the CPU and the GPU path on your own hardware, and the faster one wins. It runs once per machine, in throwaway workers so it costs the real pipeline nothing, and it never overrides a backend you picked by hand. There is also an "Autoconfigure optimal performance" button in the sidebar to re-run it on demand. On the reference GPU it reads a 3.06x to 4.64x advantage, against an end-to-end gap of about 3.5x measured on a 6.5-minute clip, so its number is an approximation rather than a promise. What protects you is not its accuracy but its threshold: the GPU path costs a 1.2 to 2.4 GB download, recommending that wrongly is the one expensive mistake, so it only moves you when it reads at least 2x.
 - **WebGPU is available again**, and is now chosen per machine by the probe rather than by a global switch. See below for why it was off.
-- **Faster CPU engine (Relaxed-SIMD).** The app ships a second ONNX Runtime WASM build using relaxed-SIMD instructions, picked by a micro-benchmark at startup when it is at least 1.5x faster on your browser (that margin is calibrated so Firefox, where the instructions are much slower, is never moved onto it by accident). Built reproducibly from a pinned toolchain in Docker, with `VITE_ORT_RELAXED_ENABLE` as an operator kill switch.
 - **In-graph top-K and log-sum-exp decoders.** When the model source ships them, the app prefers decoder graphs that return only the top-K logits and compute the log-sum-exp inside the graph, so each decode step stops copying a full vocabulary row out of the model.
 - **Optimized encoder graphs.** When the source ships a pre-optimized encoder, it is preferred, including for the sharded fp32 build.
 - **One-click benchmark.** A sidebar section measures every backend and precision your device can actually run, on a clip that ships with the app, and builds a single anonymised report you can read, copy, or send if the instance collects them.
