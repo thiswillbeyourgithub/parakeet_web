@@ -20,7 +20,7 @@
 //
 // Message contract:
 //   -> {type:'init', decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
-//                    wasmPaths, wasmSimd, numThreads, subsampling, windowStride}
+//                    wasmPaths, numThreads, subsampling, windowStride}
 //   <- {type:'ready'} | {type:'error', message}
 //   -> {type:'boost', encoded, strength, depthScaling, minpOverride}  // encoded:null clears
 //   <- {type:'boostReady'} | {type:'error', message}
@@ -46,11 +46,11 @@ let decodeChain = Promise.resolve();
 function initModel(msg) {
   const {
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
-    wasmPaths, wasmSimd, numThreads, subsampling, windowStride,
+    wasmPaths, numThreads, subsampling, windowStride,
   } = msg;
   return ParakeetModel.decoderOnlyFromUrls({
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
-    wasmPaths, wasmSimd, cpuThreads: numThreads, subsampling, windowStride,
+    wasmPaths, cpuThreads: numThreads, subsampling, windowStride,
   });
 }
 

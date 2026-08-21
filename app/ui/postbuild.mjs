@@ -77,19 +77,10 @@ async function processHtml(htmlPath) {
 // hands ORT the verified bytes via wasmPaths. Without this manifest, a
 // serving-path compromise could swap the ~11 MB jsep.wasm for an
 // attacker-built ML runtime that exfiltrates PCM at inference time.
-// Covers the stock runtime under dist/ort/ and, when the deployment ships it
-// (scripts/build-ort-relaxed.sh), the opt-in Relaxed-SIMD build under
-// dist/ort-relaxed/; the latter being absent is the normal case and skips
-// quietly, which is also what App.jsx's availability probe keys off.
-// A git-lfs pointer file is what a clone WITHOUT git-lfs checks out in place
-// of the real relaxed-SIMD wasm (tracked via .gitattributes): ~130 bytes of
-// UTF-8 starting with this magic. A real wasm/mjs can never start with it.
-export function isLfsPointer(bytes) {
-  return Buffer.from(bytes.subarray(0, 40)).toString('utf8')
-    .startsWith('version https://git-lfs.github.com/spec/');
-}
+// Covers the vendored runtime under dist/ort/.
 
-async function emitOrtManifest(dirName = 'ort') {
+async function emitOrtManifest() {
+  const dirName = 'ort';
   const ortDir = join(DIST, dirName);
   let entries;
   try {
@@ -102,14 +93,6 @@ async function emitOrtManifest(dirName = 'ort') {
   const manifest = {};
   for (const name of targets) {
     const bytes = await readFile(join(ortDir, name));
-    // Without this, a no-git-lfs clone would manifest the pointer text, the
-    // app's availability probe would see the manifest and engage, and ORT
-    // would then choke on a 130-byte "wasm". Skipping the manifest makes the
-    // gate report the runtime as absent, which is the honest state.
-    if (isLfsPointer(bytes)) {
-      console.warn(`[postbuild] dist/${dirName}/${name} is an un-smudged git-lfs pointer (clone without git-lfs); skipping the ${dirName} manifest so the app falls back to the stock runtime`);
-      return;
-    }
     manifest[name] = 'sha384-' + createHash('sha384').update(bytes).digest('base64');
   }
   await writeFile(join(ortDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
@@ -160,12 +143,11 @@ async function main() {
   }
   for (const h of htmls) await processHtml(h);
   await emitOrtManifest();
-  await emitOrtManifest('ort-relaxed');
   await emitAssetIntegrity();
 }
 
-// Run only when invoked as a script (node postbuild.mjs): the unit tests
-// import isLfsPointer and must not trigger a build's side effects.
+// Run only when invoked as a script (node postbuild.mjs), so importing this
+// module from a test cannot trigger a build's side effects.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(err => {
     console.error('[postbuild] failed:', err);

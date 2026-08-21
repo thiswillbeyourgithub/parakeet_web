@@ -1,9 +1,0 @@
-#!/bin/sh
-# Git LFS smudge bookkeeping (materialises the relaxed-SIMD ORT wasm pair on
-# checkout/merge, updates pointer state after commits). Soft-gated on purpose,
-# unlike the stock git-lfs stub which HARD-FAILS every commit for contributors
-# without git-lfs: this repo works fine without the LFS blobs (the app just
-# ships no /ort-relaxed/ runtime and the sidebar toggle self-hides), so a
-# missing tool must never break plain git usage.
-command -v git-lfs >/dev/null 2>&1 || exit 0
-git lfs post-commit "$@"

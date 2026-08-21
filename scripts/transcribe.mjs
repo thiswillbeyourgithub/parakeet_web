@@ -349,13 +349,15 @@ Options:
                            intra-op threads with --ort node|cuda (default: ORT chooses).
       --wasm-paths DIR     Load the ORT WASM engine artifacts from DIR instead of the
                            vendored dist (only with --ort wasm). Artifact filenames are
-                           fixed, so pointing at another directory is how an alternative
-                           engine build is selected, e.g. the relaxed-SIMD build from
-                           scripts/build-ort-relaxed.sh in app/ui/public/ort-relaxed/.
+                           fixed, so pointing at another directory is how a self-built
+                           engine is selected. The app itself ships only the vendored
+                           npm runtime.
       --wasm-simd MODE     ort.env.wasm.simd override: true, false, fixed or relaxed
                            (only with --ort wasm). "relaxed" needs an engine built with
                            relaxed-SIMD kernels AND a runtime that validates the
-                           instructions (Node 22 does), else ORT throws at init.
+                           instructions (Node 22 does), else ORT throws at init; no
+                           such engine ships with this repo, so it is for a build you
+                           supply yourself via --wasm-paths.
       --profile            Collect per-stage timing metrics (preprocess/encode/decode)
                            into the result (see --json) without --verbose's debug logs
                            polluting stdout; what benchmarks should use.
@@ -641,15 +643,13 @@ export function decodePcm(ffmpeg, file) {
 // thin caller over them.
 
 // Map the CLI's --wasm-paths / --wasm-simd values onto the `ort.env.wasm`
-// overrides that select an alternative engine build (PERF_PLAN #5: the
-// relaxed-SIMD runtime from scripts/build-ort-relaxed.sh ships identically
-// NAMED artifacts in a different directory, so directory choice IS the variant
-// choice, exactly like the app's /ort-relaxed/ path). `wasmPaths` becomes an
+// overrides that select an alternative engine build: ORT artifact filenames are
+// fixed, so the DIRECTORY is the variant choice. `wasmPaths` becomes an
 // absolute prefix with a trailing slash (ort-web string-concatenates the
 // artifact filename onto it); `simd` maps the CLI string onto the
-// true|false|'fixed'|'relaxed' union ort.env.wasm.simd accepts. Node's engine
-// validates relaxed SIMD (v22 does), so 'relaxed' under Node is a faithful A/B
-// of the browser toggle. Pure and exported for unit tests.
+// true|false|'fixed'|'relaxed' union ort.env.wasm.simd accepts. These stay
+// available for an engine the operator builds themselves; this repo ships only
+// the vendored npm runtime. Pure and exported for unit tests.
 export function resolveWasmEnvOverrides({ wasmPaths = null, wasmSimd = null } = {}) {
   const out = { wasmPaths: null, simd: null };
   if (wasmPaths) {
