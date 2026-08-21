@@ -33,7 +33,7 @@ Per change, where a number exists:
 |---|---|
 | Pausing page animations during a GPU run | essentially the entire GPU gain; a 3-minute clip went from 12 min 39 s to 8.5 s |
 | 60-second chunk window (was 20 s) | 1.41x on the GPU path; no measurable change on the CPU path |
-| Relaxed-SIMD CPU engine | 18.6 % less wall time when measured on its own in August, against a different encoder than the one 10.0.0 ships; not yet re-validated for the shipped combination |
+| Relaxed-SIMD CPU engine | 2.7 % faster on the shipped build, not distinguishable from noise (95 % CI 0.90 to 1.05, n=11 per arm, forced on against forced off). The 18.6 % measured in August was against a different encoder than 10.0.0 ships, and is decisively excluded here |
 | Parallel encode pool | +4.2 % on an idle machine, 14.6 % worse on a busy one, which is why its hardware gate was raised |
 
 ### What it costs
