@@ -33,7 +33,7 @@ Changement par changement, lorsqu'un chiffre existe :
 |---|---|
 | Mise en pause des animations pendant une exécution GPU | l'essentiel du gain GPU à lui seul ; un extrait de 3 minutes est passé de 12 min 39 s à 8,5 s |
 | Fenêtre de découpage de 60 secondes (au lieu de 20 s) | 1,41x sur la voie GPU ; aucun écart mesurable sur la voie CPU |
-| Moteur CPU Relaxed-SIMD | 18,6 % de temps en moins lorsqu'il était mesuré seul en août ; dans la version 10.0.0 publiée, le désactiver n'a rien changé de mesurable |
+| Moteur CPU Relaxed-SIMD | 18,6 % de temps en moins lorsqu'il était mesuré seul en août, face à un encodeur différent de celui que livre la 10.0.0 ; pas encore revalidé pour la combinaison publiée |
 | Encodage parallèle | +4,2 % sur une machine au repos, 14,6 % de moins sur une machine chargée, d'où le relèvement de son seuil matériel |
 
 ### Ce que cela coûte
