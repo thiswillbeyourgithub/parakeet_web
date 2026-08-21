@@ -21,7 +21,6 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Performance on commodity hardware](#performance-on-commodity-hardware)
 - [Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)
 - [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
-- [Faster CPU engine (Relaxed-SIMD)](#faster-cpu-engine-relaxed-simd)
 - [Dictation Mode](#dictation-mode)
 - [Speaker Diarization](#speaker-diarization)
 - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
@@ -85,7 +84,7 @@ sudo docker compose -f docker/docker-compose.yml up
 
 This app is meant to run on the machine you already own, which is usually a laptop with no usable GPU. A large share of the work here therefore goes into extracting as much speed as possible from ordinary hardware, and into never making your machine pay for a choice that does not suit it.
 
-Concretely that has meant: a second ONNX Runtime build using relaxed-SIMD instructions, used only when it actually measures faster in your browser ([Faster CPU engine](#faster-cpu-engine-relaxed-simd)); decoder graphs that return only the top-K logits, so each decode step stops copying a full vocabulary row out of the model; a 60-second chunk window chosen by measurement rather than habit; encoding spread across background workers when, and only when, the machine has cores genuinely free; and a backend chosen by timing both paths on your own hardware instead of trusting a number from someone else's GPU ([Autoconfigure](#autoconfigure-measuring-instead-of-guessing)).
+Concretely that has meant: decoder graphs that return only the top-K logits, so each decode step stops copying a full vocabulary row out of the model; a 60-second chunk window chosen by measurement rather than habit; encoding spread across background workers when, and only when, the machine has cores genuinely free; and a backend chosen by timing both paths on your own hardware instead of trusting a number from someone else's GPU ([Autoconfigure](#autoconfigure-measuring-instead-of-guessing)).
 
 The rule behind all of it is that a claim only survives if it was measured on a real machine through the real app. That is also how the largest win in this release was found: WebGPU had been switched off for a month on a diagnosis that turned out to be wrong (see the next section), and the actual fix took a 3-minute clip from 12 min 39 s to 8.5 s.
 
@@ -118,14 +117,6 @@ Some details that matter more than they look:
 - **You can re-run it at any time** with the "Autoconfigure optimal performance" button in Settings.
 
 The measurement pauses page animations while it runs, for the same reason the real GPU runs do (see above). On a machine with no GPU, and under `?webgpu=0`, none of this runs or downloads anything at all. (Built with the help of [Claude Code](https://claude.com/claude-code).)
-
-## Faster CPU engine (Relaxed-SIMD)
-
-The app ships a second build of the ONNX Runtime WASM engine compiled with [Relaxed SIMD](https://github.com/WebAssembly/relaxed-simd), whose packed int8 dot-product instruction speeds up the quantized matrix math considerably on browsers whose engine profits from it (measured about 19% faster end to end on Chromium-family browsers with the int8 model; Firefox validates the instructions but runs them no faster, so it stays on the stock engine).
-
-By default the setting is Auto: at the first model load the app runs a ~40 ms micro-benchmark of the exact instruction pattern in your browser and picks the faster engine, so Chrome/Brave/Edge users get the speedup and everyone else keeps the standard build. You can force On or Off in the settings (applied at the next page load). Transcription quality is unaffected either way (verified by a WER/CER benchmark over the full FLEURS French+English validation sets).
-
-Because this is a self-compiled binary rather than the npm-published one, it is built by a reproducible, pinned-toolchain Docker builder (`scripts/build-ort-relaxed-docker.sh --repro-check`, which compiles it twice in fresh containers and only installs a bit-identical result) and ships with its `SHA256SUMS` and `BUILD-INFO` provenance files so anyone can rebuild and compare. Self-hosters can force every visitor back to the stock npm-vendored engine at any time with the `VITE_ORT_RELAXED_ENABLE=false` environment variable, no rebuild needed. (Built and benchmarked with the help of [Claude Code](https://claude.com/claude-code).)
 
 ## Dictation Mode
 
