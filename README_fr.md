@@ -18,6 +18,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
+- [Performances sur du matériel ordinaire](#performances-sur-du-matériel-ordinaire)
 - [Choisir entre CPU et GPU](#choisir-entre-cpu-et-gpu)
 - [Configuration automatique : mesurer plutôt que supposer](#configuration-automatique--mesurer-plutôt-que-supposer)
 - [Moteur CPU plus rapide (Relaxed-SIMD)](#moteur-cpu-plus-rapide-relaxed-simd)
@@ -33,6 +34,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Réinitialiser l'application](#réinitialiser-lapplication)
 - [Débogage mobile](#débogage-mobile)
 - [Architecture](#architecture)
+- [Journal des modifications](./CHANGELOG_fr.md)
 - [Licence](#licence)
 - [Remerciements](#remerciements)
 - [Crédits](#crédits)
@@ -78,6 +80,16 @@ sudo docker compose -f docker/docker-compose.yml up
 ```
 
 3. Rendez-vous ensuite sur `http://localhost:5173`
+
+## Performances sur du matériel ordinaire
+
+Cette application est faite pour tourner sur la machine que vous possédez déjà, le plus souvent un portable sans GPU utilisable. Une grande part du travail consiste donc à tirer le maximum de vitesse d'un matériel ordinaire, et à ne jamais faire payer à votre machine un choix qui ne lui convient pas.
+
+Concrètement : une seconde compilation d'ONNX Runtime utilisant les instructions relaxed-SIMD, retenue seulement lorsqu'elle se révèle réellement plus rapide dans votre navigateur ([Moteur CPU plus rapide](#moteur-cpu-plus-rapide-relaxed-simd)) ; des graphes de décodeur qui ne renvoient que les logits top-K, pour que chaque étape de décodage cesse de recopier une ligne de vocabulaire entière hors du modèle ; une fenêtre de découpage de 60 secondes choisie par la mesure et non par habitude ; un encodage réparti sur des workers d'arrière-plan quand, et seulement quand, la machine a des cœurs réellement libres ; et un backend choisi en chronométrant les deux voies sur votre propre matériel plutôt qu'en se fiant à un chiffre obtenu sur le GPU de quelqu'un d'autre ([Configuration automatique](#configuration-automatique--mesurer-plutôt-que-supposer)).
+
+La règle derrière tout cela : une affirmation ne survit que si elle a été mesurée sur une vraie machine, à travers la vraie application. C'est aussi ainsi qu'a été trouvé le plus gros gain de cette version : WebGPU était désactivé depuis un mois sur un diagnostic qui s'est révélé faux (voir la section suivante), et le correctif réel a fait passer un extrait de 3 minutes de 12 min 39 s à 8,5 s.
+
+Chaque changement mesuré est listé dans le [journal des modifications](./CHANGELOG_fr.md), et vous pouvez mesurer votre propre machine avec le [banc d'essai](#banc-dessai) intégré.
 
 ## Choisir entre CPU et GPU
 
