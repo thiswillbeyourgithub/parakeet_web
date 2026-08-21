@@ -14,21 +14,37 @@ Un seul fil conducteur traverse toute cette version : **tirer le maximum de vite
 
 L'application est faite pour tourner sur la machine que la personne possède déjà, le plus souvent un portable sans GPU utilisable. Le travail a donc porté d'abord sur la voie CPU, et sur le fait de ne jamais faire payer à une machine un choix qui ne lui convient pas.
 
-### Mesures principales
+### Ce que cela a réellement rapporté, mesuré
 
-Mesuré sur la machine de référence (un ordinateur de bureau 6 cœurs / 12 fils ; une RTX 3090 Ti lorsqu'un GPU est impliqué). Votre machine sera différente, et c'est précisément pour cela que l'application mesure désormais la vôtre au lieu de se fier à ces chiffres.
+Les chiffres ci-dessous proviennent d'un A/B entrelacé entre la version 9.9.0 telle que publiée et la version 10.0.0 telle que publiée, servies côte à côte, sur le même enregistrement anglais de 6,5 minutes, sur la machine de référence (un ordinateur de bureau 6 cœurs / 12 fils ; une RTX 3090 Ti lorsqu'un GPU est impliqué). Votre machine sera différente, et c'est précisément pour cela que l'application mesure désormais la vôtre au lieu de se fier à ces chiffres.
 
-| Changement | Effet |
+| Voie | 9.9.0 | 10.0.0 | Écart |
+|---|---|---|---|
+| GPU (WebGPU) | 1078 s | 30 s | **36x plus rapide** |
+| CPU (WASM) | 103 s | 103 s | aucun écart mesurable (IC à 95 % de 0,95 à 1,10, n=13 par bras) |
+
+**Cette version est une version GPU.** En 9.9.0, la voie GPU était désactivée parce qu'elle mesurait environ 10x plus lent que la voie CPU. En 10.0.0, elle est environ 3,5x plus rapide que la voie CPU sur la même machine, ce qui fait toute la différence entre une voie que personne ne pouvait utiliser et la plus rapide disponible.
+
+La voie CPU est la déception qu'il faut assumer. Plusieurs changements qui mesuraient bien isolément (le moteur relaxed-SIMD, les sorties de décodeur top-K, le graphe d'encodeur optimisé, la fenêtre de 60 secondes) ne se composent pas en un gain que cette machine sait distinguer de son propre bruit. Sa charge résidente produit une dispersion de 5 à 8 % d'une exécution à l'autre : résoudre une amélioration réelle de 4 % demanderait environ 41 répétitions par bras, et 13 ont été effectuées. Le résultat est donc borné plutôt que nul : tout écart de bout en bout supérieur à environ 10 % sur la voie CPU, dans un sens comme dans l'autre, est exclu.
+
+Changement par changement, lorsqu'un chiffre existe :
+
+| Changement | Effet mesuré |
 |---|---|
-| Moteur CPU Relaxed-SIMD | 18,6 % de temps en moins sur int8, mesuré dans le navigateur |
-| Mise en pause des animations pendant une exécution GPU | le même extrait de 3 minutes est passé de 12 min 39 s à 8,5 s |
-| WebGPU, une fois ce problème corrigé | environ 19 s contre environ 102 s sur un enregistrement de 6,5 minutes, soit environ 5x plus rapide que la voie CPU |
-| Fenêtre de découpage de 60 secondes (au lieu de 20 s) | moins d'exécutions de l'encodeur par extrait, et moins de jointures à recoudre |
-| Encodage parallèle | +4,2 % sur une machine au repos, mais 14,6 % de moins sur une machine chargée, d'où le relèvement de son seuil matériel |
+| Mise en pause des animations pendant une exécution GPU | l'essentiel du gain GPU à lui seul ; un extrait de 3 minutes est passé de 12 min 39 s à 8,5 s |
+| Fenêtre de découpage de 60 secondes (au lieu de 20 s) | 1,41x sur la voie GPU ; aucun écart mesurable sur la voie CPU |
+| Moteur CPU Relaxed-SIMD | 18,6 % de temps en moins lorsqu'il était mesuré seul en août ; dans la version 10.0.0 publiée, le désactiver n'a rien changé de mesurable |
+| Encodage parallèle | +4,2 % sur une machine au repos, 14,6 % de moins sur une machine chargée, d'où le relèvement de son seuil matériel |
+
+### Ce que cela coûte
+
+Le premier chargement du modèle sur la voie CPU est passé de 11,5 s à 15,5 s, et la mémoire maximale de 10,5 Go à 11,3 Go. La voie GPU n'est affectée sur aucun de ces deux points. L'application embarque également environ 19 Mo de fichiers statiques supplémentaires (13 Mo pour le moteur relaxed-SIMD, 6 Mo pour les graphes de mesure).
+
+Ce chargement initial plus lent est un compromis délibéré : après avoir écrit le modèle dans IndexedDB, l'application le relit désormais depuis cette base au lieu de réutiliser la copie en mémoire, ce qui coûte une lecture complète supplémentaire d'un fichier de 833 Mo mais évite toute une catégorie d'échecs de chargement dus à des blobs corrompus. Les chargements suivants passent de toute façon par le cache et restent inchangés.
 
 ### Ajouté
 
-- **Configuration automatique : l'application mesure votre machine au lieu de supposer.** Deux graphes ONNX d'environ 5 Mo sont chronométrés sur la voie CPU et sur la voie GPU de votre propre matériel, et la plus rapide l'emporte. Cela s'exécute une fois par machine, dans des workers jetables pour ne rien coûter au pipeline réel, et ne remplace jamais un backend que vous avez choisi vous-même. Un bouton « Configurer automatiquement les performances » dans le panneau latéral permet de relancer la mesure à la demande. Sur le GPU de référence, elle lit un avantage de 3,06x à 4,64x là où l'écart réel de bout en bout est de 5,4x : elle sous-estime donc, ce qui est le bon sens de l'erreur, car la voie GPU coûte un téléchargement de 1,2 à 2,4 Go et la recommander à tort est la seule erreur coûteuse.
+- **Configuration automatique : l'application mesure votre machine au lieu de supposer.** Deux graphes ONNX d'environ 5 Mo sont chronométrés sur la voie CPU et sur la voie GPU de votre propre matériel, et la plus rapide l'emporte. Cela s'exécute une fois par machine, dans des workers jetables pour ne rien coûter au pipeline réel, et ne remplace jamais un backend que vous avez choisi vous-même. Un bouton « Configurer automatiquement les performances » dans le panneau latéral permet de relancer la mesure à la demande. Sur le GPU de référence, elle lit un avantage de 3,06x à 4,64x, face à un écart de bout en bout d'environ 3,5x mesuré sur un extrait de 6,5 minutes : son chiffre est donc une approximation, pas une promesse. Ce qui vous protège n'est pas sa précision mais son seuil : la voie GPU coûte un téléchargement de 1,2 à 2,4 Go, la recommander à tort est la seule erreur coûteuse, et elle ne vous y déplace donc que lorsqu'elle lit au moins 2x.
 - **WebGPU est de nouveau disponible**, et il est désormais choisi machine par machine par la mesure, et non par un interrupteur global. Voir plus bas pourquoi il était désactivé.
 - **Moteur CPU plus rapide (Relaxed-SIMD).** L'application embarque une seconde compilation WASM d'ONNX Runtime utilisant les instructions relaxed-SIMD, retenue par un micro-benchmark au démarrage lorsqu'elle est au moins 1,5x plus rapide dans votre navigateur (cette marge est calibrée pour que Firefox, où ces instructions sont bien plus lentes, n'y bascule jamais par accident). Compilée de façon reproductible depuis une chaîne d'outils figée dans Docker, avec `VITE_ORT_RELAXED_ENABLE` comme interrupteur d'arrêt pour l'hébergeur.
 - **Décodeurs top-K et log-sum-exp intégrés au graphe.** Lorsque la source du modèle les fournit, l'application préfère les graphes de décodeur qui ne renvoient que les logits top-K et calculent le log-sum-exp dans le graphe, de sorte que chaque étape de décodage cesse de recopier une ligne de vocabulaire entière hors du modèle.
