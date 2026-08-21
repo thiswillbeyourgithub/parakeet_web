@@ -38,6 +38,8 @@ audio (file or mic/phone)
 |---|---|
 | `README.md` | User-facing overview: features, quick start, per-feature docs. |
 | `README_fr.md` | French translation of `README.md`, kept in lockstep with it (each links to the other; the About modal points here when the UI language is French). |
+| `CHANGELOG.md` | Release notes, starting at 10.0.0 (earlier releases live only in the git history). Written for readers, not as a commit dump: each entry says what was measured and on what. |
+| `CHANGELOG_fr.md` | French translation of `CHANGELOG.md`, kept in lockstep with it exactly like the two READMEs (each links to the other). |
 | `ARCHITECTURE.md` | This file. |
 | `CLAUDE.md` | Instructions for Claude Code / contributors (version bump, screenshot, vendored-dep and Caddy refresh procedures). |
 | `LICENSE` | AGPLv3 for the combined work. |

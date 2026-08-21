@@ -18,6 +18,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 - [Features](#features)
 - [Quick Start](#quick-start)
+- [Performance on commodity hardware](#performance-on-commodity-hardware)
 - [Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)
 - [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
 - [Faster CPU engine (Relaxed-SIMD)](#faster-cpu-engine-relaxed-simd)
@@ -33,6 +34,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Resetting the app](#resetting-the-app)
 - [Mobile debugging](#mobile-debugging)
 - [Architecture](#architecture)
+- [Changelog](./CHANGELOG.md)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
 - [Credits](#credits)
@@ -78,6 +80,16 @@ sudo docker compose -f docker/docker-compose.yml up
 ```
 
 3. Then visit `http://localhost:5173`
+
+## Performance on commodity hardware
+
+This app is meant to run on the machine you already own, which is usually a laptop with no usable GPU. A large share of the work here therefore goes into extracting as much speed as possible from ordinary hardware, and into never making your machine pay for a choice that does not suit it.
+
+Concretely that has meant: a second ONNX Runtime build using relaxed-SIMD instructions, used only when it actually measures faster in your browser ([Faster CPU engine](#faster-cpu-engine-relaxed-simd)); decoder graphs that return only the top-K logits, so each decode step stops copying a full vocabulary row out of the model; a 60-second chunk window chosen by measurement rather than habit; encoding spread across background workers when, and only when, the machine has cores genuinely free; and a backend chosen by timing both paths on your own hardware instead of trusting a number from someone else's GPU ([Autoconfigure](#autoconfigure-measuring-instead-of-guessing)).
+
+The rule behind all of it is that a claim only survives if it was measured on a real machine through the real app. That is also how the largest win in this release was found: WebGPU had been switched off for a month on a diagnosis that turned out to be wrong (see the next section), and the actual fix took a 3-minute clip from 12 min 39 s to 8.5 s.
+
+Every measured change is listed in the [changelog](./CHANGELOG.md), and you can measure your own machine with the built-in [Benchmark](#benchmark).
 
 ## Choosing between CPU and GPU
 
