@@ -23,11 +23,13 @@ The numbers below come from an interleaved A/B of the shipped 9.9.0 build agains
 | GPU (WebGPU) | 1004 s | 20 s | **50x faster** |
 | CPU (WASM) | 104 s | 111 s | **7 % slower** (p=0.03, n=20 per arm) |
 
-**This is a GPU release, and it costs the CPU path about 7 %.** In 9.9.0 the GPU path was switched off because it measured about 10x slower than the CPU path. In 10.0.0 it is roughly 5x faster than the CPU path on the same machine, which is the difference between a path nobody could use and the fastest one available.
+**This is a GPU release, and it spends about 7 % of the CPU path's speed on accuracy.** In 9.9.0 the GPU path was switched off because it measured about 10x slower than the CPU path. In 10.0.0 it is roughly 5x faster than the CPU path on the same machine, which is the difference between a path nobody could use and the fastest one available.
 
 The CPU regression is not diffuse, and it is worth being precise about because the obvious guess is wrong. It is not the accumulation of several changes each costing a little. **Everything 10.0.0 changed about CPU work other than the chunk window measures +0.5 % (95 % CI 0.945 to 1.091, p=0.71), which is nothing at all.** The entire deficit is the chunk window default going from 20 s to 60 s: it costs 6.7 % on the new build, 8.7 % on the old one, and 7.9 % on the int8-lite encoder. Three arms, two independently built trees, two quantisations, every one of them p < 0.02. Conformer attention is quadratic in sequence length, so tripling the window triples per-chunk attention work while only thirding the number of chunks.
 
-That same window is worth 2.3x on the GPU. So it is a real trade rather than a mistake: the right default if the GPU is the target, the wrong one for the laptop-without-a-usable-GPU case this app is built for.
+That 7 % is not a regression to be fixed, though, because speed is not what the longer window was bought for. **It transcribes more accurately.** A grid over 200 long French-medical clips (2.7 h of audio) put 60 s chunks within +0.14 WER of decoding each clip whole, against +0.66 at 20 s and +1.28 at 25 s: every seam costs a little, mostly deletions at the splice, so fewer seams come out better. The same window is also worth 2.3x on the GPU. So the CPU path pays about 7 % for roughly half a point of WER, and that is the intended trade rather than an oversight.
+
+One claim from that grid does not survive this measurement: it reported throughput as flat across window sizes. It is not, at least on this machine, by 7 to 9 % across three arms. The accuracy result is unaffected.
 
 Two claims from an earlier draft of these notes were withdrawn after better-powered measurement, and are recorded here because the retraction is the useful part. The CPU path was reported as showing "no measurable change" at n=13 per arm, which was a limit of that measurement rather than a property of the code, and the top-K decoder and optimized encoder graph were credited as CPU improvements that "measured well on their own". At n=20 they are jointly indistinguishable from zero. Both graphs are still preferred when the model source ships them, and both remain worthwhile on the GPU path, but neither buys anything measurable on the CPU.
 
@@ -36,7 +38,7 @@ Per change, where a number exists:
 | Change | Measured effect |
 |---|---|
 | Pausing page animations during a GPU run | 22x on the GPU path on its own; a 3-minute clip went from 12 min 39 s to 8.5 s |
-| 60-second chunk window (was 20 s) | 2.3x on the GPU path; 7 % slower on the CPU path |
+| 60-second chunk window (was 20 s) | about 0.5 WER better than 20 s; 2.3x on the GPU path; 7 % slower on the CPU path |
 | Parallel encode pool | +4.2 % on an idle machine, 14.6 % worse on a busy one, which is why its hardware gate was raised |
 | Top-K decoder, optimized encoder graph | no measurable effect on the CPU path (see above) |
 
@@ -59,7 +61,7 @@ The slower first load is a deliberate trade: after writing the model to IndexedD
 
 ### Changed
 
-- **The chunk window default went from 20 s to 60 s**, and the cap from 25 s to 90 s, both from measurement. It is worth 2.3x on the GPU path and costs about 7 % on the CPU path, so a machine without a usable GPU pays for a setting that only the GPU benefits from. A persisted 20 s window is migrated automatically, and the setting remains adjustable.
+- **The chunk window default went from 20 s to 60 s**, and the cap from 25 s to 90 s, both from measurement. Fewer stitch seams transcribe better, by about half a point of WER over a 200-clip grid, and the longer window is worth 2.3x on the GPU. It costs about 7 % on the CPU path, which is the price of that accuracy. A persisted 20 s window is migrated automatically, and the setting remains adjustable for anyone who would rather have the 7 % back.
 - **The parallel encode pool now requires 8 logical cores**, up from 4. Its honest envelope is a small win on an idle machine and a real loss on a busy one, so only machines with genuine headroom take the bet.
 - **Seams are always de-duplicated**, not only when word timestamps were requested.
 - The "folded" encoder variant is now called "optimized" throughout.
