@@ -136,7 +136,14 @@ export function listModels() {
 // audio, seam dedup verified engaged) measured the OPPOSITE: quality improves
 // with the window, every seam costs a little (mostly deletions at the splice),
 // and 60 s chunks sit within +0.14 WER of decoding each clip whole (vs +0.66
-// at 20 s, +1.28 at 25 s), with flat throughput across window sizes. So the
+// at 20 s, +1.28 at 25 s). That grid also reported flat throughput across
+// window sizes, which a later in-browser A/B refuted: on a 6C/12T box, n=20
+// per arm, 60 s is 7-9 % SLOWER than 20 s end to end on the WASM path
+// (confirmed independently on two builds and two quantisations, each p < 0.02)
+// while being 2.3x FASTER on WebGPU, since conformer attention is quadratic in
+// window length but the GPU is bound by per-run event-loop overhead instead.
+// The accuracy result stands, and it is the reason for the default: the CPU
+// path knowingly pays ~7 % for ~0.5 WER. So the
 // default is 60 s; the cap leaves headroom above it (whole-clip decodes up to
 // ~77 s measured clean; past that is extrapolation, bounded at 90 s because
 // conformer attention memory grows quadratically with the window and an OOM

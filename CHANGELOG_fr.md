@@ -23,11 +23,13 @@ Les chiffres ci-dessous proviennent d'un A/B entrelacé entre la version 9.9.0 t
 | GPU (WebGPU) | 1004 s | 20 s | **50x plus rapide** |
 | CPU (WASM) | 104 s | 111 s | **7 % plus lent** (p=0,03, n=20 par bras) |
 
-**Cette version est une version GPU, et elle coûte environ 7 % à la voie CPU.** En 9.9.0, la voie GPU était désactivée parce qu'elle mesurait environ 10x plus lent que la voie CPU. En 10.0.0, elle est environ 5x plus rapide que la voie CPU sur la même machine, ce qui fait toute la différence entre une voie que personne ne pouvait utiliser et la plus rapide disponible.
+**Cette version est une version GPU, et elle échange environ 7 % de la vitesse de la voie CPU contre de la précision.** En 9.9.0, la voie GPU était désactivée parce qu'elle mesurait environ 10x plus lent que la voie CPU. En 10.0.0, elle est environ 5x plus rapide que la voie CPU sur la même machine, ce qui fait toute la différence entre une voie que personne ne pouvait utiliser et la plus rapide disponible.
 
 Cette régression CPU n'est pas diffuse, et il vaut la peine d'être précis car l'explication qui vient spontanément à l'esprit est fausse. Il ne s'agit pas de l'accumulation de plusieurs changements coûtant chacun un peu. **Tout ce que la version 10.0.0 a modifié au travail CPU en dehors de la fenêtre de découpage mesure +0,5 % (IC à 95 % de 0,945 à 1,091, p=0,71), c'est-à-dire rien du tout.** L'intégralité du déficit vient du passage de la fenêtre de découpage par défaut de 20 s à 60 s : elle coûte 6,7 % sur la nouvelle version, 8,7 % sur l'ancienne et 7,9 % sur l'encodeur int8-lite. Trois bras, deux arbres compilés indépendamment, deux quantifications, chacun avec p < 0,02. L'attention du conformer est quadratique en longueur de séquence : tripler la fenêtre triple donc le travail d'attention par segment alors qu'elle ne divise le nombre de segments que par trois.
 
-Cette même fenêtre vaut 2,3x sur le GPU. C'est donc un véritable compromis et non une erreur : la bonne valeur par défaut si le GPU est la cible, la mauvaise pour le cas du portable sans GPU utilisable pour lequel cette application est conçue.
+Ces 7 % ne sont toutefois pas une régression à corriger, car ce n'est pas la vitesse que la fenêtre plus longue visait. **Elle transcrit plus précisément.** Une grille sur 200 longs extraits médicaux français (2,7 h d'audio) place les segments de 60 s à +0,14 WER du décodage de chaque extrait en entier, contre +0,66 à 20 s et +1,28 à 25 s : chaque jointure coûte un peu, surtout des suppressions au raccord, donc moins de jointures donnent un meilleur résultat. Cette même fenêtre vaut par ailleurs 2,3x sur le GPU. La voie CPU paie donc environ 7 % pour à peu près un demi-point de WER, et c'est le compromis voulu et non un oubli.
+
+Une affirmation de cette grille ne survit pas à la présente mesure : elle donnait le débit comme constant quelle que soit la taille de fenêtre. Il ne l'est pas, du moins sur cette machine, de 7 à 9 % sur trois bras. Le résultat de précision, lui, n'est pas affecté.
 
 Deux affirmations d'une version antérieure de ces notes ont été retirées après des mesures mieux dimensionnées, et elles figurent ici parce que le retrait est précisément ce qui est utile. La voie CPU était donnée comme ne montrant « aucun écart mesurable » avec n=13 par bras, ce qui était une limite de cette mesure et non une propriété du code ; et les sorties de décodeur top-K ainsi que le graphe d'encodeur optimisé étaient crédités d'améliorations CPU « mesurant bien isolément ». Avec n=20, leur effet conjoint est indiscernable de zéro. Les deux graphes restent préférés lorsque la source du modèle les fournit, et restent utiles sur la voie GPU, mais aucun n'apporte quoi que ce soit de mesurable sur la voie CPU.
 
@@ -36,7 +38,7 @@ Changement par changement, lorsqu'un chiffre existe :
 | Changement | Effet mesuré |
 |---|---|
 | Mise en pause des animations pendant une exécution GPU | 22x sur la voie GPU à elle seule ; un extrait de 3 minutes est passé de 12 min 39 s à 8,5 s |
-| Fenêtre de découpage de 60 secondes (au lieu de 20 s) | 2,3x sur la voie GPU ; 7 % plus lent sur la voie CPU |
+| Fenêtre de découpage de 60 secondes (au lieu de 20 s) | environ 0,5 WER de mieux qu'à 20 s ; 2,3x sur la voie GPU ; 7 % plus lent sur la voie CPU |
 | Encodage parallèle | +4,2 % sur une machine au repos, 14,6 % de moins sur une machine chargée, d'où le relèvement de son seuil matériel |
 | Décodeur top-K, graphe d'encodeur optimisé | aucun effet mesurable sur la voie CPU (voir ci-dessus) |
 
@@ -59,7 +61,7 @@ Ce chargement initial plus lent est un compromis délibéré : après avoir écr
 
 ### Modifié
 
-- **La fenêtre de découpage par défaut est passée de 20 s à 60 s**, et le plafond de 25 s à 90 s, sur la base de mesures. Elle vaut 2,3x sur la voie GPU et coûte environ 7 % sur la voie CPU : une machine sans GPU utilisable paie donc pour un réglage dont seul le GPU profite. Une fenêtre de 20 s déjà enregistrée est migrée automatiquement, et le réglage reste ajustable.
+- **La fenêtre de découpage par défaut est passée de 20 s à 60 s**, et le plafond de 25 s à 90 s, sur la base de mesures. Moins de jointures de raccord donnent une meilleure transcription, d'environ un demi-point de WER sur une grille de 200 extraits, et la fenêtre plus longue vaut 2,3x sur le GPU. Elle coûte environ 7 % sur la voie CPU, ce qui est le prix de cette précision. Une fenêtre de 20 s déjà enregistrée est migrée automatiquement, et le réglage reste ajustable pour qui préfère récupérer ces 7 %.
 - **L'encodage parallèle exige désormais 8 cœurs logiques**, contre 4 auparavant. Son bilan honnête est un petit gain sur une machine au repos et une vraie perte sur une machine chargée : seules les machines disposant d'une marge réelle prennent le pari.
 - **Les jointures sont toujours dédupliquées**, et non uniquement quand les horodatages par mot ont été demandés.
 - La variante d'encodeur « pliée » (folded) s'appelle désormais « optimisée » partout.
