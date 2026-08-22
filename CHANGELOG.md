@@ -16,34 +16,39 @@ The app is meant to run on whatever machine a person already owns, usually a lap
 
 ### What this actually bought, measured
 
-The numbers below come from an interleaved A/B of the shipped 9.9.0 build against the shipped 10.0.0 build, served side by side, on the same 6.5-minute English recording, on the reference machine (a 6-core / 12-thread desktop; an RTX 3090 Ti where a GPU is involved). Your machine will differ, which is exactly why the app now measures yours instead of trusting these.
+The numbers below come from an interleaved A/B of the shipped 9.9.0 build against the shipped 10.0.0 build, served side by side, on the same 6.5-minute English recording, on the reference machine (a 6-core / 12-thread desktop; an RTX 3090 Ti where a GPU is involved). Arm order rotates every repetition so drift in background load cannot favour whichever build runs first, figures are medians, and intervals are a percentile bootstrap over the ratio of medians with a Mann-Whitney rank test alongside. This machine carries a 5 to 10 % run-to-run spread from its own resident load, which is larger than several of the effects below and is why the CPU arms were run 20 times each. Your machine will differ, which is exactly why the app now measures yours instead of trusting these.
 
 | Path | 9.9.0 | 10.0.0 | Change |
 |---|---|---|---|
-| GPU (WebGPU) | 1078 s | 30 s | **36x faster** |
-| CPU (WASM) | 103 s | 103 s | no measurable change (95 % CI 0.95 to 1.10, n=13 per arm) |
+| GPU (WebGPU) | 1004 s | 20 s | **50x faster** |
+| CPU (WASM) | 104 s | 111 s | **7 % slower** (p=0.03, n=20 per arm) |
 
-**This is a GPU release.** In 9.9.0 the GPU path was switched off because it measured about 10x slower than the CPU path. In 10.0.0 it is about 3.5x faster than the CPU path on the same machine, which is the difference between a path nobody could use and the fastest one available.
+**This is a GPU release, and it costs the CPU path about 7 %.** In 9.9.0 the GPU path was switched off because it measured about 10x slower than the CPU path. In 10.0.0 it is roughly 5x faster than the CPU path on the same machine, which is the difference between a path nobody could use and the fastest one available.
 
-The CPU path is the honest disappointment. Several changes that measured well on their own (top-K decoder outputs, the optimized encoder graph, the 60-second window) do not compose into a gain this machine can tell apart from noise. Its resident load produces a 5 to 8 % run-to-run spread, so resolving a real 4 % improvement would need roughly 41 repetitions per arm, and 13 were run. The result is bounded rather than zero: any end-to-end CPU change larger than about 10 %, in either direction, is ruled out.
+The CPU regression is not diffuse, and it is worth being precise about because the obvious guess is wrong. It is not the accumulation of several changes each costing a little. **Everything 10.0.0 changed about CPU work other than the chunk window measures +0.5 % (95 % CI 0.945 to 1.091, p=0.71), which is nothing at all.** The entire deficit is the chunk window default going from 20 s to 60 s: it costs 6.7 % on the new build, 8.7 % on the old one, and 7.9 % on the int8-lite encoder. Three arms, two independently built trees, two quantisations, every one of them p < 0.02. Conformer attention is quadratic in sequence length, so tripling the window triples per-chunk attention work while only thirding the number of chunks.
+
+That same window is worth 2.3x on the GPU. So it is a real trade rather than a mistake: the right default if the GPU is the target, the wrong one for the laptop-without-a-usable-GPU case this app is built for.
+
+Two claims from an earlier draft of these notes were withdrawn after better-powered measurement, and are recorded here because the retraction is the useful part. The CPU path was reported as showing "no measurable change" at n=13 per arm, which was a limit of that measurement rather than a property of the code, and the top-K decoder and optimized encoder graph were credited as CPU improvements that "measured well on their own". At n=20 they are jointly indistinguishable from zero. Both graphs are still preferred when the model source ships them, and both remain worthwhile on the GPU path, but neither buys anything measurable on the CPU.
 
 Per change, where a number exists:
 
 | Change | Measured effect |
 |---|---|
-| Pausing page animations during a GPU run | essentially the entire GPU gain; a 3-minute clip went from 12 min 39 s to 8.5 s |
-| 60-second chunk window (was 20 s) | 1.41x on the GPU path; no measurable change on the CPU path |
+| Pausing page animations during a GPU run | 22x on the GPU path on its own; a 3-minute clip went from 12 min 39 s to 8.5 s |
+| 60-second chunk window (was 20 s) | 2.3x on the GPU path; 7 % slower on the CPU path |
 | Parallel encode pool | +4.2 % on an idle machine, 14.6 % worse on a busy one, which is why its hardware gate was raised |
+| Top-K decoder, optimized encoder graph | no measurable effect on the CPU path (see above) |
 
 ### What it costs
 
-First model load on the CPU path went from 11.5 s to 15.5 s, and peak memory from 10.5 GB to 11.3 GB. The GPU path is unaffected on both counts. The app also ships about 5 MB more static assets, for the probe graphs.
+First model load on the CPU path went from 11.4 s to 13.8 s, and peak memory from about 10.1 GB to about 11.1 GB. On the GPU path both were measured with only two runs per arm, where the difference is not separable from the noise. The app also ships about 6 MB more static assets, 5 MB of which is the probe graphs.
 
 The slower first load is a deliberate trade: after writing the model to IndexedDB the app now re-reads it from there instead of reusing the in-memory copy, which costs a full extra read of an 833 MB file but avoids a class of corrupted-blob load failures. Loads after the first one read from the cache either way and are unchanged.
 
 ### Added
 
-- **Autoconfigure: the app measures your machine instead of guessing.** Two roughly 5 MB ONNX graphs are timed through both the CPU and the GPU path on your own hardware, and the faster one wins. It runs once per machine, in throwaway workers so it costs the real pipeline nothing, and it never overrides a backend you picked by hand. There is also an "Autoconfigure optimal performance" button in the sidebar to re-run it on demand. On the reference GPU it reads a 3.06x to 4.64x advantage, against an end-to-end gap of about 3.5x measured on a 6.5-minute clip, so its number is an approximation rather than a promise. What protects you is not its accuracy but its threshold: the GPU path costs a 1.2 to 2.4 GB download, recommending that wrongly is the one expensive mistake, so it only moves you when it reads at least 2x.
+- **Autoconfigure: the app measures your machine instead of guessing.** Two roughly 5 MB ONNX graphs are timed through both the CPU and the GPU path on your own hardware, and the faster one wins. It runs once per machine, in throwaway workers so it costs the real pipeline nothing, and it never overrides a backend you picked by hand. There is also an "Autoconfigure optimal performance" button in the sidebar to re-run it on demand. On the reference GPU it reads a 3.06x to 4.64x advantage, against a true end-to-end gap of roughly 5x measured on a 6.5-minute clip, so it under-reports, which is the safe direction to be wrong in. What protects you is not its accuracy but its threshold: the GPU path costs a 1.2 to 2.4 GB download, recommending that wrongly is the one expensive mistake, so it only moves you when it reads at least 2x.
 - **WebGPU is available again**, and is now chosen per machine by the probe rather than by a global switch. See below for why it was off.
 - **In-graph top-K and log-sum-exp decoders.** When the model source ships them, the app prefers decoder graphs that return only the top-K logits and compute the log-sum-exp inside the graph, so each decode step stops copying a full vocabulary row out of the model.
 - **Optimized encoder graphs.** When the source ships a pre-optimized encoder, it is preferred, including for the sharded fp32 build.
@@ -54,7 +59,7 @@ The slower first load is a deliberate trade: after writing the model to IndexedD
 
 ### Changed
 
-- **The chunk window default went from 20 s to 60 s**, and the cap from 25 s to 90 s, both from measurement. A persisted 20 s window is migrated automatically.
+- **The chunk window default went from 20 s to 60 s**, and the cap from 25 s to 90 s, both from measurement. It is worth 2.3x on the GPU path and costs about 7 % on the CPU path, so a machine without a usable GPU pays for a setting that only the GPU benefits from. A persisted 20 s window is migrated automatically, and the setting remains adjustable.
 - **The parallel encode pool now requires 8 logical cores**, up from 4. Its honest envelope is a small win on an idle machine and a real loss on a busy one, so only machines with genuine headroom take the bet.
 - **Seams are always de-duplicated**, not only when word timestamps were requested.
 - The "folded" encoder variant is now called "optimized" throughout.
