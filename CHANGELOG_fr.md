@@ -16,34 +16,39 @@ L'application est faite pour tourner sur la machine que la personne possède dé
 
 ### Ce que cela a réellement rapporté, mesuré
 
-Les chiffres ci-dessous proviennent d'un A/B entrelacé entre la version 9.9.0 telle que publiée et la version 10.0.0 telle que publiée, servies côte à côte, sur le même enregistrement anglais de 6,5 minutes, sur la machine de référence (un ordinateur de bureau 6 cœurs / 12 fils ; une RTX 3090 Ti lorsqu'un GPU est impliqué). Votre machine sera différente, et c'est précisément pour cela que l'application mesure désormais la vôtre au lieu de se fier à ces chiffres.
+Les chiffres ci-dessous proviennent d'un A/B entrelacé entre la version 9.9.0 telle que publiée et la version 10.0.0 telle que publiée, servies côte à côte, sur le même enregistrement anglais de 6,5 minutes, sur la machine de référence (un ordinateur de bureau 6 cœurs / 12 fils ; une RTX 3090 Ti lorsqu'un GPU est impliqué). L'ordre des bras tourne à chaque répétition, afin qu'une dérive de la charge de fond ne puisse pas favoriser la version qui passe en premier ; les chiffres sont des médianes, et les intervalles sont un bootstrap par percentiles sur le rapport des médianes, accompagné d'un test de rangs de Mann-Whitney. Cette machine présente une dispersion de 5 à 10 % d'une exécution à l'autre du fait de sa propre charge résidente, supérieure à plusieurs des effets ci-dessous, et c'est pourquoi les bras CPU ont été exécutés 20 fois chacun. Votre machine sera différente, et c'est précisément pour cela que l'application mesure désormais la vôtre au lieu de se fier à ces chiffres.
 
 | Voie | 9.9.0 | 10.0.0 | Écart |
 |---|---|---|---|
-| GPU (WebGPU) | 1078 s | 30 s | **36x plus rapide** |
-| CPU (WASM) | 103 s | 103 s | aucun écart mesurable (IC à 95 % de 0,95 à 1,10, n=13 par bras) |
+| GPU (WebGPU) | 1004 s | 20 s | **50x plus rapide** |
+| CPU (WASM) | 104 s | 111 s | **7 % plus lent** (p=0,03, n=20 par bras) |
 
-**Cette version est une version GPU.** En 9.9.0, la voie GPU était désactivée parce qu'elle mesurait environ 10x plus lent que la voie CPU. En 10.0.0, elle est environ 3,5x plus rapide que la voie CPU sur la même machine, ce qui fait toute la différence entre une voie que personne ne pouvait utiliser et la plus rapide disponible.
+**Cette version est une version GPU, et elle coûte environ 7 % à la voie CPU.** En 9.9.0, la voie GPU était désactivée parce qu'elle mesurait environ 10x plus lent que la voie CPU. En 10.0.0, elle est environ 5x plus rapide que la voie CPU sur la même machine, ce qui fait toute la différence entre une voie que personne ne pouvait utiliser et la plus rapide disponible.
 
-La voie CPU est la déception qu'il faut assumer. Plusieurs changements qui mesuraient bien isolément (les sorties de décodeur top-K, le graphe d'encodeur optimisé, la fenêtre de 60 secondes) ne se composent pas en un gain que cette machine sait distinguer de son propre bruit. Sa charge résidente produit une dispersion de 5 à 8 % d'une exécution à l'autre : résoudre une amélioration réelle de 4 % demanderait environ 41 répétitions par bras, et 13 ont été effectuées. Le résultat est donc borné plutôt que nul : tout écart de bout en bout supérieur à environ 10 % sur la voie CPU, dans un sens comme dans l'autre, est exclu.
+Cette régression CPU n'est pas diffuse, et il vaut la peine d'être précis car l'explication qui vient spontanément à l'esprit est fausse. Il ne s'agit pas de l'accumulation de plusieurs changements coûtant chacun un peu. **Tout ce que la version 10.0.0 a modifié au travail CPU en dehors de la fenêtre de découpage mesure +0,5 % (IC à 95 % de 0,945 à 1,091, p=0,71), c'est-à-dire rien du tout.** L'intégralité du déficit vient du passage de la fenêtre de découpage par défaut de 20 s à 60 s : elle coûte 6,7 % sur la nouvelle version, 8,7 % sur l'ancienne et 7,9 % sur l'encodeur int8-lite. Trois bras, deux arbres compilés indépendamment, deux quantifications, chacun avec p < 0,02. L'attention du conformer est quadratique en longueur de séquence : tripler la fenêtre triple donc le travail d'attention par segment alors qu'elle ne divise le nombre de segments que par trois.
+
+Cette même fenêtre vaut 2,3x sur le GPU. C'est donc un véritable compromis et non une erreur : la bonne valeur par défaut si le GPU est la cible, la mauvaise pour le cas du portable sans GPU utilisable pour lequel cette application est conçue.
+
+Deux affirmations d'une version antérieure de ces notes ont été retirées après des mesures mieux dimensionnées, et elles figurent ici parce que le retrait est précisément ce qui est utile. La voie CPU était donnée comme ne montrant « aucun écart mesurable » avec n=13 par bras, ce qui était une limite de cette mesure et non une propriété du code ; et les sorties de décodeur top-K ainsi que le graphe d'encodeur optimisé étaient crédités d'améliorations CPU « mesurant bien isolément ». Avec n=20, leur effet conjoint est indiscernable de zéro. Les deux graphes restent préférés lorsque la source du modèle les fournit, et restent utiles sur la voie GPU, mais aucun n'apporte quoi que ce soit de mesurable sur la voie CPU.
 
 Changement par changement, lorsqu'un chiffre existe :
 
 | Changement | Effet mesuré |
 |---|---|
-| Mise en pause des animations pendant une exécution GPU | l'essentiel du gain GPU à lui seul ; un extrait de 3 minutes est passé de 12 min 39 s à 8,5 s |
-| Fenêtre de découpage de 60 secondes (au lieu de 20 s) | 1,41x sur la voie GPU ; aucun écart mesurable sur la voie CPU |
+| Mise en pause des animations pendant une exécution GPU | 22x sur la voie GPU à elle seule ; un extrait de 3 minutes est passé de 12 min 39 s à 8,5 s |
+| Fenêtre de découpage de 60 secondes (au lieu de 20 s) | 2,3x sur la voie GPU ; 7 % plus lent sur la voie CPU |
 | Encodage parallèle | +4,2 % sur une machine au repos, 14,6 % de moins sur une machine chargée, d'où le relèvement de son seuil matériel |
+| Décodeur top-K, graphe d'encodeur optimisé | aucun effet mesurable sur la voie CPU (voir ci-dessus) |
 
 ### Ce que cela coûte
 
-Le premier chargement du modèle sur la voie CPU est passé de 11,5 s à 15,5 s, et la mémoire maximale de 10,5 Go à 11,3 Go. La voie GPU n'est affectée sur aucun de ces deux points. L'application embarque également environ 5 Mo de fichiers statiques supplémentaires, pour les graphes de mesure.
+Le premier chargement du modèle sur la voie CPU est passé de 11,4 s à 13,8 s, et la mémoire maximale d'environ 10,1 Go à environ 11,1 Go. Sur la voie GPU, ces deux grandeurs n'ont été mesurées qu'avec deux exécutions par bras, où l'écart ne se distingue pas du bruit. L'application embarque également environ 6 Mo de fichiers statiques supplémentaires, dont 5 Mo pour les graphes de mesure.
 
 Ce chargement initial plus lent est un compromis délibéré : après avoir écrit le modèle dans IndexedDB, l'application le relit désormais depuis cette base au lieu de réutiliser la copie en mémoire, ce qui coûte une lecture complète supplémentaire d'un fichier de 833 Mo mais évite toute une catégorie d'échecs de chargement dus à des blobs corrompus. Les chargements suivants passent de toute façon par le cache et restent inchangés.
 
 ### Ajouté
 
-- **Configuration automatique : l'application mesure votre machine au lieu de supposer.** Deux graphes ONNX d'environ 5 Mo sont chronométrés sur la voie CPU et sur la voie GPU de votre propre matériel, et la plus rapide l'emporte. Cela s'exécute une fois par machine, dans des workers jetables pour ne rien coûter au pipeline réel, et ne remplace jamais un backend que vous avez choisi vous-même. Un bouton « Configurer automatiquement les performances » dans le panneau latéral permet de relancer la mesure à la demande. Sur le GPU de référence, elle lit un avantage de 3,06x à 4,64x, face à un écart de bout en bout d'environ 3,5x mesuré sur un extrait de 6,5 minutes : son chiffre est donc une approximation, pas une promesse. Ce qui vous protège n'est pas sa précision mais son seuil : la voie GPU coûte un téléchargement de 1,2 à 2,4 Go, la recommander à tort est la seule erreur coûteuse, et elle ne vous y déplace donc que lorsqu'elle lit au moins 2x.
+- **Configuration automatique : l'application mesure votre machine au lieu de supposer.** Deux graphes ONNX d'environ 5 Mo sont chronométrés sur la voie CPU et sur la voie GPU de votre propre matériel, et la plus rapide l'emporte. Cela s'exécute une fois par machine, dans des workers jetables pour ne rien coûter au pipeline réel, et ne remplace jamais un backend que vous avez choisi vous-même. Un bouton « Configurer automatiquement les performances » dans le panneau latéral permet de relancer la mesure à la demande. Sur le GPU de référence, elle lit un avantage de 3,06x à 4,64x, face à un écart réel de bout en bout d'environ 5x mesuré sur un extrait de 6,5 minutes : elle sous-estime donc, ce qui est le bon sens de l'erreur. Ce qui vous protège n'est pas sa précision mais son seuil : la voie GPU coûte un téléchargement de 1,2 à 2,4 Go, la recommander à tort est la seule erreur coûteuse, et elle ne vous y déplace donc que lorsqu'elle lit au moins 2x.
 - **WebGPU est de nouveau disponible**, et il est désormais choisi machine par machine par la mesure, et non par un interrupteur global. Voir plus bas pourquoi il était désactivé.
 - **Décodeurs top-K et log-sum-exp intégrés au graphe.** Lorsque la source du modèle les fournit, l'application préfère les graphes de décodeur qui ne renvoient que les logits top-K et calculent le log-sum-exp dans le graphe, de sorte que chaque étape de décodage cesse de recopier une ligne de vocabulaire entière hors du modèle.
 - **Graphes d'encodeur optimisés.** Lorsque la source fournit un encodeur pré-optimisé, il est préféré, y compris pour la version fp32 en fragments.
@@ -54,7 +59,7 @@ Ce chargement initial plus lent est un compromis délibéré : après avoir écr
 
 ### Modifié
 
-- **La fenêtre de découpage par défaut est passée de 20 s à 60 s**, et le plafond de 25 s à 90 s, sur la base de mesures. Une fenêtre de 20 s déjà enregistrée est migrée automatiquement.
+- **La fenêtre de découpage par défaut est passée de 20 s à 60 s**, et le plafond de 25 s à 90 s, sur la base de mesures. Elle vaut 2,3x sur la voie GPU et coûte environ 7 % sur la voie CPU : une machine sans GPU utilisable paie donc pour un réglage dont seul le GPU profite. Une fenêtre de 20 s déjà enregistrée est migrée automatiquement, et le réglage reste ajustable.
 - **L'encodage parallèle exige désormais 8 cœurs logiques**, contre 4 auparavant. Son bilan honnête est un petit gain sur une machine au repos et une vraie perte sur une machine chargée : seules les machines disposant d'une marge réelle prennent le pari.
 - **Les jointures sont toujours dédupliquées**, et non uniquement quand les horodatages par mot ont été demandés.
 - La variante d'encodeur « pliée » (folded) s'appelle désormais « optimisée » partout.
