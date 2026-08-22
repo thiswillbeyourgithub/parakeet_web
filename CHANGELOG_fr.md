@@ -56,7 +56,7 @@ Ce chargement initial plus lent est un compromis délibéré : après avoir écr
 - **Graphes d'encodeur optimisés.** Lorsque la source fournit un encodeur pré-optimisé, il est préféré, y compris pour la version fp32 en fragments.
 - **Benchmark en un clic.** Une section du panneau latéral mesure tous les backends et toutes les précisions que votre appareil peut réellement exécuter, sur un extrait fourni avec l'application, et produit un rapport anonymisé unique que vous pouvez lire, copier ou envoyer si l'instance les collecte.
 - **Encodage en pool et décodage en worker composés** sur la voie CPU, pour que l'encodage et le décodage se recouvrent (activation par l'hébergeur via `VITE_WASM_DECODE_PIPELINE`).
-- **Avertissement hors Chromium.** Firefox exécute les mêmes noyaux WASM environ 9x plus lentement pour des raisons extérieures à cette application : il le signale désormais une fois, de façon fermable, au lieu de simplement sembler cassé.
+- **Avertissement hors Chromium.** Firefox exécute les mêmes noyaux WASM environ 11x plus lentement pour des raisons extérieures à cette application (mesuré ici à 1153 s contre 104 s sur Chromium pour le même extrait de 6,5 minutes) : il le signale désormais, de façon fermable, au lieu de simplement sembler cassé. À noter que l'avertissement réapparaît à chaque chargement de page et non une seule fois.
 - **Repli lorsqu'une installation n'a pas les poids GPU.** Si la source du modèle ne fournit aucun encodeur exécutable par le GPU, l'application charge la version CPU et vous le signale, au lieu d'échouer. Cela compte parce que la mesure peut sélectionner le GPU pour un visiteur qui ne l'a jamais choisi.
 
 ### Modifié

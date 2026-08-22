@@ -56,7 +56,7 @@ The slower first load is a deliberate trade: after writing the model to IndexedD
 - **Optimized encoder graphs.** When the source ships a pre-optimized encoder, it is preferred, including for the sharded fp32 build.
 - **One-click benchmark.** A sidebar section measures every backend and precision your device can actually run, on a clip that ships with the app, and builds a single anonymised report you can read, copy, or send if the instance collects them.
 - **Composed encode pool and decode worker** on the CPU path, so encoding and decoding overlap (operator opt-in via `VITE_WASM_DECODE_PIPELINE`).
-- **Non-Chromium warning.** Firefox runs the same WASM kernels roughly 9x slower for reasons outside this app, so it now says so once, dismissably, instead of just feeling broken.
+- **Non-Chromium warning.** Firefox runs the same WASM kernels about 11x slower for reasons outside this app (measured here at 1153 s against 104 s on Chromium for the same 6.5-minute clip), so it now says so, dismissably, instead of just feeling broken. Note that the notice reappears on each page load rather than only once.
 - **Fallback when a deployment has no GPU weights.** If the model source ships no encoder the GPU can run, the app loads the CPU version and tells you, instead of failing. This matters because the probe can select the GPU for a visitor who never chose it.
 
 ### Changed
