@@ -1,22 +1,27 @@
-// Tier-3 E2E for the *LSE* decoder preference. The model repo can ship
-// decoder_joint-model.int8.lse.onnx (parakeet-tdt-0.6b-v3-smoothquant-onnx/
-// scripts/optimize-decoder-graph.py lse): the stock int8 decoder/joint with
-// lse_token/lse_duration log-partition outputs appended, which the beam
-// decoder consumes via _partition instead of running its own JS log-sum-exp
-// over the ~8k token logits per hypothesis expansion. hub.js (lseDecoderName)
-// must PREFER it whenever the active source lists it, with no change to the
-// reported quant. The pure decision is unit-tested in
-// get-parakeet-model-files.test.mjs and the consumption semantics in
-// beam-decode.test.mjs; THIS spec is the in-browser proof that the preferred
-// file actually loads, initialises, and produces a correct transcript on the
-// WASM backend with a real beam width (the LSE path is beam-only, so the spec
-// seeds a deliberate width 5 instead of the fresh-install greedy default).
+// Tier-3 E2E for the decoder's in-graph log-partition (LSE) outputs on the BEAM
+// path. The model repo's canonical decoders carry `lse_token`/`lse_duration`
+// (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py lse),
+// the log-sum-exp of the token and TDT-duration logit slices, which the beam
+// decoder reads in _partition instead of running its own JS pass over the ~8k
+// token logits per hypothesis per step.
 //
-// The LSE decoder is produced locally in the model working folder (and shipped
-// by the Olicorne HF repo); the e2e model dir only carries it when a
-// fallback_models symlink (or `npm run e2e:models` once the fetch list includes
-// it) provides the file, so when the static server does not serve it the spec
-// SKIPS itself rather than fail, exactly like the optimized-encoder spec.
+// Why this exists next to transcription-topk-decoder.spec.js: that spec covers
+// the GREEDY consumer (the reduced fetch list). The LSE scalars are consumed on
+// the BEAM path, which greedy never exercises, so this one seeds beam 5 and
+// asserts the transcript still matches the golden. Their consumption is silent
+// by design (a stock decoder simply leaves them undefined), so the assertion
+// here is the capability marker plus an unchanged transcript: if the graph
+// values ever diverged from the JS fallback, the beam-5 transcript is where it
+// would show.
+//
+// Nothing here checks a FILENAME: those outputs ship inside the canonical name
+// now, so the only honest signal is what the loaded session declares. Against a
+// stock upstream decoder (istupakov) the spec SKIPS; under
+// PARAKEET_E2E_STRICT_WEIGHTS that skip becomes a failure, which is right on a
+// maintainer checkout.
+//
+// The numeric equivalence itself (graph values vs the JS log-sum-exp) is
+// unit-tested; this is the in-browser proof.
 //
 // Built with Claude Code.
 
@@ -31,13 +36,9 @@ import { seedSettings } from './seed.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
 
-const LSE_PROBE = '/models/decoder_joint-model.int8.lse.onnx';
+const CAPABLE_MARKER = '[Parakeet.js] Decoder in-graph outputs: log-partition=yes';
 
-test('transcribes JFK English (MP3) at beam 5 preferring the LSE int8 decoder', async ({ page, request, baseURL }) => {
-  const head = await request.head(LSE_PROBE).catch(() => null);
-  requireWeightsOrSkip(test, !head || !head.ok(),
-    `no LSE int8 decoder at ${baseURL}${LSE_PROBE} (symlink it into fallback_models, or run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py lse)`);
-
+test('transcribes JFK English (MP3) at beam 5 on a decoder with in-graph log-partition outputs', async ({ page }) => {
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();
 
@@ -51,22 +52,15 @@ test('transcribes JFK English (MP3) at beam 5 preferring the LSE int8 decoder', 
     if (text.includes('[Transcribe] Total time for entire audio')) transcribeRuns += 1;
   });
 
-  // Force the LOCAL model source at CONFIG level (same window.__CONFIG__
-  // mechanism as the optimized-encoder spec): the LSE preference is
-  // listing-gated, and only the local /models server (serve.mjs) is
-  // guaranteed to serve the lse file. The seeded `modelSource: 'local'` alone
-  // is NOT enough: it only enables the local fallback, the app still lists
-  // the HF repo first, and until the lse artifact is pushed there the app
-  // would deterministically download the stock decoder from the network
-  // (observed: the un-CONFIG'd run pulled decoder_joint-model.int8.onnx from
-  // HF and the marker assertion failed).
+  // Force the LOCAL model source at CONFIG level: only the local /models server
+  // (serve.mjs) is guaranteed to serve the promoted decoder. The seeded
+  // `modelSource: 'local'` alone is NOT enough, it only enables the local
+  // fallback while the app still lists the HF repo first.
   await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
-  // Seed a deliberate beam width on top: the LSE outputs are only consumed on
-  // the beam path (greedy never computes a partition). beamWidthAuto false
-  // marks the width as a user choice so the boost-state coupling cannot drop
-  // it back to 1. int8 is the default decoder precision, so no quant seeding
-  // is needed: the lse file must be picked up with zero further configuration.
+  // Seed a deliberate beam width: the LSE outputs are only consumed on the beam
+  // path (greedy never computes a partition). beamWidthAuto false marks the
+  // width as a user choice so the boost-state coupling cannot drop it back to 1.
   await page.goto('/');
   await seedSettings(page, { beamWidth: 5, beamWidthAuto: false });
   await page.reload();
@@ -74,11 +68,8 @@ test('transcribes JFK English (MP3) at beam 5 preferring the LSE int8 decoder', 
 
   await expect(page.locator('body')).toContainText('✔', { timeout: 7 * 60 * 1000 });
 
-  // The positive signal: hub.js logs exactly this when it swaps the canonical
-  // int8 name for the lse one. Without it the test would silently pass on the
-  // stock decoder and prove nothing.
-  expect(logs.some((l) => l.includes('[Hub] Using the LSE decoder decoder_joint-model.int8.lse.onnx')),
-    `expected the LSE int8 decoder to be preferred; saw logs:\n${logs.join('\n')}`).toBe(true);
+  requireWeightsOrSkip(test, !logs.some((l) => l.includes(CAPABLE_MARKER)),
+    `the served decoder declares no in-graph log-partition outputs (a stock upstream build); logs:\n${logs.join('\n')}`);
 
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 
@@ -96,8 +87,8 @@ test('transcribes JFK English (MP3) at beam 5 preferring the LSE int8 decoder', 
   }).toPass({ timeout: 60 * 1000 });
 
   // The local-fallback resolver HEAD-probes candidates that do not exist (.data
-  // sidecars, the fp32 lse decoder). Those 404s surface as
-  // benign "Failed to load resource" console errors; anything else still fails.
+  // sidecars, the fp32 decoder). Those 404s surface as benign "Failed to load
+  // resource" console errors; anything else still fails.
   const realErrors = errors.filter((e) => !/Failed to load resource.*404/.test(e));
   expect(realErrors, `page console errors: ${realErrors.join('\n')}`).toHaveLength(0);
 });
