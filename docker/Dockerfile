@@ -113,8 +113,24 @@ RUN if [ "$RUN_NPM_AUDIT" != "true" ] && [ "$RUN_NPM_AUDIT" != "false" ]; then \
 COPY app/src ./app/src
 COPY app/ui ./app/ui
 COPY signaling ./signaling
+COPY scripts/precompress.mjs ./scripts/precompress.mjs
 
 RUN cd app/ui && npm run build
+
+# Brotli sidecars for the built bundle, served by Caddy's
+# `file_server { precompressed br }` (see Caddyfile). dist is ~138 MB, ~130 MB
+# of it WASM, and without this Caddy re-compresses those bytes on every single
+# request. Offline brotli q11 takes the ORT jsep build from 26 MB to 3.5 MB and
+# ffmpeg-core from 31 MB to 6.9 MB (measured), for zero per-request CPU.
+#
+# This runs AFTER `npm run build` on purpose: postbuild.mjs writes the SRI /
+# asset-integrity manifests over the plain files, and the sidecars only add
+# files next to them, so no hash is invalidated.
+#
+# It costs ~2.5 min of build time on 12 cores (q11 is deliberately the slowest
+# setting: paid once here, saved on every visitor). Node has brotli built in,
+# so this needs no extra package in the builder image.
+RUN node scripts/precompress.mjs --static app/ui/dist
 
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
 FROM caddy:2-alpine@sha256:86deaf5e3d3408a6ccec08fbb79989783dd26e206ae10bcf78a801dc8c9ab794
@@ -161,6 +177,12 @@ COPY --from=builder --chown=parakeet:parakeet /build/signaling /signaling
 # is on disk (local-model deployments); see docker/prebuild-boost.mjs.
 COPY --from=builder --chown=parakeet:parakeet /build/app/src /opt/parakeet/app/src
 COPY --chown=parakeet:parakeet docker/prebuild-boost.mjs /opt/parakeet/docker/prebuild-boost.mjs
+
+# Sidecar precompressor, used at boot on the mounted model folder: it reports
+# stale sidecars by default and regenerates them when PRECOMPRESS_MODELS is set
+# (see entrypoint.sh). Same file the builder ran over the bundle, so the
+# staleness rule cannot drift between the two.
+COPY --chown=parakeet:parakeet scripts/precompress.mjs /opt/parakeet/scripts/precompress.mjs
 
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY docker/entrypoint.sh /entrypoint.sh

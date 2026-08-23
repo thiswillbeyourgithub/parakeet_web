@@ -10,6 +10,16 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The app itself now downloads about six times smaller
+
+Every visitor downloads the app bundle before anything else happens, and 130 of its 138 MB are WebAssembly: the ONNX Runtime builds, ffmpeg, and the diarization engine. Caddy was compressing those bytes again for every single request. They are now compressed once, at image build time, and served as-is.
+
+Measured on the shipped bundle: the ONNX Runtime WebGPU build goes from 26 MB to 3.5 MB, ffmpeg from 31 MB to 6.9 MB, the diarization engine from 17 MB to 2.5 MB. The server also stops spending CPU on it entirely.
+
+Nothing changes for the app: the browser decodes the response before the app sees it, so the bytes it gets, and the integrity hashes it checks them against, are exactly the same. A browser that does not accept brotli falls back to what it got before.
+
+The only visible cost is on the maintainer side: `docker build` takes about two and a half minutes longer, which is the point of doing it there rather than on every request.
+
 ### Self-hosted model weights can now be served compressed
 
 A self-hosted mirror can pre-compress its model files once and let Caddy serve them with `Content-Encoding: zstd`. On the shipped int8 encoder that is 881,878,510 bytes down to 642,839,559 (27 % less to download, both measured), and the browser decompresses it natively in about 3 seconds, so any connection slower than roughly 200 MB/s comes out ahead.

@@ -58,6 +58,10 @@ CLAUDE.md
 scripts/*
 !scripts/openai-like-server
 !scripts/transcribe.mjs
+# ...and the precompressor: the builder stage runs it over app/ui/dist to emit
+# the brotli sidecars Caddy serves, and the runtime image keeps a copy for the
+# opt-in PRECOMPRESS_MODELS pass over the mounted model folder.
+!scripts/precompress.mjs
 # ...but never a host node_modules inside it: the builder stage runs `npm ci`
 # from the lockfile, and copying a host tree in would defeat that.
 scripts/openai-like-server/node_modules/
