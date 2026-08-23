@@ -42,8 +42,8 @@ export async function routeNoLocalMirror(page) {
 }
 
 /**
- * 404 only the GPU-runnable encoders in the local mirror (the fp16 file and the
- * fp32 shard set), leaving int8 and everything else served normally. That is a
+ * 404 only the GPU-runnable encoder layout in the local mirror (the fp32 shard
+ * set), leaving int8 and everything else served normally. That is a
  * model source which cannot serve WebGPU but can serve WASM, which is exactly
  * the deployment the GPU-to-WASM fallback exists for. Routed rather than relying
  * on what `fallback_models` happens to contain, so the premise holds on any box
@@ -52,7 +52,7 @@ export async function routeNoLocalMirror(page) {
 export async function routeLocalMirrorWithoutGpuEncoders(page) {
   await page.route(LOCAL_MODELS_RE, (route) => {
     const url = route.request().url();
-    const isGpuEncoder = /encoder-model\.fp16\.onnx|\/sharded\/|encoder-model\.onnx\.data\.\d+/.test(url);
+    const isGpuEncoder = /\/sharded\/|encoder-model\.onnx\.data\.\d+/.test(url);
     return isGpuEncoder ? route.fulfill({ status: 404, body: 'not found' }) : route.continue();
   });
 }

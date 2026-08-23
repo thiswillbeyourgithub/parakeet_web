@@ -717,14 +717,17 @@ export default function App() {
   // ~2.4 GB, full quality, ~35 % slower). 'fp32' is opt-in: only honoured when
   // the repo actually ships the fp32 shards, else hub.js throws
   // QuantUnavailableError (no silent downgrade; resolveModelQuant). Ignored on
-  // WebGPU, which has its own fp16/fp32 selection.
+  // WebGPU, which has its own selection.
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
-  // Encoder precision for the WebGPU backend: 'fp16' (default; ~1.2 GB,
-  // near-lossless, fast) or 'fp32' (~2.4 GB, full quality, ~2x slower). int8 is
-  // not offered here: the GPU EP has no int8 encoder kernel. Resolved against
-  // what the repo ships by resolveModelQuant (fp16 needs encoder-model.fp16.onnx,
-  // else it falls back to fp32). Ignored on WASM, which uses wasmEncoderQuant.
-  const [webgpuEncoderQuant, setWebgpuEncoderQuant] = useState('fp16');
+  // Encoder precision for the WebGPU backend. fp32 (~2.4 GB, sharded) is the
+  // only value: int8 has no GPU encoder kernel, and the fp16 build the model
+  // repo shipped until 2026-08-23 was withdrawn (its WGSL kernels need the
+  // adapter's `shader-f16` feature, which no GPU available here exposes, so it
+  // could never be exercised end to end). Kept as a per-backend setting rather
+  // than inlined so the benchmark ids, the live model-swap signature and the
+  // harnesses that seed it keep working, and so a future GPU precision has a
+  // slot. Ignored on WASM, which uses wasmEncoderQuant.
+  const [webgpuEncoderQuant, setWebgpuEncoderQuant] = useState('fp32');
   // WebGPU availability. `navigator.gpu` existing isn't enough: an adapter may
   // still be unavailable (blocklisted GPU, headless Chromium, etc.), so we
   // actually request one. null = still probing, true/false = resolved.
@@ -735,12 +738,6 @@ export default function App() {
   // navigator.gpu, e.g. Firefox today) or 'noAdapter' (requestAdapter failed,
   // e.g. blocklisted GPU or hardware acceleration off).
   const [webgpuUnavailableReason, setWebgpuUnavailableReason] = useState(null);
-  // Whether the WebGPU adapter exposes the `shader-f16` feature. fp16 WGSL
-  // kernels only compile with it; without it the fp16 encoder builds but emits
-  // an empty transcript, so we resolve fp16 -> fp32 and grey out the fp16 radio.
-  // null = unknown (still probing, or no adapter) -> assume supported; once an
-  // adapter resolves it is true/false. Only an explicit false blocks fp16.
-  const [webgpuShaderF16, setWebgpuShaderF16] = useState(null);
   // Tracks whether the backend reflects an explicit choice (restored from a
   // saved setting or picked in the UI) vs. our automatic default. The automatic
   // default (always WASM int8) only applies when this is false.
@@ -1566,7 +1563,7 @@ export default function App() {
           loadSetting('backendUserPicked', false),
           loadSetting('perfProbeVerdict', null),
           loadSetting('wasmEncoderQuant', 'int8'),
-          loadSetting('webgpuEncoderQuant', 'fp16'),
+          loadSetting('webgpuEncoderQuant', 'fp32'),
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('verboseLog', false),
           loadSetting('debugDecode', false),
@@ -1637,7 +1634,9 @@ export default function App() {
           setBackend(coerceBackend(savedBackend));
         }
         setWasmEncoderQuant(savedWasmEncoderQuant === 'fp32' ? 'fp32' : 'int8');
-        setWebgpuEncoderQuant(savedWebgpuEncoderQuant === 'fp32' ? 'fp32' : 'fp16');
+        // fp32 is the only WebGPU encoder precision left, so an older saved
+        // 'fp16' is coerced rather than restored.
+        setWebgpuEncoderQuant('fp32');
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setDebugDecode(!!savedDebugDecode);
@@ -2067,7 +2066,6 @@ export default function App() {
     (async () => {
       let available = false;
       let reason = null;
-      let shaderF16 = null;
       try {
         if (!window.isSecureContext) {
           // navigator.gpu is only exposed in secure contexts; a plain http://
@@ -2082,9 +2080,6 @@ export default function App() {
           available = !!adapter;
           if (!adapter) reason = 'noAdapter';
           else {
-            // fp16 compute needs the shader-f16 adapter feature; record it so the
-            // quant resolver can fall back to fp32 and the UI can grey out fp16.
-            shaderF16 = adapter.features.has('shader-f16');
             // Coarse identity of the GPU, used only to invalidate a stored
             // performance-probe verdict when the machine's GPU changes (docked
             // eGPU, switched integrated/discrete). Adapter info is deliberately
@@ -2101,7 +2096,6 @@ export default function App() {
       if (!cancelled) {
         setWebgpuAvailable(available);
         setWebgpuUnavailableReason(available ? null : reason);
-        setWebgpuShaderF16(shaderF16);
       }
     })();
     return () => { cancelled = true; };
@@ -2119,7 +2113,7 @@ export default function App() {
   usePersistedSetting('perfProbeVerdict', probeVerdict, settingsLoaded);
   // Persist the WASM encoder-precision choice (int8 / fp32).
   usePersistedSetting('wasmEncoderQuant', wasmEncoderQuant, settingsLoaded);
-  // Persist the WebGPU encoder-precision choice (fp16 / fp32).
+  // Persist the WebGPU encoder-precision choice.
   usePersistedSetting('webgpuEncoderQuant', webgpuEncoderQuant, settingsLoaded);
 
   // Save settings to IndexedDB whenever they change (only after initial load).
@@ -3048,30 +3042,24 @@ export default function App() {
       // final quant against what the repo actually ships (resolveModelQuant):
       //   - WASM: int8 encoder (~800 MB), the only one that fits the 32-bit WASM
       //     heap / Chromium's ~2 GB blob limit.
-      //   - WebGPU: prefer the fp16 encoder (~1.2 GB, near-lossless vs fp32 and
-      //     lighter to serve) when the repo ships encoder-model.fp16.onnx, else
-      //     fp32 (~2.4 GB). The GPU EP has no int8 encoder kernel.
+      //   - WebGPU: the fp32 encoder (~2.4 GB, sharded), the only precision the
+      //     GPU EP has an encoder kernel for.
       const wantWebgpu = backend.startsWith('webgpu');
       // On WASM the user may opt into the sharded fp32 encoder (full quality);
       // hub.js only honours it when the repo ships the shards
       // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
       // stays int8 on WASM regardless (tiny, runs fine).
       const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
-      // On WebGPU the user picks fp16 (default) or fp32; int8 is not offered
-      // (no GPU int8 encoder kernel). The fused decoder_joint always runs int8:
-      // on this model the int8 joiner is as accurate as fp32/fp16 (measured) while
-      // being smaller and faster, and the GPU EP runs the int8 decoder fine. int8
-      // was already the default on every path except WebGPU-fp16, which now matches.
-      const webgpuFp32 = wantWebgpu && webgpuEncoderQuant === 'fp32';
+      // On WebGPU the encoder is always fp32 (int8 has no GPU encoder kernel).
+      // The fused decoder_joint always runs int8 on both backends: on this model
+      // the int8 joiner is as accurate as fp32 (measured) while being smaller and
+      // faster, and the GPU EP runs the int8 decoder fine.
       // Resolve the WASM encoder request: fp32 (shards) or the default int8.
       const wasmEncoderRequest = wasmWantsFp32 ? 'fp32' : 'int8';
       const downloadOpts = {
-        encoderQuant: wantWebgpu ? (webgpuFp32 ? 'fp32' : 'fp16') : wasmEncoderRequest,
+        encoderQuant: wantWebgpu ? 'fp32' : wasmEncoderRequest,
         decoderQuant: 'int8',
         allowWasmFp32: wasmWantsFp32,
-        // When the GPU lacks shader-f16, hub.js resolves the fp16 request above
-        // to fp32 (fp16 shaders won't compile). null/unknown -> assume supported.
-        shaderF16: webgpuShaderF16,
         preprocessor,
         backend,
         progress: progressCallback,
@@ -3090,9 +3078,9 @@ export default function App() {
         // First (HuggingFace) attempt: let hub.js transparently switch to the
         // locally-served /models mirror BEFORE downloading when HF cannot
         // deliver the requested quant but /models can (the user picked WASM fp32
-        // and only /models ships the shards, or WebGPU fp16 and only /models
-        // ships the fp16 encoder). Detecting it pre-download avoids fetching the
-        // wrong (downgraded) weights only to throw them away.
+        // or WebGPU, and only /models ships the shards). Detecting it
+        // pre-download avoids fetching the wrong (downgraded) weights only to
+        // throw them away.
         downloadOpts.localUpgradeBaseUrl = '/models';
       }
       // Shield any cached diarization models from the generational orphan sweep
@@ -3260,7 +3248,7 @@ export default function App() {
       // tell the user exactly why rather than leaving a bare "Failed".
       if (e instanceof QuantUnavailableError) {
         // On a GPU backend that means this model source ships no encoder the
-        // GPU can run (no fp16 file, no fp32 shards). Retry on WASM instead of
+        // GPU can run (no fp32 shards). Retry on WASM instead of
         // stranding the visitor on Failed: they may never have chosen WebGPU
         // at all, since the performance probe can select it for them, and a
         // deployment pointed at a repo without GPU weights would otherwise
@@ -5157,7 +5145,6 @@ export default function App() {
     const plan = planBenchmark({
       webgpuAvailable: webgpuAvailable !== false,
       webgpuDisabled: WEBGPU_DISABLED,
-      shaderF16: webgpuShaderF16,
       currentBackend: backend,
       currentWasmQuant: wasmEncoderQuant,
       currentWebgpuQuant: webgpuEncoderQuant,
@@ -5168,7 +5155,7 @@ export default function App() {
       for (const row of plan) next[row.id] = row.id in prev ? prev[row.id] : row.defaultSelected;
       return next;
     });
-  }, [sectionsOpen.benchmark, benchmarkRunning, webgpuAvailable, webgpuShaderF16,
+  }, [sectionsOpen.benchmark, benchmarkRunning, webgpuAvailable,
       backend, wasmEncoderQuant, webgpuEncoderQuant]);
 
   // Push one combination into the settings and wait until the change is LIVE.
@@ -7017,31 +7004,22 @@ export default function App() {
             )}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
-              // Single fixed list (int8 / fp16 / fp32); only the greying moves
-              // with the backend. int8 has no GPU encoder kernel (unavailable on
-              // WebGPU); fp16 overflows the WASM heap (unavailable on WASM); fp32
-              // runs on both. The remembered selection is per-backend, so WASM
-              // keeps its int8<->fp32 choice and WebGPU its fp16<->fp32 choice.
+              // Single fixed list (int8 / fp32); only the greying moves with the
+              // backend. int8 has no GPU encoder kernel (unavailable on WebGPU);
+              // fp32 runs on both. The remembered selection is per-backend, so
+              // WASM keeps its int8<->fp32 choice while WebGPU is pinned to fp32
+              // (the model repo's fp16 build was withdrawn on 2026-08-23).
               const isWebgpu = backend.startsWith('webgpu');
               const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
               const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
-              // fp16 needs the GPU's shader-f16 feature; when an adapter resolved
-              // WITHOUT it, fp16 can't run so it's greyed out and the load
-              // silently resolves to fp32 (hub.js). null = unknown -> leave fp16
-              // selectable (assume supported, matching the resolver default).
-              const webgpuNoF16 = isWebgpu && webgpuShaderF16 === false;
-              // Show the precision that will ACTUALLY load: fp32 when fp16 is
-              // blocked, so the radio doesn't sit on a disabled fp16 option.
-              const effectiveQuant = webgpuNoF16 ? 'fp32' : currentQuant;
-              // int8 is the default everywhere. fp32 is an opt-in on BOTH paths:
-              // on WASM via <2 GB shards (~2.4 GB, ~2x slower), and on WebGPU.
-              // fp16 is WebGPU-only, so it needs the WebGPU backend AND an
-              // adapter exposing shader-f16; under the ?webgpu=0 kill switch
-              // (WEBGPU_DISABLED) it is greyed out with its own note.
-              const webgpuDisabledNote = t('precisionUnavailableWebgpuDisabled');
+              // Show the precision that will ACTUALLY load, so the radio never
+              // sits on an option the backend cannot serve.
+              const effectiveQuant = isWebgpu ? 'fp32' : currentQuant;
+              // int8 is the default on WASM and the only precision it ships;
+              // fp32 is opt-in on WASM via the <2 GB shards (~2.4 GB, ~35 %
+              // slower) and the only precision WebGPU has an encoder kernel for.
               const rows = [
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : (WEBGPU_DISABLED ? webgpuDisabledNote : t('precisionUnavailableWasm')) },
                 { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
               ];
               return (
@@ -7931,7 +7909,7 @@ export default function App() {
       )}
 
       {/* Warning banner: the GPU backend could not be served by this model source
-          (no fp16 file, no fp32 shards), so the load fell back to WASM. The app
+          (no fp32 shards), so the load fell back to WASM. The app
           works normally after this, hence a warning rather than an error. */}
       {gpuFallbackWarning && (
         <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>

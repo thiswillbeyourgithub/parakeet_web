@@ -9,7 +9,7 @@
 // Reuses the WASM-int8 local-model setup (serve.mjs serves the weights at
 // /models; seedSettings forces local source + wasm). CPU threads is the only
 // param that reliably reloads to SUCCESS on headless int8 (a precision change
-// would need fp16/fp32 shards the harness does not ship), so we swap the thread
+// would need the fp32 shards the harness does not ship), so we swap the thread
 // count and observe the control locking (reload underway) then unlocking (model
 // ready again) - a purely UI-observable full reload cycle.
 //

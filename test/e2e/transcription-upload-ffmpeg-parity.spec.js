@@ -14,8 +14,9 @@
 // is disabled app-wide and every backend runs the WASM int8 encoder, int8
 // mishears the word EITHER way (it emits "Velnafaccine" on the cleanly-trimmed
 // ffmpeg audio too), so the rare-word spelling is no longer a reliable signal.
-// fp16 still spells it correctly, but fp16 is WebGPU-only and cannot run in
-// headless CI. The int8 flip was bisected to the vendored onnxruntime-web
+// fp32 still spells it correctly, but the sharded fp32 encoder is a 2.4 GB
+// download the CI tier does not fetch. The int8 flip was bisected to the
+// vendored onnxruntime-web
 // 1.26.0 -> 1.27.0 bump (commit e319783), which shifted the WASM int8 numerics
 // enough to change the greedy token. So this spec asserts the ffmpeg-under-CSP
 // load plus CLI parity on the STABLE sentence stem (which int8 transcribes

@@ -56,7 +56,7 @@ function sendFile(req, res, filePath, status = 200) {
   setHeaders(res, filePath);
   res.statusCode = status;
   // HEAD: headers only, no body. The local-fallback model resolver (hub.js)
-  // HEAD-probes candidate weights (fp16 ~1.2 GB, fp32 sidecar ~2.4 GB) to decide
+  // HEAD-probes candidate weights (the fp32 sidecar is ~2.4 GB) to decide
   // the quant; streaming the file would read the whole thing off disk for a
   // metadata-only request, so short-circuit with Content-Length and end.
   if (req.method === 'HEAD') {

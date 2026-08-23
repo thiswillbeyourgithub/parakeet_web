@@ -7,7 +7,7 @@
 //
 //   default ("chunk")  npm run webgpu:check
 //     Feeds the committed 3 min JFK moon-speech crop (test/fixtures/
-//     jfk-moon-3min.mp3) on the fp16/WebGPU path and asserts chunking engaged,
+//     jfk-moon-3min.mp3) on the WebGPU path and asserts chunking engaged,
 //     the transcript recovers the golden content (word-overlap), and no runaway
 //     seam duplication. The WebGPU chunk test the headless tier cannot run.
 //
@@ -20,8 +20,8 @@
 // production: test/e2e/serve.mjs (UI + local weights at /models with the
 // COOP/COEP headers ORT needs, which also make CDP's JS-heap metric precise
 // under cross-origin isolation) and test/e2e/seed.mjs (backend 'webgpu-hybrid',
-// the UI's actual WebGPU option, so resolveModelQuant picks the fp16 encoder
-// fallback_models ships). Both sample the JS heap via CDP; the late/early
+// the UI's actual WebGPU option, so resolveModelQuant picks the fp32 encoder
+// fallback_models ships as shards). Both sample the JS heap via CDP; the late/early
 // growth check only applies once there are enough chunks to bucket (the full
 // run), so the short chunk run leans on completion + no-OOM + content asserts.
 //
@@ -31,19 +31,20 @@
 //
 // Usage (on a GPU box):
 //   npm run build --prefix app/ui            # the harness serves app/ui/dist
-//   npm run webgpu:check                     # 3 min chunk check, fp16 (DEFAULT)
-//   npm run webgpu:check:fp32                # same, fp32 encoder (via shards)
-//   npm run webgpu:memcheck[:fp32]           # full 17 min memory-leak run
+//   npm run webgpu:check                     # 3 min chunk check
+//   npm run webgpu:memcheck                  # full 17 min memory-leak run
 //   node scripts/webgpu-check.mjs --full --headless --max-growth=1.4
 //
-// Precision: the DEFAULT (fp16) needs the WebGPU `shader-f16` adapter feature.
-// GPUs/drivers whose Dawn build does not expose it (e.g. this repo's RTX 3090 Ti
-// box, see CLAUDE.md) load fp16 but emit an EMPTY transcript, so the default
-// check FAILS the content assertion there. On such a box use --fp32: fp32 needs
-// no shader-f16 and is the only path that exercises real WebGPU compute (encoder
-// on the GPU + the decode-worker pipeline) end to end. fp32 loads via the <2 GB
-// shards (single-file fp32 is unloadable on WebGPU; see hub.js), so the local
-// /models mirror must serve sharded/encoder-model.onnx.data.NNN.
+// Precision: fp32, the only encoder precision the GPU EP has a kernel for. (The
+// model repo shipped an fp16 encoder until 2026-08-23, which this harness used
+// by default; it was withdrawn because its WGSL kernels need the adapter's
+// `shader-f16` feature, which this repo's RTX 3090 Ti box does not expose, so it
+// loaded and then emitted an EMPTY transcript here.) fp32 needs no shader-f16
+// and exercises real WebGPU compute (encoder on the GPU + the decode-worker
+// pipeline) end to end. It loads via the <2 GB shards (single-file fp32 is
+// unloadable on WebGPU; see hub.js), so the local /models mirror must serve
+// sharded/encoder-model.onnx.data.NNN. `--fp32` is still accepted as a no-op so
+// existing invocations and the npm aliases keep working.
 //
 // Backend coverage: this harness only exercises `webgpu-hybrid`, the sole
 // user-selectable WebGPU backend (App.jsx exposes wasm + webgpu-hybrid radios).
@@ -68,7 +69,7 @@ const ROOT = resolve(__dirname, '..');
 const DIST = resolve(ROOT, 'app/ui/dist');
 const SERVE = resolve(ROOT, 'test/e2e/serve.mjs');
 
-const MIN_OVERLAP = 0.7;   // fp16 (cleaner) vs the int8 golden: most words match
+const MIN_OVERLAP = 0.7;   // fp32 (cleaner) vs the int8 golden: most words match
 const LEAK_MIN_CHUNKS = 6; // need this many chunks to bucket early/late heap
 
 // --- args --------------------------------------------------------------------
@@ -100,8 +101,7 @@ function parseArgs(argv) {
         console.log(`Usage: node scripts/webgpu-check.mjs [options]
   --full             Run the full ~17 min speech (memory-leak mode) instead of the 3 min crop
   --headless         Run headless (WebGPU is more reliable headed on a GPU box)
-  --fp32             Use the fp32 WebGPU encoder instead of fp16 (needs no shader-f16;
-                     the only path that runs real WebGPU compute on a Dawn build lacking it)
+  --fp32             Accepted and ignored: fp32 is the only WebGPU encoder precision
   --max-growth F     Max late/early JS-heap median ratio before it is a leak (default: 1.5)
   --channel C        Browser channel: 'chrome' (installed) or 'chromium' (bundled) (default: chromium)
   --port N           Static server port (default: 4179)
@@ -191,7 +191,7 @@ async function main() {
     const debug = !!process.env.WEBGPU_DEBUG; // forward all page console to stderr
     // Benign console noise to ignore, all by-design and not failures:
     //  - "Failed to load resource ... 404": with local source, hub.js HEAD-probes
-    //    candidate weights that may not exist locally (decoder fp16/fp32 sidecars),
+    //    candidate weights that may not exist locally (the fp32 decoder sidecar),
     //    and serve.mjs does not ship the optional runtime /config.js. Each miss is
     //    logged as a 404 console error.
     //  - the /config.js 404 is served as an HTML error page, so the browser's
@@ -227,12 +227,12 @@ async function main() {
     page.on('pageerror', (e) => { if (!benign(e.message)) errors.push(`pageerror: ${e.message}`); });
     page.on('crash', () => { crashed = true; });
 
-    // Force the LOCAL model source (serve.mjs /models), which is where the fp16
-    // weights live: the upstream HF repo ships no encoder-model.fp16.onnx, so on
-    // 'hf' the app falls back to the 2.4 GB fp32 encoder. modelSource is a CONFIG
-    // value the docker entrypoint writes into window.__CONFIG__ (NOT a settings-DB
-    // key), so we inject it the same way before any app script runs. With local
-    // source, hub.js HEAD-probes /models and resolves the fp16 encoder.
+    // Force the LOCAL model source (serve.mjs /models), which is where the fp32
+    // SHARDS live: the upstream HF repo ships only the flat single-file fp32
+    // encoder, which cannot load on WebGPU at all (see hub.js). modelSource is a
+    // CONFIG value the docker entrypoint writes into window.__CONFIG__ (NOT a
+    // settings-DB key), so we inject it the same way before any app script runs.
+    // With local source, hub.js HEAD-probes /models and finds the shards.
     await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
     // WebGPU is available app-wide now (App.jsx WEBGPU_DISABLED defaults false,
@@ -246,7 +246,7 @@ async function main() {
     // Hard gate: a REAL WebGPU adapter, else SKIP. Chromium with
     // --enable-unsafe-webgpu hands out a software (SwiftShader/lavapipe) adapter
     // on a GPU-less box; that is useless for a GPU test (and OOMs loading the
-    // 1.2 GB fp16 model), so reject fallback/software adapters too.
+    // 2.4 GB fp32 model), so reject fallback/software adapters too.
     const gpu = await page.evaluate(async () => {
       if (!navigator.gpu) return { ok: false, reason: 'navigator.gpu is undefined' };
       try {
@@ -266,11 +266,11 @@ async function main() {
     }
     console.error(`[webgpu-check] WebGPU adapter: ${gpu.adapter || 'unknown'}`);
 
-    // --fp32 forces the fp32 WebGPU encoder. fp32 needs no shader-f16 (the one
-    // WebGPU feature this box's Dawn build does not expose), so it is the only
-    // in-harness way to exercise the real WebGPU compute path here, and it is
-    // what makes the decode-worker pipeline observable end to end.
-    const quant = args.fp32 ? 'fp32' : 'fp16';
+    // fp32 is the only WebGPU encoder precision. It needs no shader-f16 (the one
+    // WebGPU feature this box's Dawn build does not expose), so it exercises the
+    // real WebGPU compute path here, and it is what makes the decode-worker
+    // pipeline observable end to end.
+    const quant = 'fp32';
     await seedSettings(page, { backend: 'webgpu-hybrid', webgpuEncoderQuant: quant });
     await page.reload();
 

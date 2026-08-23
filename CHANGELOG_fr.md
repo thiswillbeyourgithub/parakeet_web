@@ -8,6 +8,27 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Non publié
+
+### Deux versions de l'encodeur retirées : `int8 lite` et `fp16`
+
+Le dépôt du modèle fournissait quatre précisions d'encodeur. Deux d'entre elles disparaissent, du dépôt du modèle comme de l'application, ainsi que le code qui les sélectionnait.
+
+**`int8 lite`** (environ 757 Mo contre 841 Mo pour la version par défaut) gardait davantage de couches en fp32 pour récupérer un peu de la précision sacrifiée par la quantification int8 agressive. Mesurée sur les 25 langues du jeu de validation FLEURS, elle ressort à 14,82 % de WER contre 14,27 % pour la version par défaut, et sur le jeu de huit discours en audio long à 9,9 % contre 8,6 %. Elle était donc légèrement moins bonne dans les deux cas, pour 84 Mo de téléchargement en moins. Rien ne plaidait pour elle, et chaque précision supplémentaire dans le sélecteur est une combinaison de plus à tester et une chose de plus à expliquer.
+
+**`fp16`** (environ 1,2 Go) était la précision par défaut sur WebGPU. Elle n'a jamais pu être éprouvée de bout en bout ici : ses noyaux WGSL exigent que l'adaptateur WebGPU expose `shader-f16`, ce que le GPU sur lequel ce projet est développé ne fait pas, quoi qu'en dise le pilote. ONNX Runtime construisait la session sans broncher, puis renvoyait une transcription vide. La seule chose mesurable, sa précision sous onnxruntime natif avec calcul en fp16, était bonne, mais « bon sur une voie que l'on ne peut pas exécuter » n'est pas une précision publiable, et elle se trouvait devant chaque visiteur que la mesure de performance envoyait sur le GPU.
+
+Ce que cela change pour vous :
+
+- Le sélecteur de précision de l'encodeur propose désormais **int8** et **fp32**, rien d'autre.
+- Sur le backend WebGPU, l'encodeur est désormais toujours en **fp32** (environ 2,4 Go, chargé en fragments). Ce n'est pas une régression par rapport à ce qui tournait réellement : c'est ce vers quoi un GPU sans `shader-f16` se rabattait déjà.
+- Si vous aviez sélectionné `int8 lite` ou `fp16`, vous basculez vers la précision fonctionnelle de votre backend au prochain chargement.
+- Les personnes qui autohébergent peuvent supprimer `encoder-model.int8.lite.onnx`, `encoder-model.fp16.onnx` et `decoder_joint-model.fp16.onnx` de leur miroir. **Les fragments fp32 deviennent obligatoires pour toute installation qui souhaite servir des visiteurs WebGPU**, puisque fp16 n'est plus là pour compenser un miroir qui en manque. Un miroir qui ne sert ni l'un ni l'autre se dégrade toujours proprement : ces visiteurs basculent sur la voie CPU avec un avertissement, comme auparavant.
+
+Le script de génération fp16 est conservé dans le dépôt du modèle, de sorte que la version puisse être régénérée si une machine dotée de `shader-f16` la rend un jour testable.
+
+---
+
 ## 10.0.0 (2026-08-21)
 
 Un seul fil conducteur traverse toute cette version : **tirer le maximum de vitesse d'un matériel ordinaire, et cesser de supposer où se trouve cette vitesse**. Presque chaque changement ci-dessous est parti d'une mesure qui contredisait une supposition, dont une qui était fausse depuis un mois et avait fait désactiver toute une fonctionnalité.

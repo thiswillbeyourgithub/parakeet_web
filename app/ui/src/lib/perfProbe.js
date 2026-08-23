@@ -16,12 +16,12 @@
 // What is measured, and why the two arms use different precisions: the CPU arm
 // runs the INT8 graph and the GPU arm runs the FP32 graph, because that is
 // what each backend actually loads (WASM ships the int8 encoder, WebGPU ships
-// fp16/fp32). Timing both arms in fp32 would hand the GPU the 2-3x that int8
+// fp32). Timing both arms in fp32 would hand the GPU the 2-3x that int8
 // buys the CPU and would recreate exactly the mistake that cost this project a
 // month: choosing the GPU when the CPU was faster. Every remaining asymmetry
-// is deliberately pointed the same way (an f16-capable GPU is timed in fp32,
-// and the probe's GEMMs are smaller than the encoder's, both of which
-// UNDER-report the GPU), so a probe that says "GPU wins" is trustworthy and a
+// is deliberately pointed the same way (the probe's GEMMs are smaller than the
+// encoder's, which UNDER-reports the GPU), so a probe that says "GPU wins" is
+// trustworthy and a
 // probe that says "CPU wins" may be leaving a little on the table.
 //
 // Written with the help of Claude Code.
@@ -64,8 +64,8 @@ export const PROBE_RUN_TIMEOUT_MS = 30000;
 // How much faster the GPU arm must be before the app switches a visitor onto
 // the WebGPU path. This is NOT a noise margin (the medians are far apart when
 // a real GPU is present); it prices the download. Choosing WebGPU commits the
-// user to a 1.2 GB (fp16) or 2.4 GB (fp32) encoder instead of ~600 MB int8, so
-// a marginal win is not worth 2-4x the bytes on a metered connection. It also
+// user to a 2.4 GB fp32 encoder instead of ~600 MB int8, so a marginal win is
+// not worth 4x the bytes on a metered connection. It also
 // buys headroom against the probe's own conservative bias (see the header):
 // the one machine with ground truth measured 5.4x end-to-end, comfortably
 // clear of this bar, while a GPU that only edges ahead stays on WASM.

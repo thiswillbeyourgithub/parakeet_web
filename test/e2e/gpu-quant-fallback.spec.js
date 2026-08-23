@@ -1,5 +1,5 @@
 // Tier-3 E2E for the GPU-to-WASM fallback when a model source ships no encoder
-// the GPU can run (no fp16 file, no fp32 shards).
+// the GPU can run (no fp32 shards).
 //
 // Why this matters enough to have its own spec: since WebGPU was re-enabled,
 // the performance probe can put a visitor on the GPU backend without them ever
@@ -25,13 +25,14 @@ import { seedSettings, expandSettingsSection, APP_VERSION } from './seed.mjs';
 import { routeLocalMirrorWithoutGpuEncoders } from './routes.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
 
-const ADAPTER_WITH_F16 = () => {
+const ADAPTER = () => {
   Object.defineProperty(navigator, 'gpu', {
     configurable: true,
     value: {
       requestAdapter: async () => ({
-        // shader-f16 present, so the app asks for fp16 FIRST and then fp32:
-        // both have to come back unavailable for the fallback to be reached.
+        // shader-f16 is reported but no longer influences anything: fp32 is the
+        // only GPU precision left, and it has to come back unavailable for the
+        // fallback to be reached.
         features: new Set(['shader-f16']),
         limits: {},
         info: { vendor: 'test', architecture: 'stub', device: '' },
@@ -52,7 +53,7 @@ test('a source with no GPU encoder falls back to WASM instead of failing the loa
   const logs = [];
   page.on('console', (m) => logs.push(m.text()));
 
-  await page.addInitScript(ADAPTER_WITH_F16);
+  await page.addInitScript(ADAPTER);
   // Serve everything from the local mirror, then take the GPU encoders away.
   await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
   await routeLocalMirrorWithoutGpuEncoders(page);

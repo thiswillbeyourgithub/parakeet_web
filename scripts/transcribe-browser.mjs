@@ -106,8 +106,8 @@ export function parseArgs(argv) {
   if (a.backend !== 'webgpu-hybrid' && a.backend !== 'wasm') {
     throw new Error(`--backend must be webgpu-hybrid or wasm (got ${a.backend})`);
   }
-  if (a.quant !== 'fp32' && a.quant !== 'fp16' && a.quant !== 'int8') {
-    throw new Error(`--quant must be fp32, fp16 or int8 (got ${a.quant})`);
+  if (a.quant !== 'fp32' && a.quant !== 'int8') {
+    throw new Error(`--quant must be fp32 or int8 (got ${a.quant})`);
   }
   if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 10) {
     throw new Error('--beam-width must be an integer in [1, 10] (the UI cap)');
@@ -179,9 +179,9 @@ Options:
                           Default 2. Ignored with --no-diarize.
       --no-diarize        Skip speaker diarization; write the plain transcript.
       --backend B         webgpu-hybrid (default, real GPU) or wasm (CPU).
-      --quant Q           WebGPU encoder quant: fp32 (default), fp16 or int8.
-                          fp16 needs the shader-f16 GPU feature (this box lacks
-                          it, so fp16 transcribes empty here; use fp32 or int8).
+      --quant Q           WebGPU encoder quant: fp32 (default) or int8. int8 has
+                          no GPU encoder kernel, so it resolves to fp32 anyway;
+                          it is accepted so a WASM run can be seeded the same way.
       --lang L            Seed the UI language (default en) so control text matches.
       --headless          Run headless (WebGPU is more reliable headed on a GPU box).
       --channel C         Browser build: chromium (default) or chrome.

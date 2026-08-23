@@ -43,18 +43,12 @@ describe('planBenchmark', () => {
     const off = planBenchmark({ webgpuAvailable: true, webgpuDisabled: true });
     assert.ok(off.every(r => r.backend === 'wasm'));
     const on = planBenchmark({ webgpuAvailable: true });
+    // fp32 is the only precision the GPU EP has an encoder kernel for, so it is
+    // the only WebGPU row (the model repo's fp16 build was withdrawn 2026-08-23).
     assert.deepEqual(
       on.filter(r => r.backend === 'webgpu-hybrid').map(r => r.quant),
-      ['fp16', 'fp32'],
+      ['fp32'],
     );
-  });
-
-  test('fp16 is dropped when the adapter explicitly lacks shader-f16', () => {
-    const plan = planBenchmark({ webgpuAvailable: true, shaderF16: false });
-    assert.ok(!plan.some(r => r.quant === 'fp16'));
-    assert.ok(plan.some(r => r.id === 'webgpu-hybrid:fp32'));
-    // null means "not probed yet" and must NOT drop the row.
-    assert.ok(planBenchmark({ webgpuAvailable: true, shaderF16: null }).some(r => r.quant === 'fp16'));
   });
 
   test('heavy (fp32) rows are unchecked by default unless already selected', () => {
@@ -110,7 +104,7 @@ describe('transcript similarity', () => {
     assert.equal(transcriptSimilarity('alpha beta', 'gamma delta'), 0);
   });
 
-  test('an empty transcript (the fp16-without-shader-f16 symptom) scores 0', () => {
+  test('an empty transcript (the symptom of a session whose kernels never compiled) scores 0', () => {
     assert.equal(transcriptSimilarity(BENCHMARK_CLIP.expectedText, ''), 0);
     assert.equal(transcriptSimilarity('', ''), 1);
   });
