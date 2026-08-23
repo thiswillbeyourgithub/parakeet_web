@@ -50,6 +50,8 @@ services:
       # container, then set LOCAL_MODEL_PATH below to the in-container target.
       # Caddy serves it under /models/. Pre-populate the host folder with e.g.:
       #   hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir /host/path
+      # Drop the `:ro` if you set PRECOMPRESS_MODELS below, which writes the
+      # `.zst` sidecars into this folder at boot.
       # - /host/path/to/onnx-files:/models:ro
 
       # Custom dictation regex rules: uncomment and set the host path to a folder
@@ -89,6 +91,13 @@ services:
       # container side of the volume above). Caddy serves this directory at
       # /models/. Leave unset to disable local fallback entirely.
       - LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-}
+      # Generate the zstd sidecars Caddy serves for the local weights, at boot,
+      # instead of only warning about stale ones (841 MB -> 643 MB on the int8
+      # encoder). Needs the model mount WRITABLE (drop its `:ro`); costs
+      # ~30-90 s on the first boot after a model change and nothing afterwards.
+      # Leave unset to prepare them on the host instead:
+      #   node scripts/precompress.mjs --models <model-dir>
+      - PRECOMPRESS_MODELS=${PRECOMPRESS_MODELS:-}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
       # Phrase-boosting lists: folder of .txt files or https URL to one .txt.

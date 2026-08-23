@@ -29,6 +29,7 @@ Ce n'était pas déjà le cas par hasard : les poids sont servis en `application
 À retenir pour ceux qui hébergent eux-mêmes :
 
 - Lancez `node scripts/precompress.mjs --models <dossier-modele>` après avoir rempli (ou remplacé) le dossier de modèles. Le script est idempotent et ne fait jamais échouer un déploiement. Il utilise le binaire `zstd` si l'hôte en a un, sinon le zstd intégré à Node.
+- Ou définissez `PRECOMPRESS_MODELS=1` et laissez le conteneur les préparer au démarrage. Cela nécessite que le volume de modèles soit monté en écriture (retirez son `:ro`) et prend 30 à 90 secondes au premier démarrage suivant un changement de modèle ; les démarrages suivants les trouvent à jour et ne font rien.
 - Sans fichier `.zst`, ou pour un navigateur qui n'accepte pas zstd, Caddy sert le fichier brut exactement comme avant. Rien d'autre n'est à changer.
 - Un fichier `.zst` plus ancien que sa source serait servi à la place du vrai fichier : le script supprime donc ceux qu'il ne peut pas régénérer, et le conteneur avertit au démarrage s'il en trouve un périmé.
 - Les téléchargements qui reprennent en cours de route ne sont pas affectés : les navigateurs demandent les plages d'octets sans compression.

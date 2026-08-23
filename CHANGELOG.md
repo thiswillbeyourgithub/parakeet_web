@@ -29,6 +29,7 @@ This was not happening before by accident: model weights are served as `applicat
 Notes for self-hosters:
 
 - Run `node scripts/precompress.mjs --models <model-dir>` after populating (or replacing) the model folder. It is idempotent and never fails a deployment. It uses the `zstd` binary when the host has one and Node's own zstd otherwise.
+- Or set `PRECOMPRESS_MODELS=1` and let the container prepare them at startup instead. That needs the model volume mounted writable (drop its `:ro`) and takes 30 to 90 seconds on the first boot after a model change; later boots find them current and do nothing.
 - Without a `.zst` sidecar, or for a browser that does not accept zstd, Caddy serves the plain file exactly as before. Nothing else has to change.
 - A sidecar older than its source would be served instead of the real file, so the script deletes any it cannot regenerate, and the container warns at startup if it finds a stale one.
 - Downloads that resume mid-file are unaffected: browsers ask for byte ranges uncompressed.
