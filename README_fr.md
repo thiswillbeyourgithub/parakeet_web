@@ -345,9 +345,24 @@ volumes:
 LOCAL_MODEL_PATH=/models
 ```
 
+```bash
+# 4. Facultatif mais recommandé : précompressez les poids une fois pour toutes.
+./scripts/precompress-models.sh /host/path/to/onnx-files
+```
+
 Caddy sert ce qui se trouve à `LOCAL_MODEL_PATH` sous `/models/`. Le
 conteneur plante au démarrage si `vocab.txt` est manquant, de sorte que
 les mauvaises configurations sont détectées tôt.
+
+L'étape 4 écrit un fichier `<fichier>.zst` à côté de chaque fichier ONNX,
+que Caddy sert ensuite avec `Content-Encoding: zstd`. L'encodeur int8 passe
+ainsi de 841 Mo à 643 Mo (27 % de moins à télécharger), et le navigateur le
+décompresse nativement en 3 secondes environ : sur toute connexion plus lente
+que ~200 Mo/s, le modèle arrive donc plus tôt. Le script nécessite `zstd` sur
+l'hôte, et rien ne casse s'il est absent : sans fichier `.zst`, Caddy sert le
+fichier brut exactement comme avant. **Relancez le script chaque fois que vous
+remplacez un fichier de modèle**, sinon le conteneur avertira au démarrage
+qu'un fichier `.zst` est périmé.
 
 Utilisez `VITE_MODEL_SOURCE` pour choisir d'où l'interface récupère les poids :
 
