@@ -40,7 +40,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 
 ---
 
-Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) puis re-quantizé pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) sur le backend WASM (CPU).
+Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), puis re-quantizé et optimisé au niveau du graphe pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) sur le backend WASM (CPU).
 
 ![](./image.png)
 
