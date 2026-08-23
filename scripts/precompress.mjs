@@ -152,6 +152,24 @@ export function relativeSidecarLink(aliasPath, canonicalPath, suffix) {
   return relative(dirname(aliasPath), canonicalPath + suffix);
 }
 
+/** What the alias's sidecar link looks like on disk right now. Shared by the
+ *  report and the write path so `--check` cannot call healthy something the
+ *  write path would go on to fix. */
+function aliasLinkState(alias, suffix) {
+  const link = alias.path + suffix;
+  const want = relativeSidecarLink(alias.path, alias.canonical, suffix);
+  let current = null;
+  try {
+    if (lstatSync(link).isSymbolicLink()) current = readlinkSync(link);
+  } catch { /* absent */ }
+  return {
+    link,
+    want,
+    hasTarget: existsSync(alias.canonical + suffix),
+    ok: current === want && existsSync(link),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Compressors
 // ---------------------------------------------------------------------------
@@ -336,9 +354,20 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
       const why = w.hadSidecar ? 'STALE' : 'missing';
       console.error(`[precompress] ${why} sidecar: ${basename(w.sidecar)}`);
     }
+    // A missing alias LINK matters as much as a missing sidecar: the flat path
+    // it sits on is the one Caddy resolves, so without it the compressed bytes
+    // exist on disk and are served to nobody.
+    let brokenLinks = 0;
+    for (const alias of aliases) {
+      const state = aliasLinkState(alias, suffix);
+      if (state.ok) { counts.kept += 1; continue; }
+      if (!state.hasTarget) continue; // its source sidecar is already reported
+      brokenLinks += 1;
+      console.error(`[precompress] missing sidecar link: ${relative(dir, state.link)}`);
+    }
     console.error(`[precompress] ${mode}: ${counts.kept} sidecar(s) current, `
-      + `${counts.stale} stale, ${work.length - counts.stale} missing`);
-    if (work.length) {
+      + `${counts.stale} stale, ${work.length - counts.stale + brokenLinks} missing`);
+    if (work.length || brokenLinks) {
       console.error(`[precompress] A stale sidecar is served INSTEAD of the file it shadows, so`);
       console.error(`[precompress] visitors whose browser accepts the encoding get outdated bytes.`);
       console.error(`[precompress] Fix: node scripts/precompress.mjs --${mode} ${dir}`);
@@ -399,15 +428,9 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
   // also trip the tier-3 dangling-symlink check (test/e2e/dangling-links.mjs),
   // and it would be right to.
   for (const alias of aliases) {
-    const target = alias.canonical + suffix;
-    if (!existsSync(target)) continue;
-    const want = relativeSidecarLink(alias.path, alias.canonical, suffix);
-    const link = alias.path + suffix;
-    let current = null;
-    try {
-      if (lstatSync(link).isSymbolicLink()) current = readlinkSync(link);
-    } catch { /* absent */ }
-    if (current === want && existsSync(link)) {
+    const { link, want, ok, hasTarget } = aliasLinkState(alias, suffix);
+    if (!hasTarget) continue;
+    if (ok) {
       counts.kept += 1;
       continue;
     }

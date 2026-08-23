@@ -361,6 +361,25 @@ describe('end to end on a real tree', () => {
     assert.ok(!lstatSync(join(nested, 'encoder-model.onnx.zst')).isSymbolicLink());
   });
 
+  test('check mode reports a missing link, not just a missing sidecar', async () => {
+    // The flat link is the path Caddy resolves. Delete it and the compressed
+    // bytes still exist on disk, served to nobody, with every mtime healthy: a
+    // staleness-only check calls that tree perfectly fine.
+    const root = join(dir, 'models');
+    rmSync(join(root, 'encoder-model.onnx.zst'), { force: true });
+
+    const c = await run({ mode: 'models', dir: root, level: 1, check: true });
+    assert.equal(c.stale, 0);
+    assert.equal(c.made, 0);
+    assert.ok(!existsSync(join(root, 'encoder-model.onnx.zst')),
+      'check mode must not create the link it reports');
+
+    // ...and the write pass puts it back.
+    const w = await run({ mode: 'models', dir: root, level: 1 });
+    assert.equal(w.linked, 1);
+    assert.equal(w.made, 0, 'the bytes were already compressed, only the link was gone');
+  });
+
   test('a dangling sidecar link is cleaned up rather than left to fail the tier-3 check', async () => {
     const root = join(dir, 'models');
     rmSync(join(root, 'Owner', 'repo', 'encoder-model.onnx.zst'), { force: true });
