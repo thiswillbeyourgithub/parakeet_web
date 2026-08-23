@@ -639,8 +639,8 @@ function hypTailIds(hyp, n) {
 // memory for the whole transcription.
 const DEBUG_ALTERNATIVES_K = 5;
 
-// Stage-2 in-graph TOP-K decoder outputs (the model repo's
-// optimize-decoder-graph.py `topk` artifact, decoder_joint-model*.lse.topk.onnx):
+// Stage-2 in-graph TOP-K decoder outputs (added by the model repo's
+// optimize-decoder-graph.py, and shipped inside its canonical decoders):
 // the k largest TOKEN logits of the `outputs` row (descending) with their vocab
 // ids, plus the TDT duration logits split out of that same row. They are
 // APPENDED after the stock outputs (which stay bit-identical), so a decoder that
@@ -724,16 +724,29 @@ export class ParakeetModel {
     this._targetLenTensor = new ort.Tensor('int32', this._targetLenArray, [1]);
 
     // Master switch for the in-graph top-K decoder outputs (TOPK_OUTPUT_NAMES).
-    // Default true: shipping a decoder that carries them IS the opt-in, exactly
-    // like the lse artifact. An explicit `false` disables the fast path
-    // ENTIRELY, so every joint call fetches the full `outputs` row again: this
-    // is the A/B control for benchmarking the readback saving and the escape
-    // hatch if a future artifact ever diverges. `transcribe(opts.useTopkOutputs)`
-    // overrides it per call.
+    // Default true: shipping a decoder that carries them IS the opt-in. An
+    // explicit `false` disables the fast path ENTIRELY, so every joint call
+    // fetches the full `outputs` row again: this is the A/B control for
+    // benchmarking the readback saving and the escape hatch if a future artifact
+    // ever diverges. `transcribe(opts.useTopkOutputs)` overrides it per call.
     this.useTopkOutputs = useTopkOutputs !== false;
     // Memoised capability probe + one-shot engagement log (see _topkOutputsReady).
     this._topkReady = undefined;
     this._topkEngagedLogged = false;
+
+    // Report, once per model, what the LOADED decoder_joint actually declares.
+    // Both stages come from the model repo's optimize-decoder-graph.py and now
+    // ship inside the canonical decoder filename, so the file NAME no longer
+    // tells anyone whether they are there: this log is the only way an operator
+    // (or a test) can tell a graph carrying them from a stock upstream one.
+    // Skipped for an encoder-only model, which has no joiner session.
+    if (joinerSession) {
+      const names = joinerSession.outputNames;
+      const declares = (list) => Array.isArray(names) && list.every((n) => names.includes(n));
+      console.log('[Parakeet.js] Decoder in-graph outputs:'
+        + ` log-partition=${declares(LSE_OUTPUT_NAMES) ? 'yes' : 'no'}`
+        + ` top-K=${declares(TOPK_OUTPUT_NAMES) ? 'yes' : 'no'}`);
+    }
   }
 
   /**
