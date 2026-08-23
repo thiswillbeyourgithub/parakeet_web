@@ -27,7 +27,7 @@ const SR = 16000;
 // (same source the tier-3 e2e uses), so a checkout with the weights present runs
 // this without any env setup.
 const here = dirname(fileURLToPath(import.meta.url));
-const FALLBACK_DIR = resolve(here, '../../fallback_models/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx');
+const FALLBACK_DIR = resolve(here, '../../fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx');
 function resolveTestModelDir() {
   if (process.env.PARAKEET_E2E_MODEL_DIR) return process.env.PARAKEET_E2E_MODEL_DIR;
   if (existsSync(FALLBACK_DIR)) return FALLBACK_DIR;

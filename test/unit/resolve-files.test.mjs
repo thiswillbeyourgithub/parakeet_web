@@ -5,7 +5,7 @@
 // The regression this pins: the SmoothQuant int8 encoder has TWO valid names.
 // The published HF repo (and the e2e fetch) use the canonical
 // `encoder-model.int8.onnx`, while the model-repo working folder
-// (parakeet-tdt-0.6b-v3-smoothquant-onnx/) keeps the descriptive
+// (parakeet-tdt-0.6b-v3-optimized-onnx/) keeps the descriptive
 // `encoder-model.int8.smoothquant.onnx`. resolveFiles must accept BOTH (canonical
 // first, SmoothQuant as a fallback) so `--model-dir` can point at either layout;
 // before the fix, pointing at the working folder threw "Missing

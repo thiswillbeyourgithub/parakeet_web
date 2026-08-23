@@ -40,7 +40,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 
 ---
 
-Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), puis re-quantizé et optimisé au niveau du graphe pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) sur le backend WASM (CPU).
+Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), puis re-quantizé et optimisé au niveau du graphe pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)) sur le backend WASM (CPU).
 
 ![](./image.png)
 
@@ -330,7 +330,7 @@ dans le conteneur :
 
 ```bash
 # 1. Remplissez n'importe quel dossier hôte avec les fichiers ONNX (disposition à plat) :
-hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx \
+hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx \
     --local-dir /host/path/to/onnx-files
 ```
 
@@ -479,7 +479,7 @@ Certaines listes de phrase boosting fournies incluent des noms de bactéries dé
 - **[LPSN (List of Prokaryotic names with Standing in Nomenclature)](https://lpsn.dsmz.de/)** – Source des noms de bactéries dans les listes de boosting `lorn` (List of Recommended Names for bacteria of medical importance) et `french_medical`, utilisés sous licence CC BY-SA 4.0 (voir [ATTRIBUTION.md](./ATTRIBUTION.md))
 - **[nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)** – Le modèle ASR sous-jacent par NVIDIA
 - **[istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)** – Conversion ONNX du modèle
-  - Cela a été essentiel pour me permettre de réaliser ma propre quantization améliorée, disponible sur [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
+  - Cela a été essentiel pour me permettre de réaliser ma propre quantization améliorée, disponible sur [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Implémentation de référence en Python
 - **ONNX Runtime Web** – Rend l'inférence dans le navigateur possible
 - **[sherpa-onnx (k2-fsa)](https://github.com/k2-fsa/sherpa-onnx)** – Moteur WebAssembly précompilé d'identification des locuteurs (Apache-2.0)

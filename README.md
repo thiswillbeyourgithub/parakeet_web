@@ -40,7 +40,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 ---
 
-Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), then re-quantized and graph-optimized for this app as [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)) on the WASM (CPU) backend.
+Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), then re-quantized and graph-optimized for this app as [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)) on the WASM (CPU) backend.
 
 ![](./image.png)
 
@@ -324,7 +324,7 @@ it with the ONNX files, bind-mount it into the container, and set
 
 ```bash
 # 1. Populate any host folder with the ONNX files (flat layout):
-hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx \
+hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx \
     --local-dir /host/path/to/onnx-files
 ```
 
@@ -470,7 +470,7 @@ Some bundled phrase-boosting lists include bacterial names derived from LPSN (Li
 - **[LPSN (List of Prokaryotic names with Standing in Nomenclature)](https://lpsn.dsmz.de/)** – Source of the bacterial names in the `lorn` (List of Recommended Names for bacteria of medical importance) and `french_medical` boost lists, used under CC BY-SA 4.0 (see [ATTRIBUTION.md](./ATTRIBUTION.md))
 - **[nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)** – The underlying ASR model by NVIDIA
 - **[istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)** – ONNX conversion of the model
-  - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
+  - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Python reference implementation
 - **ONNX Runtime Web** – Makes browser inference possible
 - **[sherpa-onnx (k2-fsa)](https://github.com/k2-fsa/sherpa-onnx)** – Prebuilt WebAssembly speaker-diarization engine (Apache-2.0)

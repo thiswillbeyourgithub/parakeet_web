@@ -1,6 +1,6 @@
 // Tier-3 E2E for the decoder's in-graph log-partition (LSE) outputs on the BEAM
 // path. The model repo's canonical decoders carry `lse_token`/`lse_duration`
-// (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py lse),
+// (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/optimize-decoder-graph.py lse),
 // the log-sum-exp of the token and TDT-duration logit slices, which the beam
 // decoder reads in _partition instead of running its own JS pass over the ~8k
 // token logits per hypothesis per step.

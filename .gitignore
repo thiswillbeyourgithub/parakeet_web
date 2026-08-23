@@ -41,7 +41,7 @@ fallback_models
 # Candidate symlink farm built by scripts/quantize-int8-smoothquant.py
 fallback_models_sq
 # Standalone HF model-repo folder (its own git repo + multi-GB LFS weights)
-parakeet-tdt-0.6b-v3-smoothquant-onnx
+parakeet-tdt-0.6b-v3-optimized-onnx
 test-results
 playwright-report
 .playwright

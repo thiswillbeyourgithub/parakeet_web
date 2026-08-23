@@ -45,7 +45,7 @@ export function requireWeightsOrSkip(test, missing, message, env = process.env) 
       `${message}\n[strict-weights] Treated as a FAILURE, not a skip, because ` +
       `strict-weights is on (default: on locally, off in CI). Serve the missing ` +
       `weights (\`npm run e2e:models\`, and for fp32 run ` +
-      `parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), or set ` +
+      `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), or set ` +
       `PARAKEET_E2E_STRICT_WEIGHTS=0 to skip instead.`,
     );
   }

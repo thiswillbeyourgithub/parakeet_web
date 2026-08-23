@@ -1,7 +1,7 @@
 // Tier-3 E2E for the decoder's in-graph top-K outputs and the decode-side fast
 // path they enable. The model repo's canonical int8 decoder
 // (decoder_joint-model.int8.onnx) carries topk_logits/topk_ids/duration_logits
-// appended by parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// appended by parakeet-tdt-0.6b-v3-optimized-onnx/scripts/
 // optimize-decoder-graph.py, so a greedy decode step fetches a few dozen floats
 // per joint call instead of reading the whole ~8.2k-float `outputs` row back out
 // of ORT.

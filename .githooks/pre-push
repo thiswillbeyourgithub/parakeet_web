@@ -26,7 +26,7 @@
 #     silently skipping (CI, which only fetches the int8 + diarization set,
 #     keeps skipping them instead). Serve the weights with `npm run e2e:models`,
 #     and the fp32 shards with
-#     `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py`; or
+#     `uv run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py`; or
 #     export PARAKEET_E2E_STRICT_WEIGHTS=0 before pushing to fall back to skips.
 #   - WebGPU: the ONLY way to exercise the real GPU path (encoder batching +
 #     the encode/decode worker pipeline). It is NOT prompted and NOT a release
