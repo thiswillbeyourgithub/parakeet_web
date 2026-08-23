@@ -446,17 +446,28 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
   return counts;
 }
 
-function usage() {
-  console.error('usage: node scripts/precompress.mjs --static|--models [DIR] [--quality N] [--level N] [--check]');
-}
+export const USAGE =
+  'usage: node scripts/precompress.mjs --static|--models [DIR] [--quality N] [--level N] [--check]';
 
-async function main(argv) {
-  let mode = null;
-  let dir = null;
-  let level = 9;      // -9 measured 642 MB vs -3's 665 MB on the int8 encoder,
-                      // and it is paid once, so the extra seconds are free.
-  let quality = 11;   // brotli's slowest and smallest; build-time only.
-  let check = false;
+/**
+ * Parse the command line. Pure so the tests can pin it: `--models=/models` was
+ * silently accepted with the path DROPPED, which quietly precompressed the
+ * default directory instead of the one that was named.
+ *
+ * @returns {{mode: string|null, dir: string|null, level: number, quality: number,
+ *            check: boolean, help: boolean, error: string|null}}
+ */
+export function parseArgs(argv, env = {}) {
+  const out = {
+    mode: null,
+    dir: null,
+    level: 9,      // -9 measured 642 MB vs -3's 665 MB on the int8 encoder, and
+                   // it is paid once, so the extra seconds are free.
+    quality: 11,   // brotli's slowest and smallest; build-time only.
+    check: false,
+    help: false,
+    error: null,
+  };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -466,25 +477,40 @@ async function main(argv) {
       : [arg, null];
     const value = () => (inline !== null ? inline : argv[++i]);
     switch (flag) {
-      case '--static': mode = 'static'; break;
-      case '--models': mode = 'models'; break;
-      case '--level': level = parseInt(value(), 10); break;
-      case '--quality': quality = parseInt(value(), 10); break;
-      case '--check': check = true; break;
-      case '-h': case '--help': usage(); return 0;
+      // `--models=/path` names the directory; `--models /path` is the same
+      // thing with a space, handled by the positional branch below.
+      case '--static': out.mode = 'static'; if (inline !== null) out.dir = inline; break;
+      case '--models': out.mode = 'models'; if (inline !== null) out.dir = inline; break;
+      case '--level': out.level = parseInt(value(), 10); break;
+      case '--quality': out.quality = parseInt(value(), 10); break;
+      case '--check': out.check = true; break;
+      case '-h': case '--help': out.help = true; break;
       default:
-        if (flag.startsWith('-')) { console.error(`unknown option: ${flag}`); usage(); return 2; }
-        dir = flag;
+        if (flag.startsWith('-')) { out.error = `unknown option: ${flag}`; return out; }
+        out.dir = flag;
     }
   }
 
-  if (!mode) { usage(); return 2; }
-  if (!dir) {
-    dir = mode === 'models'
-      ? (process.env.LOCAL_MODEL_PATH || 'fallback_models')
+  if (out.help) return out;
+  if (!out.mode) { out.error = 'pick a mode: --static or --models'; return out; }
+  if (!Number.isInteger(out.level) || !Number.isInteger(out.quality)) {
+    out.error = 'expected an integer for --level / --quality';
+    return out;
+  }
+  if (!out.dir) {
+    out.dir = out.mode === 'models'
+      ? (env.LOCAL_MODEL_PATH || 'fallback_models')
       : 'app/ui/dist';
   }
-  dir = resolve(dir);
+  return out;
+}
+
+async function main(argv) {
+  const opts = parseArgs(argv, process.env);
+  if (opts.help) { console.error(USAGE); return 0; }
+  if (opts.error) { console.error(opts.error); console.error(USAGE); return 2; }
+  const { mode, level, quality, check } = opts;
+  const dir = resolve(opts.dir);
 
   const concurrency = Math.max(1, Math.min(availableParallelism(), 8));
   const started = Date.now();
