@@ -99,7 +99,10 @@ const MAX_ENCODER_BATCH_CEIL = 4;
 
 // Approximate encoder WEIGHT footprint on the GPU, inferred from the quant in
 // the filename (int8 ~0.6 GB, fp16 ~1.2 GB, fp32 ~2.4 GB; see CLAUDE.md). Used
-// only to leave room for weights when sizing the activation budget below.
+// only to leave room for weights when sizing the activation budget below. The
+// fp16 case is unreachable from the app since that build was withdrawn on
+// 2026-08-23, but it is kept: without it an fp16 name would fall into the fp32
+// branch and reserve twice the room it needs.
 export function encoderWeightBytesFromName(name) {
   const n = (name || '').toLowerCase();
   if (n.includes('fp32') || (!n.includes('int8') && !n.includes('fp16'))) return 2.4e9; // fp32 / plain
