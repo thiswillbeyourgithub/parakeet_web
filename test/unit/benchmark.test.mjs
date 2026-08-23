@@ -26,15 +26,15 @@ import {
 } from '../../app/ui/src/lib/benchmark.js';
 
 describe('planBenchmark', () => {
-  test('a WASM-only device gets the three WASM rows and no GPU row', () => {
+  test('a WASM-only device gets the two WASM rows and no GPU row', () => {
     const plan = planBenchmark({ webgpuAvailable: false });
-    assert.deepEqual(plan.map(r => r.id), ['wasm:int8-lite', 'wasm:fp32', 'wasm:int8']);
+    assert.deepEqual(plan.map(r => r.id), ['wasm:fp32', 'wasm:int8']);
     assert.ok(plan.every(r => r.backend === 'wasm'));
   });
 
   test('the currently selected combination is sorted last so it stays cached', () => {
-    const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'int8-lite' });
-    assert.equal(plan[plan.length - 1].id, 'wasm:int8-lite');
+    const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'fp32' });
+    assert.equal(plan[plan.length - 1].id, 'wasm:fp32');
     assert.equal(plan[plan.length - 1].isCurrent, true);
     assert.equal(plan.filter(r => r.isCurrent).length, 1);
   });
@@ -74,7 +74,7 @@ describe('planBenchmark', () => {
   test('estimatedDownloadMB skips combinations already on disk', () => {
     const plan = planBenchmark({});
     const all = estimatedDownloadMB(plan);
-    assert.equal(all, QUANT_DOWNLOAD_MB.int8 + QUANT_DOWNLOAD_MB['int8-lite'] + QUANT_DOWNLOAD_MB.fp32);
+    assert.equal(all, QUANT_DOWNLOAD_MB.int8 + QUANT_DOWNLOAD_MB.fp32);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8']), all - QUANT_DOWNLOAD_MB.int8);
   });
 });
@@ -206,11 +206,13 @@ describe('runBenchmarkPlan', () => {
 
   test('a load failure becomes a failed row and does not stop the run', async () => {
     const { deps } = fakeDeps({
-      loadModel: async (c) => { if (c.quant === 'int8-lite') throw new Error('boom'); },
+      loadModel: async (c) => { if (c.quant === 'fp32') throw new Error('boom'); },
     });
-    const plan = planBenchmark({}).filter(c => !c.heavy);
+    // The whole plan, not just the light rows: with one int8 row and one fp32
+    // row, failing fp32 still leaves a successful row to prove the run went on.
+    const plan = planBenchmark({});
     const results = await runBenchmarkPlan(plan, deps);
-    const bad = results.find(r => r.quant === 'int8-lite');
+    const bad = results.find(r => r.quant === 'fp32');
     assert.equal(bad.status, 'failed');
     assert.equal(bad.stage, 'load');
     assert.equal(bad.error.message, 'boom');

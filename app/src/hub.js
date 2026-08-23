@@ -947,7 +947,6 @@ export async function listLocalRepoFiles(baseUrl) {
   };
   const candidates = [
     'encoder-model.fp16.onnx',
-    'encoder-model.int8.lite.onnx',
     'decoder_joint-model.fp16.onnx',
     'encoder-model.onnx.data',
     'decoder_joint-model.onnx.data',
@@ -992,15 +991,8 @@ export async function listLocalRepoFiles(baseUrl) {
 
 // Map a resolved quant to its ONNX filename suffix. fp16 files are produced by
 // parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py and must be hosted in
-// the model repo to be selected. 'int8-lite' is a lighter int8 encoder build
-// (encoder-model.int8.lite.onnx, ~757 MB vs the default int8's ~841 MB). BOTH
-// builds keep the worst linear2 MatMuls in fp32 (model repo's
-// scripts/quantize-int8-smoothquant.py --exclude-worst); lite keeps FEWER of
-// them (11, --exclude-worst 0.05) than the default (18), so it quantizes MORE,
-// which is why it is ~84 MB smaller and scores slightly worse (FLEURS macro WER
-// 14.82% vs 14.27%). Only the encoder has a lite build, the decoder always uses
-// the plain int8 file.
-export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
+// the model repo to be selected.
+export const QUANT_SUFFIX = { int8: '.int8.onnx', fp16: '.fp16.onnx', fp32: '.onnx' };
 
 // Optimized encoder variants. The model repo can ship an offline-optimized
 // copy of an encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
@@ -1017,7 +1009,7 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', 'int8-lite': '.int8.lite.onnx'
 // the <2 GB shard layout (both browser backends, see resolveModelQuant), so
 // optimizedEncoderName gates the fp32 preference on the OPTIMIZED shard set
 // (encoder-model.optimized.onnx.data.NNN) being listed, not on the flat graph.
-// 'int8-lite' has no optimized build. The int8 name carries its
+// The int8 name carries its
 // `.smoothquant.` provenance because the optimization was applied to the
 // SmoothQuant int8 build (the one published as the canonical
 // encoder-model.int8.onnx); fp16 and fp32 are plain casts/exports of the same
@@ -1065,7 +1057,7 @@ export const OPTIMIZED_ENCODER_NAMES = {
  * 13.8%). Promoting it to a preference is an owner call, since it would move
  * every fp32 GPU visitor onto a 41 MB larger download for an unresolved gain.
  *
- * @param {string} encoderQ Resolved encoder quant ('int8'|'int8-lite'|'fp16'|'fp32').
+ * @param {string} encoderQ Resolved encoder quant ('int8'|'fp16'|'fp32').
  * @param {string[]} repoFiles Filenames available in the active source.
  * @returns {string|null}
  */
@@ -1187,9 +1179,7 @@ function hasFp32ShardSet(repoFiles) {
  *     shards (encoder-model.onnx.data.NNN, from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), the
  *     encoder resolves to fp32 (the shards clear both caps and the 2.4 GB fits
  *     the ~4 GB wasm32 heap). The decoder stays int8 (tiny, runs fine on WASM).
- *     Without all three the int8 pin stands. A second opt-in is `encoderQuant`
- *     'int8-lite': the lighter encoder-model.int8.lite.onnx, honoured only when
- *     the repo actually ships it (else it pins, like a missing fp32 shard set).
+ *     Without all three the int8 pin stands.
  *   - WebGPU: the GPU EP has no int8 encoder kernel, so it needs fp16 or fp32.
  *     Prefer fp16 when the repo ships encoder-model.fp16.onnx (near-lossless vs
  *     fp32, ~half the download, and lighter to serve), else fall back to fp32.
@@ -1200,7 +1190,7 @@ function hasFp32ShardSet(repoFiles) {
  *
  * @param {Object} args
  * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').
- * @param {('int8'|'int8-lite'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
+ * @param {('int8'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
  * @param {('int8'|'fp16'|'fp32')} args.decoderQuant Requested decoder quant.
  * @param {string[]} args.repoFiles Filenames available in the repo.
  * @param {boolean} [args.allowWasmFp32=false] Opt-in: allow sharded fp32 on WASM
@@ -1223,20 +1213,6 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
         encoderFellBackToFp32: false,
       };
     }
-    // Opt-in lighter int8 encoder (encoder-model.int8.lite.onnx). Like the fp32
-    // shards it is honoured ONLY when the active source actually ships the file;
-    // a missing lite build is NOT silently downgraded to the default int8 (that
-    // would hide which build loaded), so it pins and the caller throws
-    // QuantUnavailableError. The decoder stays int8 (same tiny joiner).
-    if (encoderQuant === 'int8-lite') {
-      const hasLite = repoFiles.includes('encoder-model.int8.lite.onnx');
-      return {
-        encoderQ: hasLite ? 'int8-lite' : 'int8',
-        decoderQ: 'int8',
-        pinnedToInt8: !hasLite,
-        encoderFellBackToFp32: false,
-      };
-    }
     return {
       encoderQ: 'int8',
       decoderQ: 'int8',
@@ -1255,10 +1231,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   const hasFp16Dec = canF16 && repoFiles.includes('decoder_joint-model.fp16.onnx');
   let encoderQ = encoderQuant;
   // int8/fp16 requests resolve to fp16-if-shipped-else-fp32; explicit fp32 stays.
-  // 'int8-lite' is a WASM-only build with no GPU kernel/file, so on WebGPU it is
-  // treated like int8 (bumped to fp16/fp32) rather than passed through — defence
-  // in depth, since the per-backend picker never sends it here.
-  if (encoderQ === 'int8' || encoderQ === 'int8-lite' || encoderQ === 'fp16') {
+  if (encoderQ === 'int8' || encoderQ === 'fp16') {
     encoderQ = hasFp16Enc ? 'fp16' : 'fp32';
   }
   const decoderQ = (decoderQuant === 'fp16' && hasFp16Dec) ? 'fp16' : 'int8';
@@ -1328,7 +1301,7 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  * Accepts either a HuggingFace repo ID or a known model key from the registry.
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
  * @param {Object} [options]
- * @param {('int8'|'int8-lite'|'fp16'|'fp32')} [options.encoderQuant='int8'] Requested encoder quant (resolved per backend/availability by resolveModelQuant). 'int8-lite' selects the lighter encoder-model.int8.lite.onnx on WASM (opt-in, throws QuantUnavailableError if not shipped).
+ * @param {('int8'|'fp16'|'fp32')} [options.encoderQuant='int8'] Requested encoder quant (resolved per backend/availability by resolveModelQuant).
  * @param {('int8'|'fp16'|'fp32')} [options.decoderQuant='int8'] Requested decoder quant
  * @param {('nemo80'|'nemo128')} [options.preprocessor] Preprocessor variant (auto-detected from model config if not specified)
  * @param {('js'|'onnx')} [options.preprocessorBackend='js'] Preprocessor backend selection.
@@ -1425,11 +1398,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     throw new QuantUnavailableError({
       backend,
       requested: { encoder: encoderQuant, decoder: decoderQuant },
-      message: encoderQuant === 'int8-lite'
-        ? `Requested the lite int8 encoder (encoder-model.int8.lite.onnx) on the `
-          + `${backend} backend, but neither HuggingFace nor the local /models mirror ships it. `
-          + `Host the lite encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst) or pick the default int8 encoder.`
-        : `Requested encoder=${encoderQuant}/decoder=${decoderQuant} cannot run on the `
+      message: `Requested encoder=${encoderQuant}/decoder=${decoderQuant} cannot run on the `
           + `${backend} backend from any available source. fp16 cannot run on WASM at all; `
           + `fp32 needs the <2 GB shards (encoder-model.onnx.data.NNN from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), `
           + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`,

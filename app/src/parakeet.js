@@ -104,7 +104,7 @@ export function encoderWeightBytesFromName(name) {
   const n = (name || '').toLowerCase();
   if (n.includes('fp32') || (!n.includes('int8') && !n.includes('fp16'))) return 2.4e9; // fp32 / plain
   if (n.includes('fp16')) return 1.2e9;
-  return 0.6e9; // int8 (and int8.smoothquant, int8.lite)
+  return 0.6e9; // int8 (and int8.smoothquant)
 }
 
 /**

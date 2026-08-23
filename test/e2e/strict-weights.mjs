@@ -1,5 +1,5 @@
 // Shared gate for the tier-3 specs that need OPTIONAL model weights which
-// upstream does not ship: the sharded fp32 encoder, the int8-lite encoder, and
+// upstream does not ship: the sharded fp32 encoder and
 // the speaker-diarization models. Historically each such spec self-SKIPPED when
 // its weights were not served, so a weightless run stayed green. The problem:
 // on a box that is SUPPOSED to have the full model set (a maintainer's local

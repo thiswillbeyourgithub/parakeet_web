@@ -20,7 +20,7 @@
 #     matrix -- sharded fp32-on-WASM, fp32 auto-upgrade + no-downgrade, int8
 #     lite + its no-downgrade, diarization (+ failure UX + speaker match),
 #     chunking, and the FLEURS regression. The specs that need OPTIONAL weights
-#     (fp32 shards, int8-lite, diarization models) FAIL here when those weights
+#     (fp32 shards, diarization models) FAIL here when those weights
 #     are not served: this hook sets PARAKEET_E2E_STRICT_WEIGHTS=1 so a
 #     maintainer checkout that is meant to have everything cannot pass by
 #     silently skipping (CI, which only fetches the int8 + diarization set,
