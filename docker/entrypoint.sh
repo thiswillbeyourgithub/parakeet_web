@@ -295,6 +295,28 @@ else
     echo "[entrypoint]     --local-dir /some/host/path"
     exit 1
   fi
+
+  # Stale-sidecar guard. Caddy serves `<file>.zst` in place of `<file>` to any
+  # browser that accepts zstd (file_server ... precompressed, see Caddyfile),
+  # so a sidecar left over from an OLDER copy of a model would be handed to
+  # some visitors while the plain file is correct: silent, and only affecting
+  # part of the audience. Compare mtimes and say so loudly. This only reports:
+  # the container runs unprivileged and the model folder is frequently mounted
+  # read-only, so fixing it is the operator's job, on the host, with
+  # scripts/precompress-models.sh (which regenerates or removes them).
+  _stale=""
+  for _z in $(find -L "${LOCAL_MODEL_PATH}" -type f -name '*.zst' 2>/dev/null); do
+    _src="${_z%.zst}"
+    if [ ! -f "${_src}" ] || [ "${_src}" -nt "${_z}" ]; then
+      _stale="${_stale} $(basename "${_z}")"
+    fi
+  done
+  if [ -n "${_stale}" ]; then
+    echo "[entrypoint] WARNING: stale precompressed sidecar(s):${_stale}"
+    echo "[entrypoint] These are served INSTEAD of the file they shadow, so visitors"
+    echo "[entrypoint] whose browser accepts zstd would get outdated weights."
+    echo "[entrypoint] Fix on the host: ./scripts/precompress-models.sh <model-dir>"
+  fi
 fi
 
 # ---------- Dictation regex rules ------------------------------------------
