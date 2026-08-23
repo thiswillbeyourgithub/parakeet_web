@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
+import { isPipelineTrouble } from './pipeline-trouble.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AUDIO = resolve(here, '../fixtures/jfk.mp3');
@@ -55,10 +56,8 @@ test('composed pipeline (pool encode + worker decode) engages and the stitched t
     }
     // Any of these means a stage broke and the in-thread fallback (or a gate)
     // masked it; the transcript below would still look healthy, so fail here.
-    if (/\[Encode\] (pool worker (crashed|init failed)|pooled run failed|pool setup failed|failed to start|pool unavailable|pool disabled)/.test(mt)
-        || /\[Decode\] (composed run failed|pipelined run failed|pipeline setup failed|failed to start decode worker|worker (error|unavailable))/.test(mt)) {
-      trouble.push(mt);
-    }
+    // Patterns are shared with the pool-only spec so the two cannot drift.
+    if (isPipelineTrouble(mt, { decode: true })) trouble.push(mt);
   });
 
   // Composed mode on WASM is operator opt-in (default off: it measured as a
