@@ -10,6 +10,21 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Les poids servis en local peuvent désormais l'être compressés
+
+Une instance qui héberge elle-même les poids peut les compresser une fois pour toutes et laisser Caddy les servir avec `Content-Encoding: zstd`. Sur l'encodeur int8 livré, cela fait passer le fichier de 881 878 510 octets à 642 839 559 (27 % de moins à télécharger, les deux mesurés), et le navigateur le décompresse nativement en 3 secondes environ : toute connexion plus lente que ~200 Mo/s y gagne.
+
+Ce n'était pas déjà le cas par hasard : les poids sont servis en `application/octet-stream`, un type que la directive `encode` de Caddy ignore délibérément. Compresser à la volée aurait coûté 6 à 11 secondes de CPU serveur à chaque téléchargement de chaque visiteur ; les octets sont donc préparés une seule fois, par `scripts/precompress-models.sh`.
+
+À retenir pour ceux qui hébergent eux-mêmes :
+
+- Lancez `./scripts/precompress-models.sh <dossier-modele>` après avoir rempli (ou remplacé) le dossier de modèles. Le script nécessite `zstd` sur l'hôte, est idempotent, et ne fait jamais échouer un déploiement.
+- Sans fichier `.zst`, ou pour un navigateur qui n'accepte pas zstd, Caddy sert le fichier brut exactement comme avant. Rien d'autre n'est à changer.
+- Un fichier `.zst` plus ancien que sa source serait servi à la place du vrai fichier : le script supprime donc ceux qu'il ne peut pas régénérer, et le conteneur avertit au démarrage s'il en trouve un périmé.
+- Les téléchargements qui reprennent en cours de route ne sont pas affectés : les navigateurs demandent les plages d'octets sans compression.
+
+Cela ne concerne que les poids servis en local. Ceux téléchargés depuis HuggingFace sont servis par HuggingFace, sans compression, et rien ici n'y change quoi que ce soit.
+
 ### Une seule version par précision : les graphes optimisés sont désormais les seuls graphes
 
 Le dépôt du modèle fournissait un fichier ONNX d'origine à côté d'une variante optimisée du même fichier, sous un nom plus long, et l'application interrogeait ces noms plus longs à chaque chargement. C'est terminé : le travail sur les graphes se trouve désormais à l'intérieur des fichiers canoniques `encoder-model*.onnx` et `decoder_joint-model*.onnx`, et il n'y a plus rien à départager.
