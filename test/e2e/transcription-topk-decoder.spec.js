@@ -1,33 +1,31 @@
-// Tier-3 E2E for the *TopK* decoder preference and its decode-side fast path.
-// The model repo can ship decoder_joint-model.int8.lse.topk.onnx
-// (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py
-// topk): the lse decoder with topk_logits/topk_ids/duration_logits appended, so
-// a greedy decode step fetches a few dozen floats per joint call instead of
-// reading the whole ~8.2k-float `outputs` row back out of ORT. hub.js
-// (topkDecoderName) must PREFER it over the lse and stock names, and
-// parakeet.js must actually ENGAGE the reduced fetch list on the default
-// (greedy, temperature 0, boost-less) run.
+// Tier-3 E2E for the decoder's in-graph top-K outputs and the decode-side fast
+// path they enable. The model repo's canonical int8 decoder
+// (decoder_joint-model.int8.onnx) carries topk_logits/topk_ids/duration_logits
+// appended by parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
+// optimize-decoder-graph.py, so a greedy decode step fetches a few dozen floats
+// per joint call instead of reading the whole ~8.2k-float `outputs` row back out
+// of ORT.
 //
-// Two markers, both required, because either half can regress silently: the
-// hub one proves the right FILE loaded, the parakeet one proves the decode loop
-// took the fast path (a decoder can ship the outputs and still be consumed the
-// old way, which would be invisible in the transcript).
+// Nothing here checks a FILENAME: those outputs ship inside the canonical name
+// now, so the only honest signal is what the loaded session declares. The
+// capability marker parakeet.js logs at construction is therefore the gate, and
+// the engaged marker is the assertion: a decoder can declare the outputs and
+// still be consumed the old way, which would be invisible in the transcript.
 //
 // The second test pins the negative side of the gate: phrase boosting adds
 // rewards to arbitrary vocab ids before the argmax, so a boosted run MUST keep
 // the full logit row. The engaged marker must not appear there, while the
 // transcript is still produced.
 //
-// The pure decision is unit-tested in get-parakeet-model-files.test.mjs and the
-// consumption semantics (fetch list, equivalence, tie behaviour) in
-// topk-decoder-outputs.test.mjs; THIS spec is the in-browser proof that the
-// preferred file loads, initialises and decodes correctly on the WASM backend.
+// The consumption semantics (fetch list, equivalence, tie behaviour) are
+// unit-tested in topk-decoder-outputs.test.mjs; THIS spec is the in-browser
+// proof that the shipped decoder loads, initialises and decodes correctly on the
+// WASM backend.
 //
-// The topk decoder is produced locally in the model working folder (and shipped
-// by the Olicorne HF repo); the e2e model dir only carries it when a
-// fallback_models symlink (or `npm run e2e:models`) provides the file, so when
-// the static server does not serve it the spec SKIPS itself rather than fail,
-// exactly like the LSE and optimized-encoder specs.
+// A stock upstream decoder (istupakov) has no such outputs, so against a model
+// dir serving one the spec SKIPS rather than fail. Under
+// PARAKEET_E2E_STRICT_WEIGHTS that skip becomes a failure, which is right on a
+// maintainer checkout: there the model repo is the one that ships them.
 //
 // Built with Claude Code.
 
@@ -42,14 +40,14 @@ import { seedSettings } from './seed.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
 
-const TOPK_PROBE = '/models/decoder_joint-model.int8.lse.topk.onnx';
-const HUB_MARKER = '[Hub] Using the TopK decoder decoder_joint-model.int8.lse.topk.onnx';
+const CAPABLE_MARKER = '[Parakeet.js] Decoder in-graph outputs: log-partition=yes top-K=yes';
 const ENGAGED_MARKER = '[Parakeet.js] TopK decoder outputs engaged';
 
-const skipUnlessServed = async (test_, request, baseURL) => {
-  const head = await request.head(TOPK_PROBE).catch(() => null);
-  requireWeightsOrSkip(test_, !head || !head.ok(),
-    `no TopK int8 decoder at ${baseURL}${TOPK_PROBE} (symlink it into fallback_models, or run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py topk)`);
+// Decide from what the LOADED decoder declares, not from a filename: skip only
+// when the served decoder genuinely has no top-K outputs.
+const skipUnlessCapable = (test_, logs) => {
+  requireWeightsOrSkip(test_, !logs.some((l) => l.includes(CAPABLE_MARKER)),
+    `the served decoder declares no in-graph top-K outputs (a stock upstream build); logs:\n${logs.join('\n')}`);
 };
 
 // The local-fallback resolver HEAD-probes candidates that do not exist (.data
@@ -57,15 +55,13 @@ const skipUnlessServed = async (test_, request, baseURL) => {
 // "Failed to load resource" console errors; anything else still fails.
 const realErrors = (errors) => errors.filter((e) => !/Failed to load resource.*404/.test(e));
 
-// Force the LOCAL model source at CONFIG level, same as the LSE spec: the
-// preference is listing-gated and only the local /models server (serve.mjs) is
-// guaranteed to serve the topk file, so without this the app would happily pull
-// the stock decoder from HF and the marker assertion would fail.
+// Force the LOCAL model source at CONFIG level: only the local /models server
+// (serve.mjs) is guaranteed to serve the promoted decoder, so without this the
+// app could pull an older published build from HF.
 const forceLocalSource = (page) =>
   page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
-test('transcribes JFK English (MP3) with the TopK int8 decoder and the fast decode path engaged', async ({ page, request, baseURL }) => {
-  await skipUnlessServed(test, request, baseURL);
+test('transcribes JFK English (MP3) with the TopK int8 decoder and the fast decode path engaged', async ({ page }) => {
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();
@@ -86,11 +82,7 @@ test('transcribes JFK English (MP3) with the TopK int8 decoder and the fast deco
 
   await expect(page.locator('body')).toContainText('✔', { timeout: 7 * 60 * 1000 });
 
-  // Nothing is seeded: the fresh-install defaults (greedy width 1, temperature
-  // 0, no phrase boost) are exactly the configuration the fast path targets, so
-  // this also pins that it engages with ZERO configuration.
-  expect(logs.some((l) => l.includes(HUB_MARKER)),
-    `expected the TopK int8 decoder to be preferred; saw logs:\n${logs.join('\n')}`).toBe(true);
+  skipUnlessCapable(test, logs);
 
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 
@@ -114,8 +106,7 @@ test('transcribes JFK English (MP3) with the TopK int8 decoder and the fast deco
   expect(realErrors(errors), `page console errors: ${realErrors(errors).join('\n')}`).toHaveLength(0);
 });
 
-test('a phrase-boosted run keeps the full logit row (fast path must NOT engage)', async ({ page, request, baseURL }) => {
-  await skipUnlessServed(test, request, baseURL);
+test('a phrase-boosted run keeps the full logit row (fast path must NOT engage)', async ({ page }) => {
 
   // French clinical clip + the same Title-case boost phrase the boost specs use
   // (the model opens the drug name with a capital, so the trie is genuinely
@@ -154,9 +145,8 @@ test('a phrase-boosted run keeps the full logit row (fast path must NOT engage)'
   await page.locator('[data-umami-event="load_model_button"]').click();
   await expect(page.locator('body')).toContainText('✔', { timeout: 7 * 60 * 1000 });
 
-  // The same TopK decoder file is loaded: only the CONSUMPTION differs.
-  expect(logs.some((l) => l.includes(HUB_MARKER)),
-    `expected the TopK int8 decoder to be preferred; saw logs:\n${logs.join('\n')}`).toBe(true);
+  // The same capable decoder is loaded: only the CONSUMPTION differs.
+  skipUnlessCapable(test, logs);
 
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 

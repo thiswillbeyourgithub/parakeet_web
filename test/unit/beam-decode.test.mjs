@@ -842,8 +842,8 @@ describe('batched joiner expansion (#batch)', () => {
   });
 });
 
-describe('in-graph LSE partitions (#R1, .lse. decoder artifact)', () => {
-  // The `.lse.` decoder_joint (model repo, scripts/optimize-decoder-graph.py)
+describe('in-graph LSE partitions (#R1)', () => {
+  // The model repo's decoder_joint (scripts/optimize-decoder-graph.py)
   // appends `lse_token`/`lse_duration` outputs: the log-partitions of the
   // token and duration logit slices, computed in-graph. The engine consumes
   // them via _partition, skipping the JS _logSumExp sweep over the ~8k token

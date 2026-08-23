@@ -15,12 +15,11 @@
 // than fail: run `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py` (writes ./fallback_models/sharded)
 // to get coverage locally. serve.mjs serves those shards from MODEL_DIR/sharded/.
 //
-// It also pins WHICH fp32 build loads. The optimized fp32 encoder (the
-// optimize-encoder-graph.py fold, sharded by shard-fp32.py --encoder
-// encoder-model.optimized.onnx) measured ~23% SLOWER on a real GPU, so hub.js
-// keeps the stock build whenever both shard sets are available. Asserting the
-// optimized marker's ABSENCE here stops the spec from silently drifting onto
-// the other build when the local mirror ships both, which it does.
+// There is nothing to pick between here any more: the model repo ships ONE fp32
+// build, graph-optimized, under the canonical encoder-model.onnx name and its
+// canonical shard set. The fold is bit-exact (verified at tolerance 0.0), so it
+// leaves no runtime signal, and the only thing worth asserting is the one below:
+// the sharded fp32 encoder really mounted and the opt-in did not fall back.
 //
 // Built with Claude Code.
 
@@ -40,18 +39,11 @@ const fixture = (name) => resolve(here, '../fixtures', name);
 // present the opt-in would fall back to the int8 pin, so there is nothing to
 // test: skip.
 const SHARD_PROBE = '/models/encoder-model.onnx.data.000';
-// When the OPTIMIZED fp32 shard set (optimize-encoder-graph.py fold +
-// shard-fp32.py --encoder encoder-model.optimized.onnx) is also served, hub.js
-// must prefer it; the probe goes to the explicit sharded/ path because
-// serve.mjs's sharded-first rerouting only covers the stock names.
-const OPTIMIZED_SHARD_PROBE = '/models/sharded/encoder-model.optimized.onnx.data.000';
 
 test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async ({ page, request, baseURL }) => {
   const head = await request.head(SHARD_PROBE).catch(() => null);
   requireWeightsOrSkip(test, !head || !head.ok(),
     `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py for local fp32 coverage)`);
-  const optHead = await request.head(OPTIMIZED_SHARD_PROBE).catch(() => null);
-  const optimizedServed = Boolean(optHead && optHead.ok());
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();
@@ -113,18 +105,6 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
     `expected the sharded fp32 encoder to be mounted; saw logs:\n${logs.join('\n')}`).toBe(true);
   expect(logs.some((l) => l.includes('pinned to int8')),
     'fp32 opt-in unexpectedly fell back to the int8 pin').toBe(false);
-  // Pin WHICH fp32 build loaded. The stock shard set is served (asserted above,
-  // it is what this spec needs to run at all), so the stock build must win even
-  // when the optimized shard set sits right next to it: the optimized fp32
-  // encoder measured ~23% SLOWER on a real GPU, so hub.js treats it as a
-  // stock-absent fallback rather than a preference (see optimizedEncoderName).
-  // Without this the spec would silently start covering whichever build the
-  // local mirror happens to ship.
-  const optimizedMarker = logs.some((l) => l.includes('[Hub] Using the optimized encoder encoder-model.optimized.onnx'));
-  expect(optimizedMarker,
-    optimizedServed
-      ? `both fp32 shard sets are served, so the STOCK build must load, but the optimized marker appeared; saw logs:\n${logs.join('\n')}`
-      : 'optimized encoder marker appeared although no optimized shard set is served').toBe(false);
 
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
 
