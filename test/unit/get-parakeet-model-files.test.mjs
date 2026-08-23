@@ -66,13 +66,8 @@ afterEach(() => {
 });
 
 // Repo fixtures mirroring the real repos resolveModelQuant must cope with.
-const REPO_FP16 = [
-  'encoder-model.fp16.onnx', 'decoder_joint-model.fp16.onnx',
-  'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
-  'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
-];
-// Upstream-istupakov-style: fp32 single sidecar + int8, no fp16.
-const REPO_NO_FP16 = [
+// Upstream-istupakov-style: the flat fp32 single sidecar + int8, no shards.
+const REPO_FLAT = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
 ];
@@ -119,7 +114,7 @@ function mockHfPaths(repoFiles) {
 
 describe('getParakeetModel file selection: WASM', () => {
   test('int8 request -> int8 encoder/decoder, no external sidecar, no preprocessor (JS default)', async () => {
-    const downloaded = mockHf(REPO_NO_FP16);
+    const downloaded = mockHf(REPO_FLAT);
     const r = await getParakeetModel('test/wasm-int8', {
       backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
     });
@@ -268,37 +263,24 @@ describe('getParakeetModel: sharded fp32 straight from HuggingFace (shards under
 });
 
 describe('getParakeetModel file selection: WebGPU', () => {
-  test('fp16 request + fp16 in repo -> fp16 encoder/decoder, no sidecar', async () => {
-    const downloaded = mockHf(REPO_FP16);
-    const r = await getParakeetModel('test/webgpu-fp16', {
-      backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16',
-    });
-    assert.deepEqual(r.filenames, { encoder: 'encoder-model.fp16.onnx', decoder: 'decoder_joint-model.fp16.onnx' });
-    assert.deepEqual(r.quantisation, { encoder: 'fp16', decoder: 'fp16' });
-    // The fp16 encoder is a single self-contained file: encoder-model.fp16.onnx.data
-    // is not in the repo, so no sidecar should be selected.
-    assert.equal(r.urls.encoderDataUrl ?? null, null);
-    // WebGPU hands the big weights to ORT as bytes, not a blob URL.
-    assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder must load as bytes');
-    assert.ok(downloaded.includes('encoder-model.fp16.onnx'));
-  });
-
-  test('fp16 request, no fp16 AND no shards -> throws QuantUnavailableError (single-file fp32 is unloadable on WebGPU)', async () => {
-    mockHf(REPO_NO_FP16);
-    // fp16 unavailable -> resolves fp32, but the repo ships only the flat 2.3 GB
-    // sidecar and no shards. Single-file fp32 cannot load on WebGPU (exceeds the
-    // browser's ~2 GB ArrayBuffer/Blob limits), so rather than attempt a load that
-    // dies deep in ORT, getParakeetModel refuses cleanly.
+  test('int8 request, no shards -> throws QuantUnavailableError (single-file fp32 is unloadable on WebGPU)', async () => {
+    mockHf(REPO_FLAT);
+    // int8 has no GPU encoder kernel so it resolves to fp32, but the repo ships
+    // only the flat 2.3 GB sidecar and no shards. Single-file fp32 cannot load on
+    // WebGPU (exceeds the browser's ~2 GB ArrayBuffer/Blob limits), so rather than
+    // attempt a load that dies deep in ORT, getParakeetModel refuses cleanly.
+    // This is the common case: int8 is the app's default, so a visitor the perf
+    // probe moves onto WebGPU never asked for fp32 at all.
     await assert.rejects(
-      getParakeetModel('test/webgpu-fp32-fallback', {
-        backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'fp16',
+      getParakeetModel('test/webgpu-int8-no-shards', {
+        backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8',
       }),
       (e) => e instanceof QuantUnavailableError && /shards|2 GB|ArrayBuffer/i.test(e.message),
     );
   });
 
   test('explicit fp32 request, no shards -> throws QuantUnavailableError', async () => {
-    mockHf(REPO_NO_FP16);
+    mockHf(REPO_FLAT);
     await assert.rejects(
       getParakeetModel('test/webgpu-fp32-explicit', {
         backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
@@ -314,7 +296,7 @@ describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
   // blobs (+ their .data sidecars), never vocab/preprocessor, and carry the
   // repoId/revision/subfolder needed to rebuild the IndexedDB keys.
   test('int8 WASM: encoder + decoder only (no sidecar, no vocab)', async () => {
-    mockHf(REPO_NO_FP16);
+    mockHf(REPO_FLAT);
     const r = await getParakeetModel('test/wasm-int8', {
       backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
     });
@@ -353,7 +335,7 @@ describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
 
 describe('getParakeetModel file selection: preprocessor backend', () => {
   test('preprocessorBackend "onnx" selects the preprocessor ONNX named for the model', async () => {
-    const downloaded = mockHf(REPO_NO_FP16);
+    const downloaded = mockHf(REPO_FLAT);
     const r = await getParakeetModel('test/onnx-preproc', {
       backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
       preprocessorBackend: 'onnx', preprocessor: 'nemo128',
@@ -369,8 +351,7 @@ describe('getParakeetModel file selection: preprocessor backend', () => {
 // faster session build) must be preferred whenever the active source lists it,
 // without changing the reported quantisation. Its absence resolves exactly as
 // before (the earlier describes pin that side with optimized-less fixtures).
-const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_NO_FP16];
-const REPO_OPTIMIZED_FP16 = ['encoder-model.fp16.optimized.onnx', ...REPO_FP16];
+const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_FLAT];
 // fp32's optimized build is only usable through its OWN shard set (browser paths
 // can never load a flat multi-GB fp32 graph, see the sharded describes above).
 // A source shipping BOTH layouts, which is what the model repo does:
@@ -401,17 +382,6 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
     assert.ok(!downloaded.includes('encoder-model.int8.onnx'), 'must not also fetch the stock encoder');
     assert.ok(r.cacheInfo.filenames.includes('encoder-model.int8.smoothquant.optimized.onnx'),
       'the optimized file gets its own cache key so the sweep can evict the stock blob');
-  });
-
-  test('WebGPU fp16 + optimized shipped -> optimized fp16 encoder', async () => {
-    const downloaded = mockHf(REPO_OPTIMIZED_FP16);
-    const r = await getParakeetModel('test/webgpu-fp16-optimized', {
-      backend: 'webgpu', encoderQuant: 'fp16', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.encoder, 'encoder-model.fp16.optimized.onnx');
-    assert.equal(r.quantisation.encoder, 'fp16');
-    assert.ok(downloaded.includes('encoder-model.fp16.optimized.onnx'));
-    assert.ok(!downloaded.includes('encoder-model.fp16.onnx'));
   });
 
   test('WASM fp32 + ONLY the optimized shard set -> optimized graph + shards from sharded/', async () => {
@@ -463,7 +433,7 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
 
   test('optimizedEncoderName: listing-gated, fp32 only as a stock-absent fallback', () => {
     assert.equal(optimizedEncoderName('int8', REPO_OPTIMIZED_INT8), 'encoder-model.int8.smoothquant.optimized.onnx');
-    assert.equal(optimizedEncoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
+    assert.equal(optimizedEncoderName('int8', REPO_FLAT), null, 'absent file -> canonical name');
     // fp32 is reachable only through a shard set: a flat optimized graph with no
     // .data.NNN shards is unloadable in every browser path (2 GB
     // ArrayBuffer/blob/IDB walls), so it must never be chosen.
@@ -471,7 +441,7 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
       'optimized shards alone -> load them, nothing else can serve fp32');
     assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32), null,
       'both shard sets -> stock wins (optimized measured ~23% slower on GPU)');
-    assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_NO_FP16]), null,
+    assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_FLAT]), null,
       'flat optimized graph without its shard set -> stock');
     assert.equal(optimizedEncoderName('fp32', REPO_HF_SHARDED), null,
       'stock shards alone -> stock');
@@ -486,7 +456,7 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
 // active source lists it, never change the reported quant, resolve exactly as
 // before when absent (the earlier describes pin that side with lse-less
 // fixtures).
-const REPO_LSE_INT8 = ['decoder_joint-model.int8.lse.onnx', ...REPO_NO_FP16];
+const REPO_LSE_INT8 = ['decoder_joint-model.int8.lse.onnx', ...REPO_FLAT];
 
 describe('getParakeetModel file selection: LSE decoder preference', () => {
   test('WASM int8 + lse shipped -> lse decoder downloaded, stock decoder not fetched, quant still int8', async () => {
@@ -513,13 +483,13 @@ describe('getParakeetModel file selection: LSE decoder preference', () => {
     assert.ok(downloaded.includes('decoder_joint-model.int8.lse.onnx'));
   });
 
-  test('lseDecoderName: gated on the listing, fp16 always canonical', () => {
+  test('lseDecoderName: gated on the listing, unknown quants stay canonical', () => {
     assert.equal(lseDecoderName('int8', REPO_LSE_INT8), 'decoder_joint-model.int8.lse.onnx');
-    assert.equal(lseDecoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
-    assert.equal(lseDecoderName('fp32', ['decoder_joint-model.lse.onnx', ...REPO_NO_FP16]), 'decoder_joint-model.lse.onnx');
-    // No fp16 lse artifact is shipped (an fp16 graph would accumulate the
-    // partition in fp16), so even a plausibly-named file must never be preferred.
-    assert.equal(lseDecoderName('fp16', ['decoder_joint-model.fp16.lse.onnx', ...REPO_FP16]), null);
+    assert.equal(lseDecoderName('int8', REPO_FLAT), null, 'absent file -> canonical name');
+    assert.equal(lseDecoderName('fp32', ['decoder_joint-model.lse.onnx', ...REPO_FLAT]), 'decoder_joint-model.lse.onnx');
+    // int8 and fp32 are the only quants with an lse artifact, so a plausibly-named
+    // file for any other quant must never be preferred.
+    assert.equal(lseDecoderName('fp16', ['decoder_joint-model.fp16.lse.onnx', ...REPO_FLAT]), null);
     assert.equal(lseDecoderName('int8', null), null, 'defensive: no listing at all');
   });
 });
@@ -554,13 +524,13 @@ describe('getParakeetModel file selection: TopK decoder preference', () => {
     assert.ok(!downloaded.includes('decoder_joint-model.int8.lse.topk.onnx'));
   });
 
-  test('topkDecoderName: gated on the listing, fp16 always canonical', () => {
+  test('topkDecoderName: gated on the listing, unknown quants stay canonical', () => {
     assert.equal(topkDecoderName('int8', REPO_TOPK_INT8), 'decoder_joint-model.int8.lse.topk.onnx');
     assert.equal(topkDecoderName('int8', REPO_LSE_INT8), null, 'lse alone -> no topk');
-    assert.equal(topkDecoderName('int8', REPO_NO_FP16), null, 'absent file -> canonical name');
-    assert.equal(topkDecoderName('fp32', ['decoder_joint-model.lse.topk.onnx', ...REPO_NO_FP16]), 'decoder_joint-model.lse.topk.onnx');
-    // No fp16 topk artifact is shipped, same reason as the lse one.
-    assert.equal(topkDecoderName('fp16', ['decoder_joint-model.fp16.lse.topk.onnx', ...REPO_FP16]), null);
+    assert.equal(topkDecoderName('int8', REPO_FLAT), null, 'absent file -> canonical name');
+    assert.equal(topkDecoderName('fp32', ['decoder_joint-model.lse.topk.onnx', ...REPO_FLAT]), 'decoder_joint-model.lse.topk.onnx');
+    // Same as the lse one: only int8 and fp32 have a topk artifact.
+    assert.equal(topkDecoderName('fp16', ['decoder_joint-model.fp16.lse.topk.onnx', ...REPO_FLAT]), null);
     assert.equal(topkDecoderName('int8', null), null, 'defensive: no listing at all');
   });
 });

@@ -38,7 +38,6 @@ export const LONG_PROFILE_TARGET_SEC = 90;
 // weights; the decoder (~18 MB) and preprocessor (~1 MB) are folded in.
 export const QUANT_DOWNLOAD_MB = {
   int8: 860,
-  fp16: 1200,
   fp32: 2350,
 };
 
@@ -64,21 +63,16 @@ function comboId(backend, quant) {
 export function planBenchmark({
   webgpuAvailable = false,
   webgpuDisabled = false,
-  shaderF16 = null,
   currentBackend = 'wasm',
   currentWasmQuant = 'int8',
-  currentWebgpuQuant = 'fp16',
+  currentWebgpuQuant = 'fp32',
 } = {}) {
   const combos = [
     { backend: 'wasm', quant: 'int8' },
     { backend: 'wasm', quant: 'fp32' },
   ];
   if (webgpuAvailable && !webgpuDisabled) {
-    // fp16 needs the adapter's shader-f16 feature; without it ORT builds a
-    // session whose f16 shaders never compile (empty transcript), so drop the
-    // row entirely rather than report a bogus failure. null means "not probed
-    // yet", which the app treats as supported.
-    if (shaderF16 !== false) combos.push({ backend: 'webgpu-hybrid', quant: 'fp16' });
+    // fp32 is the only precision the GPU EP has an encoder kernel for.
     combos.push({ backend: 'webgpu-hybrid', quant: 'fp32' });
   }
 
@@ -237,7 +231,7 @@ function summarizeRuns({ combo, profile, loadMs, runs, audioSec, expectedText })
 
 // Run every selected combination: load the model, then transcribe each
 // profile `repeats` times. Never throws: a combination that cannot load or
-// transcribe becomes a result row with a status, because "fp16 fails on this
+// transcribe becomes a result row with a status, because "fp32 fails on this
 // GPU" is exactly the kind of finding the report exists to carry.
 //
 // deps:

@@ -9,10 +9,10 @@
 #   2. Always: tier 1 (unit) + tier 2 (http)               -- fast, no model.
 #   3. If asked: rebuild app/ui/dist, then tier 3 (Playwright WASM E2E).
 #   4. If PREPUSH_WEBGPU=1 is exported: scripts/webgpu-check.mjs on a REAL GPU.
-#      This is NEVER prompted: WebGPU is disabled app-wide (see App.jsx
-#      WEBGPU_DISABLED / the "Why is WebGPU disabled?" README section), so the
-#      GPU path is opt-in diagnostics only. The check forces `?webgpu=1` to
-#      re-enable the backend for the run.
+#      This is NEVER prompted: it needs a real, FREE GPU on the pushing machine,
+#      which no CI runner and most developer boxes do not have, so the GPU path
+#      is opt-in only. (WebGPU itself has been available app-wide since
+#      2026-08-21; the check still passes `?webgpu=1`, now a harmless no-op.)
 #
 # What each tier actually covers:
 #   - tier 1/2: pure logic + the real signaling server.
@@ -29,15 +29,14 @@
 #     `uv run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py`; or
 #     export PARAKEET_E2E_STRICT_WEIGHTS=0 before pushing to fall back to skips.
 #   - WebGPU: the ONLY way to exercise the real GPU path (encoder batching +
-#     the encode/decode worker pipeline). WebGPU is disabled app-wide, so this
-#     is NOT prompted and NOT a release gate; opt in with PREPUSH_WEBGPU=1. It
+#     the encode/decode worker pipeline). It is NOT prompted and NOT a release
+#     gate; opt in with PREPUSH_WEBGPU=1. It
 #     cannot run in CI or in headless-CI (no GPU); it needs a real, FREE GPU
-#     here. The default args force fp32
-#     (`--fp32`), which is the WebGPU path that needs no `shader-f16` and so is
-#     the one that actually validates on this box; override with the
-#     PREPUSH_WEBGPU_ARGS env var (e.g. PREPUSH_WEBGPU_ARGS='--channel=chromium'
-#     to try fp16 on a GPU that exposes shader-f16, or add --full for the
-#     ~17 min memory-leak run). fp32 needs the local fp32 shards served.
+#     here. It runs fp32, the only WebGPU encoder precision left since the fp16
+#     build was withdrawn on 2026-08-23; fp32 needs no `shader-f16` and so is
+#     the path that actually validates on this box. Override the args with the
+#     PREPUSH_WEBGPU_ARGS env var (e.g. add --full for the ~17 min memory-leak
+#     run). fp32 needs the local fp32 shards served.
 #     NOTE: a BUSY GPU (e.g. VRAM held by another process) makes this
 #     false-fail via OOM-fallback, so only opt in when the GPU is free.
 #
@@ -58,9 +57,9 @@ cd "$repo_root"
 # you kick off an unattended run. With no terminal (a non-interactive push, e.g.
 # CI) tier 3 is skipped. The WebGPU check is env-gated, never prompted.
 run_e2e=n
-# The WebGPU check is opt-in via env var only (never prompted): WebGPU is
-# disabled app-wide, so the GPU path is diagnostics, not a release gate. Export
-# PREPUSH_WEBGPU=1 to run it (needs a real, FREE GPU; a busy GPU false-fails).
+# The WebGPU check is opt-in via env var only (never prompted): it needs a real,
+# FREE GPU on the pushing machine, so the GPU path is diagnostics, not a release
+# gate. Export PREPUSH_WEBGPU=1 to run it (a busy GPU false-fails).
 case "${PREPUSH_WEBGPU:-}" in 1|y|Y) run_webgpu=y ;; *) run_webgpu=n ;; esac
 
 ask_yn() { # prompt -> echoes y or n, aborts the push on anything else

@@ -1,8 +1,9 @@
 // Tier-1 unit test for listLocalRepoFiles (app/src/hub.js): the HEAD-probe that
 // discovers which quant-relevant files a locally-served /models mirror actually
 // ships. The HF API lists a repo for us, but a flat local mirror can't be
-// listed, so this probes the fp16 variants, the single fp32 sidecar, and the
-// contiguous fp32 shards (encoder-model.onnx.data.NNN) up to the first gap.
+// listed, so this probes the single fp32 sidecar, the optimized encoder and
+// LSE/TopK decoder variants, and the contiguous fp32 shards
+// (encoder-model.onnx.data.NNN) up to the first gap.
 // Built with Claude Code.
 
 import { test, describe, afterEach } from 'node:test';
@@ -23,12 +24,12 @@ function mockServer(present) {
 }
 
 describe('listLocalRepoFiles', () => {
-  test('reports the fp16 encoder + decoder when present, ignores absent candidates', async () => {
-    mockServer(['encoder-model.fp16.onnx', 'decoder_joint-model.fp16.onnx']);
+  test('reports the fp32 external-data sidecars when present, ignores absent candidates', async () => {
+    mockServer(['encoder-model.onnx.data', 'decoder_joint-model.onnx.data']);
     const files = await listLocalRepoFiles('/models');
     assert.deepEqual(
       files.sort(),
-      ['decoder_joint-model.fp16.onnx', 'encoder-model.fp16.onnx'],
+      ['decoder_joint-model.onnx.data', 'encoder-model.onnx.data'],
     );
   });
 
@@ -95,22 +96,22 @@ describe('listLocalRepoFiles', () => {
 
   test('a probe that throws is treated as "absent", not fatal', async () => {
     globalThis.fetch = async (url) => {
-      if (String(url).endsWith('encoder-model.fp16.onnx')) return { ok: true };
+      if (String(url).endsWith('encoder-model.onnx.data')) return { ok: true };
       throw new Error('network down');
     };
     const files = await listLocalRepoFiles('/models');
-    assert.deepEqual(files, ['encoder-model.fp16.onnx']);
+    assert.deepEqual(files, ['encoder-model.onnx.data']);
   });
 
   test('probes the optimized encoder variants so a local mirror gets the same preference as an HF listing', async () => {
     // Without these candidates a mirror shipping an optimized encoder
     // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-encoder-graph.py
     // fold) would never report it, and getParakeetModel could not prefer it.
-    mockServer(['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.fp16.optimized.onnx']);
+    mockServer(['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.optimized.onnx']);
     const files = await listLocalRepoFiles('/models');
     assert.deepEqual(
       files.sort(),
-      ['encoder-model.fp16.optimized.onnx', 'encoder-model.int8.smoothquant.optimized.onnx'],
+      ['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.optimized.onnx'],
     );
   });
 

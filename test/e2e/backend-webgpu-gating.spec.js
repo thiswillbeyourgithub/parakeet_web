@@ -8,9 +8,10 @@
 //      webgpu-hybrid backend SURVIVES a reload. It used to be coerced to WASM
 //      on every boot, so this is the assertion that would catch the app-wide
 //      pin coming back by accident,
-//   2. fp16 stays gated on the adapter's shader-f16 feature, whatever the
-//      backend does: ORT's fp16 kernels emit WGSL f16, and on an adapter
-//      without it they compile to nothing and the transcript comes back EMPTY,
+//   2. on WebGPU the int8 precision is greyed out and fp32 is what is actually
+//      selected, whatever the adapter reports: the GPU EP has no int8 encoder
+//      kernel, and the fp16 build that used to be the GPU default was withdrawn
+//      on 2026-08-23, so fp32 is the only precision the GPU path has left,
 //   3. with NO adapter, WebGPU is greyed out and WASM stays the default, which
 //      is what most CI machines and many visitors actually are,
 //   4. `?webgpu=0` forces WASM for that page load and coerces a persisted
@@ -24,7 +25,8 @@
 import { test, expect } from '@playwright/test';
 import { seedSettings, expandSettingsSection } from './seed.mjs';
 
-// A working adapter. `features` decides fp16: ORT needs shader-f16 for it.
+// A working adapter. `features` no longer influences precision (it decided fp16
+// until that build was withdrawn), which is exactly what test 2 below pins.
 const adapterStub = (features = []) => `
   Object.defineProperty(navigator, 'gpu', {
     configurable: true,
@@ -65,13 +67,16 @@ test('with a GPU present, WebGPU is selectable and a persisted choice survives a
   await expect(webgpuRadio).toBeChecked();
   await expect(page.locator('input[name="backend"][value="wasm"]')).not.toBeChecked();
 
-  // On a WebGPU adapter that HAS shader-f16, fp16 is a real choice.
-  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeEnabled();
+  // fp32 is the only precision the GPU path has, so it is what is selected.
+  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeDisabled();
 });
 
-test('fp16 stays greyed out on an adapter without shader-f16', async ({ page }) => {
-  // The failure this prevents is silent: ORT builds the session happily and
-  // returns an EMPTY transcript, so the gate has to be in the UI.
+test('on WebGPU the precision is fp32 regardless of what the adapter reports', async ({ page }) => {
+  // fp16 used to be the GPU default and was gated on the adapter's shader-f16
+  // feature (without it ORT built the session happily and returned an EMPTY
+  // transcript). That build is withdrawn, so an adapter WITHOUT shader-f16 must
+  // now behave exactly like one with it: fp32, selected, no other GPU option.
   await page.addInitScript(adapterStub([]));
   await page.goto('/');
   await seedSettings(page, { backend: 'webgpu-hybrid' });
@@ -80,9 +85,10 @@ test('fp16 stays greyed out on an adapter without shader-f16', async ({ page }) 
   await openPrecisionControls(page);
 
   await expect(page.locator('input[name="backend"][value="webgpu-hybrid"]')).toBeEnabled();
-  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeDisabled();
-  // fp32 is the fallback precision on such a GPU, so it must stay available.
-  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeEnabled();
+  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeDisabled();
+  // The withdrawn precision must not have left a radio behind.
+  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toHaveCount(0);
 });
 
 test('with no adapter, WebGPU is greyed out and WASM int8 stays the default', async ({ page }) => {
@@ -99,9 +105,8 @@ test('with no adapter, WebGPU is greyed out and WASM int8 stays the default', as
   const int8 = page.locator('input[name="encoderQuant"][value="int8"]');
   await expect(int8).toBeEnabled();
   await expect(int8).toBeChecked();
-  // The opt-in sharded fp32 stays selectable on WASM; fp16 cannot.
+  // The opt-in sharded fp32 stays selectable on WASM.
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeEnabled();
-  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeDisabled();
 });
 
 test('?webgpu=0 forces WASM even on a GPU machine, and coerces a persisted choice', async ({ page }) => {
@@ -116,5 +121,6 @@ test('?webgpu=0 forces WASM even on a GPU machine, and coerces a persisted choic
 
   await expect(page.locator('input[name="backend"][value="webgpu-hybrid"]')).toBeDisabled();
   await expect(page.locator('input[name="backend"][value="wasm"]')).toBeChecked();
-  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeDisabled();
+  // Back on the CPU path, int8 is selectable again.
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeEnabled();
 });

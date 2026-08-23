@@ -81,8 +81,8 @@ test('transcribes JFK English (MP3) preferring the optimized int8 encoder', asyn
     expect(o, `transcript "${got}" vs golden "${GOLDEN}" overlap ${o.toFixed(2)}`).toBeGreaterThanOrEqual(0.7);
   }).toPass({ timeout: 60 * 1000 });
 
-  // The local-fallback resolver HEAD-probes candidates that do not exist (fp16
-  // variants, .data sidecars, the optimized fp16). Those 404s surface as benign
+  // The local-fallback resolver HEAD-probes candidates that do not exist (.data
+  // sidecars, the optimized fp32). Those 404s surface as benign
   // "Failed to load resource" console errors; anything else still fails.
   const realErrors = errors.filter((e) => !/Failed to load resource.*404/.test(e));
   expect(realErrors, `page console errors: ${realErrors.join('\n')}`).toHaveLength(0);

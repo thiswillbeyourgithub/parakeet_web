@@ -8,6 +8,27 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Unreleased
+
+### Two encoder builds withdrawn: `int8 lite` and `fp16`
+
+The model repo shipped four encoder precisions. Two of them are gone, from the model repo and from the app, along with the code that selected them.
+
+**`int8 lite`** (about 757 MB against the default build's 841 MB) kept more layers in fp32 to buy back a little accuracy the aggressive int8 quantisation gave up. Measured over the 25-language FLEURS validation split it came out at 14.82 % WER against the default build's 14.27 %, and on the eight-speech long-audio set at 9.9 % against 8.6 %. So it was slightly worse on both, for 84 MB less download. Nothing recommended it, and every extra precision in the picker is another combination to test and another thing to explain.
+
+**`fp16`** (about 1.2 GB) was the WebGPU default. It could never be exercised end to end here: its WGSL kernels need the WebGPU adapter to expose `shader-f16`, and the GPU this project develops against does not, whatever the driver reports. ONNX Runtime would build the session happily and then return an empty transcript. The one thing that could be measured, its accuracy under native onnxruntime with fp16 compute, was good, but "good on a path we cannot run" is not a shipping precision, and it was sitting in front of every visitor the performance probe moved onto the GPU.
+
+What this changes for you:
+
+- The encoder-precision picker now offers **int8** and **fp32**, nothing else.
+- On the WebGPU backend the encoder is now always **fp32** (about 2.4 GB, loaded as shards). This is not a downgrade from what actually ran: it is what a GPU without `shader-f16` already fell back to.
+- If you had `int8 lite` or `fp16` selected, you are moved to the working precision for your backend on the next load.
+- Self-hosters can drop `encoder-model.int8.lite.onnx`, `encoder-model.fp16.onnx` and `decoder_joint-model.fp16.onnx` from their mirror. **The fp32 shards are now mandatory for any deployment that wants to serve WebGPU visitors at all**, since fp16 is no longer there to cover for a mirror that lacks them. A mirror serving neither still degrades safely: those visitors fall back to the CPU path with a warning, as before.
+
+The fp16 build script is kept in the model repo so the build can be regenerated if a machine with `shader-f16` ever makes it testable.
+
+---
+
 ## 10.0.0 (2026-08-21)
 
 One theme runs through this whole release: **extract as much speed as possible from ordinary, commodity hardware, and stop guessing where that speed is**. Almost every change below started as a measurement that contradicted an assumption, including one assumption that had been wrong for a month and had a whole feature switched off because of it.

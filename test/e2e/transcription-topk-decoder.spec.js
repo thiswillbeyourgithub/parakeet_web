@@ -52,8 +52,8 @@ const skipUnlessServed = async (test_, request, baseURL) => {
     `no TopK int8 decoder at ${baseURL}${TOPK_PROBE} (symlink it into fallback_models, or run parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py topk)`);
 };
 
-// The local-fallback resolver HEAD-probes candidates that do not exist (fp16
-// variants, .data sidecars, the fp32 decoders). Those 404s surface as benign
+// The local-fallback resolver HEAD-probes candidates that do not exist (.data
+// sidecars, the fp32 decoders). Those 404s surface as benign
 // "Failed to load resource" console errors; anything else still fails.
 const realErrors = (errors) => errors.filter((e) => !/Failed to load resource.*404/.test(e));
 

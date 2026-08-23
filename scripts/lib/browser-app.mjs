@@ -67,7 +67,7 @@ export function spawnAppServer({ port, modelDir, distDir } = {}) {
 // passed literally: with channel:'chromium' Playwright runs the FULL Chromium
 // binary even for headless, and that binary's blob-storage paging is broken
 // under multi-GB blob traffic here (paged blob files come back NotReadableError
-// / net::ERR_BLOB_REFERENCED_BLOB_BROKEN, killing every int8/fp16 model load
+// / net::ERR_BLOB_REFERENCED_BLOB_BROKEN, killing every int8 model load
 // at ORT session create; reproduced app-free, 2026-08-12). The default launch
 // uses the headless shell for headless runs, which never hits it, and headed
 // runs use the full binary either way.
