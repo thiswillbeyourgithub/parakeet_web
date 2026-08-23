@@ -487,44 +487,29 @@ export function resolveModelDir(cliDir, repoId) {
 // `--model-dir` can point straight at the working folder. The int8 DECODER keeps
 // the single `decoder_joint-model.int8.onnx` name in both layouts.
 //
-// A `.optimized.` encoder outranks them all when present: an offline-optimized
-// copy (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-encoder-graph.py
-// fold, which constant-folds the runtime shape-computation glue away) with
-// identical weights and numerics but ~23% fewer graph nodes, so ORT builds the
-// session faster. Shipping the file is the opt-in (the model repo gates
-// optimized artifacts on a bit-exact check plus a WER re-run), mirroring
-// hub.js OPTIMIZED_ENCODER_NAMES. The fp32 fold writes its weights to an
-// `encoder-model.optimized.onnx.data` sidecar (or .data.NNN shards, see
-// shard-fp32.py); both createSession paths resolve external data from the graph
-// basename, so the candidate list alone routes them.
+// There are no other names to try. The model repo's graph work (an encoder whose
+// runtime shape glue is constant-folded away, a decoder carrying the beam
+// search's in-graph log-partition and top-K outputs) ships INSIDE the canonical
+// files, so a dir either has the optimized build under the canonical name or it
+// has a stock upstream one. Whether the decoder actually carries the extra
+// outputs is discovered from the loaded session's outputNames (parakeet.js
+// _topkOutputsReady), never from the filename.
 //
-// Same story for a `.lse.` DECODER (optimize-decoder-graph.py lse): the
-// identical joint graph plus two in-graph log-partition outputs the beam
-// decoder consumes instead of its JS log-sum-exp pass (parakeet.js
-// _partition). Mirrors hub.js LSE_DECODER_NAMES; no fp16 lse artifact is
-// shipped (an fp16 graph would accumulate the partition in fp16).
-//
-// A `.lse.topk.` decoder outranks the plain `.lse.` one: it is the same graph
-// with the in-graph top-K token logits/ids and the split-out duration logits
-// appended, which lets the greedy loop fetch a few dozen floats per joint call
-// instead of the whole ~8.2k-float row (parakeet.js TOPK_FETCHES). Mirrors
-// hub.js TOPK_DECODER_NAMES, same shipping-the-file-is-the-opt-in contract.
+// fp16 is kept here even though the model repo withdrew its fp16 files on
+// 2026-08-23: scripts/quantize-fp16.py can regenerate them, and this CLI (via
+// wer-bench.mjs --ort node) is how such a build would be measured.
 const QUANT_FILES = {
   int8: {
-    encoder: ['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
-    decoder: ['decoder_joint-model.int8.lse.topk.onnx', 'decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.int8.onnx'],
+    encoder: ['encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
+    decoder: ['decoder_joint-model.int8.onnx'],
   },
   fp16: {
-    encoder: ['encoder-model.fp16.optimized.onnx', 'encoder-model.fp16.onnx'],
+    encoder: ['encoder-model.fp16.onnx'],
     decoder: ['decoder_joint-model.fp16.onnx'],
   },
   fp32: {
-    // Stock FIRST for fp32, unlike int8/fp16: the optimized fp32 build measured
-    // ~23% SLOWER on a real GPU (see hub.js optimizedEncoderName), so it is a
-    // fallback for a dir that ships only it, not a preference. Point --model-dir
-    // at a dir holding just one build to A/B them.
-    encoder: ['encoder-model.onnx', 'encoder-model.optimized.onnx'],
-    decoder: ['decoder_joint-model.lse.topk.onnx', 'decoder_joint-model.lse.onnx', 'decoder_joint-model.onnx'],
+    encoder: ['encoder-model.onnx'],
+    decoder: ['decoder_joint-model.onnx'],
   },
 };
 
@@ -848,9 +833,10 @@ async function main() {
   console.error(`[transcribe] model: ${args.model} (enc ${args.quant} / dec ${args.decoderQuant}, ort=${args.ortBackend})`);
   console.error(`[transcribe] dir:   ${dir}`);
   // Name the artifacts resolveFiles actually picked. A quant alone does not say
-  // which BUILD ran: the resolver silently prefers a `.optimized.` encoder and a
-  // `.lse.topk.`/`.lse.` decoder when the dir ships them, so an A/B between two model dirs
-  // (or a timing quoted from this harness) is unattributable without this line.
+  // which BUILD ran: two model dirs can ship different graphs under the same
+  // canonical name (an older published revision, a locally regenerated one), so
+  // an A/B between dirs, or a timing quoted from this harness, is unattributable
+  // without this line.
   console.error(`[transcribe] files: enc ${basename(encoderPath)} / dec ${basename(decoderPath)}`);
 
   const ffmpeg = findFfmpeg(args.ffmpeg);
