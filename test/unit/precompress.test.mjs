@@ -39,9 +39,47 @@ import {
   worthKeeping,
   planCanonical,
   relativeSidecarLink,
+  parseArgs,
   run,
   STATIC_MIN_BYTES,
 } from '../../scripts/precompress.mjs';
+
+describe('parseArgs', () => {
+  test('takes the directory either way round', () => {
+    // `--models=/models` used to be accepted with the path DROPPED, so the run
+    // silently precompressed the default directory instead of the named one.
+    assert.equal(parseArgs(['--models', '/models']).dir, '/models');
+    assert.equal(parseArgs(['--models=/models']).dir, '/models');
+    assert.equal(parseArgs(['--static=/srv']).dir, '/srv');
+    assert.equal(parseArgs(['--static', '/srv']).dir, '/srv');
+  });
+
+  test('takes numeric options either way round', () => {
+    assert.equal(parseArgs(['--models', '--level', '3']).level, 3);
+    assert.equal(parseArgs(['--models', '--level=3']).level, 3);
+    assert.equal(parseArgs(['--static', '--quality=5']).quality, 5);
+  });
+
+  test('falls back to the documented defaults', () => {
+    assert.equal(parseArgs(['--static']).dir, 'app/ui/dist');
+    assert.equal(parseArgs(['--models']).dir, 'fallback_models');
+    assert.equal(parseArgs(['--models'], { LOCAL_MODEL_PATH: '/mnt/m' }).dir, '/mnt/m');
+  });
+
+  test('refuses to guess', () => {
+    // No mode means no idea which compressor or which directory, and picking
+    // one would either recompress the wrong tree or write the wrong format.
+    assert.ok(parseArgs([]).error);
+    assert.ok(parseArgs(['--models', '--bogus']).error);
+    assert.ok(parseArgs(['--models', '--level', 'nine']).error);
+  });
+
+  test('help short-circuits without an error', () => {
+    const p = parseArgs(['--help']);
+    assert.equal(p.help, true);
+    assert.equal(p.error, null);
+  });
+});
 
 describe('isCompressibleStatic', () => {
   const big = STATIC_MIN_BYTES * 10;
