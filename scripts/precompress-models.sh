@@ -72,12 +72,43 @@ if [[ ${#SOURCES[@]} -eq 0 ]]; then
   exit 0
 fi
 
+# The same bytes are usually reachable by more than one path. A maintainer's
+# tree keeps the weights in a nested folder and links them into the root,
+# because the root is the flat layout Caddy serves; `sharded` is a symlinked
+# directory, so its files show up twice as well. Compressing each view would
+# spend ~600 MB and several seconds per duplicate, and compressing only the
+# real file would leave the served path without a sidecar (Caddy looks for
+# `<requested path>.zst`, not the target's). So: compress each set of bytes
+# ONCE, next to the real file, and give every other view a symlink to that
+# sidecar. The link target is relative, so a deploy rsync carries it intact.
+declare -A CANON=()   # resolved real path -> the path we compress
+ALIASES=()            # every other path that reaches the same bytes
+CANON_ORDER=()
+
+for pass in real other; do
+  for src in "${SOURCES[@]}"; do
+    real=$(readlink -f "$src" 2>/dev/null) || continue
+    [[ -n "$real" ]] || continue
+    nosym=$(realpath -s "$src" 2>/dev/null) || continue
+    is_real=0; [[ "$nosym" == "$real" ]] && is_real=1
+    # First pass claims the genuine on-disk paths, so a sidecar is never
+    # written through a symlink when a real path for the same bytes exists.
+    if [[ $pass == real && $is_real -eq 0 ]]; then continue; fi
+    if [[ -n "${CANON[$real]:-}" ]]; then
+      [[ "${CANON[$real]}" == "$src" ]] || ALIASES+=("$src")
+    else
+      CANON[$real]="$src"
+      CANON_ORDER+=("$src")
+    fi
+  done
+done
+
 writable=1
 [[ -w "$DIR" ]] || writable=0
 
-made=0 kept=0 pruned=0 failed=0
+made=0 kept=0 pruned=0 failed=0 linked=0
 
-for src in "${SOURCES[@]}"; do
+for src in "${CANON_ORDER[@]}"; do
   sidecar="$src.zst"
 
   # Up to date: sidecar exists and is not older than its source.
@@ -121,7 +152,51 @@ for src in "${SOURCES[@]}"; do
   fi
 done
 
-echo "[precompress] $made generated, $kept already current, $pruned stale removed, $failed failed"
+# Every other path that reaches the same bytes gets a symlink to the sidecar
+# generated (or kept) above, so the flat layout is served compressed without a
+# second copy on disk. A sidecar that does not exist is never linked to: a
+# dangling `.zst` would make Caddy fall back to the plain file (harmless) but
+# would also trip the tier-3 dangling-symlink check
+# (test/e2e/dangling-links.mjs), so it must not be created.
+for alias in "${ALIASES[@]}"; do
+  real=$(readlink -f "$alias" 2>/dev/null) || continue
+  canon="${CANON[$real]:-}"
+  [[ -n "$canon" && -f "$canon.zst" ]] || continue
+
+  # When the duplicate view comes from a symlinked DIRECTORY (`sharded` is one),
+  # `$alias.zst` and `$canon.zst` name the very same file. There is nothing to
+  # link, and writing here would delete the sidecar we just generated.
+  if [[ "$(readlink -f "$(dirname "$alias")")" == "$(readlink -f "$(dirname "$canon")")" ]]; then
+    kept=$((kept + 1))
+    continue
+  fi
+
+  # -s keeps this lexical: without it realpath resolves the alias's own
+  # directory back to the canonical one and computes a self-reference.
+  want=$(realpath -m -s --relative-to="$(dirname "$alias")" "$canon.zst")
+  link="$alias.zst"
+  if [[ -L "$link" && "$(readlink "$link")" == "$want" && -e "$link" ]]; then
+    kept=$((kept + 1))
+    continue
+  fi
+  # An older run of this script wrote a full second copy here; replacing it
+  # with the link is what reclaims that space.
+  if [[ -e "$link" || -L "$link" ]]; then
+    rm -f "$link" 2>/dev/null && pruned=$((pruned + 1))
+  fi
+  if ln -sfn "$want" "$link" 2>/dev/null && [[ -e "$link" ]]; then
+    linked=$((linked + 1))
+  else
+    # Never leave a dangling sidecar behind: Caddy would just serve the plain
+    # file, but the tier-3 dangling-symlink check treats a broken link in the
+    # served set as a hard failure, and it would be right to.
+    rm -f "$link" 2>/dev/null
+    echo "[precompress] failed to link $link -> $want" >&2
+    failed=$((failed + 1))
+  fi
+done
+
+echo "[precompress] $made generated, $linked linked, $kept already current, $pruned stale removed, $failed failed"
 # A failure here is never fatal: without a sidecar Caddy serves the plain file,
 # which is what it does today.
 exit 0
