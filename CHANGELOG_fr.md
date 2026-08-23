@@ -10,6 +10,24 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Une seule version par précision : les graphes optimisés sont désormais les seuls graphes
+
+Le dépôt du modèle fournissait un fichier ONNX d'origine à côté d'une variante optimisée du même fichier, sous un nom plus long, et l'application interrogeait ces noms plus longs à chaque chargement. C'est terminé : le travail sur les graphes se trouve désormais à l'intérieur des fichiers canoniques `encoder-model*.onnx` et `decoder_joint-model*.onnx`, et il n'y a plus rien à départager.
+
+Concrètement, voici ce que contiennent maintenant ces fichiers canoniques :
+
+- **Les deux encodeurs ont un graphe optimisé.** Leur tuyauterie de calcul de formes à l'exécution est pré-évaluée hors ligne, ce qui réécrit la plomberie autour des calculs, pas les calculs eux-mêmes : l'int8 passe de 3547 à 2732 nœuds, le fp32 de 4491 à 2041. Les sorties sont vérifiées identiques au bit près à celles de la version non optimisée (tolérance stricte de 0,0 sur plusieurs longueurs de séquence), les transcriptions ne bougent donc pas. Sur le temps total, la réponse honnête est que la mesure n'a pas tranché : l'A/B en fp32 donne 4,7 % en faveur de la version optimisée, avec un intervalle de confiance qui englobe encore « aucune différence ».
+- **Les deux décodeurs embarquent des sorties supplémentaires dans le graphe**, qu'une étape de décodage peut lire au lieu de refaire le même calcul en JavaScript : les log-partitions dont la recherche en faisceau a besoin, et les quelques plus forts logits de jetons dont la voie gloutonne a besoin, au lieu de relire depuis ONNX Runtime une ligne entière de 8193 flottants à chaque étape. Mesuré sur le backend GPU, le décodage est environ 5 % plus rapide avec elles ; le temps total, lui, ne bouge pas, parce que ce n'est pas le décodage qui domine là-bas.
+
+Ce que cela change pour vous :
+
+- Tout le monde bénéficie des graphes optimisés, et non plus seulement les visiteurs dont le miroir servait les fichiers supplémentaires.
+- Face à un miroir servi localement, six requêtes HEAD de moins avant chaque chargement du modèle, ainsi qu'un balayage redondant à la recherche d'un second jeu de fragments fp32 : l'application ne part plus en quête de noms de fichiers qui n'existent plus.
+- Rien à sélectionner et rien à configurer : il y a un fichier par précision.
+- Les personnes qui autohébergent doivent recopier les noms canoniques et peuvent supprimer de leur miroir tout fichier `.optimized`, `.lse` ou `.topk`. L'application les ignore désormais.
+
+Un miroir plus ancien reste parfaitement utilisable, y compris le dépôt amont `istupakov` : ses décodeurs ne déclarent simplement pas les sorties supplémentaires, le moteur s'en aperçoit au chargement et continue de calculer ces valeurs en JavaScript, exactement comme avant.
+
 ### Deux versions de l'encodeur retirées : `int8 lite` et `fp16`
 
 Le dépôt du modèle fournissait quatre précisions d'encodeur. Deux d'entre elles disparaissent, du dépôt du modèle comme de l'application, ainsi que le code qui les sélectionnait.

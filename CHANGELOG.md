@@ -10,6 +10,24 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### One build per precision: the optimised graphs are now the only graphs
+
+The model repo used to ship a stock ONNX file next to an optimised variant of it, under a longer filename, and the app HEAD-probed for those longer names on every load. That is over: the graph work now lives inside the canonical `encoder-model*.onnx` and `decoder_joint-model*.onnx`, and there is nothing else to choose between.
+
+Concretely, what those canonical files now contain:
+
+- **Both encoders are graph-optimised.** Their runtime shape-computation glue is constant-folded offline, which is a rewrite of the plumbing around the maths, not of the maths: int8 goes from 3547 to 2732 nodes, fp32 from 4491 to 2041. Outputs are verified bit-identical to the unoptimised build (a strict tolerance of 0.0 across several sequence lengths), so transcripts do not move. On wall time the honest answer is that it did not resolve: the fp32 A/B came out 4.7 % in the optimised build's favour with a confidence interval that still spans "no difference".
+- **Both decoders carry extra in-graph outputs** that a decode step can read instead of doing the same work in JavaScript: the log-partitions the beam search needs, and the top few token logits the greedy path needs instead of reading a whole 8193-float row back out of ONNX Runtime per step. Measured on the GPU backend, decode is about 5 % faster with them; total wall time is a wash, because decode is not what dominates there.
+
+What this changes for you:
+
+- Everybody gets the optimised graphs, instead of only the visitors whose model mirror happened to serve the extra files.
+- Against a locally served mirror, six fewer HEAD requests before each model load, plus a redundant scan for a second set of fp32 shards: the app no longer goes looking for filenames that no longer exist.
+- Nothing to select, and nothing to configure: there is one file per precision.
+- Self-hosters should mirror the canonical names and can delete any `.optimized`, `.lse` or `.topk` file from their mirror. The app ignores them now.
+
+An older mirror is still perfectly usable, including the upstream `istupakov` repo: its decoders simply do not declare the extra outputs, the engine notices at load time and keeps computing those values in JavaScript exactly as before.
+
 ### Two encoder builds withdrawn: `int8 lite` and `fp16`
 
 The model repo shipped four encoder precisions. Two of them are gone, from the model repo and from the app, along with the code that selected them.
