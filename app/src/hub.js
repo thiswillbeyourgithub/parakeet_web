@@ -944,43 +944,28 @@ export async function listLocalRepoFiles(baseUrl) {
       return res.ok ? name : null;
     } catch { return null; }
   };
-  const candidates = [
-    'encoder-model.onnx.data',
-    'decoder_joint-model.onnx.data',
-    // Optimized encoder / LSE / TopK decoder variants (see
-    // OPTIMIZED_ENCODER_NAMES / LSE_DECODER_NAMES / TOPK_DECODER_NAMES): probed
-    // so a local mirror that ships them gets the same preference as an HF
-    // listing.
-    ...Object.values(OPTIMIZED_ENCODER_NAMES),
-    ...Object.values(LSE_DECODER_NAMES),
-    ...Object.values(TOPK_DECODER_NAMES),
-  ];
+  const candidates = ['encoder-model.onnx.data', 'decoder_joint-model.onnx.data'];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) until the
-  // first gap so resolveModelQuant and the download loop can see them, for BOTH
-  // fp32 encoder names: the stock encoder-model.onnx and the optimized
-  // encoder-model.optimized.onnx (each shard set gates its own preference, see
-  // optimizedEncoderName). The shards (plus the rewritten graph that points at
-  // them) sit either flat under baseUrl or in a `sharded/` subfolder:
-  // scripts/shard-fp32.py's DEFAULT output is `<model-dir>/sharded`, so an
-  // operator who runs it over an `hf download` mirror and bind-mounts the
-  // parent serves the shards at `/models/sharded/...`, not flat. Probe flat
-  // first, then under sharded/, and report basenames either way so
-  // resolveModelQuant stays oblivious to the layout; getParakeetModel re-probes
-  // the physical subfolder to fetch the encoder graph + shards from the right
-  // place (vocab + the int8 decoder, which scripts/shard-fp32.py does NOT copy
-  // into sharded/, still come from the flat root).
-  for (const enc of ['encoder-model.onnx', OPTIMIZED_ENCODER_NAMES.fp32]) {
-    const shardName = (i) => `${enc}.data.${String(i).padStart(3, '0')}`;
+  // first gap so resolveModelQuant and the download loop can see them. The
+  // shards (plus the rewritten graph that points at them) sit either flat under
+  // baseUrl or in a `sharded/` subfolder: scripts/shard-fp32.py's DEFAULT output
+  // is `<model-dir>/sharded`, so an operator who runs it over an `hf download`
+  // mirror and bind-mounts the parent serves the shards at `/models/sharded/...`,
+  // not flat. Probe flat first, then under sharded/, and report basenames either
+  // way so resolveModelQuant stays oblivious to the layout; getParakeetModel
+  // re-probes the physical subfolder to fetch the encoder graph + shards from the
+  // right place (vocab + the int8 decoder, which scripts/shard-fp32.py does NOT
+  // copy into sharded/, still come from the flat root).
+  const shardName = (i) => `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
+  for (let i = 0; ; i++) {
+    if (!(await probe(shardName(i)))) break;
+    files.push(shardName(i));
+  }
+  if (!files.some((f) => f.startsWith('encoder-model.onnx.data.'))) {
     for (let i = 0; ; i++) {
-      if (!(await probe(shardName(i)))) break;
+      if (!(await probe(`sharded/${shardName(i)}`))) break;
       files.push(shardName(i));
-    }
-    if (!files.some((f) => f.startsWith(`${enc}.data.`))) {
-      for (let i = 0; ; i++) {
-        if (!(await probe(`sharded/${shardName(i)}`))) break;
-        files.push(shardName(i));
-      }
     }
   }
   return files;
@@ -992,136 +977,22 @@ export async function listLocalRepoFiles(baseUrl) {
 // GPU available here does, so it could never be exercised end to end).
 export const QUANT_SUFFIX = { int8: '.int8.onnx', fp32: '.onnx' };
 
-// Optimized encoder variants. The model repo can ship an offline-optimized
-// copy of an encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
-// optimize-encoder-graph.py fold, which constant-folds the runtime
-// shape-computation glue away): same weights, same numerics, ~23% fewer
-// graph nodes, so ORT builds the inference session ~2 s faster on WASM.
-// Shipping the file IS the opt-in: the model repo gates any optimized artifact
-// on a bit-exact `check` plus a WER re-run before committing it, so loaders
-// simply prefer the optimized name whenever the active source lists it and fall
-// back to the canonical name otherwise. The fp32 entry matters most on WebGPU:
-// the stock fp32 graph's ~500 shape-glue ops have no WebGPU kernels, so the EP
-// fragments the graph into GPU/CPU ping-pong (~15x slower than WASM int8) and
-// the fold removes exactly that op family. fp32 weights only ever load through
-// the <2 GB shard layout (both browser backends, see resolveModelQuant), so
-// optimizedEncoderName gates the fp32 preference on the OPTIMIZED shard set
-// (encoder-model.optimized.onnx.data.NNN) being listed, not on the flat graph.
-// The int8 name carries its
-// `.smoothquant.` provenance because the optimization was applied to the
-// SmoothQuant int8 build (the one published as the canonical
-// encoder-model.int8.onnx); fp32 is a plain export of the same weights, so its
-// name carries only the tag.
-export const OPTIMIZED_ENCODER_NAMES = {
-  int8: 'encoder-model.int8.smoothquant.optimized.onnx',
-  fp32: 'encoder-model.optimized.onnx',
-};
-
-/**
- * The optimized encoder filename to load for a resolved encoder quant, or null
- * to use the canonical `encoder-model<QUANT_SUFFIX>` name. Pure (a lookup gated
- * on the file listing) so both getParakeetModel and tests share one decision.
- * fp32 is special-cased TWICE.
- *
- * First, its weights only load through the shard layout, so the preference is
- * keyed on the optimized SHARD SET in the listing (a flat
- * encoder-model.optimized.onnx alone must not flip the choice toward a file the
- * browser paths cannot load); the flat graph need not be listed at all, since
- * the sharded layout carries its own rewritten graph.
- *
- * Second, and unlike int8, the optimized fp32 build is a FALLBACK rather
- * than a preference: it is used only when the stock shard set is absent. So a
- * source shipping BOTH layouts keeps the stock build, while a source shipping
- * ONLY the optimized one still loads (it is bit-exact either way).
- *
- * That asymmetry was set on a 2026-08-08 measurement that has since been
- * RETRACTED, and the code is kept this way only because nothing has replaced the
- * decision, not because the old reason still holds. The original A/B (RTX 3090
- * Ti / Chromium 148, 3 min clip, encode wall: stock 174.5 / 157.3 / 200.3 s vs
- * optimized 214.9 / 198.5 / 198.7 s) read stock ~23% ahead, but it predates
- * ec140a0, the fix for the page-animation tax on the ~2000 event-loop yields per
- * encoder run. That tax is levied PER YIELD and yield count follows graph
- * partitioning, while the fold's entire content is removing 1661 Constant nodes,
- * so the old arms differed in tax as much as in kernel speed.
- *
- * Re-measured 2026-08-23 with the tax gone (same GPU, 390 s clip, 6 runs per arm,
- * arm order rotated, each run verified from the console to have loaded the
- * intended encoder, identical 859-word transcripts): stock median 20.3 s vs
- * optimized 19.3 s, i.e. 4.7% the other way, 95% CI [0.99, 1.20], p=0.092, and
- * the optimized arm varied 1.8% run to run against stock's 11.9%. So the 23%
- * penalty does not exist and this fallback has no measured justification left;
- * what it does NOT have is a resolved win either (the design could only resolve
- * 13.8%). Promoting it to a preference is an owner call, since it would move
- * every fp32 GPU visitor onto a 41 MB larger download for an unresolved gain.
- *
- * @param {string} encoderQ Resolved encoder quant ('int8'|'fp32').
- * @param {string[]} repoFiles Filenames available in the active source.
- * @returns {string|null}
- */
-export function optimizedEncoderName(encoderQ, repoFiles) {
-  const name = OPTIMIZED_ENCODER_NAMES[encoderQ];
-  if (!name || !Array.isArray(repoFiles)) return null;
-  if (encoderQ === 'fp32') {
-    if (parseEncoderShards(repoFiles).shards.length > 0) return null; // stock wins
-    return parseEncoderShards(repoFiles, name).shards.length > 0 ? name : null;
-  }
-  return repoFiles.includes(name) ? name : null;
-}
-
-// LSE decoder variants, the decoder-side sibling of the optimized encoder. The
-// model repo can ship a decoder_joint with two extra in-graph outputs
-// (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-decoder-graph.py
-// lse): the original graph byte-untouched plus `lse_token`/`lse_duration`,
-// the log-partition scalars the beam decoder otherwise recomputes in JS with
-// ~8k Math.exp per hypothesis per step (parakeet.js _partition consumes them,
-// and falls back to the JS pass on stock decoders). Same opt-in contract as
-// OPTIMIZED_ENCODER_NAMES: shipping the file is the switch, gated repo-side on
-// a bit-exact check of the original outputs.
-export const LSE_DECODER_NAMES = {
-  int8: 'decoder_joint-model.int8.lse.onnx',
-  fp32: 'decoder_joint-model.lse.onnx',
-};
-
-/**
- * The LSE decoder filename to load for a resolved decoder quant, or null to
- * use the canonical `decoder_joint-model<QUANT_SUFFIX>` name.
- *
- * @param {string} decoderQ Resolved decoder quant ('int8'|'fp32').
- * @param {string[]} repoFiles Filenames available in the active source.
- * @returns {string|null}
- */
-export function lseDecoderName(decoderQ, repoFiles) {
-  const name = LSE_DECODER_NAMES[decoderQ];
-  return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
-}
-
-// TopK decoder variants: the LSE decoders (above) with THREE more in-graph
-// outputs appended (optimize-decoder-graph.py topk), the existing ones left
-// bit-identical. `topk_logits`/`topk_ids` are the k largest TOKEN logits of the
-// joint row with their vocab ids, `duration_logits` is the TDT duration slice.
-// They let the decode loop fetch a few dozen floats per joint call instead of
-// reading the whole ~8.2k-float `outputs` row back out of ORT (parakeet.js
-// TOPK_FETCHES / _readTopkStep; a decoder without them keeps the full-row
-// path). Superset of the LSE artifact, so it is preferred OVER it, and the same
-// opt-in contract applies: shipping the file is the switch.
-export const TOPK_DECODER_NAMES = {
-  int8: 'decoder_joint-model.int8.lse.topk.onnx',
-  fp32: 'decoder_joint-model.lse.topk.onnx',
-};
-
-/**
- * The TopK decoder filename to load for a resolved decoder quant, or null when
- * the active source does not ship it (the caller then falls back to the LSE
- * name, then to the canonical one).
- *
- * @param {string} decoderQ Resolved decoder quant ('int8'|'fp32').
- * @param {string[]} repoFiles Filenames available in the active source.
- * @returns {string|null}
- */
-export function topkDecoderName(decoderQ, repoFiles) {
-  const name = TOPK_DECODER_NAMES[decoderQ];
-  return name && Array.isArray(repoFiles) && repoFiles.includes(name) ? name : null;
-}
+// There is exactly ONE encoder and ONE decoder build per quant, under the
+// canonical istupakov names, and both are already optimized at the source: the
+// model repo folds the encoder's runtime shape-computation glue away
+// (optimize-encoder-graph.py fold: same weights, same numerics, ~23% fewer int8
+// nodes / ~55% fewer fp32 nodes, so ORT builds the session ~2 s faster on WASM)
+// and appends the beam decoder's in-graph outputs to the decoder
+// (optimize-decoder-graph.py lse + topk: `lse_token`/`lse_duration`, the
+// log-partition scalars parakeet.js _partition would otherwise recompute with
+// ~8k Math.exp per hypothesis per step, plus `topk_logits`/`topk_ids`/
+// `duration_logits` so a decode step fetches a few dozen floats instead of the
+// full ~8.2k-float row, see parakeet.js TOPK_FETCHES / _readTopkStep).
+//
+// So nothing here probes for optimized filenames any more. The decoder fast
+// paths are detected at RUNTIME from the loaded session's outputNames, never
+// from the filename, so they engage on our repo and stay dormant on a stock
+// upstream one (istupakov) with no name list to keep in sync.
 
 /**
  * Parse the fp32 encoder shard set out of a repo file listing. The shards
@@ -1151,15 +1022,12 @@ export function parseEncoderShards(repoFiles, encoderName = 'encoder-model.onnx'
   return { shards: entries.map((e) => e.base), subdir: entries.length ? entries[0].dir : '' };
 }
 
-// Whether the listing carries ANY loadable fp32 shard set: the stock
-// encoder-model.onnx.data.NNN or the optimized encoder-model.optimized.onnx
-// .data.NNN (see OPTIMIZED_ENCODER_NAMES). fp32 weights are only ever loaded
-// through shards on the browser backends, so this is the one existence check
-// resolveModelQuant and quantSatisfiable share; WHICH set to load is decided
-// later by optimizedEncoderName.
+// Whether the listing carries a loadable fp32 shard set
+// (encoder-model.onnx.data.NNN). fp32 weights are only ever loaded through
+// shards on the browser backends, so this is the one existence check
+// resolveModelQuant and quantSatisfiable share.
 function hasFp32ShardSet(repoFiles) {
-  return parseEncoderShards(repoFiles).shards.length > 0
-    || parseEncoderShards(repoFiles, OPTIMIZED_ENCODER_NAMES.fp32).shards.length > 0;
+  return parseEncoderShards(repoFiles).shards.length > 0;
 }
 
 /**
@@ -1393,30 +1261,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         + `or use the wasm backend.`,
     });
   }
-  // Prefer the optimized encoder build when the active source ships it:
-  // identical numerics, ~23% fewer graph nodes, faster session build (see
-  // OPTIMIZED_ENCODER_NAMES). The name change mints a new cache key, so the
-  // generational sweep below evicts the stock blob after the first load.
-  const optimizedEncoder = optimizedEncoderName(encoderQ, repoFiles);
-  if (optimizedEncoder) {
-    console.log(`[Hub] Using the optimized encoder ${optimizedEncoder} (same numerics, faster session build)`);
-  }
-  const encoderName = optimizedEncoder || `encoder-model${QUANT_SUFFIX[encoderQ]}`;
-  // Same find-and-prefer contract for the decoder, in two stages: the TopK
-  // variant (in-graph top-K token logits + duration logits, so a decode step
-  // stops reading the full ~8.2k-float row back from ORT) is a superset of the
-  // LSE one (in-graph log-partition outputs the beam decoder consumes instead
-  // of its JS log-sum-exp pass), so it wins when both are listed; otherwise the
-  // LSE one; otherwise the canonical name.
-  const topkDecoder = topkDecoderName(decoderQ, repoFiles);
-  if (topkDecoder) {
-    console.log(`[Hub] Using the TopK decoder ${topkDecoder} (in-graph top-K, smaller per-step readback)`);
-  }
-  const lseDecoder = topkDecoder ? null : lseDecoderName(decoderQ, repoFiles);
-  if (lseDecoder) {
-    console.log(`[Hub] Using the LSE decoder ${lseDecoder} (in-graph log-partition, faster beam decode)`);
-  }
-  const decoderName = topkDecoder || lseDecoder || `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
+  // One build per quant, under the canonical names. Whether this source's
+  // decoder carries the in-graph LSE / top-K outputs is discovered from the
+  // loaded session's outputNames, not from the filename.
+  const encoderName = `encoder-model${QUANT_SUFFIX[encoderQ]}`;
+  const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
   // External encoder weights come in one of two layouts. A sharded fp32 encoder
   // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
