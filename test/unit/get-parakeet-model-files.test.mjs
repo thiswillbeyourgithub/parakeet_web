@@ -71,13 +71,13 @@ const REPO_FLAT = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
 ];
-// Sharded fp32 (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py): no single sidecar, two shards instead.
+// Sharded fp32 (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py): no single sidecar, two shards instead.
 const REPO_FP32_SHARDS = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001',
   'vocab.txt', 'nemo128.onnx',
 ];
-// How the model repo (parakeet-tdt-0.6b-v3-smoothquant-onnx) ACTUALLY ships on
+// How the model repo (parakeet-tdt-0.6b-v3-optimized-onnx) ACTUALLY ships on
 // HuggingFace: the flat single-file fp32 encoder at the root (WebGPU) PLUS the
 // <2GB shards under a `sharded/` subfolder (WASM), which the HF tree API lists
 // with that prefix. The old flat-only shard regex missed these, so WASM fp32

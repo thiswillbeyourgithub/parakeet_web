@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 // tier-3 e2e exercises the same weights users get. The diarization set matches
 // diarizationModels.js's un-gated csukuangfj defaults.
 const REVISION = 'main';
-const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx';
+const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
 export const MODELS = [
   { repo: ASR_REPO, file: 'encoder-model.int8.onnx' },
   { repo: ASR_REPO, file: 'decoder_joint-model.int8.onnx' },

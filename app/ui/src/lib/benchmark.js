@@ -34,7 +34,7 @@ export const LONG_PROFILE_TARGET_SEC = 90;
 
 // Approximate download per encoder precision, in MB, used ONLY to warn about
 // bandwidth before a run (the real sizes come from the repo being served).
-// Measured on the shipped Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx
+// Measured on the shipped Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx
 // weights; the decoder (~18 MB) and preprocessor (~1 MB) are folded in.
 export const QUANT_DOWNLOAD_MB = {
   int8: 860,

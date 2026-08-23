@@ -95,7 +95,7 @@ services:
       # MODEL_DIR is a HOST path (the in-container one is PARAKEET_MODEL_DIR=/models
       # below); it must hold encoder-model.*.onnx, decoder_joint-model.*.onnx and
       # vocab.txt. Populate one with:
-      #   hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx --local-dir ./models
+      #   hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models
       # Read-only: the server only ever reads weights, and a compromised process
       # must not be able to swap the model under you.
       - ${MODEL_DIR:?set MODEL_DIR in .env to the host directory holding the ONNX weights}:/models:ro

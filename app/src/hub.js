@@ -967,7 +967,7 @@ export async function checkLocalModelFiles(baseUrl, repoId) {
  * under `baseUrl`, e.g. '/models') can't be listed, so we HEAD-probe the
  * specific candidates resolveModelQuant cares about: the single fp32 sidecar
  * and the contiguous fp32 encoder shards
- * (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) up to the first gap. Returned in the same shape as
+ * (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) up to the first gap. Returned in the same shape as
  * listRepoFiles so resolveModelQuant and the download loop treat both sources
  * identically.
  *
@@ -983,7 +983,7 @@ export async function listLocalRepoFiles(baseUrl) {
   };
   const candidates = ['encoder-model.onnx.data', 'decoder_joint-model.onnx.data'];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
-  // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) until the
+  // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) until the
   // first gap so resolveModelQuant and the download loop can see them. The
   // shards (plus the rewritten graph that points at them) sit either flat under
   // baseUrl or in a `sharded/` subfolder: scripts/shard-fp32.py's DEFAULT output
@@ -1033,7 +1033,7 @@ export const QUANT_SUFFIX = { int8: '.int8.onnx', fp32: '.onnx' };
 
 /**
  * Parse the fp32 encoder shard set out of a repo file listing. The shards
- * (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py, `<name>.data.NNN`)
+ * (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py, `<name>.data.NNN`)
  * can be reported in either of two layouts and this normalises both:
  *   - flat basenames (`encoder-model.onnx.data.000`), how a local mirror reports
  *     them via listLocalRepoFiles, and
@@ -1075,7 +1075,7 @@ function hasFp32ShardSet(repoFiles) {
  *     sidecar trips the ~2 GB ArrayBuffer / blob-fetch caps. The one exception is
  *     an explicit opt-in: when `allowWasmFp32` is set,
  *     `encoderQuant` is 'fp32', AND the repo ships the fp32 encoder as <2GB
- *     shards (encoder-model.onnx.data.NNN, from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), the
+ *     shards (encoder-model.onnx.data.NNN, from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), the
  *     encoder resolves to fp32 (the shards clear both caps and the 2.4 GB fits
  *     the ~4 GB wasm32 heap). The decoder stays int8 (tiny, runs fine on WASM).
  *     Without all three the int8 pin stands.
@@ -1269,7 +1269,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     // above) could serve it. We refuse to silently fall back to int8: a silent
     // quant swap makes it impossible to tell which precision actually loaded.
     // fp32 only overflows as a single 2.4 GB sidecar; the SHARDED fp32 encoder
-    // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py + allowWasmFp32) loads fine, so this means the
+    // (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py + allowWasmFp32) loads fine, so this means the
     // requested quant's files were not available, not that fp32 is categorically
     // impossible on WASM. Throw so the caller surfaces it instead of proceeding.
     throw new QuantUnavailableError({
@@ -1277,7 +1277,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       requested: { encoder: encoderQuant, decoder: decoderQuant },
       message: `Requested encoder=${encoderQuant}/decoder=${decoderQuant} cannot run on the `
           + `${backend} backend from any available source. `
-          + `fp32 needs the <2 GB shards (encoder-model.onnx.data.NNN from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), `
+          + `fp32 needs the <2 GB shards (encoder-model.onnx.data.NNN from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
           + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`,
     });
   }
@@ -1294,7 +1294,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       message: `The fp32 encoder cannot run on the ${backend} backend as a single file `
         + `(its ~2.3 GB weights exceed the browser's ~2 GB ArrayBuffer / Blob limits), and no `
         + `source ships the <2 GB shards (encoder-model.onnx.data.NNN from `
-        + `parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py). Host the shards, `
+        + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py). Host the shards, `
         + `or use the wasm backend.`,
     });
   }
@@ -1305,7 +1305,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
   // External encoder weights come in one of two layouts. A sharded fp32 encoder
-  // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
+  // (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
   // < 2 GB so it clears the WASM ArrayBuffer / Chromium blob-fetch caps; a plain
   // export keeps a single <name>.data sidecar. Detect the shards here (before the
   // download list is built) so the encoder graph fetch can be routed to wherever

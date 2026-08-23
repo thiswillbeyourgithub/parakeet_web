@@ -323,7 +323,7 @@ Options:
                            Defaults to the HuggingFace cache for the model.
       --quant int8|fp16|fp32
                            ENCODER quantisation. Default int8. fp16 files come
-                           from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
+                           from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32).
       --decoder-quant int8|fp16|fp32
                            DECODER/joiner quantisation, chosen independently of
@@ -469,7 +469,7 @@ export function resolveModelDir(cliDir, repoId) {
 
 // Per-quant filename candidates for the encoder and decoder, in preference
 // order (the first that exists on disk wins). fp16 files are produced by
-// parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py from the fp32
+// parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py from the fp32
 // pieces; fp32 is the plain name (with an external .onnx.data for the encoder).
 //
 // The encoder and decoder quant are resolved INDEPENDENTLY (resolveFiles takes a
@@ -481,7 +481,7 @@ export function resolveModelDir(cliDir, repoId) {
 // int8 has TWO valid encoder names: the published HF repo renames the SmoothQuant
 // int8 encoder to the canonical `encoder-model.int8.onnx` (what App.jsx/hub.js and
 // fetch-e2e-models.mjs download), while the model-repo working folder
-// (parakeet-tdt-0.6b-v3-smoothquant-onnx/) keeps it under the descriptive
+// (parakeet-tdt-0.6b-v3-optimized-onnx/) keeps it under the descriptive
 // `encoder-model.int8.smoothquant.onnx`. Try the canonical name first so the
 // published/cached layout is unchanged, then fall back to the SmoothQuant name so
 // `--model-dir` can point straight at the working folder. The int8 DECODER keeps
@@ -555,7 +555,7 @@ export async function createSession(modelPath, opts, { ortMod = ort, fromPath = 
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
   // External weights live either in a single <model>.data sidecar (the upstream
-  // fp32 layout) or, for a sharded fp32 encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py), in
+  // fp32 layout) or, for a sharded fp32 encoder (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), in
   // <model>.data.000, .001, ... each kept under 2 GB so no externalData buffer
   // trips the WASM ArrayBuffer / blob caps. Mount every matching file; the `path`
   // must equal the location string baked into the graph (the shard basename).

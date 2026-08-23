@@ -39,7 +39,7 @@ Built with Claude Code.
 cd scripts/openai-like-server
 cp env.example .env
 # edit .env: MODEL_DIR is the only mandatory value
-hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx --local-dir ./models
+hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models
 sudo docker compose up -d --build
 
 curl -sS -F file=@../../test/fixtures/jfk.mp3 \
@@ -65,7 +65,7 @@ node scripts/openai-like-server/server.mjs --help     # every flag, env var and 
 There is **no runtime download**. A missing or incomplete model directory is a fatal boot error that names the missing file, because a server that silently downloads 600 MB on its first request is a worse surprise than one that refuses to start.
 
 ```bash
-hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx --local-dir ./models
+hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models
 ```
 
 The directory must contain, for the precision you asked for:

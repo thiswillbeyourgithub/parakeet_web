@@ -346,7 +346,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            quant, loading that quant's model and resetting the
                            encoder cache (the encoder output is quant-specific).
                            The accuracy table gains a "quant" column. fp16 files
-                           come from parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/quantize-fp16.py
+                           come from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
   --decoder-quants LIST    DECODER/joiner quantisation(s) to benchmark, a
@@ -384,7 +384,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            any fp16 model need the native node backend, which
                            streams external data from disk. wasm can still load
                            fp32 if the model dir is pre-sharded
-                           (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/shard-fp32.py,
+                           (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py,
                            each shard <2 GB). An explicit --ort applies to every
                            swept quant.
       --cuda               Sugar for --ort cuda: run every quant on the NVIDIA GPU

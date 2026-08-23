@@ -586,7 +586,7 @@ export function resolveOptions(argv = [], env = process.env) {
     throw new Error(
       'no model directory: pass --model-dir (or -m) / set PARAKEET_MODEL_DIR to the folder holding '
       + 'encoder-model.*.onnx + decoder_joint-model.*.onnx + vocab.txt.\n'
-      + '  Populate one with:  hf download Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx --local-dir ./models',
+      + '  Populate one with:  hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models',
     );
   }
   if (!isLoopbackHost(options.host) && !options.apiKey && !options.allowKeylessNonLoopback) {
