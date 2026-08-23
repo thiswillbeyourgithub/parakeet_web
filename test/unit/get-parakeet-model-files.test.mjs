@@ -19,7 +19,7 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getParakeetModel, QuantUnavailableError, optimizedEncoderName, lseDecoderName, topkDecoderName } from '../../app/src/hub.js';
+import { getParakeetModel, QuantUnavailableError } from '../../app/src/hub.js';
 
 // A streaming body so _streamAndCache's reader loop runs; content is irrelevant
 // here (we assert on which files were selected, not their bytes).
@@ -92,7 +92,7 @@ const REPO_HF_SHARDED = [
 // Path-aware HF mock: unlike mockHf (which records only the trailing segment),
 // this records the FULL repo-relative path after /resolve/<rev>/ so a test can
 // tell `sharded/encoder-model.onnx` apart from the flat `encoder-model.onnx`.
-// Shared by the sharded-fp32 and optimized-fp32 describes.
+// Shared by the sharded-fp32 and canonical-names describes.
 function mockHfPaths(repoFiles) {
   const present = new Set(repoFiles);
   const downloaded = [];
@@ -346,191 +346,63 @@ describe('getParakeetModel file selection: preprocessor backend', () => {
   });
 });
 
-// The optimized encoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
-// optimize-encoder-graph.py fold: identical numerics, ~23% fewer graph nodes,
-// faster session build) must be preferred whenever the active source lists it,
-// without changing the reported quantisation. Its absence resolves exactly as
-// before (the earlier describes pin that side with optimized-less fixtures).
-const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_FLAT];
-// fp32's optimized build is only usable through its OWN shard set (browser paths
-// can never load a flat multi-GB fp32 graph, see the sharded describes above).
-// A source shipping BOTH layouts, which is what the model repo does:
-const REPO_OPTIMIZED_FP32 = [
+// One build per quant, under the canonical istupakov names. The graph work the
+// model repo does (optimize-encoder-graph.py fold on the encoders,
+// optimize-decoder-graph.py lse + topk on the decoders) lands IN those files, so
+// there is no name to prefer and no listing to consult. This describe pins that
+// there is no longer any filename-based selection: whatever else a source
+// serves, the loader asks for the canonical names and nothing else.
+//
+// The decoder fast paths are detected at runtime instead, from the loaded
+// session's outputNames (parakeet.js _topkOutputsReady), which is what makes
+// this safe: a decoder carrying the extra outputs engages them whatever it is
+// called, and a stock upstream decoder does not.
+const REPO_WITH_WITHDRAWN_VARIANTS = [
+  'encoder-model.int8.smoothquant.optimized.onnx',
+  'decoder_joint-model.int8.lse.onnx',
+  'decoder_joint-model.int8.lse.topk.onnx',
+  ...REPO_FLAT,
+];
+// A source still serving the withdrawn `.optimized` fp32 shard set alongside the
+// canonical one.
+const REPO_SHARDED_WITH_WITHDRAWN_VARIANTS = [
   ...REPO_HF_SHARDED,
   'sharded/encoder-model.optimized.onnx',
   'sharded/encoder-model.optimized.onnx.data.000',
   'sharded/encoder-model.optimized.onnx.data.001',
 ];
-// ...and one shipping ONLY the optimized layout, the single case where it is
-// selected (it measured slower on GPU, so it is a fallback, not a preference).
-const REPO_OPTIMIZED_FP32_ONLY = [
-  'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt', 'nemo128.onnx',
-  'sharded/encoder-model.optimized.onnx',
-  'sharded/encoder-model.optimized.onnx.data.000',
-  'sharded/encoder-model.optimized.onnx.data.001',
-];
 
-describe('getParakeetModel file selection: optimized encoder preference', () => {
-  test('WASM int8 + optimized shipped -> optimized encoder downloaded, stock not fetched, quant still int8', async () => {
-    const downloaded = mockHf(REPO_OPTIMIZED_INT8);
-    const r = await getParakeetModel('test/wasm-int8-optimized', {
+describe('getParakeetModel file selection: canonical names only', () => {
+  test('WASM int8: the canonical encoder and decoder are fetched, withdrawn variant names ignored', async () => {
+    const downloaded = mockHf(REPO_WITH_WITHDRAWN_VARIANTS);
+    const r = await getParakeetModel('test/wasm-int8-canonical', {
       backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
     });
-    assert.equal(r.filenames.encoder, 'encoder-model.int8.smoothquant.optimized.onnx');
-    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' }, 'the fold changes the file, never the reported quant');
-    assert.ok(downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
-    assert.ok(!downloaded.includes('encoder-model.int8.onnx'), 'must not also fetch the stock encoder');
-    assert.ok(r.cacheInfo.filenames.includes('encoder-model.int8.smoothquant.optimized.onnx'),
-      'the optimized file gets its own cache key so the sweep can evict the stock blob');
+    assert.equal(r.filenames.encoder, 'encoder-model.int8.onnx');
+    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.onnx');
+    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' });
+    assert.ok(downloaded.includes('encoder-model.int8.onnx'));
+    assert.ok(downloaded.includes('decoder_joint-model.int8.onnx'));
+    assert.ok(!downloaded.some((f) => f.includes('.optimized.') || f.includes('.lse.')),
+      `no variant file may be fetched; got ${downloaded.join(', ')}`);
   });
 
-  test('WASM fp32 + ONLY the optimized shard set -> optimized graph + shards from sharded/', async () => {
-    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32_ONLY);
-    const r = await getParakeetModel('test/wasm-fp32-optimized', {
-      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
-    });
-    assert.equal(r.quantisation.encoder, 'fp32');
-    assert.equal(r.filenames.encoder, 'encoder-model.optimized.onnx', 'filename stays the bare basename the graph references');
-    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
-      ['encoder-model.optimized.onnx.data.000', 'encoder-model.optimized.onnx.data.001'],
-      'mount paths must match the optimized graph\'s external_data basenames');
-    assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx'), 'must fetch the optimized rewritten graph from sharded/');
-    assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx.data.000')
-      && downloaded.includes('sharded/encoder-model.optimized.onnx.data.001'));
-    for (const stock of ['encoder-model.onnx', 'encoder-model.onnx.data', 'sharded/encoder-model.onnx',
-      'sharded/encoder-model.onnx.data.000', 'sharded/encoder-model.onnx.data.001']) {
-      assert.ok(!downloaded.includes(stock), `must not also fetch the stock ${stock}`);
+  test('fp32 on either backend loads the canonical shard set, never a withdrawn one', async () => {
+    for (const backend of ['wasm', 'webgpu']) {
+      const downloaded = mockHfPaths(REPO_SHARDED_WITH_WITHDRAWN_VARIANTS);
+      const r = await getParakeetModel(`test/${backend}-fp32-canonical`, {
+        backend, encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
+      });
+      assert.equal(r.quantisation.encoder, 'fp32');
+      assert.equal(r.filenames.encoder, 'encoder-model.onnx');
+      assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
+        ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001'],
+        'mount paths must match the canonical graph\'s external_data basenames');
+      assert.ok(downloaded.includes('sharded/encoder-model.onnx'), `[${backend}] must fetch the rewritten graph from sharded/`);
+      assert.ok(!downloaded.some((f) => f.includes('optimized')),
+        `[${backend}] withdrawn build must not be fetched; got ${downloaded.join(', ')}`);
+      assert.ok(!downloaded.includes('encoder-model.onnx.data'),
+        `[${backend}] must NOT fetch the flat 2.4GB sidecar when shards exist`);
     }
-  });
-
-  test('WebGPU fp32 + ONLY the optimized shard set -> loads it as bytes, never a flat sidecar', async () => {
-    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32_ONLY);
-    const r = await getParakeetModel('test/webgpu-fp32-optimized', {
-      backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
-    });
-    assert.equal(r.quantisation.encoder, 'fp32');
-    assert.equal(r.filenames.encoder, 'encoder-model.optimized.onnx');
-    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
-      ['encoder-model.optimized.onnx.data.000', 'encoder-model.optimized.onnx.data.001']);
-    assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder graph must load as bytes');
-    assert.ok(downloaded.includes('sharded/encoder-model.optimized.onnx'));
-    assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must NOT fetch the flat 2.4GB sidecar on WebGPU');
-  });
-
-  // The regression this guards: the optimized fp32 build measured ~23% SLOWER on
-  // a real GPU, so when a source ships BOTH shard sets (what the model repo does)
-  // the loader must stay on the stock build.
-  test('fp32 + BOTH shard sets shipped -> stock wins, optimized is not fetched', async () => {
-    const downloaded = mockHfPaths(REPO_OPTIMIZED_FP32);
-    const r = await getParakeetModel('test/webgpu-fp32-both', {
-      backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.encoder, 'encoder-model.onnx');
-    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
-      ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
-    assert.ok(!downloaded.some((f) => f.includes('optimized')), `optimized build must not be fetched; got ${downloaded.join(', ')}`);
-  });
-
-  test('optimizedEncoderName: listing-gated, fp32 only as a stock-absent fallback', () => {
-    assert.equal(optimizedEncoderName('int8', REPO_OPTIMIZED_INT8), 'encoder-model.int8.smoothquant.optimized.onnx');
-    assert.equal(optimizedEncoderName('int8', REPO_FLAT), null, 'absent file -> canonical name');
-    // fp32 is reachable only through a shard set: a flat optimized graph with no
-    // .data.NNN shards is unloadable in every browser path (2 GB
-    // ArrayBuffer/blob/IDB walls), so it must never be chosen.
-    assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32_ONLY), 'encoder-model.optimized.onnx',
-      'optimized shards alone -> load them, nothing else can serve fp32');
-    assert.equal(optimizedEncoderName('fp32', REPO_OPTIMIZED_FP32), null,
-      'both shard sets -> stock wins (optimized measured ~23% slower on GPU)');
-    assert.equal(optimizedEncoderName('fp32', ['encoder-model.optimized.onnx', ...REPO_FLAT]), null,
-      'flat optimized graph without its shard set -> stock');
-    assert.equal(optimizedEncoderName('fp32', REPO_HF_SHARDED), null,
-      'stock shards alone -> stock');
-    assert.equal(optimizedEncoderName('int8', null), null, 'defensive: no listing at all');
-  });
-});
-
-// The LSE decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
-// optimize-decoder-graph.py lse: the same joint graph plus in-graph
-// lse_token/lse_duration log-partition outputs consumed by the beam decoder's
-// _partition) follows the optimized encoder's contract: prefer it whenever the
-// active source lists it, never change the reported quant, resolve exactly as
-// before when absent (the earlier describes pin that side with lse-less
-// fixtures).
-const REPO_LSE_INT8 = ['decoder_joint-model.int8.lse.onnx', ...REPO_FLAT];
-
-describe('getParakeetModel file selection: LSE decoder preference', () => {
-  test('WASM int8 + lse shipped -> lse decoder downloaded, stock decoder not fetched, quant still int8', async () => {
-    const downloaded = mockHf(REPO_LSE_INT8);
-    const r = await getParakeetModel('test/wasm-int8-lse', {
-      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
-    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' }, 'the lse variant changes the file, never the reported quant');
-    assert.ok(downloaded.includes('decoder_joint-model.int8.lse.onnx'));
-    assert.ok(!downloaded.includes('decoder_joint-model.int8.onnx'), 'must not also fetch the stock decoder');
-    assert.ok(r.cacheInfo.filenames.includes('decoder_joint-model.int8.lse.onnx'),
-      'the lse file gets its own cache key so the sweep can evict the stock blob');
-  });
-
-  test('lse decoder and optimized encoder are preferred together (independent switches)', async () => {
-    const downloaded = mockHf(['decoder_joint-model.int8.lse.onnx', ...REPO_OPTIMIZED_INT8]);
-    const r = await getParakeetModel('test/wasm-int8-lse-and-optimized', {
-      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.encoder, 'encoder-model.int8.smoothquant.optimized.onnx');
-    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
-    assert.ok(downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
-    assert.ok(downloaded.includes('decoder_joint-model.int8.lse.onnx'));
-  });
-
-  test('lseDecoderName: gated on the listing, unknown quants stay canonical', () => {
-    assert.equal(lseDecoderName('int8', REPO_LSE_INT8), 'decoder_joint-model.int8.lse.onnx');
-    assert.equal(lseDecoderName('int8', REPO_FLAT), null, 'absent file -> canonical name');
-    assert.equal(lseDecoderName('fp32', ['decoder_joint-model.lse.onnx', ...REPO_FLAT]), 'decoder_joint-model.lse.onnx');
-    // int8 and fp32 are the only quants with an lse artifact, so a plausibly-named
-    // file for any other quant must never be preferred.
-    assert.equal(lseDecoderName('fp16', ['decoder_joint-model.fp16.lse.onnx', ...REPO_FLAT]), null);
-    assert.equal(lseDecoderName('int8', null), null, 'defensive: no listing at all');
-  });
-});
-
-// The TopK decoder (optimize-decoder-graph.py topk) is the LSE graph with
-// topk_logits/topk_ids/duration_logits appended, i.e. a strict superset, so it
-// must outrank the lse file when both are listed and fall back through lse to
-// the canonical name when it is not.
-const REPO_TOPK_INT8 = ['decoder_joint-model.int8.lse.topk.onnx', ...REPO_LSE_INT8];
-
-describe('getParakeetModel file selection: TopK decoder preference', () => {
-  test('WASM int8 + topk shipped -> topk decoder downloaded, lse and stock not fetched, quant still int8', async () => {
-    const downloaded = mockHf(REPO_TOPK_INT8);
-    const r = await getParakeetModel('test/wasm-int8-topk', {
-      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.topk.onnx');
-    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' }, 'the topk variant changes the file, never the reported quant');
-    assert.ok(downloaded.includes('decoder_joint-model.int8.lse.topk.onnx'));
-    assert.ok(!downloaded.includes('decoder_joint-model.int8.lse.onnx'), 'must not also fetch the lse decoder');
-    assert.ok(!downloaded.includes('decoder_joint-model.int8.onnx'), 'must not also fetch the stock decoder');
-    assert.ok(r.cacheInfo.filenames.includes('decoder_joint-model.int8.lse.topk.onnx'),
-      'the topk file gets its own cache key so the sweep can evict the older blob');
-  });
-
-  test('no topk in the listing -> the lse decoder still wins', async () => {
-    const downloaded = mockHf(REPO_LSE_INT8);
-    const r = await getParakeetModel('test/wasm-int8-topk-absent', {
-      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.decoder, 'decoder_joint-model.int8.lse.onnx');
-    assert.ok(!downloaded.includes('decoder_joint-model.int8.lse.topk.onnx'));
-  });
-
-  test('topkDecoderName: gated on the listing, unknown quants stay canonical', () => {
-    assert.equal(topkDecoderName('int8', REPO_TOPK_INT8), 'decoder_joint-model.int8.lse.topk.onnx');
-    assert.equal(topkDecoderName('int8', REPO_LSE_INT8), null, 'lse alone -> no topk');
-    assert.equal(topkDecoderName('int8', REPO_FLAT), null, 'absent file -> canonical name');
-    assert.equal(topkDecoderName('fp32', ['decoder_joint-model.lse.topk.onnx', ...REPO_FLAT]), 'decoder_joint-model.lse.topk.onnx');
-    // Same as the lse one: only int8 and fp32 have a topk artifact.
-    assert.equal(topkDecoderName('fp16', ['decoder_joint-model.fp16.lse.topk.onnx', ...REPO_FLAT]), null);
-    assert.equal(topkDecoderName('int8', null), null, 'defensive: no listing at all');
   });
 });

@@ -25,10 +25,10 @@ const WITH_FP32_SHARDS_SUBFOLDER = [
   'encoder-model.onnx', 'encoder-model.onnx.data',
   'sharded/encoder-model.onnx', 'sharded/encoder-model.onnx.data.000', 'sharded/encoder-model.onnx.data.001',
 ];
-// A repo whose ONLY loadable fp32 layout is the OPTIMIZED shard set (the
-// constant-folded graph from optimize-encoder-graph.py, sharded by
-// shard-fp32.py --encoder encoder-model.optimized.onnx), with no stock shards.
-const WITH_OPTIMIZED_FP32_SHARDS_ONLY = [
+// A repo still serving the withdrawn `.optimized` filenames (that graph now
+// ships under the canonical name): they are NOT a loadable fp32 layout, because
+// nothing looks for them any more.
+const WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'sharded/encoder-model.optimized.onnx',
   'sharded/encoder-model.optimized.onnx.data.000', 'sharded/encoder-model.optimized.onnx.data.001',
@@ -92,27 +92,29 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS_SUBFOLDER, allowWasmFp32: true }), true);
   });
 
-  // The OPTIMIZED shard set (encoder-model.optimized.onnx.data.NNN) is a full
-  // fp32 layout of its own: a source shipping only it must satisfy fp32 on both
-  // backends, and a flat optimized graph without shards must not (same 2 GB
-  // walls as the stock single-file).
-  test('opt-in + fp32 request + ONLY the optimized shard set -> fp32 (not pinned), and satisfiable on WebGPU too', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY, allowWasmFp32: true });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
-    assert.equal(r.pinnedToInt8, false);
-    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY, allowWasmFp32: true }), true);
-    const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY });
-    assert.equal(g.webgpuFp32NeedsShards, false, 'optimized shards clear the WebGPU shard requirement');
-    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_OPTIMIZED_FP32_SHARDS_ONLY }), true);
-  });
-
-  test('opt-in + fp32 request + a flat optimized graph but NO shard set of either kind -> int8 pin', () => {
-    const flatOptimizedOnly = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'encoder-model.optimized.onnx', 'encoder-model.optimized.onnx.data'];
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOptimizedOnly, allowWasmFp32: true });
+  // There is ONE fp32 shard set now, under the canonical name. A source still
+  // serving the withdrawn `.optimized` shard names ships nothing this code can
+  // load, so fp32 must be refused exactly as if it had no shards at all: pinned
+  // to int8 on WASM, flagged needs-shards on WebGPU. Silently accepting the old
+  // names would be worse than refusing, since the download loop would then ask
+  // for a canonical graph the source does not have.
+  test('a source serving ONLY the withdrawn .optimized shard names does not satisfy fp32', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY, allowWasmFp32: true });
     assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
     assert.equal(r.pinnedToInt8, true);
-    const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOptimizedOnly });
-    assert.equal(g.webgpuFp32NeedsShards, true, 'a flat optimized graph is as unloadable as the stock single-file');
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY, allowWasmFp32: true }), false);
+    const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY });
+    assert.equal(g.webgpuFp32NeedsShards, true, 'the withdrawn shard names are not a loadable fp32 layout');
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY }), false);
+  });
+
+  test('opt-in + fp32 request + the flat sidecar but NO shard set -> int8 pin', () => {
+    const flatOnly = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data'];
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOnly, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+    const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOnly });
+    assert.equal(g.webgpuFp32NeedsShards, true, 'a flat >2 GB sidecar is unloadable on either browser backend');
   });
 });
 

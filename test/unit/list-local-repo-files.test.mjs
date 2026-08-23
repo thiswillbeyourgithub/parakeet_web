@@ -1,9 +1,8 @@
 // Tier-1 unit test for listLocalRepoFiles (app/src/hub.js): the HEAD-probe that
 // discovers which quant-relevant files a locally-served /models mirror actually
 // ships. The HF API lists a repo for us, but a flat local mirror can't be
-// listed, so this probes the single fp32 sidecar, the optimized encoder and
-// LSE/TopK decoder variants, and the contiguous fp32 shards
-// (encoder-model.onnx.data.NNN) up to the first gap.
+// listed, so this probes the two external-data sidecars and the contiguous fp32
+// shards (encoder-model.onnx.data.NNN) up to the first gap.
 // Built with Claude Code.
 
 import { test, describe, afterEach } from 'node:test';
@@ -72,8 +71,6 @@ describe('listLocalRepoFiles', () => {
   test('prefers flat shards and does not also probe sharded/ when flat shards exist', async () => {
     // When the shards ARE flat, the sharded/ fallback must not run (a flat layout
     // is complete on its own); a sharded/ duplicate must not be double-counted.
-    // The scope is per encoder: the OPTIMIZED walk may still probe sharded/ for
-    // ITS OWN set (absent here), only the STOCK sharded/ probe must be skipped.
     const probed = [];
     globalThis.fetch = async (url) => {
       const rel = String(url).slice('/models/'.length);
@@ -103,66 +100,37 @@ describe('listLocalRepoFiles', () => {
     assert.deepEqual(files, ['encoder-model.onnx.data']);
   });
 
-  test('probes the optimized encoder variants so a local mirror gets the same preference as an HF listing', async () => {
-    // Without these candidates a mirror shipping an optimized encoder
-    // (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/optimize-encoder-graph.py
-    // fold) would never report it, and getParakeetModel could not prefer it.
-    mockServer(['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.optimized.onnx']);
-    const files = await listLocalRepoFiles('/models');
-    assert.deepEqual(
-      files.sort(),
-      ['encoder-model.int8.smoothquant.optimized.onnx', 'encoder-model.optimized.onnx'],
-    );
-  });
-
-  test('walks the OPTIMIZED fp32 shard set (encoder-model.optimized.onnx.data.NNN) like the stock one', async () => {
-    // The optimized fp32 preference is gated on ITS shard set
-    // (optimizedEncoderName), so a mirror shipping only optimized shards must
-    // report them or the preference can never engage on a local mirror.
-    mockServer([
-      'encoder-model.optimized.onnx.data.000',
-      'encoder-model.optimized.onnx.data.001',
-    ]);
-    const files = await listLocalRepoFiles('/models');
-    assert.deepEqual(files, [
-      'encoder-model.optimized.onnx.data.000',
-      'encoder-model.optimized.onnx.data.001',
-    ]);
-  });
-
-  test('finds optimized shards under sharded/ and reports basenames, independently of the stock set', async () => {
-    // Both fp32 layouts at once: STOCK shards flat, OPTIMIZED shards under
-    // sharded/ (how shard-fp32.py --encoder encoder-model.optimized.onnx writes
-    // them). The per-encoder probe scoping must report BOTH sets: the flat stock
-    // shards must not suppress the optimized sharded/ walk.
-    const present = new Set([
-      'encoder-model.onnx.data.000',
-      'encoder-model.onnx.data.001',
-      'sharded/encoder-model.optimized.onnx.data.000',
-      'sharded/encoder-model.optimized.onnx.data.001',
-    ]);
+  test('probes only the two sidecars and the shard walk, nothing else', async () => {
+    // This function costs one HEAD round trip per candidate on every load
+    // against a local mirror, so the probe set is pinned. It used to also probe
+    // six optimized/LSE/TopK variant filenames; those builds now ship under the
+    // canonical names (the decoder fast paths are detected from the loaded
+    // session's outputNames, not from a filename), so re-adding name probes here
+    // would be pure latency. A mirror serving a variant name must report NOTHING
+    // for it.
+    const probed = [];
     globalThis.fetch = async (url) => {
-      const rel = String(url).slice('/models/'.length);
-      return { ok: present.has(rel) };
+      probed.push(String(url).slice('/models/'.length));
+      return { ok: false };
     };
     const files = await listLocalRepoFiles('/models');
-    assert.deepEqual(files.sort(), [
+    assert.deepEqual(files, []);
+    assert.deepEqual(probed, [
+      'encoder-model.onnx.data',
+      'decoder_joint-model.onnx.data',
       'encoder-model.onnx.data.000',
-      'encoder-model.onnx.data.001',
-      'encoder-model.optimized.onnx.data.000',
-      'encoder-model.optimized.onnx.data.001',
+      'sharded/encoder-model.onnx.data.000',
     ]);
   });
 
-  test('probes the LSE decoder variants so a local mirror gets the same preference as an HF listing', async () => {
-    // Same contract as the optimized encoder, decoder side: a mirror shipping an
-    // lse decoder (parakeet-tdt-0.6b-v3-smoothquant-onnx/scripts/
-    // optimize-decoder-graph.py lse) must be able to report it.
-    mockServer(['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.lse.onnx']);
+  test('a mirror still serving the withdrawn variant filenames reports none of them', async () => {
+    mockServer([
+      'encoder-model.int8.smoothquant.optimized.onnx',
+      'encoder-model.optimized.onnx',
+      'decoder_joint-model.int8.lse.onnx',
+      'decoder_joint-model.int8.lse.topk.onnx',
+    ]);
     const files = await listLocalRepoFiles('/models');
-    assert.deepEqual(
-      files.sort(),
-      ['decoder_joint-model.int8.lse.onnx', 'decoder_joint-model.lse.onnx'],
-    );
+    assert.deepEqual(files, []);
   });
 });
