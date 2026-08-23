@@ -14,11 +14,11 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 A self-hosted mirror can pre-compress its model files once and let Caddy serve them with `Content-Encoding: zstd`. On the shipped int8 encoder that is 881,878,510 bytes down to 642,839,559 (27 % less to download, both measured), and the browser decompresses it natively in about 3 seconds, so any connection slower than roughly 200 MB/s comes out ahead.
 
-This was not happening before by accident: model weights are served as `application/octet-stream`, and Caddy's `encode` directive deliberately skips that content type. Compressing on the fly would have cost 6 to 11 seconds of server CPU on every download by every visitor, so the bytes are prepared once instead, by `scripts/precompress-models.sh`.
+This was not happening before by accident: model weights are served as `application/octet-stream`, and Caddy's `encode` directive deliberately skips that content type. Compressing on the fly would have cost 6 to 11 seconds of server CPU on every download by every visitor, so the bytes are prepared once instead, by `scripts/precompress.mjs`.
 
 Notes for self-hosters:
 
-- Run `./scripts/precompress-models.sh <model-dir>` after populating (or replacing) the model folder. It needs `zstd` on the host, is idempotent, and never fails a deployment.
+- Run `node scripts/precompress.mjs --models <model-dir>` after populating (or replacing) the model folder. It is idempotent and never fails a deployment. It uses the `zstd` binary when the host has one and Node's own zstd otherwise.
 - Without a `.zst` sidecar, or for a browser that does not accept zstd, Caddy serves the plain file exactly as before. Nothing else has to change.
 - A sidecar older than its source would be served instead of the real file, so the script deletes any it cannot regenerate, and the container warns at startup if it finds a stale one.
 - Downloads that resume mid-file are unaffected: browsers ask for byte ranges uncompressed.

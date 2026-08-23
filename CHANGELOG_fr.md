@@ -14,11 +14,11 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 Une instance qui héberge elle-même les poids peut les compresser une fois pour toutes et laisser Caddy les servir avec `Content-Encoding: zstd`. Sur l'encodeur int8 livré, cela fait passer le fichier de 881 878 510 octets à 642 839 559 (27 % de moins à télécharger, les deux mesurés), et le navigateur le décompresse nativement en 3 secondes environ : toute connexion plus lente que ~200 Mo/s y gagne.
 
-Ce n'était pas déjà le cas par hasard : les poids sont servis en `application/octet-stream`, un type que la directive `encode` de Caddy ignore délibérément. Compresser à la volée aurait coûté 6 à 11 secondes de CPU serveur à chaque téléchargement de chaque visiteur ; les octets sont donc préparés une seule fois, par `scripts/precompress-models.sh`.
+Ce n'était pas déjà le cas par hasard : les poids sont servis en `application/octet-stream`, un type que la directive `encode` de Caddy ignore délibérément. Compresser à la volée aurait coûté 6 à 11 secondes de CPU serveur à chaque téléchargement de chaque visiteur ; les octets sont donc préparés une seule fois, par `scripts/precompress.mjs`.
 
 À retenir pour ceux qui hébergent eux-mêmes :
 
-- Lancez `./scripts/precompress-models.sh <dossier-modele>` après avoir rempli (ou remplacé) le dossier de modèles. Le script nécessite `zstd` sur l'hôte, est idempotent, et ne fait jamais échouer un déploiement.
+- Lancez `node scripts/precompress.mjs --models <dossier-modele>` après avoir rempli (ou remplacé) le dossier de modèles. Le script est idempotent et ne fait jamais échouer un déploiement. Il utilise le binaire `zstd` si l'hôte en a un, sinon le zstd intégré à Node.
 - Sans fichier `.zst`, ou pour un navigateur qui n'accepte pas zstd, Caddy sert le fichier brut exactement comme avant. Rien d'autre n'est à changer.
 - Un fichier `.zst` plus ancien que sa source serait servi à la place du vrai fichier : le script supprime donc ceux qu'il ne peut pas régénérer, et le conteneur avertit au démarrage s'il en trouve un périmé.
 - Les téléchargements qui reprennent en cours de route ne sont pas affectés : les navigateurs demandent les plages d'octets sans compression.

@@ -347,7 +347,7 @@ LOCAL_MODEL_PATH=/models
 
 ```bash
 # 4. Facultatif mais recommandé : précompressez les poids une fois pour toutes.
-./scripts/precompress-models.sh /host/path/to/onnx-files
+node scripts/precompress.mjs --models /host/path/to/onnx-files
 ```
 
 Caddy sert ce qui se trouve à `LOCAL_MODEL_PATH` sous `/models/`. Le

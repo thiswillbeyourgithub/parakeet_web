@@ -1,7 +1,7 @@
 // Tier-1 unit test for how the download path (app/src/hub.js) handles a
 // CONTENT-ENCODED response, i.e. the one Caddy's `file_server { precompressed
 // zstd }` returns when it finds an `encoder-model.int8.onnx.zst` sidecar next
-// to the model file (see scripts/precompress-models.sh).
+// to the model file (see scripts/precompress.mjs).
 //
 // Why this exists: such a response describes the COMPRESSED entity in its
 // headers (content-length ~643 MB, and a variant etag) while `resp.body` hands
