@@ -10,6 +10,14 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### L'application cesse de télécharger trois moteurs WebAssembly qu'elle n'exécute jamais
+
+ONNX Runtime est embarqué sous forme de quatre moteurs WebAssembly distincts (standard, JSEP, JSPI, asyncify) et l'application n'en charge jamais qu'un seul. Elle téléchargeait et vérifiait pourtant l'empreinte des quatre au démarrage : 79 772 176 octets, dont 26 874 157 réellement utilisés. Pire, elle le faisait une fois par contexte JavaScript, et chaque worker de transcription est son propre contexte : une machine qui fait tourner le pool d'encodage parallèle en plus du worker de décodage composé payait donc quatre fois l'addition, au moment précis où les poids du modèle se téléchargeaient eux aussi.
+
+Ce n'était pas que du gaspillage. Sous cette pile de transferts simultanés, l'un d'eux échouait immanquablement, et un worker dont le téléchargement du moteur échoue est perdu pour le reste de la session : sa part du travail repart discrètement sur le fil principal, la transcription sort quand même correcte, et la seule trace est une ligne dans la console. C'est notre propre test de bout en bout qui l'a attrapé, et c'est précisément pour cela qu'il vérifie la console et pas seulement le texte produit.
+
+La garantie d'intégrité ne change pas là où elle compte : les octets remis à ONNX Runtime restent épinglés à l'empreinte enregistrée à la construction, et un moteur altéré refuse toujours de se charger. Vérifier l'empreinte de trois moteurs jamais exécutés ne protégeait de rien.
+
 ### L'application se télécharge environ six fois plus vite
 
 Chaque visiteur télécharge le bundle de l'application avant toute chose, et 130 de ses 138 Mo sont du WebAssembly : les moteurs ONNX Runtime, ffmpeg, et le moteur de diarisation. Caddy recompressait ces octets à chaque requête. Ils sont désormais compressés une seule fois, à la construction de l'image, puis servis tels quels.
