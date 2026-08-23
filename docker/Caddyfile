@@ -301,7 +301,25 @@
 	# ONNX files and vocab.txt are expected directly inside that folder).
 	handle_path /models/* {
 		root * {$LOCAL_MODEL_PATH:/models}
-		file_server
+		# Serve `<file>.zst` with Content-Encoding: zstd when the browser
+		# accepts it, so the browser decompresses natively and nothing in
+		# the app changes. The model weights are application/octet-stream,
+		# which the `encode` directive above deliberately skips, so without
+		# this the full 841 MB int8 encoder crosses the wire uncompressed on
+		# every first load; measured, zstd -9 takes it to 643 MB.
+		#
+		# The sidecars are generated ONCE, offline, by
+		# scripts/precompress-models.sh. Compressing on the fly instead would
+		# cost 6-11 s of CPU per download per visitor. A browser that does
+		# not accept zstd, or a file with no sidecar, gets the plain file
+		# exactly as before, so this can only ever help.
+		#
+		# Resume is unaffected: browsers send `Accept-Encoding: identity` on
+		# any request carrying a Range header (verified in Chromium 148), so
+		# a resumed download gets plain byte ranges of the real file.
+		file_server {
+			precompressed zstd
+		}
 	}
 
 	# Dictation regex CSVs (entrypoint populates /var/regex from URL or local folder).
