@@ -1041,16 +1041,29 @@ export const OPTIMIZED_ENCODER_NAMES = {
  * the sharded layout carries its own rewritten graph.
  *
  * Second, and unlike int8/fp16, the optimized fp32 build is a FALLBACK rather
- * than a preference: it is used only when the stock shard set is absent. The
- * fold was built for WebGPU on the theory that the shape ops it removes are the
- * ones fragmenting the graph across execution providers, and measurement on a
- * real GPU refuted that (RTX 3090 Ti / Chromium 148, 3 min clip, 4 chunks, encode
- * wall): stock 174.5 / 157.3 / 200.3 s vs optimized 214.9 / 198.5 / 198.7 s, i.e.
- * the two cleanly paired runs both put stock ~41 s (~23%) AHEAD and optimized
- * never won. So a source shipping BOTH layouts keeps the stock build, while a
- * source shipping ONLY the optimized one still loads (it is bit-exact, just not
- * faster). Re-run scripts/webgpu-check.mjs --fp32 on a quiet box before
- * promoting this to a real preference.
+ * than a preference: it is used only when the stock shard set is absent. So a
+ * source shipping BOTH layouts keeps the stock build, while a source shipping
+ * ONLY the optimized one still loads (it is bit-exact either way).
+ *
+ * That asymmetry was set on a 2026-08-08 measurement that has since been
+ * RETRACTED, and the code is kept this way only because nothing has replaced the
+ * decision, not because the old reason still holds. The original A/B (RTX 3090
+ * Ti / Chromium 148, 3 min clip, encode wall: stock 174.5 / 157.3 / 200.3 s vs
+ * optimized 214.9 / 198.5 / 198.7 s) read stock ~23% ahead, but it predates
+ * ec140a0, the fix for the page-animation tax on the ~2000 event-loop yields per
+ * encoder run. That tax is levied PER YIELD and yield count follows graph
+ * partitioning, while the fold's entire content is removing 1661 Constant nodes,
+ * so the old arms differed in tax as much as in kernel speed.
+ *
+ * Re-measured 2026-08-23 with the tax gone (same GPU, 390 s clip, 6 runs per arm,
+ * arm order rotated, each run verified from the console to have loaded the
+ * intended encoder, identical 859-word transcripts): stock median 20.3 s vs
+ * optimized 19.3 s, i.e. 4.7% the other way, 95% CI [0.99, 1.20], p=0.092, and
+ * the optimized arm varied 1.8% run to run against stock's 11.9%. So the 23%
+ * penalty does not exist and this fallback has no measured justification left;
+ * what it does NOT have is a resolved win either (the design could only resolve
+ * 13.8%). Promoting it to a preference is an owner call, since it would move
+ * every fp32 GPU visitor onto a 41 MB larger download for an unresolved gain.
  *
  * @param {string} encoderQ Resolved encoder quant ('int8'|'int8-lite'|'fp16'|'fp32').
  * @param {string[]} repoFiles Filenames available in the active source.
