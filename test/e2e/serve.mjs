@@ -16,6 +16,7 @@ import http from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findDanglingLinks, danglingLinksMessage, danglingLinksWarning } from './dangling-links.mjs';
 
 const here = resolve(fileURLToPath(import.meta.url), '..');
 const ROOT = resolve(here, '../..');
@@ -119,6 +120,23 @@ const server = http.createServer((req, res) => {
   if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
   return sendFile(req, res, join(DIST, 'index.html'));
 });
+
+// A dangling symlink in the SERVED part of the model dir is always a broken
+// checkout, and it lies in the most expensive way: the harness reads it as
+// "weights absent" and sends you off to re-download weights that are sitting
+// right there. Die before any spec runs, with the real diagnosis. Deeper links
+// (the model repo's local `candidates/` A/B farm and friends) only get a
+// warning: they are never reachable over HTTP, so they are hygiene, not a
+// reason to refuse a good model set. (CI has no symlinks at all, it downloads
+// the files flat, so none of this can fire there.)
+const dangling = findDanglingLinks(MODEL_DIR);
+const danglingWarning = danglingLinksWarning(dangling, MODEL_DIR);
+if (danglingWarning) console.warn(danglingWarning);
+const danglingFatal = danglingLinksMessage(dangling, MODEL_DIR);
+if (danglingFatal) {
+  console.error(danglingFatal);
+  process.exit(1);
+}
 
 server.listen(PORT, '127.0.0.1', () => {
   if (!existsSync(DIST)) console.warn(`[e2e:serve] WARNING: ${DIST} missing — run \`npm run build\` in app/ui first.`);
