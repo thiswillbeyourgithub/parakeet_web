@@ -642,7 +642,19 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
         tailBytes = 0;
       }
 
-      if (resp.status === 206) {
+      // A content-encoded response describes the ENCODED entity in its headers
+      // while `resp.body` hands us the DECODED bytes. Caddy's `precompressed`
+      // serves an `encoder-model.int8.onnx.zst` sidecar exactly this way
+      // (Content-Encoding: zstd, Content-Length = the compressed size), so
+      // adopting that length as `total` would be wrong twice: the noCache path
+      // preallocates `new Uint8Array(total)` and would overflow it mid-stream,
+      // and progress would sail past 100%. Treat the length as UNKNOWN instead,
+      // which every branch below already handles (chunk collection, no progress
+      // events, `${total || '?'}` in the logs).
+      const encoded = Boolean(resp.headers.get('content-encoding'));
+      if (encoded) {
+        total = 0;
+      } else if (resp.status === 206) {
         const cr = resp.headers.get('content-range');
         const m = cr && cr.match(/\/(\d+)$/);
         if (m) total = parseInt(m[1], 10);
@@ -652,14 +664,39 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
         const cl = resp.headers.get('content-length');
         if (cl) total = parseInt(cl, 10);
       }
-      etag = resp.headers.get('etag') || resp.headers.get('last-modified') || etag;
+      // Resume survives compression: browsers send `Accept-Encoding: identity`
+      // on any request carrying a Range header (verified in Chromium 148), so a
+      // resumed attempt gets plain byte ranges of the real file and `received`,
+      // counted in decoded bytes, is the right offset to ask for. The etag is
+      // the one thing that does NOT carry over: a server serving a compressed
+      // variant returns that VARIANT's etag, which can never match the identity
+      // entity on the resume's If-Range, and a mismatch costs a full restart of
+      // a multi-hundred-MB download. So keep whatever etag we already had (from
+      // a previous identity response) rather than overwriting it with one that
+      // is guaranteed to fail. The next resume's own 206 supplies a usable one.
+      if (!encoded) {
+        etag = resp.headers.get('etag') || resp.headers.get('last-modified') || etag;
+      }
       contentType = resp.headers.get('content-type') || contentType;
 
       // noCache + known length: stream straight into one preallocated buffer so
       // we never hold the bytes twice (chunks + concat). A range-resume keeps
       // writing at `received`. If the length is unknown we fall back to
       // collecting chunks in tailChunks and concatenating at the end.
-      if (noCache && total > 0 && !memBuf) memBuf = new Uint8Array(total);
+      if (noCache && total > 0 && !memBuf) {
+        memBuf = new Uint8Array(total);
+        // The length can become known only on a LATER attempt: a first attempt
+        // that was content-encoded (or that omitted content-length) collected
+        // its bytes in tailChunks, and the retry's 206 finally reveals the real
+        // size. Fold those bytes in, or the buffer would start with `received`
+        // zero bytes and the download would return a silently corrupt model.
+        if (tailBytes > 0) {
+          let off = 0;
+          for (const c of tailChunks) { memBuf.set(c, off); off += c.length; }
+          tailChunks = [];
+          tailBytes = 0;
+        }
+      }
 
       const reader = resp.body.getReader();
       try {
