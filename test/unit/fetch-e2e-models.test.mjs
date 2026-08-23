@@ -1,10 +1,9 @@
 // Tier-1 unit test for scripts/fetch-e2e-models.mjs (the CI model fetch).
-// What it pins: `optional` entries (the preferred-variant files that may not
-// be pushed to HF yet) must tolerate a 404 by warning and skipping, while a
-// missing REQUIRED file must still fail the fetch loudly. Both matter: the
-// former keeps CI green during the window between committing a new variant to
-// the model repo and pushing it to HF; the latter is what makes a broken
-// model URL impossible to miss. Network-free (fetch is stubbed).
+// What it pins: the fetch list is entirely REQUIRED, so a broken model URL is
+// impossible to miss, and the `optional` escape hatch still behaves (tolerate a
+// 404 by warning and skipping) for the recurring window where a file is
+// committed to the model repo but not yet pushed to HF. Network-free (fetch is
+// stubbed).
 // Built with Claude Code.
 
 import { test, describe, afterEach } from 'node:test';
@@ -21,15 +20,17 @@ afterEach(() => { globalThis.fetch = realFetch; });
 const tmp = () => mkdtempSync(join(tmpdir(), 'fetch-e2e-'));
 
 describe('fetch-e2e-models: optional vs required download entries', () => {
-  test('the preferred-variant files are listed and marked optional', () => {
+  test('every listed file is required, under its canonical name', () => {
     const byFile = Object.fromEntries(MODELS.map((m) => [m.file, m]));
-    assert.equal(byFile['encoder-model.int8.smoothquant.optimized.onnx']?.optional, true);
-    assert.equal(byFile['decoder_joint-model.int8.lse.onnx']?.optional, true);
-    // The base set must stay required: no `optional` creep on the files every
-    // spec depends on.
+    // The ASR set is the canonical pair plus the vocab: the model repo's graph
+    // work ships INSIDE those two files, so there is no variant filename to
+    // fetch alongside them any more.
     assert.ok(!byFile['encoder-model.int8.onnx'].optional);
     assert.ok(!byFile['decoder_joint-model.int8.onnx'].optional);
     assert.ok(!byFile['vocab.txt'].optional);
+    // No `optional` creep anywhere: a 404 on ANY entry must fail the fetch, not
+    // warn and leave a spec to discover the gap.
+    assert.deepEqual(MODELS.filter((m) => m.optional).map((m) => m.file), []);
   });
 
   test('an optional 404 resolves false and writes nothing', async () => {

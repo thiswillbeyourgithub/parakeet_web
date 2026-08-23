@@ -1,12 +1,8 @@
 // Download the model files the tier-3 E2E needs from HuggingFace into the E2E
 // model dir (flat layout, matching hub.js getLocalModelFile and serve.mjs).
 // Local dev already has the ASR weights in ./fallback_models; this exists so CI
-// can populate a cached dir without the full 3 GB weight set. Three model sets:
+// can populate a cached dir without the full 3 GB weight set. Two model sets:
 //   - the SmoothQuant int8 ASR weights (encoder + decoder + vocab),
-//   - the optional preferred variants (graph-optimized encoder, LSE decoder)
-//     that hub.js auto-picks when present, giving their e2e specs CI
-//     coverage once the model repo's HF push lands (404 tolerated until
-//     then), and
 //   - the two speaker-diarization models (pyannote segmentation + CAM++
 //     embedding) that transcription-diarization.spec.js needs; that spec
 //     self-skips when they are absent, so this download is what gives it CI
@@ -36,16 +32,11 @@ export const MODELS = [
   { repo: ASR_REPO, file: 'encoder-model.int8.onnx' },
   { repo: ASR_REPO, file: 'decoder_joint-model.int8.onnx' },
   { repo: ASR_REPO, file: 'vocab.txt' },
-  // The preferred-variant files (hub.js picks them over the two above whenever
-  // the source lists them): the graph-optimized encoder and the LSE decoder.
-  // `optional` because they are committed to the model repo but may not be
-  // pushed to HF yet: a 404 logs a warning and the matching e2e specs
-  // self-skip, instead of failing the whole fetch. Once the HF push lands,
-  // flip these to required (drop `optional`), which also re-keys the CI model
-  // cache (the workflow keys on a hash of this file) so they get baked in.
-  { repo: ASR_REPO, file: 'encoder-model.int8.smoothquant.optimized.onnx', optional: true },
-  { repo: ASR_REPO, file: 'decoder_joint-model.int8.lse.onnx', optional: true },
-  { repo: ASR_REPO, file: 'decoder_joint-model.int8.lse.topk.onnx', optional: true },
+  // No variant filenames: the model repo's graph work (folded encoder, decoder
+  // with the in-graph log-partition + top-K outputs) ships INSIDE the two files
+  // above. Whether the fetched revision actually carries the decoder outputs is
+  // reported by parakeet.js at load, and the two specs that depend on them skip
+  // against a revision that predates the promotion.
   { repo: 'csukuangfj/sherpa-onnx-pyannote-segmentation-3-0', file: 'model.onnx' },
   { repo: 'csukuangfj/speaker-embedding-models', file: '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx' },
 ];
@@ -56,6 +47,10 @@ async function exists(p) {
   try { await stat(p); return true; } catch { return false; }
 }
 
+// `optional` tolerates a 404 instead of failing the fetch. No entry above needs
+// it today (every file is required), but it is the mechanism for the recurring
+// window where a new file is committed to the model repo and not yet pushed to
+// HF, so it stays and stays tested.
 export async function download({ repo, file, optional = false }, modelDir = MODEL_DIR) {
   const dest = join(modelDir, file);
   if (await exists(dest)) {
