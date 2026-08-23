@@ -309,7 +309,7 @@
 		# every first load; measured, zstd -9 takes it to 643 MB.
 		#
 		# The sidecars are generated ONCE, offline, by
-		# scripts/precompress-models.sh. Compressing on the fly instead would
+		# `node scripts/precompress.mjs --models`. Compressing on the fly would
 		# cost 6-11 s of CPU per download per visitor. A browser that does
 		# not accept zstd, or a file with no sidecar, gets the plain file
 		# exactly as before, so this can only ever help.
@@ -349,16 +349,30 @@
 	# /assets/main-OLD.js URL: nosniff blocks execution and the page
 	# silently breaks. More importantly, the fallback used to hide
 	# genuine 404s on legitimate asset paths, masking deploy errors.
+	# Both /srv file_servers below prefer a `<file>.br` sidecar, which the
+	# Docker builder generates with `node scripts/precompress.mjs --static`
+	# right after `vite build`. The bundle is 138 MB, 130 MB of it WASM
+	# (ffmpeg-core 32 MB, four ORT builds, sherpa 18 MB), and `encode` above
+	# re-compresses those on EVERY request. Brotli q11 offline takes the ORT
+	# jsep build from 26 MB to 3.5 MB and ffmpeg-core from 31 MB to 6.9 MB
+	# (measured), at zero per-request CPU. A browser that does not accept
+	# brotli, or a file with no sidecar, falls through to `encode` exactly as
+	# before. The bytes the browser ends up with are identical, so the SRI /
+	# asset-integrity hash checks are unaffected.
 	@asset_path path /assets/* /ort/* /js/* /pcm-recorder-worklet.js
 	handle @asset_path {
 		root * /srv
-		file_server
+		file_server {
+			precompressed br
+		}
 	}
 
 	# SPA + remote-mic.html (Vite emits both as separate entry points).
 	handle {
 		root * /srv
 		try_files {path} {path}/ /index.html
-		file_server
+		file_server {
+			precompressed br
+		}
 	}
 }

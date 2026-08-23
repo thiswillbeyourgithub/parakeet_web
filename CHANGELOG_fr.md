@@ -10,6 +10,16 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### L'application se télécharge environ six fois plus vite
+
+Chaque visiteur télécharge le bundle de l'application avant toute chose, et 130 de ses 138 Mo sont du WebAssembly : les moteurs ONNX Runtime, ffmpeg, et le moteur de diarisation. Caddy recompressait ces octets à chaque requête. Ils sont désormais compressés une seule fois, à la construction de l'image, puis servis tels quels.
+
+Mesuré sur le bundle livré : le moteur ONNX Runtime WebGPU passe de 26 Mo à 3,5 Mo, ffmpeg de 31 Mo à 6,9 Mo, le moteur de diarisation de 17 Mo à 2,5 Mo. Le serveur cesse aussi complètement d'y consacrer du CPU.
+
+Rien ne change pour l'application : le navigateur décode la réponse avant qu'elle ne lui parvienne, donc les octets qu'elle reçoit, et les empreintes d'intégrité qu'elle vérifie, sont exactement les mêmes. Un navigateur qui n'accepte pas brotli retombe sur le comportement précédent.
+
+Le seul coût visible est côté mainteneur : `docker build` prend environ deux minutes et demie de plus, ce qui est précisément l'intérêt de le faire là plutôt qu'à chaque requête.
+
 ### Les poids servis en local peuvent désormais l'être compressés
 
 Une instance qui héberge elle-même les poids peut les compresser une fois pour toutes et laisser Caddy les servir avec `Content-Encoding: zstd`. Sur l'encodeur int8 livré, cela fait passer le fichier de 881 878 510 octets à 642 839 559 (27 % de moins à télécharger, les deux mesurés), et le navigateur le décompresse nativement en 3 secondes environ : toute connexion plus lente que ~200 Mo/s y gagne.
