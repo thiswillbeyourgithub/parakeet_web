@@ -360,9 +360,17 @@ ainsi de 841 Mo à 643 Mo (27 % de moins à télécharger), et le navigateur le
 décompresse nativement en 3 secondes environ : sur toute connexion plus lente
 que ~200 Mo/s, le modèle arrive donc plus tôt. Le script nécessite `zstd` sur
 l'hôte, et rien ne casse s'il est absent : sans fichier `.zst`, Caddy sert le
-fichier brut exactement comme avant. **Relancez le script chaque fois que vous
+fichier brut exactement comme avant (il utilise le binaire `zstd` si l'hôte en
+a un, sinon le zstd intégré à Node). **Relancez le script chaque fois que vous
 remplacez un fichier de modèle**, sinon le conteneur avertira au démarrage
 qu'un fichier `.zst` est périmé.
+
+Si vous préférez ne pas avoir à penser à l'étape 4, définissez
+`PRECOMPRESS_MODELS=1` dans `docker/.env` et le conteneur s'en charge au
+démarrage. Cela nécessite que le volume de modèles soit monté en écriture
+(retirez son `:ro` dans `docker-compose.yml`) et prend 30 à 90 secondes au
+premier démarrage suivant un changement de modèle ; les démarrages suivants
+trouvent les fichiers `.zst` à jour et ne font rien.
 
 Utilisez `VITE_MODEL_SOURCE` pour choisir d'où l'interface récupère les poids :
 

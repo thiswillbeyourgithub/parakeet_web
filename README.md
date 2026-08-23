@@ -353,9 +353,16 @@ serves with `Content-Encoding: zstd`. It takes the int8 encoder from 841 MB
 to 643 MB (27% less to download), and the browser decompresses it natively
 in about 3 seconds, so on any connection slower than ~200 MB/s the model
 arrives sooner. It needs `zstd` on the host, and nothing breaks without it:
-with no sidecar, Caddy serves the plain file exactly as before. **Re-run the
-script whenever you replace a model file**, or the container will warn at
+with no sidecar, Caddy serves the plain file exactly as before (it uses the
+`zstd` binary when the host has one, and Node's own zstd otherwise). **Re-run
+the script whenever you replace a model file**, or the container will warn at
 startup that a sidecar went stale.
+
+If you would rather not think about step 4 at all, set `PRECOMPRESS_MODELS=1`
+in `docker/.env` and the container does it for you at startup. That needs the
+model volume mounted writable (drop its `:ro` in `docker-compose.yml`) and
+takes 30 to 90 seconds on the first boot after a model change; later boots
+find the sidecars current and do nothing.
 
 Use `VITE_MODEL_SOURCE` to choose where the UI fetches weights from:
 

@@ -225,6 +225,7 @@ echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-(not set, uses models.js per-model pin)}"
 echo "[entrypoint] VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-(not set, defaults to 'hf')}"
 echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
+echo "[entrypoint] PRECOMPRESS_MODELS=${PRECOMPRESS_MODELS:-(not set, sidecars are only reported on, never written)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boost lists served)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
@@ -296,27 +297,33 @@ else
     exit 1
   fi
 
-  # Stale-sidecar guard. Caddy serves `<file>.zst` in place of `<file>` to any
-  # browser that accepts zstd (file_server ... precompressed, see Caddyfile),
-  # so a sidecar left over from an OLDER copy of a model would be handed to
-  # some visitors while the plain file is correct: silent, and only affecting
-  # part of the audience. Compare mtimes and say so loudly. This only reports:
-  # the container runs unprivileged and the model folder is frequently mounted
-  # read-only, so fixing it is the operator's job, on the host, with
-  # scripts/precompress-models.sh (which regenerates or removes them).
-  _stale=""
-  for _z in $(find -L "${LOCAL_MODEL_PATH}" -type f -name '*.zst' 2>/dev/null); do
-    _src="${_z%.zst}"
-    if [ ! -f "${_src}" ] || [ "${_src}" -nt "${_z}" ]; then
-      _stale="${_stale} $(basename "${_z}")"
-    fi
-  done
-  if [ -n "${_stale}" ]; then
-    echo "[entrypoint] WARNING: stale precompressed sidecar(s):${_stale}"
-    echo "[entrypoint] These are served INSTEAD of the file they shadow, so visitors"
-    echo "[entrypoint] whose browser accepts zstd would get outdated weights."
-    echo "[entrypoint] Fix on the host: ./scripts/precompress-models.sh <model-dir>"
-  fi
+  # Precompressed sidecars. Caddy serves `<file>.zst` in place of `<file>` to
+  # any browser that accepts zstd (file_server ... precompressed, see
+  # Caddyfile), which takes the 841 MB int8 encoder to 643 MB on the wire.
+  #
+  # Default (PRECOMPRESS_MODELS unset): REPORT ONLY. A sidecar left over from an
+  # OLDER copy of a model would be handed to some visitors while the plain file
+  # stays correct, which is silent and hits only part of the audience, so it is
+  # worth a loud line at boot. Nothing is written, because the container runs
+  # unprivileged and the model folder is usually mounted read-only.
+  #
+  # PRECOMPRESS_MODELS=1: generate the missing ones and replace the stale ones
+  # here, at startup. That needs the mount WRITABLE (drop the `:ro`) and costs
+  # ~30-90 s the first time on a full model set; afterwards it is a no-op, so
+  # the cost is paid once per model change rather than per container start.
+  # Either way this never fails the boot: without a sidecar Caddy serves the
+  # plain file, which is what it did before any of this existed.
+  case "${PRECOMPRESS_MODELS:-}" in
+    1|true|y|yes)
+      echo "[entrypoint] PRECOMPRESS_MODELS set: generating zstd sidecars in ${LOCAL_MODEL_PATH}..."
+      node /opt/parakeet/scripts/precompress.mjs --models "${LOCAL_MODEL_PATH}" \
+        || echo "[entrypoint] WARNING: precompression failed; Caddy will serve the plain files."
+      ;;
+    *)
+      node /opt/parakeet/scripts/precompress.mjs --models "${LOCAL_MODEL_PATH}" --check \
+        || true
+      ;;
+  esac
 fi
 
 # ---------- Dictation regex rules ------------------------------------------
