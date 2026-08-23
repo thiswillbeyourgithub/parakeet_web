@@ -192,9 +192,14 @@ describe('resolveFiles: optimized encoder preference', () => {
 
   test('fp32 keeps the stock encoder even when the optimized one is present', () => {
     // Unlike int8/fp16, whose `.optimized.` builds are a preference, the
-    // optimized fp32 build measured ~23% SLOWER on a real GPU (see hub.js
-    // optimizedEncoderName), so stock is first in the candidate list and the
-    // optimized graph is only a fallback for a dir that ships nothing else.
+    // optimized fp32 build is only a fallback, so stock is first in the
+    // candidate list and the optimized graph serves a dir that ships nothing
+    // else. NOTE: the ~23% GPU slowdown that originally set this order has been
+    // RETRACTED (it predated the page-animation fix; re-measured 2026-08-23 at
+    // 4.7% the OTHER way, unresolved at p=0.092). This test pins the CURRENT
+    // shipped behaviour, not a still-valid perf finding: see the hub.js
+    // optimizedEncoderName comment. If the preference is ever flipped, flip
+    // this expectation with it rather than weakening the test.
     const dir = makeModelDir([
       'encoder-model.optimized.onnx',
       'encoder-model.onnx',
