@@ -10,6 +10,14 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The app stops downloading three WebAssembly runtimes it never runs
+
+ONNX Runtime is vendored as four separate WebAssembly builds (plain, JSEP, JSPI, asyncify) and the app only ever loads one of them. It was downloading and hash-checking all four at startup anyway: 79,772,176 bytes where 26,874,157 are the ones actually used. Worse, it did that once per JavaScript context, and every transcription worker is its own context, so a machine running the parallel encode pool alongside the composed decode worker paid that bill four times over, at the exact moment the model weights were downloading too.
+
+That was not only waste. Under the pile of concurrent transfers one of them reliably failed outright, and a worker whose runtime download fails is out for the rest of the session: its share of the work quietly moves back onto the main thread, the transcript still comes out fine, and the only trace is a line in the console. Our own end-to-end test caught it, which is why the test asserts on the console and not just on the text.
+
+The integrity guarantee is unchanged where it counts: the bytes handed to ONNX Runtime are still pinned to the hash the build recorded for them, and a tampered runtime still refuses to load. Hashing three builds that are never executed protected nothing.
+
 ### The app itself now downloads about six times smaller
 
 Every visitor downloads the app bundle before anything else happens, and 130 of its 138 MB are WebAssembly: the ONNX Runtime builds, ffmpeg, and the diarization engine. Caddy was compressing those bytes again for every single request. They are now compressed once, at image build time, and served as-is.

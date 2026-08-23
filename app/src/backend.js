@@ -3,9 +3,9 @@
 // The function resolves once ONNX Runtime is ready and returns the `ort` module.
 
 // Fetch /ort/manifest.json (emitted by app/ui/postbuild.mjs) and use it to
-// verify each ORT WASM/MJS runtime asset before handing the bytes to ORT.
+// verify the ORT WASM/MJS runtime assets before handing the bytes to ORT.
 // Without this, a serving-path compromise (a tampered Caddy, a malicious
-// reverse proxy, a poisoned CDN cache) could swap the ~11 MB jsep.wasm
+// reverse proxy, a poisoned CDN cache) could swap the ~26 MB jsep.wasm
 // for an attacker-built ML runtime that exfiltrates PCM at inference
 // time, completely transparent to the user.
 //
@@ -14,9 +14,21 @@
 // `wasmPaths.mjs` and `wasmPaths.wasm` directly when wasmPaths is an
 // object (it does NOT scan by filename). We pick the jsep variant
 // because the vendored bundle (ort.bundle.min.mjs) only references
-// `ort-wasm-simd-threaded.jsep.{mjs,wasm}`; if a future bundle pulls in
-// other variants the manifest entries are still verified and live on
-// disk, the public mapping just needs to point at the right pair.
+// `ort-wasm-simd-threaded.jsep.{mjs,wasm}`.
+//
+// ONLY that pinned pair is fetched, not every manifest entry. The vendored
+// npm package ships four runtime variants (plain / jsep / jspi / asyncify,
+// ~76 MB of .wasm all told) and postbuild hashes all of them, but three of
+// them are never loaded: pinning `wasmPaths` to the jsep blob URLs means ORT
+// requests nothing else. Downloading + hashing them anyway cost ~54 MB per
+// JS CONTEXT (main thread AND every worker: each one runs its own ORT
+// runtime), and the object URLs minted for the unused six were never
+// revoked. With the encode pool and the composed decode worker that is four
+// contexts fetching ~80 MB each at once, right while the model weights are
+// downloading; one of those concurrent transfers reliably died with
+// net::ERR_FAILED ("Failed to fetch"), which permanently dropped a worker to
+// the in-thread fallback (caught by transcription-composed-pipeline.spec.js).
+// Verifying bytes that are never executed bought nothing anyway.
 //
 // Falls back to the original string wasmPaths (no integrity check) when:
 //   - manifest fetch returns 404 (e.g. running against a dev server with
@@ -51,7 +63,42 @@ function _integrityFailure(reason) {
   console.warn(`[Parakeet.js] ${reason}. Falling back to unchecked wasmPaths (DEV ONLY; production hard-fails).`);
 }
 
-async function _verifiedOrtWasmPaths(basePath) {
+/**
+ * The one runtime variant ORT is pinned to. ORT 1.26+ expects
+ * `wasmPaths.mjs` / `wasmPaths.wasm` (not a filename-keyed map), and the
+ * vendored ort.bundle.min.mjs only references the jsep variant, so this pair
+ * is the whole of what ever gets loaded.
+ * @type {{mjs: string, wasm: string}}
+ */
+export const ORT_RUNTIME_ASSETS = {
+  mjs: 'ort-wasm-simd-threaded.jsep.mjs',
+  wasm: 'ort-wasm-simd-threaded.jsep.wasm',
+};
+
+/**
+ * Pick the manifest entries for the runtime pair that will actually be loaded.
+ * Pure, so the "fetch only what we pin" contract is unit-testable without a
+ * browser (test/unit/ort-asset-verify.test.mjs).
+ *
+ * @param {Record<string,string>} manifest filename -> sha384-... map.
+ * @param {{mjs: string, wasm: string}} [names] variant to pin.
+ * @returns {?{mjs: {name: string, expected: string}, wasm: {name: string, expected: string}}}
+ *   null when the manifest does not carry BOTH halves of the pair (a stripped
+ *   or foreign build): there is nothing to pin, so the caller falls back.
+ */
+export function selectOrtRuntimeAssets(manifest, names = ORT_RUNTIME_ASSETS) {
+  const mjs = manifest?.[names.mjs];
+  const wasm = manifest?.[names.wasm];
+  if (!mjs || !wasm) return null;
+  return {
+    mjs: { name: names.mjs, expected: mjs },
+    wasm: { name: names.wasm, expected: wasm },
+  };
+}
+
+// Exported for the unit test only (nothing else imports it): the property that
+// matters is WHICH requests it makes, which a pure helper cannot express.
+export async function _verifiedOrtWasmPaths(basePath) {
   if (typeof fetch === 'undefined' || !crypto?.subtle) {
     _integrityFailure('WebCrypto unavailable');
     return basePath;
@@ -65,44 +112,39 @@ async function _verifiedOrtWasmPaths(basePath) {
     _integrityFailure(`No ORT integrity manifest at ${basePath}manifest.json (${e.message})`);
     return basePath;
   }
-  const entries = Object.entries(manifest || {});
-  if (entries.length === 0) {
+  if (Object.keys(manifest || {}).length === 0) {
     _integrityFailure('ORT integrity manifest is empty');
     return basePath;
   }
+  // Fall back when the manifest cannot pin our variant (a stripped build):
+  // ORT then re-fetches by name over same-origin, unpinned.
+  const wanted = selectOrtRuntimeAssets(manifest);
+  if (!wanted) {
+    console.warn('[Parakeet.js] jsep variant missing from ORT manifest; falling back to base-path wasmPaths (still same-origin, but the runtime bytes are NOT pinned)');
+    return basePath;
+  }
   const verified = {};
-  await Promise.all(entries.map(async ([name, expected]) => {
-    const url = basePath + name;
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      // Skip variants this build did not ship. ORT will fall back to a
-      // sibling file it knows about; if every candidate is missing it
-      // surfaces a clear error at session-create time.
-      return;
-    }
+  await Promise.all(Object.entries(wanted).map(async ([key, { name, expected }]) => {
+    const resp = await fetch(basePath + name);
+    // A manifest entry the build did not actually ship. Nothing to pin, so
+    // fall through to the base path below (ORT surfaces a clear error at
+    // session-create time if the file is missing there too).
+    if (!resp.ok) return;
     const blob = await resp.blob();
     const actual = await _sha384B64(blob);
     if (actual !== expected) {
       throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
     }
-    verified[name] = URL.createObjectURL(blob);
+    verified[key] = URL.createObjectURL(blob);
   }));
-  console.log(`[Parakeet.js] ORT runtime integrity verified (${Object.keys(verified).length} files)`);
-
-  // ORT 1.26 expects `wasmPaths.mjs` / `wasmPaths.wasm` (not a
-  // filename-keyed map). The vendored ort.bundle.min.mjs only references
-  // the jsep variant, so we hand ORT the verified blob URLs for that
-  // pair. If the pair isn't in the manifest (a stripped build), fall
-  // back to the base path so ORT re-fetches over same-origin; the bytes
-  // it gets are still served from /ort/ which the manifest checked at
-  // startup, just without the blob-URL pinning.
-  const mjsUrl = verified['ort-wasm-simd-threaded.jsep.mjs'];
-  const wasmUrl = verified['ort-wasm-simd-threaded.jsep.wasm'];
-  if (mjsUrl && wasmUrl) {
-    return { mjs: mjsUrl, wasm: wasmUrl };
+  if (!verified.mjs || !verified.wasm) {
+    // Don't leak the half we did mint an object URL for.
+    for (const url of Object.values(verified)) URL.revokeObjectURL(url);
+    console.warn(`[Parakeet.js] ORT runtime asset missing under ${basePath}; falling back to base-path wasmPaths (still same-origin, but the runtime bytes are NOT pinned)`);
+    return basePath;
   }
-  console.warn('[Parakeet.js] jsep variant missing from ORT manifest; falling back to base-path wasmPaths (still same-origin, integrity check ran at startup)');
-  return basePath;
+  console.log(`[Parakeet.js] ORT runtime integrity verified (${Object.keys(verified).length} files)`);
+  return { mjs: verified.mjs, wasm: verified.wasm };
 }
 
 /**
