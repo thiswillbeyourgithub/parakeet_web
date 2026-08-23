@@ -54,7 +54,20 @@ import zlib from 'node:zlib';
 
 const execFileAsync = promisify(execFile);
 const brotliCompress = promisify(zlib.brotliCompress);
-const zstdCompress = promisify(zlib.zstdCompress);
+
+// Resolved lazily, NOT at import: Node only grew zstd in 22.15, and the Docker
+// builder that runs --static over the bundle is Node 20. Promisifying it up
+// here made the whole module fail to load there, on a mode that never
+// compresses a single byte with it.
+let zstdCompressAsync;
+function nodeZstd() {
+  if (zstdCompressAsync === undefined) {
+    zstdCompressAsync = typeof zlib.zstdCompress === 'function'
+      ? promisify(zlib.zstdCompress)
+      : null;
+  }
+  return zstdCompressAsync;
+}
 
 // ---------------------------------------------------------------------------
 // Pure decisions (exported for test/unit/precompress.test.mjs)
@@ -199,7 +212,7 @@ async function compressZstd(src, tmp, level) {
   // NOTE: never pass ZSTD_c_nbWorkers here. The one-shot API returns an EMPTY
   // buffer with it set (measured), which would write a zero-byte sidecar that
   // Caddy would happily serve in place of the model.
-  const out = await zstdCompress(buf, {
+  const out = await nodeZstd()(buf, {
     params: { [zlib.constants.ZSTD_c_compressionLevel]: level },
   });
   writeFileSync(tmp, out);
@@ -376,6 +389,11 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
   }
 
   if (mode === 'models' && !haveZstdBinary()) {
+    if (!nodeZstd()) {
+      console.error('[precompress] no zstd available: install the `zstd` binary or run this on'
+        + ' Node >= 22.15. Caddy will serve the plain files.');
+      return counts;
+    }
     console.error('[precompress] zstd binary not found, using Node\'s built-in zstd (~3x slower)');
   }
 

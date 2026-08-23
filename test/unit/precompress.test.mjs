@@ -31,6 +31,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, existsSync, lstatSync, readlinkSync, statSync, utimesSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import zlib from 'node:zlib';
 import {
   isCompressibleStatic,
@@ -289,6 +291,43 @@ describe('end to end on a real tree', () => {
     // must see the file it asked for, hash checks included.
     const back = zlib.brotliDecompressSync(readFileSync(join(root, 'main.js.br')));
     assert.equal(back.toString(), text);
+  });
+
+  test('static mode runs on a Node with no zstd at all', () => {
+    // The Docker builder is Node 20, which has brotli but no zlib.zstdCompress.
+    // Promisifying zstd at import time made the module fail to LOAD there, so
+    // the bundle step died on a mode that never compresses a byte with zstd.
+    // Reproduced by blanking the export before the tool is loaded, since this
+    // process's own Node is new enough to have it.
+    const root = join(dir, 'no-zstd');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'main.js'), 'x'.repeat(50_000));
+    const preload = join(root, 'blank-zstd.mjs');
+    writeFileSync(preload,
+      "import zlib from 'node:zlib';\nzlib.zstdCompress = undefined;\nzlib.zstdCompressSync = undefined;\n");
+
+    const tool = fileURLToPath(new URL('../../scripts/precompress.mjs', import.meta.url));
+    const r = spawnSync(process.execPath,
+      ['--import', pathToFileURL(preload).href, tool, '--static', root, '--quality', '5'],
+      { encoding: 'utf-8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(join(root, 'main.js.br')));
+  });
+
+  test('models mode says so instead of crashing when no zstd exists', () => {
+    const root = join(dir, 'no-zstd-models');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'encoder-model.onnx'), 'z'.repeat(200_000));
+    const preload = join(dir, 'no-zstd', 'blank-zstd.mjs');
+    const tool = fileURLToPath(new URL('../../scripts/precompress.mjs', import.meta.url));
+    // PATH emptied so the `zstd` binary cannot stand in for the missing API.
+    const r = spawnSync(process.execPath,
+      ['--import', pathToFileURL(preload).href, tool, '--models', root],
+      { encoding: 'utf-8', env: { ...process.env, PATH: '' } });
+    assert.equal(r.status, 0, 'a missing compressor is not fatal, Caddy serves the plain file');
+    assert.ok(!existsSync(join(root, 'encoder-model.onnx.zst')));
+    assert.match(r.stderr, /no zstd available/,
+      'the operator has to be told why nothing was compressed');
   });
 
   test('a second run does nothing', async () => {
