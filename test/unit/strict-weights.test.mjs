@@ -2,7 +2,7 @@
 // Pure logic: no Playwright, no model. Covers the env precedence (explicit
 // override vs the CI default) and that requireWeightsOrSkip fails-vs-skips
 // accordingly. This is the regression guard for the behaviour change that made
-// a missing OPTIONAL weight (fp32 shards, int8-lite, diarization models) a
+// a missing OPTIONAL weight (fp32 shards, diarization models) a
 // FAILURE locally while staying a SKIP in CI.
 //
 // Built with Claude Code.

@@ -38,7 +38,6 @@ export const LONG_PROFILE_TARGET_SEC = 90;
 // weights; the decoder (~18 MB) and preprocessor (~1 MB) are folded in.
 export const QUANT_DOWNLOAD_MB = {
   int8: 860,
-  'int8-lite': 780,
   fp16: 1200,
   fp32: 2350,
 };
@@ -72,7 +71,6 @@ export function planBenchmark({
 } = {}) {
   const combos = [
     { backend: 'wasm', quant: 'int8' },
-    { backend: 'wasm', quant: 'int8-lite' },
     { backend: 'wasm', quant: 'fp32' },
   ];
   if (webgpuAvailable && !webgpuDisabled) {

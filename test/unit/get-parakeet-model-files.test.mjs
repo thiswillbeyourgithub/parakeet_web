@@ -82,11 +82,6 @@ const REPO_FP32_SHARDS = [
   'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001',
   'vocab.txt', 'nemo128.onnx',
 ];
-// Ships the lighter int8 encoder (encoder-model.int8.lite.onnx) alongside the default int8.
-const REPO_LITE = [
-  'encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'decoder_joint-model.int8.onnx',
-  'encoder-model.onnx', 'encoder-model.onnx.data', 'vocab.txt', 'nemo128.onnx',
-];
 // How the model repo (parakeet-tdt-0.6b-v3-smoothquant-onnx) ACTUALLY ships on
 // HuggingFace: the flat single-file fp32 encoder at the root (WebGPU) PLUS the
 // <2GB shards under a `sharded/` subfolder (WASM), which the HF tree API lists
@@ -137,31 +132,6 @@ describe('getParakeetModel file selection: WASM', () => {
     assert.ok(downloaded.includes('encoder-model.int8.onnx'));
     assert.ok(downloaded.includes('vocab.txt'));
     assert.ok(!downloaded.includes('encoder-model.onnx.data'), 'must not fetch the fp32 sidecar on the int8 pin');
-  });
-
-  test('int8-lite request + lite shipped -> lite encoder, plain int8 decoder, no sidecar', async () => {
-    const downloaded = mockHf(REPO_LITE);
-    const r = await getParakeetModel('test/wasm-int8-lite', {
-      backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8',
-    });
-    assert.deepEqual(r.filenames, { encoder: 'encoder-model.int8.lite.onnx', decoder: 'decoder_joint-model.int8.onnx' });
-    assert.deepEqual(r.quantisation, { encoder: 'int8-lite', decoder: 'int8' });
-    assert.equal(r.urls.encoderDataUrl ?? null, null, 'lite encoder is self-contained');
-    assert.ok(downloaded.includes('encoder-model.int8.lite.onnx'), 'must fetch the lite encoder');
-    assert.ok(!downloaded.includes('encoder-model.int8.onnx'), 'must NOT fetch the default int8 encoder when lite was requested');
-  });
-
-  test('int8-lite request but NO lite file in repo throws rather than silently using default int8', async () => {
-    // No silent downgrade: an absent lite build surfaces as QuantUnavailableError
-    // (like a missing fp32 shard set) so it is obvious which build loaded.
-    const downloaded = mockHf(REPO_NO_FP16);
-    await assert.rejects(
-      getParakeetModel('test/wasm-int8-lite-missing', {
-        backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8',
-      }),
-      (err) => err instanceof QuantUnavailableError && err.requested.encoder === 'int8-lite',
-    );
-    assert.ok(!downloaded.includes('encoder-model.int8.lite.onnx'), 'no lite file should be fetched when the request is rejected');
   });
 
   test('fp32 request honoured only with allowWasmFp32 + shards: shards mounted as array, single sidecar NOT added', async () => {
@@ -401,7 +371,6 @@ describe('getParakeetModel file selection: preprocessor backend', () => {
 // before (the earlier describes pin that side with optimized-less fixtures).
 const REPO_OPTIMIZED_INT8 = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_NO_FP16];
 const REPO_OPTIMIZED_FP16 = ['encoder-model.fp16.optimized.onnx', ...REPO_FP16];
-const REPO_OPTIMIZED_PLUS_LITE = ['encoder-model.int8.smoothquant.optimized.onnx', ...REPO_LITE];
 // fp32's optimized build is only usable through its OWN shard set (browser paths
 // can never load a flat multi-GB fp32 graph, see the sharded describes above).
 // A source shipping BOTH layouts, which is what the model repo does:
@@ -443,16 +412,6 @@ describe('getParakeetModel file selection: optimized encoder preference', () => 
     assert.equal(r.quantisation.encoder, 'fp16');
     assert.ok(downloaded.includes('encoder-model.fp16.optimized.onnx'));
     assert.ok(!downloaded.includes('encoder-model.fp16.onnx'));
-  });
-
-  test('int8-lite request ignores an optimized default-int8 file (no optimized lite build exists)', async () => {
-    const downloaded = mockHf(REPO_OPTIMIZED_PLUS_LITE);
-    const r = await getParakeetModel('test/wasm-lite-vs-optimized', {
-      backend: 'wasm', encoderQuant: 'int8-lite', decoderQuant: 'int8',
-    });
-    assert.equal(r.filenames.encoder, 'encoder-model.int8.lite.onnx',
-      'an explicit lite request must never be hijacked by the optimized default build');
-    assert.ok(!downloaded.includes('encoder-model.int8.smoothquant.optimized.onnx'));
   });
 
   test('WASM fp32 + ONLY the optimized shard set -> optimized graph + shards from sharded/', async () => {

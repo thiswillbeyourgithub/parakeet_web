@@ -18,7 +18,7 @@
 //     feature enabled and auto-send off, and the click posts exactly the text
 //     the user was shown
 //
-// Only the wasm/int8 row is selected: int8-lite and fp32 weights are not
+// Only the wasm/int8 row is selected by default: the fp32 weights are not
 // guaranteed to exist on a CI runner, and each extra row costs a full model
 // load. Headless Chromium has no WebGPU adapter, so the GPU rows never appear.
 //
@@ -69,9 +69,6 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
 
   // fp32 is a 2.3 GB download and must never be pre-selected for anyone.
   await expect(page.locator('input[name="benchmark-combo-wasm:fp32"]')).not.toBeChecked();
-  // Keep this run to a single model load.
-  await page.locator('input[name="benchmark-combo-wasm:int8-lite"]').uncheck();
-
   await page.locator('[data-umami-event="benchmark_run"]').click();
 
   const textarea = page.locator('.benchmark-report-text');

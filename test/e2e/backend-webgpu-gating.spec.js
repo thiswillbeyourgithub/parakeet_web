@@ -99,8 +99,7 @@ test('with no adapter, WebGPU is greyed out and WASM int8 stays the default', as
   const int8 = page.locator('input[name="encoderQuant"][value="int8"]');
   await expect(int8).toBeEnabled();
   await expect(int8).toBeChecked();
-  // int8-lite and the opt-in sharded fp32 stay selectable on WASM; fp16 cannot.
-  await expect(page.locator('input[name="encoderQuant"][value="int8-lite"]')).toBeEnabled();
+  // The opt-in sharded fp32 stays selectable on WASM; fp16 cannot.
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeEnabled();
   await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeDisabled();
 });

@@ -713,10 +713,9 @@ export default function App() {
   const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~800 MB, fast,
-  // good quality on long audio with the SmoothQuant encoder), 'int8-lite' (the
-  // lighter ~757 MB int8 build, opt-in) or 'fp32' (sharded ~2.4 GB, full quality,
-  // ~2x slower). 'int8-lite'/'fp32' are opt-in: only honoured when the repo
-  // actually ships the lite file / fp32 shards, else hub.js throws
+  // good quality on long audio with the SmoothQuant encoder) or 'fp32' (sharded
+  // ~2.4 GB, full quality, ~35 % slower). 'fp32' is opt-in: only honoured when
+  // the repo actually ships the fp32 shards, else hub.js throws
   // QuantUnavailableError (no silent downgrade; resolveModelQuant). Ignored on
   // WebGPU, which has its own fp16/fp32 selection.
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
@@ -1637,7 +1636,7 @@ export default function App() {
           // app-wide, so an old saved choice must not resurrect the GPU path.
           setBackend(coerceBackend(savedBackend));
         }
-        setWasmEncoderQuant(['fp32', 'int8-lite'].includes(savedWasmEncoderQuant) ? savedWasmEncoderQuant : 'int8');
+        setWasmEncoderQuant(savedWasmEncoderQuant === 'fp32' ? 'fp32' : 'int8');
         setWebgpuEncoderQuant(savedWebgpuEncoderQuant === 'fp32' ? 'fp32' : 'fp16');
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
@@ -3058,18 +3057,14 @@ export default function App() {
       // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
       // stays int8 on WASM regardless (tiny, runs fine).
       const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
-      // Opt into the lighter int8 encoder (encoder-model.int8.lite.onnx). hub.js
-      // only honours it when the active source ships the lite file, else it
-      // throws QuantUnavailableError (no silent downgrade to the default int8).
-      const wasmWantsLite = !wantWebgpu && wasmEncoderQuant === 'int8-lite';
       // On WebGPU the user picks fp16 (default) or fp32; int8 is not offered
       // (no GPU int8 encoder kernel). The fused decoder_joint always runs int8:
       // on this model the int8 joiner is as accurate as fp32/fp16 (measured) while
       // being smaller and faster, and the GPU EP runs the int8 decoder fine. int8
       // was already the default on every path except WebGPU-fp16, which now matches.
       const webgpuFp32 = wantWebgpu && webgpuEncoderQuant === 'fp32';
-      // Resolve the WASM encoder request: fp32 (shards) > int8-lite > default int8.
-      const wasmEncoderRequest = wasmWantsFp32 ? 'fp32' : (wasmWantsLite ? 'int8-lite' : 'int8');
+      // Resolve the WASM encoder request: fp32 (shards) or the default int8.
+      const wasmEncoderRequest = wasmWantsFp32 ? 'fp32' : 'int8';
       const downloadOpts = {
         encoderQuant: wantWebgpu ? (webgpuFp32 ? 'fp32' : 'fp16') : wasmEncoderRequest,
         decoderQuant: 'int8',
@@ -3282,7 +3277,7 @@ export default function App() {
           await applyBackend('wasm');
           return loadModelRef.current({ useLocalFallback, gpuQuantFallbackTried: true });
         }
-        setModelLoadError(e.requested?.encoder === 'int8-lite' ? t('quantUnavailableLite') : t('quantUnavailable'));
+        setModelLoadError(t('quantUnavailable'));
       }
       setStatus('failed');
       setProgress('');
@@ -7046,10 +7041,6 @@ export default function App() {
               const webgpuDisabledNote = t('precisionUnavailableWebgpuDisabled');
               const rows = [
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                // The lite int8 encoder is a WASM-only build (no GPU int8 kernel);
-                // opt-in, and hub.js throws QuantUnavailableError if the repo
-                // doesn't ship encoder-model.int8.lite.onnx (no silent downgrade).
-                { value: 'int8-lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
                 { value: 'fp16', label: t('precisionFp16'), available: isWebgpu && !webgpuNoF16, note: webgpuNoF16 ? t('precisionUnavailableNoF16') : (WEBGPU_DISABLED ? webgpuDisabledNote : t('precisionUnavailableWasm')) },
                 { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
               ];

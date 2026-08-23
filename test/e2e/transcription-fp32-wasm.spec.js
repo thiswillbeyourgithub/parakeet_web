@@ -88,7 +88,7 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   // restore, and clicking Load straight after reload can beat it (observed: the
   // spec then silently loads the default int8 weights and fails on the
   // shard-mount assertion). Driving the radio is race-free (synchronous React
-  // state) and exercises the real UI path, same as transcription-int8-lite.
+  // state) and exercises the real UI path.
   await page.locator('.settings-toggle').click();
   await expandSettingsSection(page, 'Model and performance');
   const fp32Radio = page.locator('input[name="encoderQuant"][value="fp32"]');
