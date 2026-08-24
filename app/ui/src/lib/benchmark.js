@@ -347,6 +347,13 @@ export async function runBenchmarkPlan(combos, {
 // languages, time zone, screen geometry and devicePixelRatio, storage
 // quota/usage, audio-input count, and network RTT. Each is a fingerprinting
 // surface with no bearing on why one backend is slower than another.
+//
+// Deliberately KEPT, in full: everything that describes the CPU and the GPUs.
+// CPU is what the browser will say about it and no more (logical cores from
+// hardwareConcurrency, RAM class from deviceMemory, plus architecture/bitness/
+// platform in the browser block: no engine exposes a CPU model string). GPU is
+// every adapter the machine offers plus the WebGL renderer names, because a
+// backend timing that cannot be attributed to a chip is not a measurement.
 export function anonymizeEnvironment(env = {}) {
   const b = env.browser || {};
   const uad = b.uaData || {};
@@ -378,9 +385,23 @@ export function anonymizeEnvironment(env = {}) {
       jsHeapLimitMB: hw.jsHeap?.limitMB ?? null,
     },
     capabilities: env.capabilities ?? null,
+    // Every GPU the machine will admit to, not just the one the app happens to
+    // run on: `adapters` carries the discrete AND the integrated adapter on a
+    // hybrid machine, which is what makes "the GPU row is slow here" readable.
     webgpu: gpu
-      ? { adapter: gpu.adapter ?? null, features: gpu.features ?? null, limits: gpu.limits ?? null }
+      ? {
+        adapter: gpu.adapter ?? null,
+        features: gpu.features ?? null,
+        limits: gpu.limits ?? null,
+        adapters: gpu.adapters ?? null,
+      }
       : null,
+    // Readable GPU names (WebGL renderer strings). Kept even though they are a
+    // fingerprinting surface: a performance report whose GPU rows cannot be
+    // attributed to a GPU model answers nothing, and this is the same class of
+    // detail the WebGPU adapter block above already carries. It is also the
+    // ONLY GPU evidence on a machine with no WebGPU at all.
+    gpuRenderers: env.gpuRenderers ?? null,
     ort: env.ort ?? null,
     connection: conn ? { effectiveType: conn.effectiveType ?? null, downlinkMbit: conn.downlink ?? conn.downlinkMbit ?? null } : null,
   };

@@ -42,6 +42,49 @@ function roundMB(bytes) {
   return typeof bytes === 'number' && Number.isFinite(bytes) ? Math.round(bytes / 1e6) : null;
 }
 
+// WebGL renderer strings. This is the only place a browser NAMES the actual GPU
+// in readable form ("ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 Ti, ...)"), and the
+// only GPU signal at all when WebGPU is missing, which is precisely when a
+// "why can't I use my GPU" report gets filed. A hybrid machine answers
+// DIFFERENTLY per powerPreference, so both are probed: that is how the
+// integrated and the discrete GPU both end up in the report. Identical answers
+// collapse into one entry listing both preferences (the single-GPU case).
+// Every context is released immediately (WEBGL_lose_context), so the probe
+// never holds a GPU context open behind the app's real work.
+async function probeWebglRenderers(win) {
+  const doc = win?.document;
+  if (!doc?.createElement) return null;
+  const seen = new Map();
+  for (const powerPreference of ['high-performance', 'low-power']) {
+    let gl = null;
+    try {
+      const canvas = doc.createElement('canvas');
+      const attrs = { powerPreference, failIfMajorPerformanceCaveat: false };
+      gl = canvas.getContext('webgl2', attrs) || canvas.getContext('webgl', attrs);
+      if (!gl) continue;
+      const dbg = gl.getExtension ? gl.getExtension('WEBGL_debug_renderer_info') : null;
+      const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      const row = {
+        powerPreference: [powerPreference],
+        vendor: typeof vendor === 'string' ? vendor : null,
+        renderer: typeof renderer === 'string' ? renderer : null,
+        // false when the browser masks the strings (Firefox with
+        // resistFingerprinting, Safari), which is worth knowing before reading
+        // a generic "WebKit WebGL" as the machine's real GPU.
+        unmasked: !!dbg,
+      };
+      const key = `${row.vendor}|${row.renderer}|${row.unmasked}`;
+      const prev = seen.get(key);
+      if (prev) prev.powerPreference.push(powerPreference);
+      else seen.set(key, row);
+    } catch { /* one preference failing must not lose the other */ } finally {
+      try { gl?.getExtension?.('WEBGL_lose_context')?.loseContext?.(); } catch { /* best effort */ }
+    }
+  }
+  return seen.size ? [...seen.values()] : null;
+}
+
 // Probe the runtime. `nav`/`win` are injectable for tests; `glob` is where the
 // live ORT env is looked up (backend.js initOrt sets globalThis.ort after the
 // first session build, so this section is null until a model has loaded and
@@ -119,19 +162,38 @@ export async function collectEnvironment(
   // WebGPU adapter detail: this is the payload that makes "support my GPU"
   // reports actionable (vendor/architecture plus the exact feature/limit set
   // the backend gating logic keys off, e.g. shader-f16 and maxBufferSize).
+  // `adapter`/`features`/`limits` describe the DEFAULT adapter, the one the app
+  // itself runs on. `adapters` additionally asks for a high-performance and a
+  // low-power one, which is how a hybrid machine's discrete AND integrated GPU
+  // both make it into the report; on a single-GPU machine the answers are
+  // identical and collapse into one entry listing every preference that
+  // produced it.
   env.webgpu = null;
   if (nav?.gpu?.requestAdapter) {
-    try {
-      const adapter = await nav.gpu.requestAdapter();
-      if (adapter) {
-        env.webgpu = {
-          adapter: adapter.info ? idlAttrs(adapter.info) : null,
-          features: adapter.features ? [...adapter.features].sort() : [],
-          limits: adapter.limits ? idlAttrs(adapter.limits) : null,
-        };
-      }
-    } catch { env.webgpu = null; }
+    const seen = new Map();
+    for (const powerPreference of [null, 'high-performance', 'low-power']) {
+      try {
+        const adapter = await nav.gpu.requestAdapter(powerPreference ? { powerPreference } : undefined);
+        if (!adapter) continue;
+        const info = adapter.info ? idlAttrs(adapter.info) : null;
+        const features = adapter.features ? [...adapter.features].sort() : [];
+        const limits = adapter.limits ? idlAttrs(adapter.limits) : null;
+        const fallback = typeof adapter.isFallbackAdapter === 'boolean' ? adapter.isFallbackAdapter : null;
+        if (!env.webgpu) env.webgpu = { adapter: info, features, limits, adapters: [] };
+        const key = JSON.stringify([info, features, fallback]);
+        const label = powerPreference || 'default';
+        const prev = seen.get(key);
+        if (prev) prev.powerPreference.push(label);
+        else seen.set(key, { powerPreference: [label], info, features, limits, isFallbackAdapter: fallback });
+      } catch { /* one preference failing must not lose the others */ }
+    }
+    if (env.webgpu) env.webgpu.adapters = [...seen.values()];
   }
+
+  // Named GPUs (see probeWebglRenderers): readable model names, and the only
+  // GPU evidence at all on a machine with no WebGPU.
+  env.gpuRenderers = null;
+  try { env.gpuRenderers = await probeWebglRenderers(win); } catch { env.gpuRenderers = null; }
 
   const conn = nav?.connection;
   env.connection = conn ? {
@@ -195,6 +257,7 @@ export function buildSupportReport({ generatedAt = null, app = {}, settings = {}
     hardware: env.hardware ?? null,
     capabilities: env.capabilities ?? null,
     webgpu: env.webgpu ?? null,
+    gpuRenderers: env.gpuRenderers ?? null,
     ort: env.ort ?? null,
     connection: env.connection ?? null,
     storage: env.storage ?? null,

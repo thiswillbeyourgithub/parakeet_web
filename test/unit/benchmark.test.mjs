@@ -321,7 +321,19 @@ describe('anonymizeEnvironment', () => {
       jsHeap: { limitMB: 4096, usedMB: 512 },
     },
     capabilities: { wasm: { simd: true, threads: true }, webgpu: true },
-    webgpu: { adapter: { vendor: 'nvidia', architecture: 'ampere' }, features: ['depth-clip-control'], limits: { maxBufferSize: 2147483648 } },
+    webgpu: {
+      adapter: { vendor: 'nvidia', architecture: 'ampere' },
+      features: ['depth-clip-control'],
+      limits: { maxBufferSize: 2147483648 },
+      adapters: [
+        { powerPreference: ['default', 'high-performance'], info: { vendor: 'nvidia' }, features: [], limits: {}, isFallbackAdapter: false },
+        { powerPreference: ['low-power'], info: { vendor: 'intel' }, features: [], limits: {}, isFallbackAdapter: false },
+      ],
+    },
+    gpuRenderers: [
+      { powerPreference: ['high-performance'], vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, RTX 3090 Ti)', unmasked: true },
+      { powerPreference: ['low-power'], vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, UHD Graphics)', unmasked: true },
+    ],
     ort: { versions: { web: '1.27.0' }, wasm: { numThreads: 4, simd: true } },
     connection: { effectiveType: '4g', downlink: 10, rtt: 50 },
     storage: { quotaMB: 123456, usageMB: 4321 },
@@ -340,6 +352,11 @@ describe('anonymizeEnvironment', () => {
     assert.deepEqual(a.capabilities, env.capabilities);
     assert.equal(a.webgpu.adapter.vendor, 'nvidia');
     assert.equal(a.webgpu.limits.maxBufferSize, 2147483648);
+    // Both GPUs of a hybrid machine, named: a backend timing nobody can
+    // attribute to a chip answers nothing.
+    assert.deepEqual(a.webgpu.adapters.map((x) => x.info.vendor), ['nvidia', 'intel']);
+    assert.deepEqual(a.gpuRenderers.map((x) => x.renderer),
+      ['ANGLE (NVIDIA, RTX 3090 Ti)', 'ANGLE (Intel, UHD Graphics)']);
     assert.equal(a.ort.wasm.numThreads, 4);
     assert.equal(a.connection.effectiveType, '4g');
   });
@@ -377,6 +394,7 @@ describe('anonymizeEnvironment', () => {
   test('survives an empty or partial probe', () => {
     const a = anonymizeEnvironment({});
     assert.equal(a.webgpu, null);
+    assert.equal(a.gpuRenderers, null);
     assert.equal(a.hardware.hardwareConcurrency, null);
     assert.equal(a.connection, null);
   });
