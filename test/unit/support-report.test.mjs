@@ -154,7 +154,7 @@ test('buildSupportReport emits stable parseable JSON and folds BigInt', () => {
   // Fixed top-level key order so two reports diff cleanly.
   assert.deepEqual(Object.keys(parsed), [
     'format', 'generatedAt', 'app', 'settings', 'model', 'browser', 'hardware',
-    'capabilities', 'webgpu', 'ort', 'connection', 'storage', 'audioInputs',
+    'capabilities', 'webgpu', 'gpuRenderers', 'ort', 'connection', 'storage', 'audioInputs',
   ]);
   // Missing env sections come out as explicit nulls, never undefined holes.
   assert.equal(parsed.hardware, null);
@@ -166,4 +166,118 @@ test('buildSupportReport tolerates a completely empty call', () => {
   assert.equal(parsed.format, 'parakeetweb-support-report/1');
   assert.equal(parsed.generatedAt, null);
   assert.deepEqual(parsed.app, {});
+});
+
+// A hybrid machine: one adapter per powerPreference, and a WebGL renderer
+// string per GPU. Both discrete and integrated have to survive into the report,
+// because "the GPU is slow here" is unanswerable without knowing WHICH GPU ran.
+function hybridNav() {
+  const discrete = {
+    info: { vendor: 'nvidia', architecture: 'ampere', device: '', description: '' },
+    features: new Set(['shader-f16']),
+    limits: { maxBufferSize: 2147483648 },
+    isFallbackAdapter: false,
+  };
+  const integrated = {
+    info: { vendor: 'intel', architecture: 'gen-12lp', device: '', description: '' },
+    features: new Set([]),
+    limits: { maxBufferSize: 268435456 },
+    isFallbackAdapter: false,
+  };
+  return {
+    gpu: {
+      requestAdapter: async (opts) => (opts?.powerPreference === 'low-power' ? integrated : discrete),
+    },
+  };
+}
+
+// Minimal WebGL stub: one renderer string per powerPreference, plus the
+// debug-renderer extension that unmasks it.
+function glWindow(byPreference) {
+  const lost = [];
+  const win = {
+    lost,
+    document: {
+      createElement: () => ({
+        getContext: (kind, attrs) => {
+          if (kind !== 'webgl2') return null;
+          const name = byPreference[attrs.powerPreference];
+          if (!name) return null;
+          const DBG = { UNMASKED_VENDOR_WEBGL: 1, UNMASKED_RENDERER_WEBGL: 2 };
+          return {
+            VENDOR: 10,
+            RENDERER: 11,
+            getExtension: (ext) => {
+              if (ext === 'WEBGL_debug_renderer_info') return DBG;
+              if (ext === 'WEBGL_lose_context') return { loseContext: () => lost.push(name) };
+              return null;
+            },
+            getParameter: (pname) => {
+              if (pname === DBG.UNMASKED_VENDOR_WEBGL) return `Vendor of ${name}`;
+              if (pname === DBG.UNMASKED_RENDERER_WEBGL) return name;
+              return null;
+            },
+          };
+        },
+      }),
+    },
+  };
+  return win;
+}
+
+test('collectEnvironment reports every GPU a hybrid machine offers', async () => {
+  const win = glWindow({
+    'high-performance': 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 Ti)',
+    'low-power': 'ANGLE (Intel, Mesa Intel UHD Graphics)',
+  });
+  const env = await collectEnvironment(hybridNav(), win, {});
+
+  // The default adapter still describes what the app itself would run on.
+  assert.equal(env.webgpu.adapter.vendor, 'nvidia');
+  assert.deepEqual(env.webgpu.features, ['shader-f16']);
+
+  // ...and both physical adapters are listed, each labelled by the preference
+  // that produced it.
+  assert.deepEqual(env.webgpu.adapters.map((a) => a.info.vendor), ['nvidia', 'intel']);
+  assert.deepEqual(env.webgpu.adapters[0].powerPreference, ['default', 'high-performance']);
+  assert.deepEqual(env.webgpu.adapters[1].powerPreference, ['low-power']);
+  assert.equal(env.webgpu.adapters[1].limits.maxBufferSize, 268435456);
+  assert.equal(env.webgpu.adapters[0].isFallbackAdapter, false);
+
+  // Readable names for both, unmasked, and no context left holding the GPU.
+  assert.deepEqual(env.gpuRenderers.map((g) => g.renderer), [
+    'ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 Ti)',
+    'ANGLE (Intel, Mesa Intel UHD Graphics)',
+  ]);
+  assert.equal(env.gpuRenderers[0].unmasked, true);
+  assert.equal(env.gpuRenderers[0].vendor, 'Vendor of ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 Ti)');
+  assert.equal(win.lost.length, 2);
+});
+
+test('collectEnvironment collapses a single-GPU machine into one entry', async () => {
+  const only = 'ANGLE (AMD, Radeon 780M)';
+  const win = glWindow({ 'high-performance': only, 'low-power': only });
+  const adapter = {
+    info: { vendor: 'amd' },
+    features: new Set([]),
+    limits: { maxBufferSize: 1 },
+    isFallbackAdapter: false,
+  };
+  const nav = { gpu: { requestAdapter: async () => adapter } };
+
+  const env = await collectEnvironment(nav, win, {});
+  assert.equal(env.webgpu.adapters.length, 1);
+  assert.deepEqual(env.webgpu.adapters[0].powerPreference, ['default', 'high-performance', 'low-power']);
+  assert.equal(env.gpuRenderers.length, 1);
+  assert.deepEqual(env.gpuRenderers[0].powerPreference, ['high-performance', 'low-power']);
+});
+
+test('collectEnvironment survives GPU probes that throw or are absent', async () => {
+  // A machine where WebGPU exists but every request throws, and WebGL is
+  // missing entirely: a report is still produced, with explicit nulls.
+  const nav = { gpu: { requestAdapter: async () => { throw new Error('no'); } } };
+  const win = { document: { createElement: () => ({ getContext: () => null }) } };
+  const env = await collectEnvironment(nav, win, {});
+  assert.equal(env.webgpu, null);
+  assert.equal(env.gpuRenderers, null);
 });
