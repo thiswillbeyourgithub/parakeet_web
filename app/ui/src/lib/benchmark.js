@@ -47,6 +47,15 @@ export const QUANT_DOWNLOAD_MB = {
 // reflex on a benchmark they can run without it.
 export const HEAVY_DOWNLOAD_MB = 1500;
 
+// Offered, but never pre-selected. int8lite is an ALTERNATIVE to a precision the
+// visitor already has rather than a backend they cannot otherwise reach, and at
+// 810 MB it slips under HEAVY_DOWNLOAD_MB. Pre-checking it would have taken the
+// default run for a typical int8 visitor from free (their model is cached) to a
+// second full model load plus 810 MB, which is exactly the reflex spend the
+// heavy rule exists to prevent. `isCurrent` still wins below, so a visitor who
+// already runs lite gets their own row checked at no cost.
+export const OPT_IN_QUANTS = new Set(['int8lite']);
+
 function comboId(backend, quant) {
   return `${backend}:${quant}`;
 }
@@ -96,9 +105,10 @@ export function planBenchmark({
       downloadMB,
       heavy,
       isCurrent,
-      // Heavy rows stay opt-in even when they are the visitor's own choice;
-      // the model is then already cached, so re-selecting it costs nothing.
-      defaultSelected: !heavy || isCurrent,
+      // Heavy and alternative rows stay opt-in unless they are the visitor's own
+      // choice; the model is then already cached, so re-selecting it costs
+      // nothing. Adding a row must never change what a default run downloads.
+      defaultSelected: isCurrent || (!heavy && !OPT_IN_QUANTS.has(c.quant)),
     };
   });
 
