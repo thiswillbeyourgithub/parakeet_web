@@ -33,22 +33,40 @@ describe('planBenchmark', () => {
     assert.ok(plan.every(r => r.backend === 'wasm'));
   });
 
-  test('the lite int8 encoder is a WASM row, cheap enough to stay checked', () => {
+  test('the lite int8 encoder is offered on WASM but never pre-selected', () => {
     const plan = planBenchmark({ webgpuAvailable: true });
     const lite = plan.find(r => r.id === 'wasm:int8lite');
     assert.ok(lite, 'int8lite must be offered on WASM');
+    // Under the heavy threshold, yet still opt-in: it is an ALTERNATIVE to a
+    // precision the visitor already has, so pre-checking it would silently turn
+    // a free default run into an 810 MB one. See OPT_IN_QUANTS.
     assert.equal(lite.heavy, false);
-    assert.equal(lite.defaultSelected, true);
+    assert.equal(lite.defaultSelected, false);
     // Lighter than the default int8, which is the whole reason it exists.
     assert.ok(QUANT_DOWNLOAD_MB.int8lite < QUANT_DOWNLOAD_MB.int8);
     // No GPU row: the GPU EP has no int8 encoder kernel, lite or not.
     assert.equal(plan.some(r => r.backend.startsWith('webgpu') && r.quant === 'int8lite'), false);
   });
 
-  test('a visitor already on int8lite gets that row marked current and sorted last', () => {
+  // The regression this pins: adding a row must not change what a default run
+  // costs. A typical int8 visitor's default selection is exactly their own
+  // cached row, so pressing Run without touching a checkbox downloads nothing.
+  test('adding int8lite left the default selection a single free row', () => {
+    const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'int8' });
+    const selected = plan.filter(r => r.defaultSelected);
+    assert.deepEqual(selected.map(r => r.id), ['wasm:int8']);
+    // Their own model is the one the cache holds, so the default run is free.
+    assert.equal(estimatedDownloadMB(selected, ['wasm:int8']), 0);
+  });
+
+  test('a visitor already on int8lite gets that row checked, current and sorted last', () => {
     const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'int8lite' });
-    assert.equal(plan[plan.length - 1].id, 'wasm:int8lite');
+    const lite = plan[plan.length - 1];
+    assert.equal(lite.id, 'wasm:int8lite');
     assert.equal(plan.filter(r => r.isCurrent).length, 1);
+    // isCurrent beats the opt-in rule: their model is already cached, so
+    // selecting it costs nothing, exactly as for a heavy row they already run.
+    assert.equal(lite.defaultSelected, true);
   });
 
   test('the currently selected combination is sorted last so it stays cached', () => {
