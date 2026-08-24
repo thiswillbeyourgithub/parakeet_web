@@ -9,8 +9,12 @@
 //     reduced fetch list,
 //   - when it does not (switched off, phrase boosting, beam search, a decoder
 //     that lacks the outputs, a row too short for what the step reads),
-//     session.run() is called with NO fetches argument at all, i.e. byte-for-
-//     byte the pre-existing behaviour,
+//     session.run() is called with the explicit FULL-ROW list: the logit row,
+//     both states, and the lse pair only when the decoder declares it. Naming
+//     them matters, because an unnamed run() fetches EVERY declared output, so
+//     on a top-K decoder the full-row paths would compute and marshal
+//     topk_logits / topk_ids / duration_logits they never read (+27% wall over
+//     800 steps at batch 8, onnxruntime-node, CPU EP),
 //   - the decoded result is identical to the full-row path, except that ties
 //     between exactly-equal top logits may be broken in a different ORDER by
 //     the ONNX TopK than by the JS argmax scan (accepted divergence, the
@@ -45,6 +49,16 @@ const EXPECTED_FETCHES = [
   'lse_token', 'lse_duration',
   'topk_logits', 'topk_ids', 'duration_logits',
 ];
+// What the FULL-ROW paths must ask for on a decoder that declares the lse pair.
+// Order included, same reason as above: it is assembled from fixed module
+// constants in parakeet.js, so pinning it catches a silent edit.
+const FULL_ROW_FETCHES = [
+  'outputs', 'output_states_1', 'output_states_2', 'lse_token', 'lse_duration',
+];
+// Same list on a decoder WITHOUT the lse pair. The optional half has to drop
+// out rather than be requested: ORT throws on an output name the graph does not
+// declare, which is why the list is built from the session instead of hardcoded.
+const FULL_ROW_FETCHES_STOCK = ['outputs', 'output_states_1', 'output_states_2'];
 
 // --- fake ORT -------------------------------------------------------------
 // Tensors track disposal so a run can assert the fast path frees every buffer
@@ -242,11 +256,11 @@ describe('top-K decoder outputs: engagement and fetch list', () => {
     assert.equal(markers[0], '[Parakeet.js] TopK decoder outputs engaged (k=8)');
   });
 
-  test('useTopkOutputs:false (model level and per call) passes NO fetches argument', async () => {
+  test('useTopkOutputs:false (model level and per call) fetches the explicit full-row list', async () => {
     const perCall = makeModel({ script: SCRIPT });
     await runTranscribe(perCall.model, SCRIPT, { useTopkOutputs: false });
-    assert.deepEqual(perCall.joinerSession.calls, perCall.joinerSession.calls.map(() => null),
-      'a disabled fast path must call run(feeds) with one argument');
+    assert.deepEqual(perCall.joinerSession.calls, perCall.joinerSession.calls.map(() => FULL_ROW_FETCHES),
+      'a disabled fast path still names the outputs it reads');
 
     const joinerSession = makeSession({ script: SCRIPT });
     const model = new ParakeetModel({
@@ -254,7 +268,30 @@ describe('top-K decoder outputs: engagement and fetch list', () => {
       preprocessor: null, ort: fakeOrt, useTopkOutputs: false,
     });
     await runTranscribe(model, SCRIPT);
-    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => null));
+    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => FULL_ROW_FETCHES));
+  });
+
+  test('the full-row list never carries the top-K outputs or prednet_lengths', async () => {
+    // The regression this guards, and the reason the list is explicit at all:
+    // run(feeds) with NO fetches argument returns EVERY declared output, so on
+    // a decoder carrying the repo's topk surgery the beam and boosting paths
+    // silently computed and marshalled topk_logits / topk_ids / duration_logits
+    // they never read, plus prednet_lengths that nothing has ever read.
+    const waste = ['topk_logits', 'topk_ids', 'duration_logits', 'prednet_lengths'];
+    for (const opts of [{ beamWidth: 3 }, { temperature: 1.2 }, { useTopkOutputs: false }]) {
+      const { model, joinerSession } = makeModel({ script: SCRIPT });
+      await runTranscribe(model, SCRIPT, opts);
+      assert.ok(joinerSession.calls.length > 0);
+      for (const fetches of joinerSession.calls) {
+        assert.ok(Array.isArray(fetches),
+          `${JSON.stringify(opts)}: the full-row path must NAME its outputs, not fetch all of them`);
+        for (const name of waste) {
+          assert.ok(!fetches.includes(name),
+            `${JSON.stringify(opts)}: full-row list must not carry ${name}`);
+        }
+        assert.ok(fetches.includes('outputs'), 'the full-row path does need the logit row');
+      }
+    }
   });
 
   test('a phrase-boost trie keeps the full logit row (boosting reads arbitrary ids)', async () => {
@@ -262,26 +299,31 @@ describe('top-K decoder outputs: engagement and fetch list', () => {
     const trie = new BoostingTrie();
     trie.insert([1, 2], 5);
     const res = await runTranscribe(model, SCRIPT, { phraseBoost: trie });
-    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => null),
-      'a boosted run must never fetch the top-K row');
+    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => FULL_ROW_FETCHES),
+      'a boosted run must take the full row and never the top-K one');
     assert.ok(res.utterance_text.length > 0);
   });
 
   test('beam search keeps the full logit row (blank lookup / prefix search need it)', async () => {
     const { model, joinerSession } = makeModel({ script: SCRIPT });
     await runTranscribe(model, SCRIPT, { beamWidth: 3 });
-    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => null));
+    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => FULL_ROW_FETCHES));
     // Same for a width-1 beam forced through the beam decoder.
     const forced = makeModel({ script: SCRIPT });
     await runTranscribe(forced.model, SCRIPT, { forceBeam: true });
-    assert.deepEqual(forced.joinerSession.calls, forced.joinerSession.calls.map(() => null));
+    assert.deepEqual(forced.joinerSession.calls, forced.joinerSession.calls.map(() => FULL_ROW_FETCHES));
   });
 
   test('a decoder without the top-K outputs (stock or lse-only) keeps the full row', async () => {
-    for (const outputNames of [STOCK_OUTPUTS, LSE_OUTPUTS]) {
+    // The stock fixture declares no lse pair, so the optional half of the
+    // full-row list must drop out: asking for an undeclared output would throw.
+    for (const [outputNames, expected] of [
+      [STOCK_OUTPUTS, FULL_ROW_FETCHES_STOCK],
+      [LSE_OUTPUTS, FULL_ROW_FETCHES],
+    ]) {
       const { model, joinerSession } = makeModel({ script: SCRIPT, outputNames });
       const res = await runTranscribe(model, SCRIPT);
-      assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => null));
+      assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => expected));
       assert.equal(res.utterance_text, SCRIPT_TEXT);
     }
   });
@@ -289,18 +331,18 @@ describe('top-K decoder outputs: engagement and fetch list', () => {
   test('a positive temperature keeps the full row (confidence needs the whole vocab)', async () => {
     const { model, joinerSession } = makeModel({ script: SCRIPT });
     await runTranscribe(model, SCRIPT, { temperature: 1.2 });
-    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => null));
+    assert.deepEqual(joinerSession.calls, joinerSession.calls.map(() => FULL_ROW_FETCHES));
   });
 
   test('a top-K row shorter than the step needs falls back to the full row for that step', async () => {
     // decode-debug reports 5 alternatives; a k=3 graph cannot serve them, so
-    // the step re-runs with no fetches list and the report stays complete.
+    // the step re-runs on the full-row list and the report stays complete.
     const { model, joinerSession } = makeModel({ script: SCRIPT, k: 3 });
     const res = await runTranscribe(model, SCRIPT, { collectDecodeDebug: true });
     // Every step probes the short row, then re-runs the same feeds full.
     assert.ok(joinerSession.calls.length > 0 && joinerSession.calls.length % 2 === 0);
     joinerSession.calls.forEach((f, i) => {
-      assert.deepEqual(f, i % 2 === 0 ? EXPECTED_FETCHES : null,
+      assert.deepEqual(f, i % 2 === 0 ? EXPECTED_FETCHES : FULL_ROW_FETCHES,
         `call ${i} should ${i % 2 === 0 ? 'probe the top-K row' : 'fall back to the full row'}`);
     });
     assert.equal(res.decodeDebug.tokens[0].alternatives.length, 5);

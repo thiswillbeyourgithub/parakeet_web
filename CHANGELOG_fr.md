@@ -10,6 +10,14 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### La recherche par faisceau cesse de payer pour des sorties de décodeur qu'elle jette
+
+Les décodeurs du dépôt de modèles exposent désormais des valeurs supplémentaires à l'intérieur du graphe, ce qui permet à une étape de décodage de lire quelques dizaines de flottants au lieu de la ligne complète de ~8 200 logits. Le chemin glouton demande exactement celles-là, et les obtient.
+
+Tous les autres chemins de décodage (recherche par faisceau, amplification de phrases, et toute exécution avec une température) ne demandaient rien de précis, ce qui, dans ONNX Runtime, signifie « renvoie toutes les sorties dont tu disposes ». Sur les nouveaux décodeurs, cela incluait en silence les trois sorties top-K que ces chemins ne lisent jamais, calculées et recopiées hors du moteur à chaque appel du réseau joint. Dans un micro-banc d'essai de 800 appels à une largeur de faisceau de 8, cela coûtait 27 % de la boucle : 4 334 ms contre 3 399 ms (onnxruntime-node, CPU, un seul fil d'exécution). Le gain sur une transcription entière est plus modeste, cette boucle n'en étant qu'une partie.
+
+Ces chemins nomment maintenant les sorties qu'ils lisent. Les transcriptions sont inchangées, et un décodeur dépourvu de ces sorties supplémentaires n'est pas affecté : la liste est construite à partir de ce que le modèle chargé déclare réellement, si bien qu'un décodeur plus ancien ou amont se comporte exactement comme avant.
+
 ### L'application cesse de télécharger trois moteurs WebAssembly qu'elle n'exécute jamais
 
 ONNX Runtime est embarqué sous forme de quatre moteurs WebAssembly distincts (standard, JSEP, JSPI, asyncify) et l'application n'en charge jamais qu'un seul. Elle téléchargeait et vérifiait pourtant l'empreinte des quatre au démarrage : 79 772 176 octets, dont 26 874 157 réellement utilisés. Pire, elle le faisait une fois par contexte JavaScript, et chaque worker de transcription est son propre contexte : une machine qui fait tourner le pool d'encodage parallèle en plus du worker de décodage composé payait donc quatre fois l'addition, au moment précis où les poids du modèle se téléchargeaient eux aussi.

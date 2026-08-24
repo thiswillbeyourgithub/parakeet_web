@@ -68,6 +68,11 @@ function makeModel(script) {
     // in-graph top-K fast path must stay off: the real probe reads the session's
     // outputNames, which this fake joiner does not declare.
     _topkOutputsReady: proto._topkOutputsReady,
+    // Same reasoning for the full-row fetch list: this fake joiner declares no
+    // outputNames, so _fullRowFetches resolves to null and _runJoinerFullRow
+    // falls back to run(feeds) with no fetches, exactly as before.
+    _fullRowFetches: proto._fullRowFetches,
+    _runJoinerFullRow: proto._runJoinerFullRow,
     _pickArgmax: proto._pickArgmax,
     _frameConfidence: proto._frameConfidence,
     _expSumAround: proto._expSumAround,
