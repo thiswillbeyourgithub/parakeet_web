@@ -10,6 +10,16 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### L'encodeur int8 allégé est de retour, comme choix à côté de celui par défaut
+
+Le dépôt de modèles construit deux encodeurs int8 à partir de la même calibration. Ils diffèrent par le nombre de multiplications matricielles laissées en pleine précision : 18 dans la version par défaut, 11 dans la version allégée. L'encodeur allégé est donc environ 88 Mo plus petit à télécharger et, mesuré sur cette machine, environ 164 Mio plus léger en mémoire de pointe, au prix d'une erreur de transcription légèrement plus élevée.
+
+Il existait auparavant, a été retiré parce que le compromis ne semblait pas en valoir la peine, et il revient là où il a sa place : comme troisième entrée de la liste des précisions d'encodeur (int8 lite / int8 / fp32) plutôt que comme une décision prise à votre place. int8 reste la valeur par défaut et rien ne change pour qui ne touche pas au réglage. Le banc d'essai intégré gagne aussi une ligne pour lui, puisque « l'encodeur allégé est-il assez bon sur ma machine » est exactement le genre de question à laquelle il sert à répondre.
+
+Le choisir face à un miroir qui n'héberge pas le fichier allégé interrompt le chargement avec un message clair au lieu de servir discrètement l'encodeur plus lourd, la règle que fp32 suivait déjà. Sur WebGPU il se comporte exactement comme int8 : le GPU n'a aucun noyau d'encodeur int8, les deux se résolvent donc en fp32.
+
+Deux correctifs plus discrets en sont sortis. Un miroir local servant l'encodeur allégé n'était jamais interrogé à son sujet, si bien que le fichier pouvait être là et être tout de même signalé comme indisponible. Et demander un décodeur fp32 en même temps qu'une précision d'encodeur disponible était rapporté comme pleinement honoré, alors qu'il n'existe aucun décodeur fp32 à fournir : la rétrogradation est désormais signalée, donc la bannière et la sonde de bascule vers le miroir se déclenchent comme elles le doivent.
+
 ### La recherche par faisceau cesse de payer pour des sorties de décodeur qu'elle jette
 
 Les décodeurs du dépôt de modèles exposent désormais des valeurs supplémentaires à l'intérieur du graphe, ce qui permet à une étape de décodage de lire quelques dizaines de flottants au lieu de la ligne complète de ~8 200 logits. Le chemin glouton demande exactement celles-là, et les obtient.
