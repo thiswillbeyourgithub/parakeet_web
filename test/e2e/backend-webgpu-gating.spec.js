@@ -124,3 +124,38 @@ test('?webgpu=0 forces WASM even on a GPU machine, and coerces a persisted choic
   // Back on the CPU path, int8 is selectable again.
   await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeEnabled();
 });
+
+test('the greyed-out WebGPU tooltip stays fully readable', async ({ page }) => {
+  // The label of a greyed-out option carries `.disabled-option` (opacity 0.5),
+  // and the help popup used to render INSIDE it, so the ancestor opacity
+  // multiplied into the popup and the explanation of why the option is greyed
+  // out came out half transparent. The popup is portalled into <body> now, so
+  // its effective opacity has to be exactly 1.
+  await page.addInitScript(NO_ADAPTER);
+  await page.goto('/');
+  await seedSettings(page);
+  await page.reload();
+
+  await openPrecisionControls(page);
+
+  const label = page.locator('.setting-options label', { has: page.locator('input[value="webgpu-hybrid"]') });
+  await expect(label).toHaveClass(/disabled-option/);
+  await label.locator('.info-help-button').click();
+
+  const popup = page.locator('.info-help-text');
+  await expect(popup).toBeVisible();
+  await expect(popup).toContainText('WebGPU');
+
+  // Effective opacity = product over the popup and every ancestor.
+  const effectiveOpacity = await popup.evaluate((el) => {
+    let o = 1;
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      o *= parseFloat(getComputedStyle(n).opacity);
+    }
+    return o;
+  });
+  expect(effectiveOpacity).toBeCloseTo(1, 5);
+
+  // And it must not have landed back inside the dimmed label.
+  await expect(label.locator('.info-help-text')).toHaveCount(0);
+});

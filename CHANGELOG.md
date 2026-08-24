@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The explanation for a greyed-out option is readable again
+
+An option your machine cannot use is greyed out, and the "?" beside it says why (WebGPU with no usable GPU adapter being the common case). The greying was applied to the whole row, help popup included, so the very text explaining the situation came out half transparent. The popup is now drawn outside the greyed row and is fully opaque again.
+
 ### The lighter int8 encoder is back, as a choice next to the default one
 
 The model repo builds two int8 encoders from the same calibration run. They differ in how many matrix multiplications are left in full precision: 18 in the default build, 11 in the lite one. That makes the lite encoder about 88 MB smaller to download and, measured on this machine, about 164 MiB lighter in peak memory, in exchange for slightly more transcription error.

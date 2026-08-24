@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
@@ -107,6 +108,12 @@ async function getDictationLib() {
 // button's bounding rect, so it can overlay sibling containers (e.g.
 // the settings sidebar) without being clipped by their overflow, and
 // is clamped to stay inside the viewport horizontally.
+// It is rendered through a PORTAL into <body> rather than inside the
+// icon's own span: a dimmed ancestor (`.disabled-option`, opacity 0.5,
+// used for the greyed-out WebGPU radio) would otherwise multiply into
+// the popup and make the very explanation of WHY the option is greyed
+// out unreadable. A portal also keeps the popup out of any ancestor
+// stacking context or transform, which would break position: fixed.
 function InfoTooltip({ text }) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [pos, setPos] = React.useState(null);
@@ -197,7 +204,7 @@ function InfoTooltip({ text }) {
       >
         ?
       </button>
-      {isOpen && (
+      {isOpen && createPortal(
         <div
           ref={popupRef}
           className="info-help-text"
@@ -206,7 +213,8 @@ function InfoTooltip({ text }) {
         >
           {text}
           <button className="info-help-close" onClick={close}>×</button>
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );
