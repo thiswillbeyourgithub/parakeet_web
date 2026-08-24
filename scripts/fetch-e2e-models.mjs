@@ -2,7 +2,7 @@
 // model dir (flat layout, matching hub.js getLocalModelFile and serve.mjs).
 // Local dev already has the ASR weights in ./fallback_models; this exists so CI
 // can populate a cached dir without the full 3 GB weight set. Two model sets:
-//   - the SmoothQuant int8 ASR weights (encoder + decoder + vocab),
+//   - the SmoothQuant int8 ASR weights (both encoders + decoder + vocab),
 //   - the two speaker-diarization models (pyannote segmentation + CAM++
 //     embedding) that transcription-diarization.spec.js needs; that spec
 //     self-skips when they are absent, so this download is what gives it CI
@@ -30,6 +30,13 @@ const REVISION = 'main';
 const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
 export const MODELS = [
   { repo: ASR_REPO, file: 'encoder-model.int8.onnx' },
+  // The lite int8 encoder (same SmoothQuant calibration, --exclude-worst 0.05,
+  // so 11 MatMuls stay fp32 instead of 18). It is the ONE precision alternative
+  // headless Chromium can actually run, so fetching it is what gives
+  // transcription-int8-lite-wasm.spec.js CI coverage instead of a permanent
+  // strict-weights skip. Costs ~793 MB on a cache miss; the cache is keyed on
+  // this file, so adding it here re-keys and re-bakes automatically.
+  { repo: ASR_REPO, file: 'encoder-model.int8.lite.onnx' },
   { repo: ASR_REPO, file: 'decoder_joint-model.int8.onnx' },
   { repo: ASR_REPO, file: 'vocab.txt' },
   // No variant filenames: the model repo's graph work (folded encoder, decoder
@@ -48,7 +55,8 @@ async function exists(p) {
 }
 
 // `optional` tolerates a 404 instead of failing the fetch. No entry above needs
-// it today (every file is required), but it is the mechanism for the recurring
+// it today (every file is required, and the lite encoder was verified live on
+// HF before being listed as such), but it is the mechanism for the recurring
 // window where a new file is committed to the model repo and not yet pushed to
 // HF, so it stays and stays tested.
 export async function download({ repo, file, optional = false }, modelDir = MODEL_DIR) {

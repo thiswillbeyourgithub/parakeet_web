@@ -35,8 +35,9 @@ jobs:
         run: npm test
 
   e2e:
-    # Tier 3: full-transcription happy path in headless Chromium. Heavy (loads
-    # the ~633 MB int8 model), so the weights are cached across runs.
+    # Tier 3: full-transcription happy path in headless Chromium. Heavy (~1.7 GB
+    # of weights: both int8 encoders, the decoder, and the diarization pair), so
+    # they are cached across runs.
     name: e2e (full transcription)
     runs-on: ubuntu-latest
     timeout-minutes: 30
