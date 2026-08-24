@@ -502,6 +502,12 @@ const WEBGPU_DISABLED = typeof location !== 'undefined'
 // or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
 const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') ? 'wasm' : b);
 
+// The encoder precisions the WASM radios offer, and the whitelist the settings
+// restore validates a saved value against. Anything else (an older 'fp16', a
+// value from a newer build, a hand-edited record) falls back to int8 rather than
+// reaching hub.js as a quant it cannot resolve.
+const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'fp32'];
+
 // Where a benchmark report is POSTed, and whether the "send it to the
 // maintainer" half of the Benchmark section exists at all. The operator opts in
 // by pointing BENCHMARK_REPORTS_DIR at a writable folder, which makes the
@@ -712,10 +718,12 @@ export default function App() {
   // because the load then SUCCEEDS, and loadModel clears that on entry.
   const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
-  // Encoder precision for the WASM/CPU backend: 'int8' (default; ~800 MB, fast,
-  // good quality on long audio with the SmoothQuant encoder) or 'fp32' (sharded
-  // ~2.4 GB, full quality, ~35 % slower). 'fp32' is opt-in: only honoured when
-  // the repo actually ships the fp32 shards, else hub.js throws
+  // Encoder precision for the WASM/CPU backend: 'int8' (default; ~900 MB, fast,
+  // good quality on long audio with the SmoothQuant encoder), 'int8lite' (the
+  // same recipe with 11 MatMuls left in fp32 instead of 18: ~88 MB smaller and
+  // ~164 MiB lighter on RAM, slightly less accurate) or 'fp32' (sharded ~2.4 GB,
+  // full quality, ~35 % slower). Both non-default values are opt-in: only
+  // honoured when the repo actually ships the matching files, else hub.js throws
   // QuantUnavailableError (no silent downgrade; resolveModelQuant). Ignored on
   // WebGPU, which has its own selection.
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
@@ -1633,7 +1641,15 @@ export default function App() {
           // app-wide, so an old saved choice must not resurrect the GPU path.
           setBackend(coerceBackend(savedBackend));
         }
-        setWasmEncoderQuant(savedWasmEncoderQuant === 'fp32' ? 'fp32' : 'int8');
+        // Whitelist rather than a fp32-or-int8 ternary. That ternary silently
+        // reset ANY other saved value to int8 on every boot, so when 'int8lite'
+        // joined the radios the choice did not survive a reload at all. It has
+        // to stay a whitelist so a value from a NEWER build (or a hand-edited
+        // record) still lands on the safe default instead of being handed to
+        // hub.js as an unresolvable quant.
+        setWasmEncoderQuant(
+          WASM_ENCODER_QUANTS.includes(savedWasmEncoderQuant) ? savedWasmEncoderQuant : 'int8',
+        );
         // fp32 is the only WebGPU encoder precision left, so an older saved
         // 'fp16' is coerced rather than restored.
         setWebgpuEncoderQuant('fp32');
@@ -7030,11 +7046,20 @@ export default function App() {
               // silently loading the heavier int8). fp32 is opt-in on WASM via
               // the <2 GB shards (~2.4 GB, ~35 % slower) and the only precision
               // WebGPU has an encoder kernel for.
-              const rows = [
-                { value: 'int8lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
-                { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
-              ];
+              // Built from WASM_ENCODER_QUANTS so the radios and the whitelist
+              // the settings restore validates against cannot drift apart: a
+              // value offered here but missing there would be silently reset to
+              // int8 on the next reload, which is exactly how int8lite first
+              // shipped without surviving a page load.
+              const PRECISION_ROW = {
+                int8lite: () => ({ label: t('precisionInt8Lite'), available: !isWebgpu }),
+                int8: () => ({ label: t('precisionInt8'), available: !isWebgpu }),
+                fp32: () => ({ label: t('precisionFp32'), available: true }),
+              };
+              const rows = WASM_ENCODER_QUANTS.map((value) => {
+                const { label, available } = PRECISION_ROW[value]();
+                return { value, label, available, note: available ? '' : t('precisionUnavailableWebgpu') };
+              });
               return (
                 <div className="setting-row">
                   <span className="setting-label">
