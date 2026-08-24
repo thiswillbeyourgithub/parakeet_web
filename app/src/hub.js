@@ -965,8 +965,8 @@ export async function checkLocalModelFiles(baseUrl, repoId) {
  * List the quant-relevant files a locally-served model directory actually has.
  * The HuggingFace API lists a repo's files for us; a local mirror (served flat
  * under `baseUrl`, e.g. '/models') can't be listed, so we HEAD-probe the
- * specific candidates resolveModelQuant cares about: the single fp32 sidecar
- * and the contiguous fp32 encoder shards
+ * specific candidates resolveModelQuant cares about: the single fp32 sidecar,
+ * the lite int8 encoder, and the contiguous fp32 encoder shards
  * (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) up to the first gap. Returned in the same shape as
  * listRepoFiles so resolveModelQuant and the download loop treat both sources
  * identically.
@@ -981,7 +981,17 @@ export async function listLocalRepoFiles(baseUrl) {
       return res.ok ? name : null;
     } catch { return null; }
   };
-  const candidates = ['encoder-model.onnx.data', 'decoder_joint-model.onnx.data'];
+  // encoder-model.int8.lite.onnx is probed for the same reason as the fp32
+  // pieces: resolveModelQuant refuses an int8lite request the source cannot
+  // serve, so a mirror that HAS the lite build must be able to say so. Omitting
+  // it would make lite permanently unavailable on a local-weights deployment
+  // (repoFiles IS this list there) and would stop the /models auto-upgrade from
+  // ever rescuing an HF repo that ships no lite encoder.
+  const candidates = [
+    'encoder-model.onnx.data',
+    'decoder_joint-model.onnx.data',
+    'encoder-model.int8.lite.onnx',
+  ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) until the
   // first gap so resolveModelQuant and the download loop can see them. The
@@ -1012,7 +1022,17 @@ export async function listLocalRepoFiles(baseUrl) {
 // model repo shipped an fp16 encoder and decoder until 2026-08-23, but that
 // build was withdrawn (fp16 compute needs a GPU exposing `shader-f16`, which no
 // GPU available here does, so it could never be exercised end to end).
-export const QUANT_SUFFIX = { int8: '.int8.onnx', fp32: '.onnx' };
+export const QUANT_SUFFIX = { int8: '.int8.onnx', int8lite: '.int8.lite.onnx', fp32: '.onnx' };
+
+// The encoder quants that are int8 under the hood. Both are CPU/WASM-only (the
+// WebGPU EP has no int8 encoder kernel), and both pair with the int8 decoder.
+// `int8lite` is the model repo's lighter SmoothQuant build: same calibration and
+// alpha search as the default, but `--exclude-worst 0.05`, so 11 MatMuls stay
+// fp32 instead of 18. That is ~84 MB less to download and ~164 MiB less peak
+// RSS, for slightly higher WER/CER. It is a straight file swap: the decoder,
+// tokenizer and preprocessor are the same files.
+const INT8_ENCODER_QUANTS = ['int8', 'int8lite'];
+const isInt8Encoder = (q) => INT8_ENCODER_QUANTS.includes(q);
 
 // There is exactly ONE encoder and ONE decoder build per quant, under the
 // canonical istupakov names, and both are already optimized at the source: the
@@ -1067,25 +1087,37 @@ function hasFp32ShardSet(repoFiles) {
   return parseEncoderShards(repoFiles).shards.length > 0;
 }
 
+// Whether the listing carries the lite int8 encoder. Only the model repo builds
+// it, so a mirror that predates it (or upstream istupakov, which never had it)
+// legitimately does not ship it. Matches it flat OR under a subfolder, the same
+// way parseEncoderShards does, since the HF tree API returns full paths.
+function hasInt8LiteEncoder(repoFiles) {
+  const name = `encoder-model${QUANT_SUFFIX.int8lite}`;
+  return repoFiles.some((f) => typeof f === 'string' && (f === name || f.endsWith(`/${name}`)));
+}
+
 /**
  * Resolve the effective encoder/decoder quantisation for a backend, given what
  * the repo actually ships. Pure (no I/O) so it can be unit-tested.
  *
  *   - Non-WebGPU (WASM): pinned to int8 by default, because a single 2.4 GB fp32
- *     sidecar trips the ~2 GB ArrayBuffer / blob-fetch caps. The one exception is
- *     an explicit opt-in: when `allowWasmFp32` is set,
- *     `encoderQuant` is 'fp32', AND the repo ships the fp32 encoder as <2GB
- *     shards (encoder-model.onnx.data.NNN, from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), the
- *     encoder resolves to fp32 (the shards clear both caps and the 2.4 GB fits
- *     the ~4 GB wasm32 heap). The decoder stays int8 (tiny, runs fine on WASM).
- *     Without all three the int8 pin stands.
+ *     sidecar trips the ~2 GB ArrayBuffer / blob-fetch caps. There are two
+ *     exceptions, both explicit opt-ins by name:
+ *     'int8lite' resolves to the lite encoder when the repo ships it (a plain
+ *     file swap, no sidecar and no shards), and 'fp32' resolves to fp32 when
+ *     `allowWasmFp32` is set AND the repo ships the fp32 encoder as <2GB shards
+ *     (encoder-model.onnx.data.NNN, from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py):
+ *     the shards clear both caps and the 2.4 GB fits the ~4 GB wasm32 heap. The
+ *     decoder stays int8 either way (tiny, runs fine on WASM). Anything missing
+ *     and the int8 pin stands, which is what makes a repo that cannot serve the
+ *     request legible instead of a silent downgrade.
  *   - WebGPU: the GPU EP has no int8 encoder kernel, so the encoder is always
- *     fp32 (which needs the shards, see below). The tiny decoder stays int8,
- *     which the GPU EP runs fine.
+ *     fp32 (which needs the shards, see below), for 'int8lite' as much as for
+ *     'int8'. The tiny decoder stays int8, which the GPU EP runs fine.
  *
  * @param {Object} args
  * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').
- * @param {('int8'|'fp32')} args.encoderQuant Requested encoder quant.
+ * @param {('int8'|'int8lite'|'fp32')} args.encoderQuant Requested encoder quant.
  * @param {('int8'|'fp32')} args.decoderQuant Requested decoder quant.
  * @param {string[]} args.repoFiles Filenames available in the repo.
  * @param {boolean} [args.allowWasmFp32=false] Opt-in: allow sharded fp32 on WASM
@@ -1094,13 +1126,34 @@ function hasFp32ShardSet(repoFiles) {
  */
 export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 = false }) {
   if (!backend.startsWith('webgpu')) {
+    // The decoder is int8 on WASM, always: no fp32 decoder is shipped and the
+    // int8 one is as accurate on this model. A request for anything else cannot
+    // be honoured, so it has to flag NO MATTER WHICH ENCODER was picked. Both
+    // opt-in encoder branches below return early, so without this the flag was
+    // only raised on the pinned path: asking for an fp32 decoder alongside an
+    // encoder choice that DID succeed came back pinnedToInt8:false, reporting a
+    // downgrade as fully honoured.
+    const decoderHonoured = decoderQuant === 'int8';
+    // Opt-in lite int8 on WASM: a single smaller encoder file, no sidecar and no
+    // shards, so the only condition is that the repo ships it. When it does not
+    // we deliberately fall through to the int8 pin rather than quietly serving
+    // the default int8: that routes through the same /models upgrade probe and
+    // QuantUnavailableError as fp32, so the user learns their repo has no lite
+    // build instead of silently running a heavier encoder than they picked.
+    if (decoderHonoured && encoderQuant === 'int8lite' && hasInt8LiteEncoder(repoFiles)) {
+      return {
+        encoderQ: 'int8lite',
+        decoderQ: 'int8',
+        pinnedToInt8: false,
+      };
+    }
     // Opt-in sharded fp32 on WASM: needs the explicit flag, an fp32 request, and
     // the repo to actually ship the <2GB shards. Anything missing keeps int8.
     // parseEncoderShards matches them flat OR under a `sharded/` subfolder (how
     // the HF tree API lists them and how the model repo ships them), so a request
     // is no longer wrongly pinned just because the shards live in `sharded/`.
     const hasFp32Shards = hasFp32ShardSet(repoFiles);
-    if (allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
+    if (decoderHonoured && allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
       return {
         encoderQ: 'fp32',
         decoderQ: 'int8',
@@ -1118,9 +1171,10 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   // exposed `shader-f16`; that build was withdrawn because fp16 compute exists
   // only on a GPU and no available GPU here exposes the feature, so it could
   // never be exercised end to end. An int8 request on WebGPU therefore becomes
-  // fp32 (there is no GPU int8 encoder kernel either), and the decoder is always
-  // int8: it is as accurate as fp32 on this model while being smaller and faster.
-  const encoderQ = encoderQuant === 'int8' ? 'fp32' : encoderQuant;
+  // fp32 (there is no GPU int8 encoder kernel either, for the lite build as much
+  // as the default), and the decoder is always int8: it is as accurate as fp32 on
+  // this model while being smaller and faster.
+  const encoderQ = isInt8Encoder(encoderQuant) ? 'fp32' : encoderQuant;
   const decoderQ = 'int8';
   // A single-file fp32 encoder cannot load on WebGPU: the ~2.3 GB weights exceed
   // BOTH Chromium's ~2 GB IndexedDB Blob-readback wall AND V8's ArrayBuffer cap,
@@ -1183,7 +1237,7 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  * Accepts either a HuggingFace repo ID or a known model key from the registry.
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
  * @param {Object} [options]
- * @param {('int8'|'fp32')} [options.encoderQuant='int8'] Requested encoder quant (resolved per backend/availability by resolveModelQuant).
+ * @param {('int8'|'int8lite'|'fp32')} [options.encoderQuant='int8'] Requested encoder quant (resolved per backend/availability by resolveModelQuant).
  * @param {('int8'|'fp32')} [options.decoderQuant='int8'] Requested decoder quant
  * @param {('nemo80'|'nemo128')} [options.preprocessor] Preprocessor variant (auto-detected from model config if not specified)
  * @param {('js'|'onnx')} [options.preprocessorBackend='js'] Preprocessor backend selection.
@@ -1201,7 +1255,7 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  *   BEFORE downloading when HF cannot serve the requested quant but the mirror can (the fp32
  *   shards). Lets a user get a precision HF doesn't host without first downloading the
  *   downgraded weights. Ignored once localFallbackBaseUrl is set.
- * @returns {Promise<{urls: {encoderUrl: string|Uint8Array, decoderUrl: string|Uint8Array, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|Array<{path:string,data:string}>|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
+ * @returns {Promise<{urls: {encoderUrl: string|Uint8Array, decoderUrl: string|Uint8Array, tokenizerUrl: string, preprocessorUrl?: string, encoderDataUrl?: string|Array<{path:string,data:string}>|null, decoderDataUrl?: string|null}, filenames: {encoder: string, decoder: string}, quantisation: {encoder: ('int8'|'int8lite'|'fp32'), decoder: ('int8'|'fp32')}, modelConfig: ModelConfig|null, preprocessorBackend: ('js'|'onnx')}>}
  */
 export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Resolve model key to repo ID and get config from the registry
@@ -1268,17 +1322,23 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     // repo, plus the local /models mirror when localUpgradeBaseUrl was probed
     // above) could serve it. We refuse to silently fall back to int8: a silent
     // quant swap makes it impossible to tell which precision actually loaded.
-    // fp32 only overflows as a single 2.4 GB sidecar; the SHARDED fp32 encoder
-    // (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py + allowWasmFp32) loads fine, so this means the
-    // requested quant's files were not available, not that fp32 is categorically
-    // impossible on WASM. Throw so the caller surfaces it instead of proceeding.
+    // Neither missing quant is categorically impossible on WASM, so the message
+    // names the specific file that was absent: fp32 only overflows as a single
+    // 2.4 GB sidecar (the SHARDED encoder + allowWasmFp32 loads fine), and the
+    // lite int8 encoder is just one more file the repo happens not to carry.
+    // Throw so the caller surfaces it instead of proceeding.
+    const missing = encoderQuant === 'int8lite'
+      ? `the lite int8 encoder (encoder-model${QUANT_SUFFIX.int8lite}, built by `
+        + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05), `
+        + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
+      : `the <2 GB fp32 shards (encoder-model.onnx.data.NNN from `
+        + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
+        + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`;
     throw new QuantUnavailableError({
       backend,
       requested: { encoder: encoderQuant, decoder: decoderQuant },
       message: `Requested encoder=${encoderQuant}/decoder=${decoderQuant} cannot run on the `
-          + `${backend} backend from any available source. `
-          + `fp32 needs the <2 GB shards (encoder-model.onnx.data.NNN from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
-          + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`,
+          + `${backend} backend from any available source. It needs ${missing}`,
     });
   }
   if (webgpuFp32NeedsShards) {

@@ -100,7 +100,7 @@ describe('listLocalRepoFiles', () => {
     assert.deepEqual(files, ['encoder-model.onnx.data']);
   });
 
-  test('probes only the two sidecars and the shard walk, nothing else', async () => {
+  test('probes only the two sidecars, the lite encoder and the shard walk, nothing else', async () => {
     // This function costs one HEAD round trip per candidate on every load
     // against a local mirror, so the probe set is pinned. It used to also probe
     // six optimized/LSE/TopK variant filenames; those builds now ship under the
@@ -108,6 +108,13 @@ describe('listLocalRepoFiles', () => {
     // session's outputNames, not from a filename), so re-adding name probes here
     // would be pure latency. A mirror serving a variant name must report NOTHING
     // for it.
+    //
+    // encoder-model.int8.lite.onnx is the ONE name-probe that earns its round
+    // trip: unlike the withdrawn variants it is not detectable from a loaded
+    // session, because resolveModelQuant has to decide whether the source can
+    // serve an int8lite request BEFORE any weight is fetched. Without it lite
+    // would be permanently unavailable on a local-weights deployment, where
+    // this list IS the repo listing.
     const probed = [];
     globalThis.fetch = async (url) => {
       probed.push(String(url).slice('/models/'.length));
@@ -118,9 +125,19 @@ describe('listLocalRepoFiles', () => {
     assert.deepEqual(probed, [
       'encoder-model.onnx.data',
       'decoder_joint-model.onnx.data',
+      'encoder-model.int8.lite.onnx',
       'encoder-model.onnx.data.000',
       'sharded/encoder-model.onnx.data.000',
     ]);
+  });
+
+  // The point of the probe above: a mirror that HAS the lite build must report
+  // it, so resolveModelQuant can honour an int8lite request against local
+  // weights instead of pinning to the heavier default int8.
+  test('a mirror serving the lite int8 encoder reports it', async () => {
+    mockServer(['encoder-model.int8.lite.onnx']);
+    const files = await listLocalRepoFiles('/models');
+    assert.deepEqual(files, ['encoder-model.int8.lite.onnx']);
   });
 
   test('a mirror still serving the withdrawn variant filenames reports none of them', async () => {
