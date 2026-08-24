@@ -26,10 +26,29 @@ import {
 } from '../../app/ui/src/lib/benchmark.js';
 
 describe('planBenchmark', () => {
-  test('a WASM-only device gets the two WASM rows and no GPU row', () => {
+  test('a WASM-only device gets the three WASM rows and no GPU row', () => {
     const plan = planBenchmark({ webgpuAvailable: false });
-    assert.deepEqual(plan.map(r => r.id), ['wasm:fp32', 'wasm:int8']);
+    // The default selection (int8) sorts last so it stays the cached model.
+    assert.deepEqual(plan.map(r => r.id), ['wasm:int8lite', 'wasm:fp32', 'wasm:int8']);
     assert.ok(plan.every(r => r.backend === 'wasm'));
+  });
+
+  test('the lite int8 encoder is a WASM row, cheap enough to stay checked', () => {
+    const plan = planBenchmark({ webgpuAvailable: true });
+    const lite = plan.find(r => r.id === 'wasm:int8lite');
+    assert.ok(lite, 'int8lite must be offered on WASM');
+    assert.equal(lite.heavy, false);
+    assert.equal(lite.defaultSelected, true);
+    // Lighter than the default int8, which is the whole reason it exists.
+    assert.ok(QUANT_DOWNLOAD_MB.int8lite < QUANT_DOWNLOAD_MB.int8);
+    // No GPU row: the GPU EP has no int8 encoder kernel, lite or not.
+    assert.equal(plan.some(r => r.backend.startsWith('webgpu') && r.quant === 'int8lite'), false);
+  });
+
+  test('a visitor already on int8lite gets that row marked current and sorted last', () => {
+    const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'int8lite' });
+    assert.equal(plan[plan.length - 1].id, 'wasm:int8lite');
+    assert.equal(plan.filter(r => r.isCurrent).length, 1);
   });
 
   test('the currently selected combination is sorted last so it stays cached', () => {
@@ -68,8 +87,9 @@ describe('planBenchmark', () => {
   test('estimatedDownloadMB skips combinations already on disk', () => {
     const plan = planBenchmark({});
     const all = estimatedDownloadMB(plan);
-    assert.equal(all, QUANT_DOWNLOAD_MB.int8 + QUANT_DOWNLOAD_MB.fp32);
+    assert.equal(all, QUANT_DOWNLOAD_MB.int8lite + QUANT_DOWNLOAD_MB.int8 + QUANT_DOWNLOAD_MB.fp32);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8']), all - QUANT_DOWNLOAD_MB.int8);
+    assert.equal(estimatedDownloadMB(plan, ['wasm:int8lite']), all - QUANT_DOWNLOAD_MB.int8lite);
   });
 });
 

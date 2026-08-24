@@ -37,7 +37,8 @@ export const LONG_PROFILE_TARGET_SEC = 90;
 // Measured on the shipped Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx
 // weights; the decoder (~18 MB) and preprocessor (~1 MB) are folded in.
 export const QUANT_DOWNLOAD_MB = {
-  int8: 860,
+  int8lite: 810,
+  int8: 900,
   fp32: 2350,
 };
 
@@ -68,6 +69,11 @@ export function planBenchmark({
   currentWebgpuQuant = 'fp32',
 } = {}) {
   const combos = [
+    // int8lite is the same SmoothQuant recipe with 11 fp32 MatMuls kept instead
+    // of 18: ~88 MB less to download and ~164 MiB less peak RSS, for slightly
+    // higher WER. Whether that trade is worth it is exactly the kind of question
+    // a benchmark on the visitor's own machine answers, so it gets a row.
+    { backend: 'wasm', quant: 'int8lite' },
     { backend: 'wasm', quant: 'int8' },
     { backend: 'wasm', quant: 'fp32' },
   ];
