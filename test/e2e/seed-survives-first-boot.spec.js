@@ -48,3 +48,44 @@ test('a seeded non-default setting survives the first boot and the reload', asyn
   await fp32Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await expect(fp32Radio).toBeChecked();
 });
+
+// Regression: the settings restore validated the saved WASM precision with a
+// `=== 'fp32' ? 'fp32' : 'int8'` ternary, so every value except fp32 was reset
+// to int8 on boot. int8lite therefore shipped as a radio you could click and
+// which silently reverted on the next page load. The bytes were in IndexedDB
+// the whole time, so only a spec that reads the RADIO after a reload catches it
+// (a storage-only assertion passes on the broken build).
+//
+// Cheap on purpose: no model load, so it costs seconds and needs no weights.
+test('a seeded int8lite precision survives the reload as the selected radio', async ({ page }) => {
+  await page.goto('/');
+  await seedSettings(page, { wasmEncoderQuant: 'int8lite' });
+  await page.reload();
+
+  expect(await readSetting(page, 'wasmEncoderQuant')).toBe('int8lite');
+
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Model and performance');
+  const liteRadio = page.locator('input[name="encoderQuant"][value="int8lite"]');
+  await liteRadio.waitFor({ state: 'visible', timeout: 30 * 1000 });
+  await expect(liteRadio,
+    'the restore reset the saved precision to int8 instead of honouring it').toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).not.toBeChecked();
+});
+
+// The flip side of the whitelist: a value this build does not know about must
+// land on int8 rather than be handed to hub.js as an unresolvable quant. 'fp16'
+// is the real case (a GPU precision, withdrawn 2026-08-23, never a WASM option).
+test('an unknown saved precision falls back to int8 rather than being restored', async ({ page }) => {
+  await page.goto('/');
+  await seedSettings(page, { wasmEncoderQuant: 'fp16' });
+  await page.reload();
+
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Model and performance');
+  const int8Radio = page.locator('input[name="encoderQuant"][value="int8"]');
+  await int8Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
+  await expect(int8Radio).toBeChecked();
+  expect(await page.locator('input[name="encoderQuant"][value="fp16"]').count(),
+    'fp16 is not a WASM precision and must not appear as a radio').toBe(0);
+});
