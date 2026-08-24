@@ -89,6 +89,12 @@ function makeModel(script) {
     _hypIds: proto._hypIds,
     _decodeBeam: proto._decodeBeam,
     _runCombinedStepBatch: proto._runCombinedStepBatch,
+    // The full-row paths now NAME the outputs they read (see parakeet.js
+    // FULL_ROW_BASE_FETCHES). These fake joiners declare no outputNames, so
+    // _fullRowFetches resolves to null and _runJoinerFullRow calls run(feeds)
+    // with no fetches, which is exactly what these stubs are written against.
+    _fullRowFetches: proto._fullRowFetches,
+    _runJoinerFullRow: proto._runJoinerFullRow,
     _disposeDecoderState: () => { statesDisposed++; },
     _runCombinedStep: async (encTensor) => {
       joinerCalls++;
@@ -690,6 +696,8 @@ describe('batched joiner expansion (#batch)', () => {
       _combState1: fakeState(),
       _combState2: fakeState(),
       _runCombinedStepBatch: proto._runCombinedStepBatch,
+      _fullRowFetches: proto._fullRowFetches,
+      _runJoinerFullRow: proto._runJoinerFullRow,
       _runCombinedStep: () => { throw new Error('B>1 must not delegate to the batch-1 path'); },
       joinerSession: {
         run: async (feeds) => {
@@ -965,6 +973,8 @@ describe('in-graph LSE partitions (#R1)', () => {
       _combState1: fakeState(),
       _combState2: fakeState(),
       _runCombinedStepBatch: proto._runCombinedStepBatch,
+      _fullRowFetches: proto._fullRowFetches,
+      _runJoinerFullRow: proto._runJoinerFullRow,
       _runCombinedStep: () => { throw new Error('B>1 must not take the batch-1 path'); },
       joinerSession: {
         run: async (feeds) => {
@@ -1003,6 +1013,8 @@ describe('in-graph LSE partitions (#R1)', () => {
       _combState1: fakeState(),
       _combState2: fakeState(),
       _runCombinedStep: proto._runCombinedStep,
+      _fullRowFetches: proto._fullRowFetches,
+      _runJoinerFullRow: proto._runJoinerFullRow,
       joinerSession: {
         run: async () => ({
           outputs: new fakeOrt.Tensor('float32', Float32Array.from([...script[0].logits, 0, -20]), [1, 1, 1, V + 2]),

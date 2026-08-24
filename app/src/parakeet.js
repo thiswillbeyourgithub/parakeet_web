@@ -665,6 +665,19 @@ const LSE_OUTPUT_NAMES = ['lse_token', 'lse_duration'];
 // all, so its behaviour is byte-identical to before this existed.
 const TOPK_FETCHES = ['output_states_1', 'output_states_2', ...LSE_OUTPUT_NAMES, ...TOPK_OUTPUT_NAMES];
 
+// The mandatory half of what a FULL-ROW joint call reads. `prednet_lengths` is
+// deliberately absent: no decode path has ever read it. The optional lse pair
+// is appended per session by _fullRowFetches.
+//
+// Why this list exists at all: `run(feeds)` with NO fetches argument makes ORT
+// return EVERY declared output. That was harmless while the decoder declared
+// only the four upstream ones, but the model repo's `topk` surgery appends
+// topk_logits / topk_ids / duration_logits, and the full-row paths read none of
+// them. Left unnamed they are computed and marshalled on every joint call:
+// measured at +27% wall over 800 steps at batch 8 (3399 ms -> 4334 ms,
+// onnxruntime-node 1.27, CPU EP, single thread) purely in waste.
+const FULL_ROW_BASE_FETCHES = ['outputs', 'output_states_1', 'output_states_2'];
+
 // Temperature at/below which _frameConfidence is a constant 1.0 and never
 // touches the logit row (same 1e-8 threshold it uses internally). The greedy
 // fast path is gated on it because confidence at a positive temperature needs a
@@ -733,6 +746,8 @@ export class ParakeetModel {
     // Memoised capability probe + one-shot engagement log (see _topkOutputsReady).
     this._topkReady = undefined;
     this._topkEngagedLogged = false;
+    // Memoised full-row fetch list (see _fullRowFetches).
+    this._fullRowFetchList = undefined;
 
     // Report, once per model, what the LOADED decoder_joint actually declares.
     // Both stages come from the model repo's optimize-decoder-graph.py and now
@@ -768,6 +783,46 @@ export class ParakeetModel {
       this._topkReady = TOPK_OUTPUT_NAMES.every(has) && LSE_OUTPUT_NAMES.every(has);
     }
     return this._topkReady;
+  }
+
+  /**
+   * Fetch list for the FULL-ROW joint paths: `_runCombinedStep`'s fallback and
+   * the batched beam step. Both read `outputs`, both decoder states, and the
+   * log-partition scalars when the loaded decoder declares them, and nothing
+   * else (see FULL_ROW_BASE_FETCHES for what naming them buys).
+   *
+   * Built from the session's declared `outputNames` rather than hardcoded,
+   * because naming an output a decoder does not have makes ORT throw and the
+   * lse pair is optional. When the three mandatory outputs are not ALL declared
+   * the list is null and the caller passes no fetches argument, i.e. exactly
+   * the pre-existing behaviour, so a decoder with an unexpected output set
+   * still reaches the existing shape validation and its clear error message
+   * instead of dying inside ORT on an unknown output name.
+   *
+   * Memoised: a session's output list never changes for a model instance.
+   * @returns {string[]|null}
+   */
+  _fullRowFetches() {
+    if (this._fullRowFetchList === undefined) {
+      const names = this.joinerSession?.outputNames;
+      const has = (n) => Array.isArray(names) && names.includes(n);
+      this._fullRowFetchList = FULL_ROW_BASE_FETCHES.every(has)
+        ? [...FULL_ROW_BASE_FETCHES, ...LSE_OUTPUT_NAMES.filter(has)]
+        : null;
+    }
+    return this._fullRowFetchList;
+  }
+
+  /**
+   * Run the joiner on the full-row path, naming only the outputs the caller
+   * reads. Shared by `_runCombinedStep` and `_runCombinedStepBatch` so the
+   * fetch policy lives in exactly one place.
+   * @param {object} feeds
+   * @returns {Promise<object>}
+   */
+  async _runJoinerFullRow(feeds) {
+    const fetches = this._fullRowFetches();
+    return fetches ? this.joinerSession.run(feeds, fetches) : this.joinerSession.run(feeds);
   }
 
   /**
@@ -1072,7 +1127,7 @@ export class ParakeetModel {
       // untouched full-row path below, which re-runs the same feeds.
     }
 
-    const out = await this.joinerSession.run(feeds);
+    const out = await this._runJoinerFullRow(feeds);
     const logits = out['outputs'];
     const outputState1 = out['output_states_1'];
     const outputState2 = out['output_states_2'];
@@ -1303,7 +1358,7 @@ export class ParakeetModel {
     };
     let out;
     try {
-      out = await this.joinerSession.run(feeds);
+      out = await this._runJoinerFullRow(feeds);
     } finally {
       for (const t of Object.values(feeds)) t.dispose?.();
     }

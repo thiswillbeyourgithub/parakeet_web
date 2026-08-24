@@ -10,6 +10,14 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### Beam search stops paying for decoder outputs it throws away
+
+The decoders in the model repo now expose extra values inside the graph, so a decode step can read a few dozen floats instead of the whole ~8,200-float logit row. The greedy path asks for exactly those and gets them.
+
+Every other decode path (beam search, phrase boosting, and any run with a temperature) asked for nothing in particular, and in ONNX Runtime that means "return every output you have". On the new decoders this silently included the three top-K outputs those paths never read, computed and copied out of the engine on every joint call. In a microbenchmark of 800 joint calls at beam width 8 it cost 27 % of the loop: 4,334 ms against 3,399 ms (onnxruntime-node, CPU, single thread). The saving over a whole transcription is smaller, since that loop is only part of it.
+
+Those paths now name the outputs they read. Transcripts are unchanged, and a decoder that does not carry the extra outputs is unaffected: the list is built from what the loaded model actually declares, so an older or upstream decoder behaves exactly as before.
+
 ### The app stops downloading three WebAssembly runtimes it never runs
 
 ONNX Runtime is vendored as four separate WebAssembly builds (plain, JSEP, JSPI, asyncify) and the app only ever loads one of them. It was downloading and hash-checking all four at startup anyway: 79,772,176 bytes where 26,874,157 are the ones actually used. Worse, it did that once per JavaScript context, and every transcription worker is its own context, so a machine running the parallel encode pool alongside the composed decode worker paid that bill four times over, at the exact moment the model weights were downloading too.
