@@ -40,6 +40,13 @@
 #     NOTE: a BUSY GPU (e.g. VRAM held by another process) makes this
 #     false-fail via OOM-fallback, so only opt in when the GPU is free.
 #
+# Everything after the interactive question is tee'd to ./pre-push-log.tmp so a
+# failure can be read (or handed to a tool) in full instead of scrolled back out
+# of the terminal. The file is truncated when the run starts and DELETED when the
+# run succeeds, so its mere presence means "the last push attempt failed here".
+# The question itself is asked before the tee is installed: its prompt has no
+# trailing newline and would sit in tee's buffer, making the hook look hung.
+#
 # Bypass the whole hook with `git push --no-verify`.
 #
 # Activated automatically by the root package.json `prepare` script, which runs
@@ -80,6 +87,36 @@ else
   echo "[pre-push] No terminal available; skipping tier 3." >&2
 fi
 [ "$run_webgpu" = y ] && echo "[pre-push] PREPUSH_WEBGPU set; the WebGPU check will run after the fast tiers." >&2
+
+# --- Full-output log ------------------------------------------------------
+# From here on, stdout AND stderr go to the terminal and to pre-push-log.tmp.
+# Kept out of the interactive section above on purpose (see the header note).
+#
+# fds 3/4 hold the real terminal so the EXIT trap can restore them: that closes
+# the pipe, which is what lets tee see EOF and flush before we decide whether to
+# delete the log. Without the restore the last lines of a failing run can be
+# missing from the very file you went to read.
+PREPUSH_LOG="$repo_root/pre-push-log.tmp"
+: > "$PREPUSH_LOG"
+exec 3>&1 4>&2
+exec > >(tee -a "$PREPUSH_LOG") 2>&1
+prepush_tee_pid=$!
+
+prepush_finish() {
+  local rc=$?
+  exec 1>&3 2>&4
+  wait "$prepush_tee_pid" 2>/dev/null || true
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$PREPUSH_LOG"
+  else
+    echo "[pre-push] Full output of this run: $PREPUSH_LOG" >&2
+  fi
+  return "$rc"
+}
+trap prepush_finish EXIT
+
+echo "[pre-push] Logging this run to $PREPUSH_LOG (deleted on success)."
+echo "[pre-push] Choices: tier3=$run_e2e webgpu=$run_webgpu"
 
 # --- Tier 1 + tier 2 (always) ---------------------------------------------
 echo "[pre-push] Running npm test (tier 1 unit + tier 2 http)..."
