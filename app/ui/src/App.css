@@ -1543,3 +1543,12 @@ html.gpu-run *::after {
   color: var(--accent-soft-text);
 }
 .decode-debug__tail { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; }
+
+/* "Benchmark complete" line in the sidebar Benchmark section. A finished run
+   reopens the sidebar and scrolls here, so this is what the user lands on. */
+.benchmark-complete {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--success);
+  margin: 0.4rem 0 0;
+}

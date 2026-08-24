@@ -10,6 +10,12 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Le banc d'essai dit sur quel matériel il a tourné, et rend la machine à la fin
+
+Un rapport de banc d'essai n'est utile que si les chiffres peuvent être rattachés à une puce. Il décrivait le processeur (nombre de cœurs, classe de mémoire, architecture) et le seul adaptateur GPU que le navigateur exposait par défaut, ce qui, sur un portable qui en a deux, ne dit rien de celui qui a réellement travaillé. Les rapports listent désormais tous les adaptateurs proposés par la machine, demandés par préférence d'alimentation, de sorte qu'un GPU intégré et un GPU dédié apparaissent tous les deux, ainsi que les noms de GPU lisibles rapportés par le navigateur via WebGL. Ces noms sont d'ailleurs la seule preuve de GPU disponible sur une machine sans WebGPU, c'est-à-dire précisément celle dont le propriétaire demande pourquoi l'option GPU est grisée. Aucun navigateur n'expose le modèle du processeur à qui que ce soit : cette absence-là est subie, pas choisie.
+
+L'exécution se comporte aussi mieux vis-à-vis du reste de l'application. Les boutons d'enregistrement, d'envoi de fichier et de micro téléphone ne restent plus affichés pendant un banc d'essai : celui-ci emprunte les mêmes chemins de chargement et de transcription, l'application semblait donc prête pour un travail qu'elle ne pouvait pas prendre, et une capture n'aurait fait que lui disputer le modèle en cours de mesure. À la fin, la barre latérale se rouvre sur les résultats, défile jusqu'au rapport et annonce que le banc d'essai est terminé, au lieu de laisser les chiffres derrière un panneau que l'utilisateur avait fermé pour suivre l'exécution. Enfin, une exécution lancée sans modèle chargé n'en laisse plus un derrière elle : les poids en mémoire sont ceux de la dernière combinaison mesurée, pas nécessairement ceux que les réglages affichent, ils sont donc libérés et le bouton de chargement du modèle réapparaît.
+
 ### L'explication d'une option grisée est de nouveau lisible
 
 Une option que votre machine ne peut pas utiliser est grisée, et le « ? » à côté indique pourquoi (le cas courant étant WebGPU sans adaptateur GPU utilisable). Le grisage s'appliquait à toute la ligne, bulle d'aide comprise : le texte qui expliquait la situation ressortait donc à moitié transparent. La bulle est désormais dessinée en dehors de la ligne grisée et redevient parfaitement opaque.
