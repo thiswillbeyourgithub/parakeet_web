@@ -108,6 +108,18 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY }), false);
   });
 
+  // Regression: both opt-in encoder branches return EARLY, so the decoder check
+  // has to happen before them. It used to sit only on the fallthrough, which
+  // meant an fp32 DECODER request paired with an encoder choice that succeeded
+  // came back pinnedToInt8:false: a downgrade (there is no fp32 decoder)
+  // reported as fully honoured, so no banner and no /models upgrade probe.
+  test('an fp32 DECODER request pins even when the fp32 ENCODER opt-in would succeed', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'fp32', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'fp32', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true }), false);
+  });
+
   test('opt-in + fp32 request + the flat sidecar but NO shard set -> int8 pin', () => {
     const flatOnly = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data'];
     const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOnly, allowWasmFp32: true });
@@ -116,6 +128,82 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     const g = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: flatOnly });
     assert.equal(g.webgpuFp32NeedsShards, true, 'a flat >2 GB sidecar is unloadable on either browser backend');
   });
+});
+
+// The lite int8 encoder is the same SmoothQuant recipe with 11 fp32 MatMuls
+// kept instead of 18: one extra file, no sidecar and no shards, so the only
+// question is whether the source ships it. Only the model repo builds it, and
+// the crucial rule is that a source WITHOUT it must not quietly serve the
+// heavier default int8: it pins (which routes through the /models upgrade probe
+// and then QuantUnavailableError), exactly like a missing fp32 shard set.
+describe('resolveModelQuant: WASM lite-int8 opt-in', () => {
+  const WITH_LITE = [
+    'encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'decoder_joint-model.int8.onnx',
+  ];
+  const WITH_LITE_SUBFOLDER = [
+    'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+    'sub/encoder-model.int8.lite.onnx',
+  ];
+
+  test('int8lite request + the lite encoder shipped -> lite encoder, int8 decoder, not pinned', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8lite', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE }), true);
+  });
+
+  test('int8lite request but NO lite encoder -> int8 pin, never a silent downgrade', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: NO_SHARDS });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true, 'a source with no lite build must surface, not swap in the heavier int8');
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: NO_SHARDS }), false);
+  });
+
+  test('the lite encoder is found under a subfolder too (HF tree API returns full paths)', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE_SUBFOLDER });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8lite', 'int8']);
+    assert.equal(r.pinnedToInt8, false);
+  });
+
+  // A near-miss name must not be mistaken for the lite build: the download loop
+  // would then ask for a file the source does not have.
+  test('a lookalike filename does not count as the lite encoder', () => {
+    const lookalike = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'encoder-model.int8.lite.onnx.bak', 'xencoder-model.int8.lite.onnx'];
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: lookalike });
+    assert.equal(r.pinnedToInt8, true);
+  });
+
+  test('an int8lite request never drags in the fp32 shards, and fp32 never picks up lite', () => {
+    const both = [...WITH_FP32_SHARDS, 'encoder-model.int8.lite.onnx'];
+    const lite = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: both, allowWasmFp32: true });
+    assert.deepEqual([lite.encoderQ, lite.decoderQ], ['int8lite', 'int8']);
+    const fp32 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: both, allowWasmFp32: true });
+    assert.deepEqual([fp32.encoderQ, fp32.decoderQ], ['fp32', 'int8']);
+  });
+
+  test('an fp32 DECODER request still pins, even with the lite encoder present', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'fp32', repoFiles: WITH_LITE });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.pinnedToInt8, true);
+  });
+
+  // The GPU EP has no int8 encoder kernel at all, so the lite build is as
+  // unrunnable there as the default int8: both must resolve to fp32.
+  for (const backend of ['webgpu', 'webgpu-hybrid']) {
+    test(`${backend} resolves an int8lite request to fp32, exactly like int8`, () => {
+      const r = resolveModelQuant({ backend, encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: [...WITH_FP32_SHARDS, 'encoder-model.int8.lite.onnx'] });
+      assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+      assert.equal(r.pinnedToInt8, false);
+      assert.equal(r.webgpuFp32NeedsShards, false);
+    });
+
+    test(`${backend} still demands the shards for an int8lite request`, () => {
+      const r = resolveModelQuant({ backend, encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE });
+      assert.equal(r.encoderQ, 'fp32');
+      assert.equal(r.webgpuFp32NeedsShards, true, 'shipping a lite int8 encoder does nothing for the GPU path');
+      assert.equal(quantSatisfiable({ backend, encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE }), false);
+    });
+  }
 });
 
 describe('isSafeRepoPath: allows the sharded/ subfolder, still blocks traversal', () => {
