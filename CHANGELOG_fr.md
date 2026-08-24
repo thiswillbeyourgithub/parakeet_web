@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### L'explication d'une option grisée est de nouveau lisible
+
+Une option que votre machine ne peut pas utiliser est grisée, et le « ? » à côté indique pourquoi (le cas courant étant WebGPU sans adaptateur GPU utilisable). Le grisage s'appliquait à toute la ligne, bulle d'aide comprise : le texte qui expliquait la situation ressortait donc à moitié transparent. La bulle est désormais dessinée en dehors de la ligne grisée et redevient parfaitement opaque.
+
 ### L'encodeur int8 allégé est de retour, comme choix à côté de celui par défaut
 
 Le dépôt de modèles construit deux encodeurs int8 à partir de la même calibration. Ils diffèrent par le nombre de multiplications matricielles laissées en pleine précision : 18 dans la version par défaut, 11 dans la version allégée. L'encodeur allégé est donc environ 88 Mo plus petit à télécharger et, mesuré sur cette machine, environ 164 Mio plus léger en mémoire de pointe, au prix d'une erreur de transcription légèrement plus élevée.
