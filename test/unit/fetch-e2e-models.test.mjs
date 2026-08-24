@@ -28,6 +28,12 @@ describe('fetch-e2e-models: optional vs required download entries', () => {
     assert.ok(!byFile['encoder-model.int8.onnx'].optional);
     assert.ok(!byFile['decoder_joint-model.int8.onnx'].optional);
     assert.ok(!byFile['vocab.txt'].optional);
+    // The lite int8 encoder is the one precision ALTERNATIVE headless Chromium
+    // can run, so it is listed to give transcription-int8-lite-wasm.spec.js real
+    // CI coverage. Dropping it would not fail anything loudly: strict-weights is
+    // lenient in CI, so that spec would just skip forever. Pin it here.
+    assert.ok(byFile['encoder-model.int8.lite.onnx'], 'the lite int8 encoder must stay in the CI fetch list');
+    assert.ok(!byFile['encoder-model.int8.lite.onnx'].optional);
     // No `optional` creep anywhere: a 404 on ANY entry must fail the fetch, not
     // warn and leave a spec to discover the gap.
     assert.deepEqual(MODELS.filter((m) => m.optional).map((m) => m.file), []);
