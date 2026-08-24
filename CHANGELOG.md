@@ -10,6 +10,16 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The lighter int8 encoder is back, as a choice next to the default one
+
+The model repo builds two int8 encoders from the same calibration run. They differ in how many matrix multiplications are left in full precision: 18 in the default build, 11 in the lite one. That makes the lite encoder about 88 MB smaller to download and, measured on this machine, about 164 MiB lighter in peak memory, in exchange for slightly more transcription error.
+
+It used to exist, was withdrawn because the trade did not look worth it, and is now back where it belongs: as a third entry in the encoder precision list (int8 lite / int8 / fp32) rather than a decision made for you. int8 stays the default and nothing changes for anyone who does not touch the setting. The self-service benchmark gained a row for it too, since "is the lighter encoder good enough on my machine" is exactly the kind of question it exists to answer.
+
+Picking it against a mirror that does not host the lite file stops the load with a clear message instead of quietly serving the heavier encoder, the same rule fp32 already followed. On WebGPU it behaves exactly like int8: the GPU has no int8 encoder kernel at all, so both resolve to fp32.
+
+Two smaller fixes came out of wiring it in. A local mirror serving the lite encoder was never asked whether it had it, so the file could sit right there and still be reported as unavailable. And asking for an fp32 decoder alongside an encoder precision that WAS available came back marked as fully honoured, even though there is no fp32 decoder to give: the downgrade is now reported, so the banner and the mirror-upgrade probe both fire as they should.
+
 ### Beam search stops paying for decoder outputs it throws away
 
 The decoders in the model repo now expose extra values inside the graph, so a decode step can read a few dozen floats instead of the whole ~8,200-float logit row. The greedy path asks for exactly those and gets them.
