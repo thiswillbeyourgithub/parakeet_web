@@ -3054,8 +3054,15 @@ export default function App() {
       // The fused decoder_joint always runs int8 on both backends: on this model
       // the int8 joiner is as accurate as fp32 (measured) while being smaller and
       // faster, and the GPU EP runs the int8 decoder fine.
-      // Resolve the WASM encoder request: fp32 (shards) or the default int8.
-      const wasmEncoderRequest = wasmWantsFp32 ? 'fp32' : 'int8';
+      // Resolve the WASM encoder request: fp32 (shards), the lite int8 build, or
+      // the default int8. 'int8lite' is passed straight through rather than
+      // collapsed to 'int8' so hub.js can tell "the user picked lite and this
+      // repo has no lite build" (-> quantUnavailable banner) apart from "the
+      // user picked the default", which is the whole point of the no-silent-
+      // downgrade rule. Anything unrecognised still lands on the default int8.
+      const wasmEncoderRequest = wasmWantsFp32
+        ? 'fp32'
+        : (wasmEncoderQuant === 'int8lite' ? 'int8lite' : 'int8');
       const downloadOpts = {
         encoderQuant: wantWebgpu ? 'fp32' : wasmEncoderRequest,
         decoderQuant: 'int8',
@@ -7004,21 +7011,27 @@ export default function App() {
             )}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
-              // Single fixed list (int8 / fp32); only the greying moves with the
-              // backend. int8 has no GPU encoder kernel (unavailable on WebGPU);
-              // fp32 runs on both. The remembered selection is per-backend, so
-              // WASM keeps its int8<->fp32 choice while WebGPU is pinned to fp32
-              // (the model repo's fp16 build was withdrawn on 2026-08-23).
+              // Single fixed list (int8 lite / int8 / fp32); only the greying
+              // moves with the backend. Neither int8 build has a GPU encoder
+              // kernel (both unavailable on WebGPU); fp32 runs on both. The
+              // remembered selection is per-backend, so WASM keeps its choice
+              // while WebGPU is pinned to fp32 (the model repo's fp16 build was
+              // withdrawn on 2026-08-23).
               const isWebgpu = backend.startsWith('webgpu');
               const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
               const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
               // Show the precision that will ACTUALLY load, so the radio never
               // sits on an option the backend cannot serve.
               const effectiveQuant = isWebgpu ? 'fp32' : currentQuant;
-              // int8 is the default on WASM and the only precision it ships;
-              // fp32 is opt-in on WASM via the <2 GB shards (~2.4 GB, ~35 %
-              // slower) and the only precision WebGPU has an encoder kernel for.
+              // int8 is the default on WASM. int8 lite is the same recipe with
+              // fewer MatMuls quantised: ~88 MB smaller and lighter on RAM, at
+              // slightly higher error, and only the model repo ships it (a repo
+              // without it surfaces the quantUnavailable banner rather than
+              // silently loading the heavier int8). fp32 is opt-in on WASM via
+              // the <2 GB shards (~2.4 GB, ~35 % slower) and the only precision
+              // WebGPU has an encoder kernel for.
               const rows = [
+                { value: 'int8lite', label: t('precisionInt8Lite'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
                 { value: 'int8', label: t('precisionInt8'), available: !isWebgpu, note: t('precisionUnavailableWebgpu') },
                 { value: 'fp32', label: t('precisionFp32'), available: true, note: '' },
               ];
