@@ -836,6 +836,11 @@ export default function App() {
   const [benchmarkResults, setBenchmarkResults] = useState([]);
   const [benchmarkReport, setBenchmarkReport] = useState('');
   const [benchmarkCopied, setBenchmarkCopied] = useState(false);
+  // Set when a run finishes with a report. It survives the progress line being
+  // cleared, so the sidebar still says the benchmark is done while the restore
+  // step (which can reload a model) is still running.
+  const [benchmarkDone, setBenchmarkDone] = useState(false);
+  const benchmarkReportRef = useRef(null);
   // idle | sending | sent | failed
   const [benchmarkSendState, setBenchmarkSendState] = useState('idle');
   const [benchmarkAutoSend, setBenchmarkAutoSend] = useState(false);
@@ -5243,6 +5248,36 @@ export default function App() {
     }
   }
 
+  // Return the app to its pre-load state: no model, no decode/encode workers,
+  // and the Load model button back on screen. Used by the benchmark when the
+  // user had no model of their own loaded when they started it.
+  function unloadModel(reason) {
+    if (modelRef.current) {
+      modelRef.current.dispose();
+      modelRef.current = null;
+    }
+    teardownEncodePool(reason);
+    stopDecodeWorker(reason);
+    // The boost effect keys off the vocab signature: clearing it drops the trie
+    // built for the model that just went away.
+    setTokenizerVocabSig(null);
+    setStatus('idle');
+    console.log(`[App] Model unloaded: ${reason}`);
+  }
+
+  // Scroll a finished run's report into view, once the sidebar has actually
+  // reopened and the section has expanded (both are state changes made by
+  // runBenchmark, so the node does not exist yet when it makes them).
+  useEffect(() => {
+    if (!benchmarkDone || !showSettings || !sectionsOpen.benchmark) return undefined;
+    const el = benchmarkReportRef.current;
+    if (!el) return undefined;
+    const id = requestAnimationFrame(() => {
+      try { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { el.scrollIntoView(); }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [benchmarkDone, showSettings, sectionsOpen.benchmark, benchmarkReport]);
+
   // Run the selected matrix end to end. Everything is driven through the app's
   // own loading and transcription paths (loadModelRef / runTranscriptionRef),
   // so the timings describe what a real user gets on this machine, and the
@@ -5255,6 +5290,7 @@ export default function App() {
     benchmarkCancelRef.current = false;
     benchmarkLoadedComboRef.current = null;
     setBenchmarkRunning(true);
+    setBenchmarkDone(false);
     setBenchmarkResults([]);
     setBenchmarkReport('');
     setBenchmarkSendState('idle');
@@ -5344,6 +5380,15 @@ export default function App() {
       });
       const reportText = formatBenchmarkReport(report);
       setBenchmarkReport(reportText);
+      // Bring the user back to the numbers. A run takes minutes and the sidebar
+      // is usually closed by then (it is where the Run button was, and it
+      // covers the page while the run is watched), so a finished benchmark that
+      // only changes something inside a closed panel reads as nothing having
+      // happened. Reopen it, expand the section, and say it is done; the scroll
+      // to the report is an effect, once the panel has actually rendered.
+      setBenchmarkDone(true);
+      setSectionsOpen((prev) => ({ ...prev, benchmark: true }));
+      setShowSettings(true);
       if (BENCHMARK_UPLOAD_ENABLED && benchmarkAutoSend) await sendBenchmarkReport(reportText);
     } catch (err) {
       console.error('[Benchmark] Run failed:', err);
@@ -5365,6 +5410,15 @@ export default function App() {
       } catch (err) {
         console.error('[Benchmark] Could not restore the previous configuration:', err);
       }
+      // Nothing was loaded before the run, so nothing should be loaded after
+      // it: the weights sitting in memory are whichever combination the plan
+      // happened to end on, which is not necessarily the configuration the
+      // settings now show. Drop them and put the Load model button back, so the
+      // next load is the one the user actually asks for (the weights stay
+      // cached, so that load is cheap) and the run's memory is handed back.
+      // Outside the try above on purpose: a restore that failed is all the more
+      // reason not to leave a stranger's model loaded.
+      if (!hadModel) unloadModel('benchmark finished');
     }
   }
 
@@ -6354,11 +6408,15 @@ export default function App() {
   // isRemoteMic keep them mounted through a capture that began mid-load (when
   // the status is a recording one and the model is not yet loaded), so the
   // Stop/Pause buttons never vanish under the user.
-  const showCaptureControls = modelLoaded
+  // A benchmark drives the very same load/transcribe paths, so the status is a
+  // loading or transcribing one for its whole duration and these controls would
+  // otherwise sit there looking usable. They are not: a capture would fight the
+  // run for the model it is timing. Hide them until it is over.
+  const showCaptureControls = !benchmarkRunning && (modelLoaded
     || status === 'loadingModel'
     || status === 'creatingSessions'
     || isRecording
-    || isRemoteMic;
+    || isRemoteMic);
 
   // Status line. Defined once and rendered from the two mutually exclusive
   // branches below (idle/failed, where it sits under the Load Model button, and
@@ -7366,7 +7424,11 @@ export default function App() {
               </button>
             )}
             {benchmarkProgress && (
-              <p style={{ fontSize: '0.78rem', margin: '0.4rem 0 0' }}>{benchmarkProgress}</p>
+              <p className="benchmark-progress" style={{ fontSize: '0.78rem', margin: '0.4rem 0 0' }}>{benchmarkProgress}</p>
+            )}
+
+            {benchmarkDone && !benchmarkRunning && (
+              <p className="benchmark-complete">{t('benchmarkComplete')}</p>
             )}
 
             {benchmarkResults.length > 0 && (
@@ -7400,7 +7462,7 @@ export default function App() {
             )}
 
             {benchmarkReport && (
-              <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.35rem', marginTop: '0.5rem' }}>
+              <div ref={benchmarkReportRef} className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.35rem', marginTop: '0.5rem' }}>
                 <span className="setting-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>
                     {t('benchmarkReport')}

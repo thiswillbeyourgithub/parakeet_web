@@ -10,6 +10,12 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The benchmark says what hardware it ran on, and hands the machine back when it is done
+
+A benchmark report is only useful if the numbers can be attributed to a chip. It described the CPU (core count, memory class, architecture) and the one GPU adapter the browser handed out by default, which on a laptop with two of them says nothing about which one actually ran. Reports now list every adapter the machine offers, asked for by power preference, so an integrated and a discrete GPU both appear, plus the readable GPU names the browser reports through WebGL. Those names are also the only GPU evidence at all on a machine with no WebGPU, which is exactly the machine whose owner is asking why the GPU option is greyed out. Browsers expose no CPU model string to anyone, so that stays missing by necessity, not by choice.
+
+The run itself behaves better around the rest of the app. The recording, file and phone buttons no longer sit there through a benchmark: it drives the same loading and transcription paths, so the app looked ready for work it could not take, and a capture would only have fought the run for the model it was timing. When the run finishes, the sidebar reopens on the results, scrolls to the report, and says the benchmark is done, instead of leaving the numbers behind a panel the user closed to watch the run. And a run started with no model loaded no longer leaves one loaded: the weights in memory are whichever combination the plan ended on, which is not necessarily the configuration the settings show, so they are released and the Load model button comes back.
+
 ### The explanation for a greyed-out option is readable again
 
 An option your machine cannot use is greyed out, and the "?" beside it says why (WebGPU with no usable GPU adapter being the common case). The greying was applied to the whole row, help popup included, so the very text explaining the situation came out half transparent. The popup is now drawn outside the greyed row and is fully opaque again.

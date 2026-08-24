@@ -80,9 +80,43 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
     'exactly one row may be pre-selected: the visitor\'s own cached model').toBe(1);
   await page.locator('[data-umami-event="benchmark_run"]').click();
 
+  // While the run owns the pipeline, the capture entry points must be gone: the
+  // benchmark drives the same load/transcribe paths, so the app sits in a
+  // "loading"/"transcribing" state throughout, which is exactly what used to
+  // put these buttons on screen looking usable while a capture could only
+  // fight the run for the model it is timing. Waiting for the loading phase
+  // first is what makes this assertion real: before it, the app is idle and
+  // they would be absent anyway.
+  await expect(page.locator('[data-umami-event="benchmark_run"]')).toBeDisabled();
+  await expect(page.locator('.benchmark-progress')).toContainText('Loading', { timeout: 60_000 });
+  await expect(page.locator('[data-umami-event="upload_file_button"]')).toHaveCount(0);
+  await expect(page.locator('[data-umami-event="record_button"]')).toHaveCount(0);
+
+  // Close the sidebar the way a user watching the run would: a finished run has
+  // to bring them back to its results by itself.
+  await page.locator('.settings-sidebar-close').click();
+  await expect(page.locator('.settings-sidebar')).toHaveCount(0);
+
   const textarea = page.locator('.benchmark-report-text');
   await expect(textarea).toBeVisible({ timeout: 8 * 60 * 1000 });
   await expect(textarea).toHaveValue(/parakeetweb-benchmark-report/, { timeout: 8 * 60 * 1000 });
+
+  // The run reopened the sidebar on its own, said it was done, and scrolled the
+  // report into view.
+  await expect(page.locator('.settings-sidebar')).toBeVisible();
+  await expect(page.locator('.benchmark-complete')).toBeVisible();
+  await expect(page.locator('.benchmark-complete')).toContainText('complete');
+  const inView = await textarea.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return r.top < window.innerHeight && r.bottom > 0;
+  });
+  expect(inView, 'the finished report must be scrolled into view').toBe(true);
+
+  // No model was loaded before the run, so none is left loaded after it: the
+  // weights in memory are whichever combination the plan ended on, not the
+  // configuration the settings show. The Load model button is back instead.
+  await expect(page.locator('[data-umami-event="load_model_button"]')).toBeVisible();
+  await expect(page.locator('[data-umami-event="upload_file_button"]')).toHaveCount(0);
 
   const report = JSON.parse(await textarea.inputValue());
   expect(report.format).toBe('parakeetweb-benchmark-report/1');
@@ -109,6 +143,24 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   expect(report.environment.capabilities.wasm.simd).toBe(true);
   expect(report.environment.capabilities.crossOriginIsolated).toBe(true);
   expect(report.environment.ort.wasm.numThreads).toBeGreaterThan(0);
+
+  // Hardware detail: what the browser will say about the CPU, and every GPU it
+  // will admit to. A backend timing nobody can attribute to a chip answers
+  // nothing, which is the whole point of collecting this.
+  expect(report.environment.browser.platform).toBeTruthy();
+  expect(report.environment.browser.architecture).toBeTruthy();
+  expect(report.environment.hardware.deviceMemoryGB).toBeGreaterThan(0);
+  // Headless Chromium has no WebGPU adapter, so that half is legitimately null;
+  // WebGL still names whatever renders here (SwiftShader on a CI box). Assert
+  // the SHAPE either way so a probe that silently stops reporting is caught.
+  expect(report.environment).toHaveProperty('gpuRenderers');
+  expect(report.environment).toHaveProperty('webgpu');
+  if (report.environment.gpuRenderers) {
+    for (const g of report.environment.gpuRenderers) {
+      expect(Array.isArray(g.powerPreference)).toBe(true);
+      expect(typeof g.renderer === 'string' || g.renderer === null).toBe(true);
+    }
+  }
 
   // ...and nothing that identifies the visitor. Asserted against the RAW text
   // so a future probe cannot smuggle a field in under a new name.
