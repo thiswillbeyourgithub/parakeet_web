@@ -20,7 +20,17 @@ What it does not buy is speed, and this is worth stating plainly because the int
 
 So pick it when download size, storage, or startup time matter more than transcription speed, and leave int8 selected otherwise. Unlike the two int8 builds, it runs on **both** backends: WebGPU has a kernel for these 4-bit multiplications (it unpacks the weights to fp16 in the shader), so it is the first precision other than fp32 the GPU path will actually load. As with int8 lite and fp32, choosing it against a mirror that does not host the file stops the load with a clear message rather than quietly serving a different precision; on WebGPU specifically, a mirror without it falls back to fp32.
 
-Built and measured with Claude Code; the quantiser is `scripts/quantize-w4a8.py` and its acceptance gates are in `scripts/check-w4a8.py`.
+Built and measured with Claude Code; the quantiser is `scripts/quantize-nbits.py` and its acceptance gates are in `scripts/check-nbits.py`.
+
+### An int8 encoder for the fine-tuned model, built without a calibration campaign
+
+The fine-tuned French-medical ONNX repo now ships an `int8` encoder alongside its fp32 and `w4a8` ones, so the app's default precision resolves against it instead of falling back. It is built by the same quantiser as the `w4a8` encoder, just at 8 bits instead of 4: the same 217 matrix multiplications, the same 32-wide blocks, the same `accuracy_level=4` that has the kernel quantise activations to 8 bits at run time. The encoder is about 905 MB, between the 4-bit build and fp32.
+
+This is a different recipe from the SmoothQuant int8 the stock model ships, and the difference is where the activation ranges come from. SmoothQuant freezes them ahead of time from a calibration campaign, which is what makes a stock int8 cast degrade on long audio when the real ranges drift away from the calibrated ones. Here the kernel recomputes the range on each run, so there is no calibration set to collect, none to go stale, and the build takes seconds rather than an afternoon.
+
+Accuracy is indistinguishable from fp32 rather than merely close. On the French-medical validation sets it measures 4.60 % word error against the fp32 build's 4.6 % (the `w4a8` encoder measures 4.7 %), and per set the two agree to a tenth of a point or better: 3.6 / 4.5 / 5.0 / 4.1 / 12.8 against fp32's 3.6 / 4.5 / 4.9 / 4.1 / 12.8. The long-audio check that motivates SmoothQuant in the first place comes back clean too: over a single uninterrupted 6.5 minute pass scored in one-minute windows, the int8 encoder's per-section word error matches fp32's in every window, with the worst window falling in the same place at the same value. There is no drift down the table.
+
+Built and measured with Claude Code. The quantiser is `scripts/quantize-nbits.py`, which now takes a `--bits` flag and builds both widths from one code path rather than two near-identical scripts, and its acceptance gates are in `scripts/check-nbits.py`.
 
 ### ONNX Runtime engine updated to 1.29
 
