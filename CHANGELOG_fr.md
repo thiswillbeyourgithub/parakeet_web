@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Moteur ONNX Runtime mis à jour en 1.29
+
+Le moteur ONNX Runtime Web embarqué (le runtime par lequel passe chaque transcription, sur les chemins CPU/WASM comme WebGPU) passe de 1.27.0 à 1.29.0, la version stable la plus récente publiée sur npm. C'est une mise à jour d'entretien : un A/B entrelacé des deux versions dans le navigateur, sur le clip de référence du projet, les avait déjà mesurées indistinguables au bruit près sur le chemin WASM, et les suites de tests unitaires et navigateur passent inchangées sur 1.29. La disposition des artefacts et le chargement à intégrité épinglée sont identiques, donc rien ne change dans ce qu'un visiteur télécharge.
+
 ### Le banc d'essai dit sur quel matériel il a tourné, et rend la machine à la fin
 
 Un rapport de banc d'essai n'est utile que si les chiffres peuvent être rattachés à une puce. Il décrivait le processeur (nombre de cœurs, classe de mémoire, architecture) et le seul adaptateur GPU que le navigateur exposait par défaut, ce qui, sur un portable qui en a deux, ne dit rien de celui qui a réellement travaillé. Les rapports listent désormais tous les adaptateurs proposés par la machine, demandés par préférence d'alimentation, de sorte qu'un GPU intégré et un GPU dédié apparaissent tous les deux, ainsi que les noms de GPU lisibles rapportés par le navigateur via WebGL. Ces noms sont d'ailleurs la seule preuve de GPU disponible sur une machine sans WebGPU, c'est-à-dire précisément celle dont le propriétaire demande pourquoi l'option GPU est grisée. Aucun navigateur n'expose le modèle du processeur à qui que ce soit : cette absence-là est subie, pas choisie.
