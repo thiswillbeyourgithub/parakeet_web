@@ -39,6 +39,7 @@ export const LONG_PROFILE_TARGET_SEC = 90;
 export const QUANT_DOWNLOAD_MB = {
   int8lite: 810,
   int8: 900,
+  w4a8: 610,
   fp32: 2350,
 };
 
@@ -54,7 +55,7 @@ export const HEAVY_DOWNLOAD_MB = 1500;
 // second full model load plus 810 MB, which is exactly the reflex spend the
 // heavy rule exists to prevent. `isCurrent` still wins below, so a visitor who
 // already runs lite gets their own row checked at no cost.
-export const OPT_IN_QUANTS = new Set(['int8lite']);
+export const OPT_IN_QUANTS = new Set(['int8lite', 'w4a8']);
 
 function comboId(backend, quant) {
   return `${backend}:${quant}`;
@@ -84,11 +85,18 @@ export function planBenchmark({
     // a benchmark on the visitor's own machine answers, so it gets a row.
     { backend: 'wasm', quant: 'int8lite' },
     { backend: 'wasm', quant: 'int8' },
+    // w4a8 is the smallest encoder by a wide margin (int4 weights, int8
+    // activations in-kernel): a quarter of fp32's download for the same accuracy,
+    // bought with slower inference, which is again a per-machine question.
+    { backend: 'wasm', quant: 'w4a8' },
     { backend: 'wasm', quant: 'fp32' },
   ];
   if (webgpuAvailable && !webgpuDisabled) {
-    // fp32 is the only precision the GPU EP has an encoder kernel for.
+    // fp32 and w4a8 are the precisions the GPU EP has an encoder kernel for:
+    // int8 has none, while w4a8's MatMulNBits dequantizes the weights to fp16 in
+    // the shader (so the GPU win is download and VRAM, not arithmetic).
     combos.push({ backend: 'webgpu-hybrid', quant: 'fp32' });
+    combos.push({ backend: 'webgpu-hybrid', quant: 'w4a8' });
   }
 
   const currentQuant = currentBackend.startsWith('webgpu') ? currentWebgpuQuant : currentWasmQuant;

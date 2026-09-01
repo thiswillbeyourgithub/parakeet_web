@@ -981,16 +981,17 @@ export async function listLocalRepoFiles(baseUrl) {
       return res.ok ? name : null;
     } catch { return null; }
   };
-  // encoder-model.int8.lite.onnx is probed for the same reason as the fp32
-  // pieces: resolveModelQuant refuses an int8lite request the source cannot
-  // serve, so a mirror that HAS the lite build must be able to say so. Omitting
-  // it would make lite permanently unavailable on a local-weights deployment
-  // (repoFiles IS this list there) and would stop the /models auto-upgrade from
-  // ever rescuing an HF repo that ships no lite encoder.
+  // The optional encoder builds are probed for the same reason as the fp32
+  // pieces: resolveModelQuant refuses an int8lite or w4a8 request the source
+  // cannot serve, so a mirror that HAS one must be able to say so. Omitting them
+  // would make those precisions permanently unavailable on a local-weights
+  // deployment (repoFiles IS this list there) and would stop the /models
+  // auto-upgrade from ever rescuing an HF repo that ships neither.
   const candidates = [
     'encoder-model.onnx.data',
     'decoder_joint-model.onnx.data',
     'encoder-model.int8.lite.onnx',
+    'encoder-model.w4a8.onnx',
   ];
   const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
   // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) until the
@@ -1018,11 +1019,16 @@ export async function listLocalRepoFiles(baseUrl) {
   return files;
 }
 
-// Map a resolved quant to its ONNX filename suffix. There are only two: the
-// model repo shipped an fp16 encoder and decoder until 2026-08-23, but that
-// build was withdrawn (fp16 compute needs a GPU exposing `shader-f16`, which no
-// GPU available here does, so it could never be exercised end to end).
-export const QUANT_SUFFIX = { int8: '.int8.onnx', int8lite: '.int8.lite.onnx', fp32: '.onnx' };
+// Map a resolved quant to its ONNX filename suffix. The model repo shipped an
+// fp16 encoder and decoder until 2026-08-23, but that build was withdrawn (fp16
+// compute needs a GPU exposing `shader-f16`, which no GPU available here does,
+// so it could never be exercised end to end).
+export const QUANT_SUFFIX = {
+  int8: '.int8.onnx',
+  int8lite: '.int8.lite.onnx',
+  w4a8: '.w4a8.onnx',
+  fp32: '.onnx',
+};
 
 // The encoder quants that are int8 under the hood. Both are CPU/WASM-only (the
 // WebGPU EP has no int8 encoder kernel), and both pair with the int8 decoder.
@@ -1087,12 +1093,13 @@ function hasFp32ShardSet(repoFiles) {
   return parseEncoderShards(repoFiles).shards.length > 0;
 }
 
-// Whether the listing carries the lite int8 encoder. Only the model repo builds
-// it, so a mirror that predates it (or upstream istupakov, which never had it)
-// legitimately does not ship it. Matches it flat OR under a subfolder, the same
-// way parseEncoderShards does, since the HF tree API returns full paths.
-function hasInt8LiteEncoder(repoFiles) {
-  const name = `encoder-model${QUANT_SUFFIX.int8lite}`;
+// Whether the listing carries the encoder build for a quant. Only the model repo
+// builds the lite int8 and w4a8 encoders, so a mirror that predates them (or
+// upstream istupakov, which never had them) legitimately does not ship them.
+// Matches flat OR under a subfolder, the same way parseEncoderShards does, since
+// the HF tree API returns full paths.
+function hasEncoderFor(repoFiles, quant) {
+  const name = `encoder-model${QUANT_SUFFIX[quant]}`;
   return repoFiles.some((f) => typeof f === 'string' && (f === name || f.endsWith(`/${name}`)));
 }
 
@@ -1140,9 +1147,20 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     // the default int8: that routes through the same /models upgrade probe and
     // QuantUnavailableError as fp32, so the user learns their repo has no lite
     // build instead of silently running a heavier encoder than they picked.
-    if (decoderHonoured && encoderQuant === 'int8lite' && hasInt8LiteEncoder(repoFiles)) {
+    if (decoderHonoured && encoderQuant === 'int8lite' && hasEncoderFor(repoFiles, 'int8lite')) {
       return {
         encoderQ: 'int8lite',
+        decoderQ: 'int8',
+        pinnedToInt8: false,
+      };
+    }
+    // Opt-in w4a8 on WASM, on the same terms as lite: one self-contained file
+    // (int4 weights, int8 activations in-kernel), no sidecar and no shards, so
+    // shipping it is the only condition. Same deliberate fall-through to the pin
+    // when the repo lacks it.
+    if (decoderHonoured && encoderQuant === 'w4a8' && hasEncoderFor(repoFiles, 'w4a8')) {
+      return {
+        encoderQ: 'w4a8',
         decoderQ: 'int8',
         pinnedToInt8: false,
       };
@@ -1174,7 +1192,21 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   // fp32 (there is no GPU int8 encoder kernel either, for the lite build as much
   // as the default), and the decoder is always int8: it is as accurate as fp32 on
   // this model while being smaller and faster.
-  const encoderQ = isInt8Encoder(encoderQuant) ? 'fp32' : encoderQuant;
+  //
+  // w4a8 is NOT rewritten: MatMulNBits has a WebGPU kernel (it dequantizes the
+  // int4 weights to fp16 in the shader, so the GPU gets no int8 arithmetic and
+  // the win is download size and VRAM, not speed), and it loads as one flat file
+  // with no shard requirement. Keeping it out of INT8_ENCODER_QUANTS is what
+  // lets it through here.
+  // A w4a8 request against a repo that does not ship the file becomes fp32 too,
+  // rather than a 404 deep in the download: same graceful rewrite int8 gets, and
+  // it keeps the missing-file story to a single shape (the fp32 shard check
+  // below), so quantSatisfiable and the QuantUnavailableError sites need no new
+  // flag.
+  const w4a8Servable = encoderQuant === 'w4a8' && hasEncoderFor(repoFiles, 'w4a8');
+  const encoderQ = isInt8Encoder(encoderQuant) || (encoderQuant === 'w4a8' && !w4a8Servable)
+    ? 'fp32'
+    : encoderQuant;
   const decoderQ = 'int8';
   // A single-file fp32 encoder cannot load on WebGPU: the ~2.3 GB weights exceed
   // BOTH Chromium's ~2 GB IndexedDB Blob-readback wall AND V8's ArrayBuffer cap,
@@ -1330,6 +1362,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     const missing = encoderQuant === 'int8lite'
       ? `the lite int8 encoder (encoder-model${QUANT_SUFFIX.int8lite}, built by `
         + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05), `
+        + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
+      : encoderQuant === 'w4a8'
+      ? `the w4a8 encoder (encoder-model${QUANT_SUFFIX.w4a8}, built by scripts/quantize-w4a8.py), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
       : `the <2 GB fp32 shards (encoder-model.onnx.data.NNN from `
         + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `

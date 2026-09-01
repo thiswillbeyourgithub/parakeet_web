@@ -105,6 +105,11 @@ const MAX_ENCODER_BATCH_CEIL = 4;
 // branch and reserve twice the room it needs.
 export function encoderWeightBytesFromName(name) {
   const n = (name || '').toLowerCase();
+  // w4a8 first: it is checked before the fp32 catch-all because its name carries
+  // none of the other markers, and on WebGPU an fp32-sized reservation for a
+  // 0.6 GB encoder would needlessly shrink the activation budget (and with it the
+  // encoder batch).
+  if (n.includes('w4a8')) return 0.6e9;
   if (n.includes('fp32') || (!n.includes('int8') && !n.includes('fp16'))) return 2.4e9; // fp32 / plain
   if (n.includes('fp16')) return 1.2e9;
   return 0.6e9; // int8 (and int8.smoothquant)
