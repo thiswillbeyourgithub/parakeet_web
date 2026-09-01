@@ -514,7 +514,12 @@ const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') 
 // restore validates a saved value against. Anything else (an older 'fp16', a
 // value from a newer build, a hand-edited record) falls back to int8 rather than
 // reaching hub.js as a quant it cannot resolve.
-const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'fp32'];
+const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'fp32'];
+
+// What WebGPU can actually run: fp32, plus w4a8 (MatMulNBits has a GPU kernel,
+// unlike int8). Same role as the WASM list, and it is why a saved WebGPU
+// precision is validated rather than coerced to fp32 outright.
+const WEBGPU_ENCODER_QUANTS = ['fp32', 'w4a8'];
 
 // Where a benchmark report is POSTed, and whether the "send it to the
 // maintainer" half of the Benchmark section exists at all. The operator opts in
@@ -1663,9 +1668,12 @@ export default function App() {
         setWasmEncoderQuant(
           WASM_ENCODER_QUANTS.includes(savedWasmEncoderQuant) ? savedWasmEncoderQuant : 'int8',
         );
-        // fp32 is the only WebGPU encoder precision left, so an older saved
-        // 'fp16' is coerced rather than restored.
-        setWebgpuEncoderQuant('fp32');
+        // Same whitelist treatment for WebGPU, which now runs w4a8 as well as
+        // fp32: an older saved 'fp16' (or an int8 one, which has no GPU kernel)
+        // is coerced to fp32 rather than restored.
+        setWebgpuEncoderQuant(
+          WEBGPU_ENCODER_QUANTS.includes(savedWebgpuEncoderQuant) ? savedWebgpuEncoderQuant : 'fp32',
+        );
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setDebugDecode(!!savedDebugDecode);
@@ -3079,21 +3087,25 @@ export default function App() {
       // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
       // stays int8 on WASM regardless (tiny, runs fine).
       const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
-      // On WebGPU the encoder is always fp32 (int8 has no GPU encoder kernel).
+      // On WebGPU the encoder is fp32 unless the user opted into w4a8, the only
+      // quantised encoder with a GPU kernel (MatMulNBits; int8 has none).
       // The fused decoder_joint always runs int8 on both backends: on this model
       // the int8 joiner is as accurate as fp32 (measured) while being smaller and
       // faster, and the GPU EP runs the int8 decoder fine.
-      // Resolve the WASM encoder request: fp32 (shards), the lite int8 build, or
-      // the default int8. 'int8lite' is passed straight through rather than
-      // collapsed to 'int8' so hub.js can tell "the user picked lite and this
-      // repo has no lite build" (-> quantUnavailable banner) apart from "the
-      // user picked the default", which is the whole point of the no-silent-
-      // downgrade rule. Anything unrecognised still lands on the default int8.
+      // Resolve the WASM encoder request: fp32 (shards), the lite int8 build,
+      // the 4-bit w4a8 build, or the default int8. 'int8lite' and 'w4a8' are
+      // passed straight through rather than collapsed to 'int8' so hub.js can
+      // tell "the user picked that build and this repo has none"
+      // (-> quantUnavailable banner) apart from "the user picked the default",
+      // which is the whole point of the no-silent-downgrade rule. Anything
+      // unrecognised still lands on the default int8.
       const wasmEncoderRequest = wasmWantsFp32
         ? 'fp32'
-        : (wasmEncoderQuant === 'int8lite' ? 'int8lite' : 'int8');
+        : (wasmEncoderQuant === 'int8lite' || wasmEncoderQuant === 'w4a8' ? wasmEncoderQuant : 'int8');
       const downloadOpts = {
-        encoderQuant: wantWebgpu ? 'fp32' : wasmEncoderRequest,
+        encoderQuant: wantWebgpu
+          ? (webgpuEncoderQuant === 'w4a8' ? 'w4a8' : 'fp32')
+          : wasmEncoderRequest,
         decoderQuant: 'int8',
         allowWasmFp32: wasmWantsFp32,
         preprocessor,
@@ -7093,37 +7105,46 @@ export default function App() {
             )}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
-              // Single fixed list (int8 lite / int8 / fp32); only the greying
-              // moves with the backend. Neither int8 build has a GPU encoder
-              // kernel (both unavailable on WebGPU); fp32 runs on both. The
-              // remembered selection is per-backend, so WASM keeps its choice
-              // while WebGPU is pinned to fp32 (the model repo's fp16 build was
-              // withdrawn on 2026-08-23).
+              // Single fixed list (int8 lite / int8 / w4a8 / fp32); only the
+              // greying moves with the backend. Neither int8 build has a GPU
+              // encoder kernel (both unavailable on WebGPU); fp32 and w4a8 run
+              // on both, w4a8 through the MatMulNBits kernel the GPU EP does
+              // implement. The remembered selection is per-backend, so WASM
+              // keeps its choice independently of WebGPU (whose fp16 build was
+              // withdrawn on 2026-08-23, leaving fp32 as its default).
               const isWebgpu = backend.startsWith('webgpu');
               const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
               const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
               // Show the precision that will ACTUALLY load, so the radio never
               // sits on an option the backend cannot serve.
-              const effectiveQuant = isWebgpu ? 'fp32' : currentQuant;
+              const effectiveQuant = isWebgpu && !WEBGPU_ENCODER_QUANTS.includes(currentQuant)
+                ? 'fp32'
+                : currentQuant;
               // int8 is the default on WASM. int8 lite is the same recipe with
               // fewer MatMuls quantised: ~88 MB smaller and lighter on RAM, at
               // slightly higher error, and only the model repo ships it (a repo
               // without it surfaces the quantUnavailable banner rather than
-              // silently loading the heavier int8). fp32 is opt-in on WASM via
-              // the <2 GB shards (~2.4 GB, ~35 % slower) and the only precision
-              // WebGPU has an encoder kernel for.
+              // silently loading the heavier int8). w4a8 is the 4-bit build:
+              // the smallest download by far and the fastest to load, but
+              // slower to run than int8 on WASM and than fp32 on WebGPU (the
+              // encoder is compute-bound, so shrinking the weights buys load
+              // time, not throughput). fp32 is opt-in on WASM via the <2 GB
+              // shards (~2.4 GB, ~35 % slower) and the WebGPU default.
               // Built from WASM_ENCODER_QUANTS so the radios and the whitelist
               // the settings restore validates against cannot drift apart: a
               // value offered here but missing there would be silently reset to
               // int8 on the next reload, which is exactly how int8lite first
-              // shipped without surviving a page load.
+              // shipped without surviving a page load. A value with no entry in
+              // PRECISION_ROW throws here rather than rendering a blank radio.
               const PRECISION_ROW = {
-                int8lite: () => ({ label: t('precisionInt8Lite'), available: !isWebgpu }),
-                int8: () => ({ label: t('precisionInt8'), available: !isWebgpu }),
-                fp32: () => ({ label: t('precisionFp32'), available: true }),
+                int8lite: () => t('precisionInt8Lite'),
+                int8: () => t('precisionInt8'),
+                w4a8: () => t('precisionW4a8'),
+                fp32: () => t('precisionFp32'),
               };
               const rows = WASM_ENCODER_QUANTS.map((value) => {
-                const { label, available } = PRECISION_ROW[value]();
+                const available = !isWebgpu || WEBGPU_ENCODER_QUANTS.includes(value);
+                const label = PRECISION_ROW[value]();
                 return { value, label, available, note: available ? '' : t('precisionUnavailableWebgpu') };
               });
               return (
