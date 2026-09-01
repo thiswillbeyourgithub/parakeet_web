@@ -281,21 +281,39 @@ describe('resolveModelQuant: w4a8 opt-in', () => {
       assert.equal(quantSatisfiable({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_W4A8 }), true);
     });
 
-    // No w4a8 file: the request degrades to fp32 rather than 404ing deep in the
-    // download, which keeps the missing-file story to the single fp32 shape.
-    test(`${backend} degrades a w4a8 request to fp32 when the source ships no w4a8 encoder`, () => {
+    // No w4a8 file: encoderQ falls back to fp32 so the caller still has a
+    // loadable graph, but w4a8NeedsFile FLAGS it. Serving that fallback silently
+    // would hand someone who picked a 610 MB encoder a 2.35 GB one, and w4a8 is
+    // offered as a live choice on this backend (int8 is greyed out), so the
+    // no-silent-downgrade rule applies here exactly as it does to the WASM pin.
+    test(`${backend} flags a w4a8 request when the source ships no w4a8 encoder, even though fp32 would load`, () => {
       const r = resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS });
       assert.equal(r.encoderQ, 'fp32');
       assert.equal(r.pinnedToInt8, false);
-      assert.equal(r.webgpuFp32NeedsShards, false, 'the shards are there, so the fp32 fallback loads');
-      assert.equal(quantSatisfiable({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }), true);
+      assert.equal(r.webgpuFp32NeedsShards, false, 'the shards are there, so the fp32 fallback would load');
+      assert.equal(r.w4a8NeedsFile, true, 'a loadable fp32 fallback is not a reason to swap it in unannounced');
+      assert.equal(quantSatisfiable({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }), false);
     });
 
     test(`${backend} flags a w4a8 request when neither the w4a8 file nor the shards are shipped`, () => {
       const r = resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NO_SHARDS });
       assert.equal(r.encoderQ, 'fp32');
+      assert.equal(r.w4a8NeedsFile, true);
       assert.equal(r.webgpuFp32NeedsShards, true, 'the fp32 fallback is itself unloadable without shards');
       assert.equal(quantSatisfiable({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NO_SHARDS }), false);
+    });
+
+    // The flag must stay off when the request was honoured, or every GPU load
+    // would refuse itself.
+    test(`${backend} leaves w4a8NeedsFile clear when the encoder is shipped, and for other quants`, () => {
+      assert.equal(resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_W4A8 }).w4a8NeedsFile, false);
+      for (const q of ['int8', 'int8lite', 'fp32']) {
+        assert.equal(
+          resolveModelQuant({ backend, encoderQuant: q, decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }).w4a8NeedsFile,
+          false,
+          `${q} must not be caught by the w4a8 flag`,
+        );
+      }
     });
   }
 });
