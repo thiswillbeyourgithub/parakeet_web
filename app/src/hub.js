@@ -1124,12 +1124,12 @@ function hasEncoderFor(repoFiles, quant) {
  *
  * @param {Object} args
  * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').
- * @param {('int8'|'int8lite'|'fp32')} args.encoderQuant Requested encoder quant.
+ * @param {('int8'|'int8lite'|'w4a8'|'fp32')} args.encoderQuant Requested encoder quant.
  * @param {('int8'|'fp32')} args.decoderQuant Requested decoder quant.
  * @param {string[]} args.repoFiles Filenames available in the repo.
  * @param {boolean} [args.allowWasmFp32=false] Opt-in: allow sharded fp32 on WASM
  *   when the repo ships encoder-model.onnx.data.NNN shards and fp32 is requested.
- * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, webgpuFp32NeedsShards: boolean}}
+ * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, webgpuFp32NeedsShards: boolean, w4a8NeedsFile: boolean}}
  */
 export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 = false }) {
   if (!backend.startsWith('webgpu')) {
@@ -1184,7 +1184,8 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
       pinnedToInt8: encoderQuant !== 'int8' || decoderQuant !== 'int8',
     };
   }
-  // fp32 is the only encoder precision the GPU path has. The model repo shipped
+  // fp32 is the GPU path's default encoder precision, and until w4a8 arrived it
+  // was the only one. The model repo shipped
   // an fp16 encoder until 2026-08-23 and this resolved to it when the adapter
   // exposed `shader-f16`; that build was withdrawn because fp16 compute exists
   // only on a GPU and no available GPU here exposes the feature, so it could
@@ -1198,11 +1199,15 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   // the win is download size and VRAM, not speed), and it loads as one flat file
   // with no shard requirement. Keeping it out of INT8_ENCODER_QUANTS is what
   // lets it through here.
-  // A w4a8 request against a repo that does not ship the file becomes fp32 too,
-  // rather than a 404 deep in the download: same graceful rewrite int8 gets, and
-  // it keeps the missing-file story to a single shape (the fp32 shard check
-  // below), so quantSatisfiable and the QuantUnavailableError sites need no new
-  // flag.
+  // A w4a8 request against a repo that does not ship the file falls back to fp32
+  // here rather than 404ing deep in the download, but it is FLAGGED, unlike the
+  // int8 rewrite above. The two are not the same case. int8 has no GPU encoder
+  // kernel at any repo, so the UI greys that radio out and the rewrite surprises
+  // nobody. w4a8 is offered on the GPU as a live choice, so silently serving
+  // fp32 instead would hand a visitor who picked a 610 MB encoder a 2.35 GB one,
+  // which is exactly the silent quant swap the rest of this module refuses to do.
+  // The flag routes it through the /models upgrade probe and then
+  // QuantUnavailableError, the same path the WASM pin takes.
   const w4a8Servable = encoderQuant === 'w4a8' && hasEncoderFor(repoFiles, 'w4a8');
   const encoderQ = isInt8Encoder(encoderQuant) || (encoderQuant === 'w4a8' && !w4a8Servable)
     ? 'fp32'
@@ -1222,6 +1227,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     decoderQ,
     pinnedToInt8: false,
     webgpuFp32NeedsShards,
+    w4a8NeedsFile: encoderQuant === 'w4a8' && !w4a8Servable,
   };
 }
 
@@ -1237,7 +1243,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
  */
 export function quantSatisfiable(args) {
   const r = resolveModelQuant(args);
-  return !r.pinnedToInt8 && !r.webgpuFp32NeedsShards;
+  return !r.pinnedToInt8 && !r.webgpuFp32NeedsShards && !r.w4a8NeedsFile;
 }
 
 /**
@@ -1324,27 +1330,28 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     : await listRepoFiles(repoId, effectiveRevision);
 
   // Resolve the effective quantisation per backend and per availability.
-  let { encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards } =
+  let { encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile } =
     resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 });
 
   // Pre-download upgrade: the primary (HF) source could not serve the requested
-  // quant (fp32 with no shards, on either backend), but a locally-served
-  // /models mirror may ship the missing
+  // quant (fp32 with no shards on either backend, w4a8 with no encoder file),
+  // but a locally-served /models mirror may ship the missing
   // pieces. Probe it BEFORE downloading the wrong (downgraded) weights; if it
   // can satisfy the request, switch the whole load to local. Only on the HF
   // path (no explicit localFallbackBaseUrl) and only when a probe target was
   // provided by the caller (localUpgradeBaseUrl).
-  if (localUpgradeBaseUrl && !localFallbackBaseUrl && (pinnedToInt8 || webgpuFp32NeedsShards)) {
+  if (localUpgradeBaseUrl && !localFallbackBaseUrl
+      && (pinnedToInt8 || webgpuFp32NeedsShards || w4a8NeedsFile)) {
     // Resolve flat-vs-nested once so the listing and the later weight fetches
     // both target the layout the operator actually mounted.
     const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId)) || localUpgradeBaseUrl;
     const localFiles = await listLocalRepoFiles(resolvedUpgrade).catch(() => []);
     if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, allowWasmFp32 })) {
       console.log(`[Hub] HuggingFace cannot serve the requested quant (encoder=${encoderQuant}); `
-        + `the local mirror at ${resolvedUpgrade} can — switching the load to it`);
+        + `the local mirror at ${resolvedUpgrade} can, switching the load to it`);
       effectiveLocalBase = resolvedUpgrade;
       repoFiles = localFiles;
-      ({ encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards } =
+      ({ encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile } =
         resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 }));
     }
   }
@@ -1376,8 +1383,24 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           + `${backend} backend from any available source. It needs ${missing}`,
     });
   }
+  if (w4a8NeedsFile) {
+    // w4a8 was picked on WebGPU and NO source we tried ships the encoder. The
+    // resolution above already fell back to fp32 so the rest of this function
+    // has a loadable graph, but serving that silently would be a 2.35 GB
+    // download in place of the 610 MB the user chose, and unlike int8 (greyed
+    // out on this backend) w4a8 is offered here as a live choice. Refuse for the
+    // same reason the WASM pin above refuses.
+    throw new QuantUnavailableError({
+      backend,
+      requested: { encoder: encoderQuant, decoder: decoderQuant },
+      message: `Requested encoder=w4a8 cannot run on the ${backend} backend from any `
+        + `available source: neither HuggingFace nor the local /models mirror ships `
+        + `encoder-model${QUANT_SUFFIX.w4a8} (built by scripts/quantize-w4a8.py). `
+        + `Host it, or pick fp32.`,
+    });
+  }
   if (webgpuFp32NeedsShards) {
-    // fp32 resolved on WebGPU (it is the only encoder precision the GPU EP has)
+    // fp32 resolved on WebGPU (it is the GPU EP's default encoder precision)
     // but NO source we tried ships the shards. The single-file fp32 encoder cannot
     // load on WebGPU (its ~2.3 GB weights exceed both Chromium's IDB Blob-readback
     // wall and V8's ArrayBuffer cap; verified on a real GPU box), so rather than
