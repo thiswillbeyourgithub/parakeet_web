@@ -10,6 +10,16 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Un encodeur int8 pour le modèle affiné, construit sans campagne de calibration
+
+Le dépôt ONNX du modèle affiné en français médical fournit désormais un encodeur `int8` à côté de ses encodeurs fp32 et `w4a8`, si bien que la précision par défaut de l'application se résout sur lui au lieu de retomber ailleurs. Il est produit par le même quantificateur que l'encodeur `w4a8`, simplement sur 8 bits au lieu de 4 : les mêmes 217 multiplications matricielles, les mêmes blocs de 32, le même `accuracy_level=4` qui fait quantifier les activations sur 8 bits par le noyau à l'exécution. L'encodeur pèse environ 905 Mo, entre la version 4 bits et fp32.
+
+C'est une recette différente de l'int8 SmoothQuant fourni avec le modèle d'origine, et la différence tient à l'origine des plages d'activation. SmoothQuant les fige à l'avance à partir d'une campagne de calibration, ce qui explique qu'une conversion int8 standard se dégrade sur de l'audio long quand les plages réelles s'écartent des plages calibrées. Ici le noyau recalcule la plage à chaque exécution : il n'y a donc aucun jeu de calibration à constituer, aucun à voir vieillir, et la construction prend quelques secondes au lieu d'une après-midi.
+
+La précision est indiscernable de fp32, et pas seulement proche. Sur les jeux de validation français médicaux, il mesure 4,60 % de taux d'erreur sur les mots contre 4,6 % pour la version fp32 (l'encodeur `w4a8` mesure 4,7 %), et jeu par jeu les deux s'accordent au dixième de point près : 3,6 / 4,5 / 5,0 / 4,1 / 12,8 contre 3,6 / 4,5 / 4,9 / 4,1 / 12,8 pour fp32. Le contrôle sur audio long, celui-là même qui justifie l'existence de SmoothQuant, ressort également propre : sur une passe ininterrompue de 6,5 minutes découpée en fenêtres d'une minute, le taux d'erreur par section de l'encodeur int8 égale celui de fp32 dans chaque fenêtre, la pire fenêtre tombant au même endroit et à la même valeur. Aucune dérive au fil du tableau.
+
+Construit et mesuré avec Claude Code. Le quantificateur est `scripts/quantize-nbits.py`, qui accepte désormais une option `--bits` et produit les deux largeurs depuis un seul chemin de code plutôt que deux scripts presque identiques ; ses tests d'acceptation sont dans `scripts/check-nbits.py`.
+
 ### Moteur ONNX Runtime mis à jour en 1.29
 
 Le moteur ONNX Runtime Web embarqué (le runtime par lequel passe chaque transcription, sur les chemins CPU/WASM comme WebGPU) passe de 1.27.0 à 1.29.0, la version stable la plus récente publiée sur npm. C'est une mise à jour d'entretien : un A/B entrelacé des deux versions dans le navigateur, sur le clip de référence du projet, les avait déjà mesurées indistinguables au bruit près sur le chemin WASM, et les suites de tests unitaires et navigateur passent inchangées sur 1.29. La disposition des artefacts et le chargement à intégrité épinglée sont identiques, donc rien ne change dans ce qu'un visiteur télécharge.
