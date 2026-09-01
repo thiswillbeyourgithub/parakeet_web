@@ -70,16 +70,28 @@ try {
     console.log(`[gpu] adapter: ${JSON.stringify(gpu)}`);
   }
 
-  await page.locator('.settings-toggle').click();
-  await expandSettingsSection(page, 'Benchmark');
-
   // Take the plan as the app computed it for this device, then select exactly
   // the requested rows: a row the planner did not offer cannot be run here.
-  const planned = await page.locator('input[name^="benchmark-combo-"]').evaluateAll(
-    (els) => els.map((e) => e.name.replace('benchmark-combo-', '')),
-  );
-  console.log(`[plan] device offers: ${planned.join(', ') || '(none)'}`);
-  const missing = combos.filter((c) => !planned.includes(c));
+  // The adapter query the planner depends on occasionally comes back empty on a
+  // first boot even though the adapter is real (observed on an Ampere box that
+  // probes fine), which drops the GPU row from an otherwise valid plan, so give
+  // the plan a couple of reloads before believing it.
+  let planned = [];
+  let missing = combos;
+  for (let attempt = 1; attempt <= 3 && missing.length; attempt += 1) {
+    if (attempt > 1) {
+      await page.reload();
+      await page.locator('[data-umami-event="load_model_button"]').waitFor({ timeout: 60_000 });
+    }
+    await page.locator('.settings-toggle').click();
+    await expandSettingsSection(page, 'Benchmark');
+    planned = await page.locator('input[name^="benchmark-combo-"]').evaluateAll(
+      (els) => els.map((e) => e.name.replace('benchmark-combo-', '')),
+    );
+    missing = combos.filter((c) => !planned.includes(c));
+    console.log(`[plan] device offers: ${planned.join(', ') || '(none)'}`
+      + (missing.length ? ` (attempt ${attempt}, still missing ${missing.join(', ')})` : ''));
+  }
   if (missing.length) throw new Error(`requested rows not planned on this device: ${missing.join(', ')}`);
 
   for (const name of planned) {
