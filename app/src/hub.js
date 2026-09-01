@@ -1371,7 +1371,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
       : encoderQuant === 'w4a8'
-      ? `the w4a8 encoder (encoder-model${QUANT_SUFFIX.w4a8}, built by scripts/quantize-w4a8.py), `
+      ? `the w4a8 encoder (encoder-model${QUANT_SUFFIX.w4a8}, built by scripts/quantize-nbits.py), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
       : `the <2 GB fp32 shards (encoder-model.onnx.data.NNN from `
         + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
@@ -1395,7 +1395,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       requested: { encoder: encoderQuant, decoder: decoderQuant },
       message: `Requested encoder=w4a8 cannot run on the ${backend} backend from any `
         + `available source: neither HuggingFace nor the local /models mirror ships `
-        + `encoder-model${QUANT_SUFFIX.w4a8} (built by scripts/quantize-w4a8.py). `
+        + `encoder-model${QUANT_SUFFIX.w4a8} (built by scripts/quantize-nbits.py). `
         + `Host it, or pick fp32.`,
     });
   }

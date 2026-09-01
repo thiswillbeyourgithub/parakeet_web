@@ -290,7 +290,7 @@ describe('getParakeetModel file selection: WebGPU', () => {
   });
 });
 
-// The w4a8 encoder (scripts/quantize-w4a8.py) packs the weights to 4 bits into
+// The w4a8 encoder (scripts/quantize-nbits.py) packs the weights to 4 bits into
 // MatMulNBits nodes: like int8 it is ONE self-contained file, with no external
 // sidecar and no shard set, so the selection layer has to leave both of those
 // mechanisms alone for it. Unlike int8 it runs on BOTH backends (MatMulNBits has
