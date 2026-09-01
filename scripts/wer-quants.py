@@ -166,7 +166,14 @@ DEFAULT_MAX_PASS_SEC = 390.0
 
 # onnxruntime CUDA EP providers (CUDA first; CPU after it ONLY for ops the CUDA
 # EP doesn't implement, it does NOT rescue a failed CUDA-library load).
-CUDA_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+# cudnn_conv_algo_search defaults to EXHAUSTIVE, which re-benchmarks conv
+# algorithms for every previously unseen input shape; since nearly every clip
+# has a unique length, that left the GPU ~idle at ~12 s/clip. HEURISTIC picks
+# the algorithm instantly and computes the same values (WER is unaffected).
+CUDA_PROVIDERS = [
+    ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}),
+    "CPUExecutionProvider",
+]
 CPU_PROVIDERS = ["CPUExecutionProvider"]
 
 # A --_child pass reports a model LOAD failure (as opposed to a later inference
