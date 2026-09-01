@@ -10,6 +10,18 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### A 4-bit encoder, for when the download is the problem
+
+There is a new entry in the encoder precision list: **w4a8**, an encoder whose weights are stored on 4 bits instead of 32. 217 of the encoder's 289 matrix multiplications carry it; the remaining 72 multiply two activations together and have no stored weight to shrink, and the convolutions and normalisations stay in full precision. Activations are quantised to 8 bits inside the kernel at run time, which is where the name comes from.
+
+The point of it is size. The encoder goes from about 2,436 MB to about 610 MB, which is roughly 457 MB once compressed for transfer against 1.55 GB for fp32, and it loads in about 7 to 9 seconds instead of 13 to 16. Accuracy is essentially unchanged: on the French-medical validation sets it measures 4.7 % word error against the fp32 build's 4.6 %, and no calibration data was needed to build it.
+
+What it does not buy is speed, and this is worth stating plainly because the intuition points the other way. Measured against the same model's fp32 encoder on the reference machine, medians of three timed runs on a 90 s profile: about 2.6x real time on the CPU path against fp32's 3.6x, and about 28x on WebGPU against fp32's 42x. int8 is faster still on the CPU path. A speech encoder consumes roughly a thousand frames in one pass, so each weight is reused across a large matrix multiplication and the work is limited by arithmetic rather than by moving weights from memory. Shrinking the weights therefore shortens the download and the load, and then costs a little throughput to unpack them again in the kernel. That is the opposite of what 4-bit quantisation does for a chatbot generating one token at a time, where memory traffic is the whole bottleneck.
+
+So pick it when download size, storage, or startup time matter more than transcription speed, and leave int8 selected otherwise. Unlike the two int8 builds, it runs on **both** backends: WebGPU has a kernel for these 4-bit multiplications (it unpacks the weights to fp16 in the shader), so it is the first precision other than fp32 the GPU path will actually load. As with int8 lite and fp32, choosing it against a mirror that does not host the file stops the load with a clear message rather than quietly serving a different precision; on WebGPU specifically, a mirror without it falls back to fp32.
+
+Built and measured with Claude Code; the quantiser is `scripts/quantize-w4a8.py` and its acceptance gates are in `scripts/check-w4a8.py`.
+
 ### ONNX Runtime engine updated to 1.29
 
 The vendored ONNX Runtime Web engine (the runtime every transcription goes through, on both the CPU/WASM and WebGPU paths) moved from 1.27.0 to 1.29.0, the newest stable npm release. This is a maintenance bump: an interleaved in-browser A/B of the two versions on this project's benchmark clip had already measured them within noise of each other on the WASM path, and the full unit and browser test suites pass unchanged on 1.29. The artifact layout and the pinned-integrity loading path are identical, so nothing changes in what a visitor downloads.
