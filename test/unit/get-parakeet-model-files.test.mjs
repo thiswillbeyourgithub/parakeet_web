@@ -290,6 +290,77 @@ describe('getParakeetModel file selection: WebGPU', () => {
   });
 });
 
+// The w4a8 encoder (scripts/quantize-w4a8.py) packs the weights to 4 bits into
+// MatMulNBits nodes: like int8 it is ONE self-contained file, with no external
+// sidecar and no shard set, so the selection layer has to leave both of those
+// mechanisms alone for it. Unlike int8 it runs on BOTH backends (MatMulNBits has
+// a WebGPU kernel), which is what gives it a describe of its own rather than a
+// row in the per-backend ones above.
+const REPO_W4A8 = [...REPO_FLAT, 'encoder-model.w4a8.onnx'];
+
+describe('getParakeetModel file selection: w4a8', () => {
+  test('WASM w4a8 request -> the w4a8 encoder, int8 decoder, no sidecar and no shard set', async () => {
+    const downloaded = mockHf(REPO_W4A8);
+    const r = await getParakeetModel('test/wasm-w4a8', {
+      backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'int8',
+    });
+    assert.deepEqual(r.filenames, { encoder: 'encoder-model.w4a8.onnx', decoder: 'decoder_joint-model.int8.onnx' });
+    assert.deepEqual(r.quantisation, { encoder: 'w4a8', decoder: 'int8' });
+    // Self-contained: the int4 weights live in the graph, so neither the single
+    // .data sidecar nor the shard array may be selected.
+    assert.equal(r.urls.encoderDataUrl ?? null, null);
+    assert.equal(r.urls.decoderDataUrl ?? null, null);
+    assert.ok(downloaded.includes('encoder-model.w4a8.onnx'));
+    assert.ok(downloaded.includes('decoder_joint-model.int8.onnx'));
+    assert.ok(downloaded.includes('vocab.txt'));
+    // The fp32 pieces sit in the same repo and must not be dragged in.
+    assert.ok(!downloaded.some((f) => f.startsWith('encoder-model.onnx')),
+      `no fp32 piece may be fetched; got ${downloaded.join(', ')}`);
+    // Eviction targets the graph itself, exactly as for int8.
+    assert.deepEqual(r.cacheInfo.filenames, ['encoder-model.w4a8.onnx', 'decoder_joint-model.int8.onnx']);
+  });
+
+  test('WebGPU w4a8 request is served as-is, with no shard set demanded', async () => {
+    const downloaded = mockHf(REPO_W4A8);
+    // REPO_W4A8 ships NO fp32 shards, which on this backend is fatal for every
+    // other precision (int8 and fp32 alike resolve to fp32 and then refuse). w4a8
+    // carries its own weights, so it loads from exactly the repo that cannot
+    // serve any of them.
+    const r = await getParakeetModel('test/webgpu-w4a8', {
+      backend: 'webgpu', encoderQuant: 'w4a8', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.encoder, 'encoder-model.w4a8.onnx');
+    assert.deepEqual(r.quantisation, { encoder: 'w4a8', decoder: 'int8' });
+    assert.equal(r.urls.encoderDataUrl ?? null, null, 'w4a8 needs no external data on the GPU either');
+    assert.ok(downloaded.includes('encoder-model.w4a8.onnx'));
+    assert.ok(!downloaded.some((f) => f.startsWith('encoder-model.onnx')),
+      `no fp32 piece may be fetched; got ${downloaded.join(', ')}`);
+    // The big weights still go to ORT as bytes on WebGPU.
+    assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder graph must load as bytes');
+  });
+
+  // Neither backend may quietly serve something else when the w4a8 file is
+  // absent. WASM pins to int8 and refuses; WebGPU falls back to fp32 internally
+  // but is flagged (w4a8NeedsFile) and refuses too, because a visitor who picked
+  // a 610 MB encoder must not silently receive a 2.35 GB one. The GPU fixture
+  // deliberately SHIPS the shards, so the only thing that can refuse that load is
+  // the missing w4a8 file, not the fp32 shard check sitting behind it.
+  for (const [backend, repoFiles] of [['wasm', REPO_FLAT], ['webgpu', REPO_FP32_SHARDS]]) {
+    test(`${backend}: a w4a8 request no source can serve throws instead of downgrading`, async () => {
+      const downloaded = mockHf(repoFiles);
+      await assert.rejects(
+        getParakeetModel(`test/${backend}-w4a8-missing`, {
+          backend, encoderQuant: 'w4a8', decoderQuant: 'int8',
+        }),
+        (e) => e instanceof QuantUnavailableError
+          && e.requested.encoder === 'w4a8'
+          && /encoder-model\.w4a8\.onnx/.test(e.message),
+      );
+      assert.deepEqual(downloaded, [], 'a refused request must not download any weight');
+    });
+  }
+});
+
 describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
   // cacheInfo lists the cached weight files evictModelFiles drops + re-downloads
   // when one fails to deserialize. It must name exactly the deserialized ONNX

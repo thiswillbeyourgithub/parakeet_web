@@ -3295,11 +3295,11 @@ export default function App() {
       // with no shards hosted). hub.js refuses to silently downgrade to int8, so
       // tell the user exactly why rather than leaving a bare "Failed".
       if (e instanceof QuantUnavailableError) {
-        // On a GPU backend that means this model source ships no encoder the
-        // GPU can run (no fp32 shards). Retry on WASM instead of
-        // stranding the visitor on Failed: they may never have chosen WebGPU
-        // at all, since the performance probe can select it for them, and a
-        // deployment pointed at a repo without GPU weights would otherwise
+        // On a GPU backend that means this source cannot serve the precision the
+        // visitor is on (no fp32 shards, or no w4a8 encoder file). Retry on WASM
+        // instead of stranding them on Failed: they may never have chosen
+        // WebGPU at all, since the performance probe can select it for them, and
+        // a deployment pointed at a repo without GPU weights would otherwise
         // break for every visitor whose machine wins the probe.
         //
         // Deliberately NOT a general "GPU failed, use the CPU" net: this fires
