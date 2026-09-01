@@ -100,7 +100,7 @@ describe('listLocalRepoFiles', () => {
     assert.deepEqual(files, ['encoder-model.onnx.data']);
   });
 
-  test('probes only the two sidecars, the lite encoder and the shard walk, nothing else', async () => {
+  test('probes only the two sidecars, the optional encoders and the shard walk, nothing else', async () => {
     // This function costs one HEAD round trip per candidate on every load
     // against a local mirror, so the probe set is pinned. It used to also probe
     // six optimized/LSE/TopK variant filenames; those builds now ship under the
@@ -109,12 +109,12 @@ describe('listLocalRepoFiles', () => {
     // would be pure latency. A mirror serving a variant name must report NOTHING
     // for it.
     //
-    // encoder-model.int8.lite.onnx is the ONE name-probe that earns its round
-    // trip: unlike the withdrawn variants it is not detectable from a loaded
+    // The two optional encoder builds are the name-probes that earn their round
+    // trip: unlike the withdrawn variants they are not detectable from a loaded
     // session, because resolveModelQuant has to decide whether the source can
-    // serve an int8lite request BEFORE any weight is fetched. Without it lite
-    // would be permanently unavailable on a local-weights deployment, where
-    // this list IS the repo listing.
+    // serve an int8lite or w4a8 request BEFORE any weight is fetched. Without
+    // them those precisions would be permanently unavailable on a local-weights
+    // deployment, where this list IS the repo listing.
     const probed = [];
     globalThis.fetch = async (url) => {
       probed.push(String(url).slice('/models/'.length));
@@ -126,19 +126,22 @@ describe('listLocalRepoFiles', () => {
       'encoder-model.onnx.data',
       'decoder_joint-model.onnx.data',
       'encoder-model.int8.lite.onnx',
+      'encoder-model.w4a8.onnx',
       'encoder-model.onnx.data.000',
       'sharded/encoder-model.onnx.data.000',
     ]);
   });
 
-  // The point of the probe above: a mirror that HAS the lite build must report
-  // it, so resolveModelQuant can honour an int8lite request against local
-  // weights instead of pinning to the heavier default int8.
-  test('a mirror serving the lite int8 encoder reports it', async () => {
-    mockServer(['encoder-model.int8.lite.onnx']);
-    const files = await listLocalRepoFiles('/models');
-    assert.deepEqual(files, ['encoder-model.int8.lite.onnx']);
-  });
+  // The point of the probes above: a mirror that HAS one of the optional builds
+  // must report it, so resolveModelQuant can honour an int8lite or w4a8 request
+  // against local weights instead of pinning to the heavier default int8.
+  for (const name of ['encoder-model.int8.lite.onnx', 'encoder-model.w4a8.onnx']) {
+    test(`a mirror serving ${name} reports it`, async () => {
+      mockServer([name]);
+      const files = await listLocalRepoFiles('/models');
+      assert.deepEqual(files, [name]);
+    });
+  }
 
   test('a mirror still serving the withdrawn variant filenames reports none of them', async () => {
     mockServer([

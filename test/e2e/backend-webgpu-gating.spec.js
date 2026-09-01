@@ -67,7 +67,8 @@ test('with a GPU present, WebGPU is selectable and a persisted choice survives a
   await expect(webgpuRadio).toBeChecked();
   await expect(page.locator('input[name="backend"][value="wasm"]')).not.toBeChecked();
 
-  // fp32 is the only precision the GPU path has, so it is what is selected.
+  // fp32 is the GPU default (w4a8 is the only other precision the GPU path
+  // offers, and it is opt-in), so it is what is selected.
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
   await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeDisabled();
 });
@@ -76,7 +77,7 @@ test('on WebGPU the precision is fp32 regardless of what the adapter reports', a
   // fp16 used to be the GPU default and was gated on the adapter's shader-f16
   // feature (without it ORT built the session happily and returned an EMPTY
   // transcript). That build is withdrawn, so an adapter WITHOUT shader-f16 must
-  // now behave exactly like one with it: fp32, selected, no other GPU option.
+  // now behave exactly like one with it: fp32, selected, and no fp16 radio left.
   await page.addInitScript(adapterStub([]));
   await page.goto('/');
   await seedSettings(page, { backend: 'webgpu-hybrid' });
