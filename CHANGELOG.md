@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### ONNX Runtime engine updated to 1.29
+
+The vendored ONNX Runtime Web engine (the runtime every transcription goes through, on both the CPU/WASM and WebGPU paths) moved from 1.27.0 to 1.29.0, the newest stable npm release. This is a maintenance bump: an interleaved in-browser A/B of the two versions on this project's benchmark clip had already measured them within noise of each other on the WASM path, and the full unit and browser test suites pass unchanged on 1.29. The artifact layout and the pinned-integrity loading path are identical, so nothing changes in what a visitor downloads.
+
 ### The benchmark says what hardware it ran on, and hands the machine back when it is done
 
 A benchmark report is only useful if the numbers can be attributed to a chip. It described the CPU (core count, memory class, architecture) and the one GPU adapter the browser handed out by default, which on a laptop with two of them says nothing about which one actually ran. Reports now list every adapter the machine offers, asked for by power preference, so an integrated and a discrete GPU both appear, plus the readable GPU names the browser reports through WebGL. Those names are also the only GPU evidence at all on a machine with no WebGPU, which is exactly the machine whose owner is asking why the GPU option is greyed out. Browsers expose no CPU model string to anyone, so that stays missing by necessity, not by choice.
