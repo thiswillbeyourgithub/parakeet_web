@@ -19,6 +19,7 @@ import {
   formatBenchmarkReport,
   median,
   normalizeForCompare,
+  OPT_IN_QUANTS,
   planBenchmark,
   runBenchmarkPlan,
   tilePcm,
@@ -26,32 +27,61 @@ import {
 } from '../../app/ui/src/lib/benchmark.js';
 
 describe('planBenchmark', () => {
-  test('a WASM-only device gets the three WASM rows and no GPU row', () => {
+  test('a WASM-only device gets the four WASM rows and no GPU row', () => {
     const plan = planBenchmark({ webgpuAvailable: false });
     // The default selection (int8) sorts last so it stays the cached model.
-    assert.deepEqual(plan.map(r => r.id), ['wasm:int8lite', 'wasm:fp32', 'wasm:int8']);
+    assert.deepEqual(plan.map(r => r.id), ['wasm:int8lite', 'wasm:w4a8', 'wasm:fp32', 'wasm:int8']);
     assert.ok(plan.every(r => r.backend === 'wasm'));
   });
 
-  test('the lite int8 encoder is offered on WASM but never pre-selected', () => {
+  test('every opt-in encoder is offered on WASM but never pre-selected', () => {
     const plan = planBenchmark({ webgpuAvailable: true });
-    const lite = plan.find(r => r.id === 'wasm:int8lite');
-    assert.ok(lite, 'int8lite must be offered on WASM');
-    // Under the heavy threshold, yet still opt-in: it is an ALTERNATIVE to a
-    // precision the visitor already has, so pre-checking it would silently turn
-    // a free default run into an 810 MB one. See OPT_IN_QUANTS.
-    assert.equal(lite.heavy, false);
-    assert.equal(lite.defaultSelected, false);
-    // Lighter than the default int8, which is the whole reason it exists.
-    assert.ok(QUANT_DOWNLOAD_MB.int8lite < QUANT_DOWNLOAD_MB.int8);
-    // No GPU row: the GPU EP has no int8 encoder kernel, lite or not.
+    // One rule pinned for the whole set rather than one test per precision: each
+    // is an ALTERNATIVE to a precision the visitor already has, so each sits
+    // under the heavy threshold and each stays unchecked. Pre-checking any of
+    // them would silently turn a free default run into a several-hundred-MB one.
+    for (const quant of OPT_IN_QUANTS) {
+      const row = plan.find(r => r.id === `wasm:${quant}`);
+      assert.ok(row, `${quant} must be offered on WASM`);
+      assert.equal(row.heavy, false);
+      assert.equal(row.defaultSelected, false);
+      // Lighter than the default int8, which is the whole reason each exists.
+      assert.ok(QUANT_DOWNLOAD_MB[quant] < QUANT_DOWNLOAD_MB.int8);
+    }
+    // No GPU row for int8lite: the GPU EP has no int8 encoder kernel, lite or
+    // not. w4a8 is the opt-in that DOES reach the GPU, pinned below.
     assert.equal(plan.some(r => r.backend.startsWith('webgpu') && r.quant === 'int8lite'), false);
+  });
+
+  test('w4a8 gets a row on both backends, opt-in on each', () => {
+    const plan = planBenchmark({ webgpuAvailable: true });
+    // The one precision offered on both: its int4 weights load through
+    // MatMulNBits, which the GPU EP does have a kernel for, unlike int8.
+    assert.ok(plan.find(r => r.id === 'wasm:w4a8'), 'w4a8 must be offered on WASM');
+    const gpu = plan.find(r => r.id === 'webgpu-hybrid:w4a8');
+    assert.ok(gpu, 'w4a8 must be offered on WebGPU');
+    // Opt-in on the GPU row too, or a WebGPU visitor's default run would pull
+    // 610 MB they never asked for.
+    assert.equal(gpu.defaultSelected, false);
+    // The smallest download of the lot, which is the whole reason it exists.
+    assert.equal(QUANT_DOWNLOAD_MB.w4a8, 610);
+    assert.ok(Object.values(QUANT_DOWNLOAD_MB).every(mb => mb >= QUANT_DOWNLOAD_MB.w4a8));
+  });
+
+  test('a visitor already on WebGPU w4a8 gets that row checked and sorted last', () => {
+    const plan = planBenchmark({ webgpuAvailable: true, currentBackend: 'webgpu-hybrid', currentWebgpuQuant: 'w4a8' });
+    const own = plan[plan.length - 1];
+    assert.equal(own.id, 'webgpu-hybrid:w4a8');
+    assert.equal(plan.filter(r => r.isCurrent).length, 1);
+    // isCurrent beats the opt-in rule on the GPU exactly as it does on WASM:
+    // their model is already cached, so selecting it costs nothing.
+    assert.equal(own.defaultSelected, true);
   });
 
   // The regression this pins: adding a row must not change what a default run
   // costs. A typical int8 visitor's default selection is exactly their own
   // cached row, so pressing Run without touching a checkbox downloads nothing.
-  test('adding int8lite left the default selection a single free row', () => {
+  test('adding the opt-in rows left the default selection a single free row', () => {
     const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'int8' });
     const selected = plan.filter(r => r.defaultSelected);
     assert.deepEqual(selected.map(r => r.id), ['wasm:int8']);
@@ -80,11 +110,12 @@ describe('planBenchmark', () => {
     const off = planBenchmark({ webgpuAvailable: true, webgpuDisabled: true });
     assert.ok(off.every(r => r.backend === 'wasm'));
     const on = planBenchmark({ webgpuAvailable: true });
-    // fp32 is the only precision the GPU EP has an encoder kernel for, so it is
-    // the only WebGPU row (the model repo's fp16 build was withdrawn 2026-08-23).
+    // fp32 and w4a8 are the precisions the GPU EP has an encoder kernel for, so
+    // they are the WebGPU rows (the model repo's fp16 build was withdrawn
+    // 2026-08-23, and plain int8 has no GPU kernel at all).
     assert.deepEqual(
       on.filter(r => r.backend === 'webgpu-hybrid').map(r => r.quant),
-      ['fp32'],
+      ['fp32', 'w4a8'],
     );
   });
 
@@ -105,9 +136,11 @@ describe('planBenchmark', () => {
   test('estimatedDownloadMB skips combinations already on disk', () => {
     const plan = planBenchmark({});
     const all = estimatedDownloadMB(plan);
-    assert.equal(all, QUANT_DOWNLOAD_MB.int8lite + QUANT_DOWNLOAD_MB.int8 + QUANT_DOWNLOAD_MB.fp32);
+    assert.equal(all, QUANT_DOWNLOAD_MB.int8lite + QUANT_DOWNLOAD_MB.int8
+      + QUANT_DOWNLOAD_MB.w4a8 + QUANT_DOWNLOAD_MB.fp32);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8']), all - QUANT_DOWNLOAD_MB.int8);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8lite']), all - QUANT_DOWNLOAD_MB.int8lite);
+    assert.equal(estimatedDownloadMB(plan, ['wasm:w4a8']), all - QUANT_DOWNLOAD_MB.w4a8);
   });
 });
 
