@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["onnx>=1.16", "onnxruntime>=1.20"]
+# dependencies = ["onnx>=1.16", "onnxruntime>=1.20", "onnx_ir"]
 # ///
 """Rewrite every eligible MatMul of an encoder into MatMulNBits: block-wise
 weights (block 32, symmetric) with accuracy_level=4, so the kernel dynamically
@@ -30,7 +30,12 @@ import onnx
 
 try:  # ORT >= ~1.22 renamed the module and generalized the class
     from onnxruntime.quantization.matmul_nbits_quantizer import MatMulNBitsQuantizer as Quantizer
-except ImportError:
+except ImportError as exc:
+    # Only fall back for a genuinely old ORT. That module also imports onnx_ir, so
+    # without this guard a missing dependency masquerades as an old install and the
+    # fallback raises a second, misleading ImportError about matmul_4bits_quantizer.
+    if "matmul_nbits_quantizer" not in str(exc):
+        raise
     from onnxruntime.quantization.matmul_4bits_quantizer import MatMul4BitsQuantizer as Quantizer
 
 # Protobuf caps a single message at 2 GB. Both widths land well under it, so the
@@ -41,7 +46,9 @@ INLINE_MAX_BYTES = 1.9e9
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("src", type=Path, help="fp32 encoder to quantize")
 ap.add_argument("dst", type=Path, help="output path, e.g. encoder-model.w4a8.onnx")
-ap.add_argument("--bits", type=int, default=4, choices=(4, 8), help="weight width (default 4)")
+ap.add_argument("--bits", type=int, default=4, choices=(2, 4, 8),
+                help="weight width (default 4). ORT's MatMulNBits accepts 2, 4 or 8. Activations are "
+                     "int8 at every width: accuracy_level tops out at 4 (int8), so there is no 'a4'.")
 args = ap.parse_args()
 src, dst = args.src, args.dst
 dst.parent.mkdir(parents=True, exist_ok=True)
