@@ -55,20 +55,14 @@ AAD
 AAS
 AAT
 AB gastrite chronique mixte
-ABC7 gene
-ABCA4 gene
-ABCB7 gene
 ABCC3
-ABCG5 gene
 ABL
-ABL gene
-ABL1 gene
 ABO
 ABP
 ABPA aspergillose bronchopulmonaire allergique
 ABS
 ABVD
-ACADM gene
+AC sur A
 ACAM
 ACAT
 ACC
@@ -87,17 +81,14 @@ ACRP
 ACS I
 ACS III
 ACS V
-ACTA2 gene
 ACTH
 ACUP
 ACV
-ACVR1 gene
 ADAM
 ADAM 10
 ADAM 17
 ADAM-TS
 ADAMTS 10
-ADAMTS 10 gene
 ADAMTS 13
 ADCC
 ADFN
@@ -178,10 +169,8 @@ AFSSET
 AGE
 AGGIR
 AGS
-AGS gene
 AHA
 AHD
-AHD gene
 AHO
 AHX
 AIC
@@ -191,12 +180,10 @@ AIDA
 AIDP
 AIDS
 AIED
-AIED gene
 AIGA
 AIGP
 AINS
 AIP
-AIRE gene
 AIS
 AIT
 AIVOC
@@ -204,7 +191,6 @@ AKA
 AKU
 ALA
 ALARA
-ALAS-2 gene
 ALAT
 ALD
 ALDS
@@ -212,7 +198,6 @@ ALS
 ALSJ
 AMC
 AMD
-AMH gene
 AMM
 AMN
 AMP
@@ -225,8 +210,6 @@ ANCR
 ANDEM
 ANDRA
 ANDV
-ANGPTL4 gene
-ANKRD11 gene
 ANMV
 ANOP1
 ANOP3
@@ -298,9 +281,7 @@ ARRX
 ARS
 ARSACS
 ART
-ARX gene
 ASA
-ASAH1 gene
 ASAT
 ASC
 ASC3
@@ -312,7 +293,6 @@ ASN
 ASOD
 ASP
 ASPA
-ASXL1 gene
 AT1
 ATA
 ATD
@@ -320,7 +300,6 @@ ATF
 ATIH
 ATLL
 ATM
-ATM gene
 ATNC
 ATP
 ATP-citrate lyase
@@ -330,11 +309,9 @@ ATPS
 ATPase
 ATRA
 ATRX
-ATRX gene
 ATU
 AVC
 AVK
-AWS gene
 AZT
 Absidia
 Académie nationale de chirurgie dentaire
@@ -378,7 +355,6 @@ Aotus trivirgatus
 Apaf
 Apicomplexa
 Apis mellifera
-Apo E gene
 ApoB
 Ar s
 Arenaviridae
@@ -405,7 +381,6 @@ B gastrite chronique antrale
 B-50
 B-K mole syndrome
 B.T.P.S
-B3GALTL gene
 B7-DC
 B7-H1
 BAAR
@@ -414,7 +389,6 @@ BAFF receptor
 BAFF-R
 BALT
 BAPN
-BARD 1 gene
 BAS
 BAV
 BBB
@@ -423,25 +397,16 @@ BBD
 BBG
 BBS
 BBS genes
-BBS1 gene
-BBS2 gene
-BBS4 gene
-BBS5 gene
-BBS6 gene sigle angl. pour
-BBS7 gene
-BBS8 gene
+BBS6
 BCG
 BCG-thérapie endovésicale
 BCGF
-BCKBB gene
-BCKDHA gene l.angl. pour
+BCKDHA
 BCNU
-BCOR gene
 BCR
 BDNF
 BED
 BEH
-BEST1 gene
 BFU-E
 BH3 mimétique
 BHE
@@ -458,11 +423,8 @@ BNV
 BOOP
 BPCO
 BPES
-BRAF gene
-BRCA gene
 BSA
 BSP
-BTK gene
 BUT
 BVT
 BVU
@@ -484,7 +446,6 @@ Basidiobolus haptosporus
 Basidiobolus ranarum
 Bax
 Bcl-2
-Bcr-abl gene
 Beare Stevenson cutis gyrata
 Bernard's syndrome
 Bertiella
@@ -531,30 +492,20 @@ CA1
 CA2
 CA3
 CA4
-CACNA1C gene
-CACNA1F gene
-CACNA1S gene
-CACNB2 gene
 CADASIL
 CAF
-CALR gene
 CAM
 CANAM
-CANT1 gene
 CAP
 CAR
 CAR-T cells
 CARSAT
 CASIL
 CASK
-CASP 1 gene
-CASR gene
 CAT
 CATCH 22
 CATT
 CAV canal atrioventriculaire
-CAV3 gene
-CBX2 gene
 CCA1
 CCAA
 CCAM
@@ -566,7 +517,7 @@ CCL5
 CCMH
 CCN
 CCR 5
-CCR 5 gene
+CCT TRIC
 CD 1
 CD 10
 CD 11, CD 18, CD 29, CD 49
@@ -593,7 +544,6 @@ CD 89
 CD 9
 CD 98
 CD156q
-CD19 gene
 CD279
 CD55
 CD59
@@ -605,10 +555,7 @@ CDC
 CDES
 CDG
 CDGF
-CDH 1 gene
 CDI
-CDKL5 gene
-CDKN1C gene
 CDP
 CDP-choline
 CDP-diglycéride
@@ -617,17 +564,14 @@ CDR
 CE FAST
 CE FFE T1
 CE FFE T2
-CEBPA gene
 CEC
 CECA
 CECOS
 CEM 50
-CEP290 gene
 CES
 CETP
-CFAP247 gene
 CFD
-CFH gene sigle angl.
+CFH
 CFTR
 CFU
 CFU-E
@@ -644,7 +588,6 @@ CHIVA
 CHOP
 CHST
 CIA
-CIASI gene
 CICR
 CIM
 CIM et DSM névrose
@@ -656,12 +599,8 @@ CIVD
 CIVETE
 CKD-EPI
 CLA
-CLCN5 gene
-CLCNKB gene
 CLIN
 CLMP
-CLN3 gene
-CLN6 gene
 CLOVES syndrome
 CME
 CMH
@@ -679,7 +618,6 @@ CNAF
 CNAM
 CNAMTS
 CNAVTS
-CNGB3 gene
 CNIL
 CNP
 CNPC
@@ -688,17 +626,6 @@ CNV
 CO2
 COAP
 COD1
-COL1A1 gene
-COL2A1 gene
-COL4A1 gene
-COL4A3 gene
-COL4A5 gene
-COL4A6 gene
-COL9A1 gene
-COL9A2 gene
-COL9A3 gene
-COLEC11 gene
-COMP gene
 COMT
 CONSORT
 COP
@@ -717,57 +644,42 @@ CPRE
 CPT
 CPUE
 CR1
-CR1, CR2, CR3.
+CR1, CR2, CR3
 CR2
 CR3
 CRAM
 CRAP
-CRB1 gene
 CRBP
 CREB
-CREBBP gene
 CRF
 CRH
 CRISPR-Cas 9
 CRP
 CRSC
 CRST syndrome
-CRX gene
-CRYBB2 gene
 CSA
 CSE
 CSF
 CSF1-R
 CSF3R
-CSF3R gene
 CSPI
 CST
 CT angiographie
 CTGF
 CTLA4
-CTLA4 gene
 CTP
 CTX-I
 CUD
 CVI
 CVP
 CVPP
-CX 32 gene
 CX3C
 CXCR1
 CXCR4
-CYBA gene
-CYBB gene
 CYFRA21-1
 CYLD
-CYLD gene
-CYMD gene
 CYP
 CYP 21A2
-CYP11A1 gene
-CYP11B1 gene
-CYP11B2 gene
-CYP17A1 gene
 Ca CO2
 Ca2 plus ATPase
 CaSR
@@ -808,6 +720,7 @@ Cdyn
 Cephalosporium
 Chadwick's sign
 Chi carré
+Chido Rogers
 Chilomastix mesnili
 Chlamydia
 Chlamydiaceae
@@ -820,7 +733,6 @@ Cimex lectularius
 Cire
 Citrobacter
 Cladosporium carrionii
-Classification of Congenital Anomalies of the Hand and Upper Limb OMT
 Claude Bernard's syndrome
 Clavibacter
 Claviceps purpurea
@@ -881,20 +793,16 @@ D-glycérate-déshydrogénase
 D-pénicillamine
 D-xylose
 DAF
-DAG1 gene
 DAM
 DAO
 DAPI
 DAR
 DATR
-DAX1 gene
-DBT gene
 DCB
 DCI
 DCL
 DCMD
 DCP
-DCX gene
 DDASS
 DDB
 DDT
@@ -914,7 +822,6 @@ DGSX
 DHA
 DHE
 DHEA
-DHH gene
 DHT
 DICS
 DID
@@ -922,25 +829,21 @@ DISH
 DISI
 DIU
 DJA
-DKC1 gene
 DL 50
 DL CO
 DL CO2
 DL O2
 DLAC
 DMA
-DMD gene
 DMDS
 DMEG syndrome
 DMLA
-DMRT1 gene
 DMSO
 DNA
 DNA circulant tumoral
 DNA mismatch repair protein MLH
 DNA polymerase
 DNA-polymérase
-DNAH5 gene
 DNCB
 DNID
 DNP
@@ -950,10 +853,9 @@ DOHaD
 DOPA
 DOPA réaction
 DOPA-décarboxylase
-DOTA sigle angl. m. pour
+DOTA
 DPA
 DPG
-DPM3 gene
 DPP
 DREAM
 DRS
@@ -970,9 +872,9 @@ DVR
 DWI
 DWM
 DXA
-DYNC2H1 gene
 DYS
 Darier dyskératose lenticulaire en disque
+Deferiprone
 Delphi
 Deltaretrovirus
 Demodex folliculorum
@@ -1012,7 +914,6 @@ ECBU
 ECG
 ECGF
 ECLS
-ECM1 gene
 ECMO
 ECP
 ED 50
@@ -1047,15 +948,12 @@ EHPAD
 EIC
 EIEE14
 ELISA
-ELN gene
 EMB
 EMG
 EN 46 000
 EOG
 EPA
 EPI
-EPM2A gene
-EPM2B gene
 EPN
 EPO
 EPR
@@ -1074,7 +972,6 @@ ETB
 ETDRS
 ETF
 ETNK1
-ETV6-PDGFRB gene
 EVA
 EVASAN
 EVR1
@@ -1132,7 +1029,6 @@ Exserohilum
 F-actine
 F.C.
 F.O.V.
-F2 gene
 FA CO2
 FA O2
 FACES syndrome
@@ -1141,11 +1037,9 @@ FAD
 FAH
 FAMM syndrome
 FAN
-FANCA gene
-FANCA gene Édit. 2018
+FANCA
 FAO syndrome
 FAS
-FAS gene
 FAST en IRM
 FCR alpha
 FDA
@@ -1158,10 +1052,6 @@ FEVG
 FGF
 FGF 23
 FGF 8
-FGF10 gene
-FGFR1 gene
-FGFR2 gene
-FGFR3 gene
 FGLDS
 FGR
 FI CO2
@@ -1171,35 +1061,26 @@ FID
 FIG
 FIGLU
 FIGO
-FIP1L1-PDGFRA gene sigle
+FIP1L1-PDGFRA
 FIRST
 FISH
 FISP
 FIV
 FIVETE
-FKBP10 gene
 FKRP
-FKRP gene
-FKTN gene
 FLAIR en IRM
 FLASH en IRM
-FLNB gene l. angl. pour
-FLT3 gene
-FLT4 gene
+FLNB
 FMC
 FMD
 FMLP
 FMN
-FMR1 gene
 FMRP
 FMT
-FNB1 gene
 FNLT
 FOAR
 FODMAP
 FOP foramen ovale perméable
-FOXC1 gene
-FOXC2 gene
 FPC
 FPO
 FRH
@@ -1213,8 +1094,6 @@ FSH-LH-RH
 FSHRBI
 FSPGR prepared
 FTA
-FTL gene
-FTO gene
 FUS
 FUS RNA-binding protein
 FV1
@@ -1244,14 +1123,12 @@ Formica fusca
 Fusarium
 Fusobacterium
 Fv puissance frontale avant
-G symb.
+G symb
 G-actine
 G-quadruplex
 G6PD
 G6PD déficit en glucose-6-phosphate déshydrogénase
 GABA
-GABRD gene
-GABRG2 gene
 GAG
 GALT
 GANAB gene,
@@ -1259,7 +1136,6 @@ GAO
 GAP
 GAP-43
 GAPO syndrome
-GATA2 gene
 GBM
 GCAO
 GCM
@@ -1274,16 +1150,12 @@ GEU
 GFO
 GGF
 GH-RH
-GHR gene
 GHS
 GHS-R
 GIFT
 GIP
 GIST
-GJA1 gene
-GJB1 gene
 GL-3
-GLA gene
 GLD
 GLP 1
 GLRX5
@@ -1296,34 +1168,24 @@ GMPc
 GMPc-d'ouverture du canal cationique des photorécepteurs
 GMS syndrome
 GNA
-GNAS gene
 GNC
 GNMP
-GNPTAB gene
 GOT
-GP1BA gene
-GP1BB gene
-GP9 gene
 GPA
 GPA gestation pour autrui
-GPBV gene
-GPD1-L gene
 GPI
 GPR 179
 GPT
 GR-RH
 GRF
-GRK1 gene
 GRP
 GTP
+GTPase
 GTPase activating protein
-GTPase sigle pour guanosine triphosphate phosphatase
-GUCY2D gene
 GVH
 Galba
 Gambusia
 Gammaherpesvirinae
-Gan gene
 Gasterophilus sp
 Gastrodiscoides hominis
 Gb3
@@ -1338,6 +1200,7 @@ Gestaltpsychologie
 Gestaltthérapie
 Giardia intestinalis
 Gigantorhynchus gigas
+Gilteritinib
 Glaukomflecken
 Glossina fusca
 Glossina morsitans
@@ -1351,15 +1214,12 @@ Granular Cell Stimulating Factor
 Grenz ray therapy
 Gs gradient de sélection de coupe en IRM
 H hypertension artérielle
+H plus K plus ATPase, pompe à proton H plus K plus adénosyltriphosphatase
 H19 gene s
 HAD
-HADHA gene
-HADHB gene
 HAG
 HAS
 HAV
-HBA1 gene
-HBA2 gene
 HBP
 HBPM
 HBV
@@ -1372,24 +1232,21 @@ HCS
 HCT
 HCV
 HDL
-HDV sigle angl.
+HDV
 HED
 HELLP syndrome
 HER2
 HEV
 HEVIL
-HEY2 gene
 HFE
 HFE 1
-HGD gene
 HGF
 HGPO
 HGPRT
-HGPRT1 gene
 HHH
 HHML syndrome
 HHV-6
-HHV-7 sigle angl.
+HHV-7
 HHV-8
 HIC
 HIE syndrome
@@ -1403,7 +1260,7 @@ HLA-B27
 HLM
 HLP
 HLV
-HMBS gene acr. hydroxyméthylbilane synthase
+HMBS
 HME
 HME hémimégalencéphalie
 HMG
@@ -1419,20 +1276,15 @@ HNRF
 HOC
 HOOE
 HOS
-HOX gene
-HOXA13 gene
 HPA
 HPETE
 HPL
 HPMPC cidofovir
-HPS gene
 HPV
 HPV vaccin anti-infections à Papillomavirus
-HRAS gene sigle angl. pour
+HRAS
 HRG
 HSA
-HSD11B2 gene
-HSD3B2 gene
 HSG
 HSP
 HSV
@@ -1445,7 +1297,6 @@ HTK
 HTLV
 HTP
 HTS
-HTT gene
 HVD
 HVG
 HVZ
@@ -1469,6 +1320,7 @@ Herpesvirus humain 6
 Heterophyes heterophyes
 Hib
 Hickey-Hare épreuve de
+Hijmans van den réaction d'Bergh
 Histoplasma capsulatum capsulatum
 Histoplasma capsulatum duboisii
 Holmes test
@@ -1498,7 +1350,6 @@ ICA
 ICAM
 ICE
 ICG
-ICOS gene
 ICP
 ICSH
 ICSI
@@ -1509,10 +1360,8 @@ IDR
 IE-PRK
 IFN
 IFSSH
-IFT80 gene
 IGAS
 IGF
-IGF2 gene
 IGPDs
 IGS II
 ILC
@@ -1533,7 +1382,6 @@ INR
 INRA
 INRS
 INSERM
-INSR gene
 INTS
 IOL
 IOO
@@ -1546,7 +1394,6 @@ IRA
 IRC
 IRF
 IRF 6
-IRF4 gene
 IRM
 IRM de diffusion et de perfusion dans les accidents ischémiques cérébraux
 IRM fonctionnelle
@@ -1560,11 +1407,9 @@ ISCOMS
 ISI
 ISKM
 ISO
-ISPD gene
 ISRS
 ISS
 IST
-IT15 gene
 ITAM
 ITIM
 IUE
@@ -1591,37 +1436,21 @@ Israel turkey meningoencephalitis virus
 Ixodes ricinus
 Ixodidae
 JAK
-JAK2V 617F gene
 JC virus
 JEV
-JMS gene
 JO-1 antigène
 JUQV
 Janus kinase
 Jusquiame
 K cellule
-KAL1 gene
 KAR
 KBG syndrome
 KCE
-KCNE1 gene
-KCNE2 gene
-KCNE3 gene
 KCNH1 gen
-KCNH2 gene
-KCNJ1 gene
-KCNJ2 gene
-KCNQ1 gene
-KCNQ1OT1 gene
-KCNT1 gene
 KERMA
 KFACS
-KFACS sigle angl.
 KID syndrome
-KIF11 gene
 KIR
-KIT gene
-KMT2A gene
 Kabuki make-up
 Kenny-Caffey syndrome
 Kingella
@@ -1635,27 +1464,24 @@ L-dihydroxy-phénylalanine
 L-dopa
 L-galactonolactone-déshydrogénase
 L-iditol-déshydrogénase
-L1CAM gene
 LADD
 LAF
 LAL
 LAM
 LAM3
 LARD
-LARGE1 gene
 LASIK
 LATS
 LAV
 LBA
 LCAT
-LCAT gene
 LCDD light chain deposition disease
 LCH
 LCR
 LCS
 LDH
-LDHA gene sigle
-LDHB gene sigle
+LDHA
+LDHB
 LDL
 LDL-C
 LECV
@@ -1668,31 +1494,25 @@ LGL leucémie à grands lymphocytes granuleux
 LH-RH
 LHCDD light and heavy chain deposition disease
 LHON
-LHX4 gene
 LIF
 LIM
 LIO
-LIS1 gene
 LLC
 LLGMD
 LMM
 LMMC
-LMNA gene
 LMP
-LMX1B gene
 LNE
 LNPF
 LNS
 LP-X
 LPAC syndrome
-LPL gene
 LPP
 LPS
 LRF
 LROS
 LROS lysosome-related organelles
 LRP
-LRP2 gene
 LRRK2 gène
 LSD 25
 LSR
@@ -1773,21 +1593,16 @@ MALT
 MAO
 MAP
 MAP-kinase
-MAP3K1 gene
 MAPA
-MAPK, acr angl. de mitogen-activated protein kinases
+MAPK
 MARC
 MARL
 MAT
-MATN3 gene
 MC4R
-MC4R gene
 MCAP syndrome
 MCI
 MCJ
 MCO
-MCOPS3 gene
-MCPH1 gene
 MCT
 MCT 8
 MCT10
@@ -1804,12 +1619,10 @@ MEGX
 MEN 1
 MEN 2A néoplasie endocrinienne multiple de type 2A
 MEN 2B ou 3 néoplasie endocrinienne multiple
-MEN1 gene
 MEOS
 MERS
 MERS-CoV
 MFD1
-MGC2413 gene
 MGRS
 MGUS
 MHAF
@@ -1818,7 +1631,7 @@ MIBG
 MIBI
 MICI
 MIF
-MIM acr. angl pour Mendelian Inheritance
+MIM
 MIP
 MIP Maximum Intensity Projection
 MIP-1-alpha
@@ -1827,22 +1640,17 @@ MIPI
 MIRL
 MIT
 MITF
-MKKS gene
 MLKL
 MLPA
 MLR
 MLTC
-MMP 2 gene sigle angl.
-MMP14 gene
+MMP 2
 MMS
 MMSE
 MMV
 MNGIE syndrome
 MNI
 MNI-test
-MOCS1 gene
-MOCS2 gene
-MOCS3 gene
 MODED
 MODY
 MONAP
@@ -1851,26 +1659,15 @@ MOTSA
 MP RAGE 3D
 MPGF
 MPL
-MPL gene
 MPR
 MPS
-MRP sigle angl. pour
+MRP
 MRP2
 MRP3
-MS4A1 gene
 MSA
 MSCF
 MSH
 MST
-MT-ATP6 gene
-MT-CO1 gene
-MT-CO3 gene
-MT-CYB gene
-MT-ND1 gene
-MT-ND2 gene
-MT-ND4 gene
-MT-ND5 gene
-MT-ND6 gene
 MT-TL1 gene,
 MTBF
 MTI
@@ -1880,9 +1677,7 @@ MTPA
 MURCS
 MUSTO
 MWS
-MYCN gene
 MYD88
-MYH9 gene
 MYP1
 Macacus Rhesus
 Macracanthorhynchus hirudinaceus
@@ -1902,7 +1697,6 @@ Marfan-like avec anomalie du tissu conjonctif
 Marshall's test
 Mastadenovirus
 McGill Pain questionnary
-MeCP2 gene
 MeV
 Megaviridae
 Megavirus
@@ -1974,7 +1768,6 @@ NAP
 NAP-1
 NARES
 NASH
-NBEAL2 gene
 NBT-PABA test
 NCAM
 NDF
@@ -1988,8 +1781,6 @@ NEMO
 NETose
 NEVIL
 NF-kappa B
-NF1 gene
-NF2 gene
 NFNS
 NGAL
 NGF
@@ -2000,8 +1791,6 @@ NIDP
 NKC
 NKCC1
 NKCC2
-NKCC2 gene sigle angl. pour
-NLRP3 gene
 NMDA
 NMF
 NMR
@@ -2013,22 +1802,17 @@ NOMID
 NOTES
 NOV
 NPC1gene
-NPC2 gene
 NPH1 gene,
-NPHS1 gene
 NPL1
 NPL2
-NPM1 gene
-NPR2 gene
-NR0B1 gene
-NR5A1 gene
-NRAS gene
 NRP
 NSE
 NTSC
 NTproBNP
-NUP62 gene
 NVC
+NZB-W
+Na K ATPase, pompe à sodium
+Na K ATPase, pompe à sodium sodium potassium adenosyltriphosphatase
 Nagel dyschromatopsie deutéranopie
 Nairoviridae
 Nairovirus
@@ -2047,7 +1831,6 @@ Neoehrlichia mikurensis
 Neorickettsia risticii
 Neorickettsia sennetsu
 Neotricula
-Neu1 gene
 Ni s
 Nocardia
 Norovirus
@@ -2060,18 +1843,13 @@ O-glycosylation
 O-mannosyl-glycosylation
 O-mannosylation
 O.A.P
-O.B.P. sigle angl.
+O.B.P.
 O.R.L.
-OA3 gene
 OAD
 OAG
 OAP
-OASD gene
 OAT
-OAT gene
 OBVR
-OCA2 gene
-OCRL gene
 OCT
 OER
 OHB
@@ -2081,10 +1859,8 @@ OMC
 OMP
 OMS
 ONG
-OPA1 gene
 OPD
 OPG
-OPN1MW gene
 OPRI
 OPS
 OPT,
@@ -2098,7 +1874,6 @@ OTA
 OVCR
 Observatoire des consommations alimentaires
 Observatoire régional de la santé
-Oct4 gene.
 Odd
 Oestrus ovis
 Office de protection contre les rayonnements ionisants
@@ -2142,15 +1917,11 @@ PAD
 PADGEM
 PAF
 PAF-acéther
-PAFAH1B1 gene
 PAGE
 PAH
-PAH gene
 PAL
-PALB2 gene
 PAM
 PAN
-PANK2 gene
 PAP
 PAPOVA virus
 PAPP-A
@@ -2159,13 +1930,11 @@ PARK
 PARP
 PAS
 PASI
-PAX3 gene
 PBD
 PBPs
 PC RMA
 PCA
 PCA, PCEA, PCS
-PCDH19 gene
 PCFT
 PCR
 PCSK
@@ -2175,15 +1944,9 @@ PD-1
 PD-L1
 PD-L1, PD-L2
 PD-L2
-PDC gene
 PDCA
-PDE6A gene
-PDE6B gene
-PDE6G gene
 PDF
 PDGF
-PDGFRA gene
-PDGFRB gene
 PDK1
 PDT
 PE CO2
@@ -2198,7 +1961,6 @@ PENb
 PEP
 PEPCK
 PEPCK-ferroactivateur
-PEPD gene
 PET
 PEV
 PFD
@@ -2218,17 +1980,15 @@ PGI
 PGK
 PHA
 PHF
-PHGDH gene
 PHS
 PHS pneumopathie d'hypersensibilité
 PI 3-kinases
 PI CO2
 PI O2
 PI3-kinase
-PI3K sigle pour
+PI3K
 PICO
 PIF
-PIGA gene
 PIGR
 PIN
 PINP
@@ -2236,19 +1996,14 @@ PIO
 PISI
 PIVKA-II
 PKB
-PKD1 gene
-PKD2 gene
-PKD3 gene
 PKR
 PLA
-PLA2G6 gene
 PLA2R
 PLA2R1
 PLEVA
 PMA
 PMDS
 PMI
-PMI gene
 PML
 PMMA
 PMSI
@@ -2260,12 +2015,11 @@ PNOTO
 PNPR
 PO2
 POAN
+POEMS
 POLIP syndrome
 POMC
 POMGNT1 gene s
 POMT
-POMT1 gene
-POMT2 gene
 POST
 PPA
 PPAR
@@ -2277,33 +2031,24 @@ PQQ
 PRF
 PRIST
 PRK
-PRKAR1A gene
 PRL
-PRNP gene
 PSA
 PSA libre
 PSB péritonite spontanée bactérienne
 PSEK
 PSF
 PSIF
-PSTA1 gene
 PTA
 PTC
-PTCH1 gene
-PTEN gene
 PTFE
 PTFR
 PTG
 PTH
 PTK
-PTPN11 gene
-PTPN22 gene
-PTS gene
 PTSD
 PTV
 PUC
 PUPPP
-PUS1 gene
 PVH
 PVR
 PXR
@@ -2324,7 +2069,6 @@ Parisiensis Nomina Anatomica
 Parke-Riccardi-Lewis syndrome
 Parvoviridae
 Pasteurella
-Pax6 gene
 Pediculoides ventricosus
 Pediculus humanus capitis
 Pediculus humanus corporis
@@ -2339,7 +2083,6 @@ Peptostreptococcus
 Peribunyaviridae
 Pet-scan
 Peña-Shokeir syndrome type I
-PfMDR gene
 Phe
 Phenuiviridae
 Phialophora janselmei
@@ -2361,6 +2104,7 @@ Plasmodium falciparum
 Plasmodium malariae
 Plasmodium ovale
 Plasmodium vivax
+Plerixafor
 Pneumococcus
 Pneumocystis carinii
 Pneumocystis jiroveci
@@ -2391,21 +2135,18 @@ Pulicidae
 Pv CO2
 Pv O2
 Q angle
-QALY sigle angl. pour
-QDPR gene
+QALY
 QTc
 Qinghaosu
 R zéro
 R.A.S.T
 RAA
-RAB18 gene
 RAB3GAP1gene
-RAB3GAP2 gene
 RAC
 RAF1
 RAG
 RAGE
-RAI.
+RAI
 RANK
 RANKL
 RANTES
@@ -2413,20 +2154,16 @@ RAR
 RARE
 RBE
 RBP
-RBP1 gene
 RCP
 RCPG
 RCUH
-RDH12 gene
-RECQL4 gene sigle angl. pour
+RECQL4
 REM syndrome
-RET gene
 RFLP
 RGD séquence
 RGO
-RHBDF2 gene
 RIA
-RING gene sigle angl. pour
+RING
 RIPK
 RIST
 RITS
@@ -2444,24 +2181,20 @@ ROPA
 RPE
 RPM
 RPR
-RPS19 gene
 RSL3
 RSS
 RT-PCR
 RTA
-RTEL1 gene
 RTM
-RTPG gene
 RTU
 RU 486
-RUNX1 gene
 RVG
 RVO
 RVP
 RXR
-RYR 1 gene
 Rac1
 Ralstonia
+Ramsay syndrome de Ramsay Hunt
 Rattus
 RePUVAthérapie
 Reduviidae
@@ -2517,17 +2250,10 @@ SC phocomélie
 SCA
 SCARMD
 SCID
-SCN10A gene
-SCN1B gene
-SCN2A gene
-SCN3B gene
-SCN4B gene
-SCN5A gene
-SCN9A gene
 SCP
 SCPRI
 SDA
-SDGT sigle pour syndrome douloureux du grand trochanter
+SDGT
 SDHEA
 SDRA
 SDRC
@@ -2536,15 +2262,13 @@ SE symbole anglais
 SECAM
 SED
 SED 6A
-SED sigle pour
 SED type spondylo-cheiro-dysplasique
 SEOV
 SEP
 SERCA
 SERPINF1gene
 SETBP1
-SF1 gene sigle angl. pour
-SF3B1 gene
+SF1
 SFNV
 SFTS
 SGLT1
@@ -2552,9 +2276,7 @@ SGLT2
 SGOT
 SGPT
 SH2, SH3
-SHANK3 gene
 SHBP
-SHOX gene
 SIADH
 SIDCS
 SILD
@@ -2563,29 +2285,17 @@ SIR
 SIRS
 SIRT
 SKALP
-SLC12A1 gene
-SLC12A3 gene
 SLC16
-SLC25A15 gene
-SLC25A38 gene
-SLC26A2 gene
-SLC45A2 gene
-SLC52A3 gene
-SLC6A19 gene
 SLI
 SLO
 SLOS
-SMA gene
 SMAD
-SMN1 gene sigle angl. pour
-SMN2 gene
+SMN1
 SMON
-SMPD1 gene
 SMPR
 SMS
 SMUR
 SNA
-SNAI2 gene
 SNC
 SNDS
 SNIIRAM
@@ -2594,27 +2304,21 @@ SNRPN
 SNURP
 SOD1
 SOS
-SOST gene
-SOX11 gene
-SOX2 gene
-SOX9 gene
 SPA
 SPECIAL
 SPECT
 SPET
-SPGR sigle angl.
+SPGR
 SPID
 SPMS
 SPOV
 SR saturation-récupération
 SRAS
 SRAS-CoV
-SRCAP gene
 SRIH
 SRM
 SRP
 SRSA
-SRY gene
 SSFP
 SSFSE
 SSM
@@ -2622,16 +2326,11 @@ SSR
 SSS
 SSSS
 SSW
-STAT3 gene
 STH
 STIR
 STK11 gene,
-STK9 gene
 STPD
-STS gene
 SUMO
-SUOX gene
-SURF1 gene
 SV40
 SVNP
 SWS
@@ -2681,6 +2380,7 @@ Sporothrix
 Sporothrix schenckii
 Sporotrichum schenkii
 Src-kinase
+St. Abbs's Head virus
 Staphylococcus
 Stard
 Stegomyia albopicta
@@ -2689,7 +2389,7 @@ Streptococcus
 Strongyloïdes fulleborni
 Strongyloïdes stercoralis
 SvO2
-Syn.
+Syn
 Syncephalastrum
 Syndrome DILS
 Syndrome d'Emberger
@@ -2715,25 +2415,21 @@ TAP-1, TAP-2
 TAR DNA-binding protein 43
 TATA box
 TAVI
-TAZ gene
-TBC1D20 gene
 TBI
 TBP
 TBPA
 TBS
 TCA
-TCF4 gene
 TCGF
 TCI
 TCMH
-TCOF1 gene
 TCP1
 TCR
 TDBH
 TDF
 TDM
 TDMQ
-TDP43 sigle
+TDP43
 TE effectif
 TE temps d'écho
 TEBG
@@ -2744,23 +2440,18 @@ TEMPI syndrome
 TEMPS
 TEP
 TEP-amyloïde
-TERC gene acr.
-TERT gene acr.
-TET2 gene
-TG sigle
+TERC
+TERT
 TGF alpha
 TGF bêta transforming growth factor bêta
 TGF transforming growth factor
 TGF-bêta
-TGFBR1 gene
-TGFBR2 gene
 TH1, TH2
 THA
 THAM
 THSD7A
 TIAC
 TIMI
-TINF2 gene
 TINU
 TIPS
 TLE
@@ -2769,44 +2460,34 @@ TMP
 TMPRSS2
 TNF
 TNFR
-TNFRSF13B gene sigle angl.
-TNFRSF13C gene
+TNFRSF13B
 TOC
 TOGD
 TONE
 TOPA
 TOSV
-TP53 gene
 TPA
 TPHA
 TPN
 TPP
 TPQ
-TRAF1 gene
 TRBV
 TREM-1
 TRF
 TRH
-TRIP11 gene
+TRIC CCT
 TSH
 TSP
+TSP HAM
 TSPT
 TSV
-TTC 8 gene
-TTC21B gene
 TTL
-TTR gene
-TUBA1A gene
 TULIP
 TUMT
 TUNA
 TURP syndrome
 TVR
 TVT
-TWIST2 gene
-TWNK gene
-TYR gene
-TYRP1 gene
 Tabanidae
 Taenia multiceps
 Taenia saginata
@@ -2881,12 +2562,10 @@ Trypanosoma cruzi
 Tunga penetrans
 Turicella otitidis
 U radiologique
-U.C.N.T. s
+U.C.N.T.
 U.H.
-U2AF1 gene
 UAA
 UAG
-UBE3A gene
 UCP1
 UCRM
 UDP
@@ -2906,7 +2585,6 @@ UDPG-déshydrogénase
 UFR
 UGA
 UGD ulcère gastroduodénal
-UGT1A1 gene
 UI Apports quotidiens en vitamine D recommandés par l'Académie nationale de médecine
 UIV
 UIV avec test au furosémide
@@ -2928,6 +2606,7 @@ Uncinaria stenocephala
 V deltoïdien
 V lingual
 V'A
+V'A sur QC
 VADS
 VAMP
 VAT
@@ -2952,8 +2631,7 @@ VHB
 VHC
 VHD
 VHE
-VHG sigle
-VHL gene
+VHG
 VHL protein
 VIH
 VIH contrôleurs
@@ -2994,15 +2672,10 @@ Vibrionaceae
 Virus H5N1
 WAIS
 WASp
-WBS gene
-WDR19 gene
 WHBV virus de l'hépatite B de la marmotte
 WHI
 WHIM
 WISC
-WNK1 gene
-WNK4 gene
-WRN gene
 WT1
 Watsonius watsoni
 Wechsler adult intelligence scale
@@ -3024,18 +2697,12 @@ Xenopsylla cheopis
 Xerostomia
 YAG
 YAP
-YARS2 gene
 Yug Bogdanovac
 Yunnan
 Z numéro atomique
-ZBTB20 gene
 ZEBRA
-ZFPM2 gene
 ZIFT
 ZIG
-ZMPSTE24 gene
-ZMYM2 gene
-ZNF198 gene
 Zebrina
 Zn s
 a apolipoprotéine
@@ -3138,7 +2805,6 @@ abdominal
 abducteur
 abduction
 abeille
-abemaciclib:::fph
 aberrant
 aberration
 aberration chromatique
@@ -3152,19 +2818,19 @@ abiotinose
 abiotique
 abiotrophia defectiva:::fph
 abiotrophie
-abiraterone accord:::fph
-abiraterone acetate zydus:::fph
-abiraterone arrow:::fph
-abiraterone biogaran:::fph
-abiraterone cristers:::fph
-abiraterone eg:::fph
-abiraterone evolugen:::fph
-abiraterone krka:::fph
-abiraterone mylan:::fph
-abiraterone sandoz:::fph
-abiraterone teva:::fph
-abiraterone zentiva:::fph
-abiraterone:::fph
+abiratérone accord:::fph
+abiratérone acétate zydus:::fph
+abiratérone arrow:::fph
+abiratérone biogaran:::fph
+abiratérone cristers:::fph
+abiratérone eg:::fph
+abiratérone evolugen:::fph
+abiratérone krka:::fph
+abiratérone mylan:::fph
+abiratérone sandoz:::fph
+abiratérone teva:::fph
+abiratérone zentiva:::fph
+abiratérone:::fph
 ablactation
 ablation
 ablation endocavitaire
@@ -3226,6 +2892,7 @@ abus sexuel
 abus sexuel dans l'enfance
 abuser
 abzyme
+abémaciclib:::fph
 abéquose
 abêtalipoprotéinémie
 abêtalipoprotéinémie normotriglycéridémique de type Steinberg
@@ -3395,28 +3062,9 @@ accélération
 accélération de Coriolis
 accélération de, effet Coriolis
 accélérine
-acebutolol almus:::fph
-acebutolol arrow lab:::fph
-acebutolol arrow:::fph
-acebutolol biogaran:::fph
-acebutolol eg:::fph
-acebutolol sandoz:::fph
-acebutolol teva:::fph
-acebutolol viatris:::fph
-acebutolol zentiva:::fph
-acebutolol zydus:::fph
-acebutolol:::fph
-aceclofenac accord:::fph
-aceclofenac biogaran:::fph
-aceclofenac eg labo:::fph
-aceclofenac viatris:::fph
-aceclofenac:::fph
 acellulaire
-acenocoumarol:::fph
 acentrique
 acentromérique
-acetate de cyproterone arrow:::fph
-acetazolamide:::fph
 acetivibrio aldrichii:::fph
 acetivibrio alkalicellulosi:::fph
 acetivibrio cellulolyticus:::fph
@@ -3462,10 +3110,6 @@ acetobacter thailandicus:::fph
 acetobacter tropicalis:::fph
 acetobacter vaccinii:::fph
 acetobacter zythi:::fph
-acetylcysteine:::fph
-acetylleucine:::fph
-acetylsalicylique acide en association avec des psycholeptiques:::fph
-acetylsalicylique acide:::fph
 achalasie
 achalasie cricopharyngienne
 achalasie et insuffisance surrénalienne
@@ -4072,8 +3716,7 @@ acinus hépatique de Rappaport
 acinus mammaire
 acinus pulmonaire
 acinésie
-acitretine:::fph
-acitrétine
+acitrétine:::fph
 acladium
 aclasie tarso-épiphysaire
 aclasta:::fph
@@ -4486,7 +4129,24 @@ acylation
 acylcoenzyme A
 acylthiokinase
 acyltransférase
+acébutolol almus:::fph
+acébutolol arrow lab:::fph
+acébutolol arrow:::fph
+acébutolol biogaran:::fph
+acébutolol eg:::fph
+acébutolol sandoz:::fph
+acébutolol teva:::fph
+acébutolol viatris:::fph
+acébutolol zentiva:::fph
+acébutolol zydus:::fph
+acébutolol:::fph
+acéclofénac accord:::fph
+acéclofénac biogaran:::fph
+acéclofénac eg labo:::fph
+acéclofénac viatris:::fph
+acéclofénac:::fph
 acédie
+acénocoumarol:::fph
 acéphale
 acéphalie
 acéphalien
@@ -4504,8 +4164,9 @@ acétalphosphatide
 acétate d'éthynodiol
 acétate de chlormadinone
 acétate de cyprotérone
+acétate de cyprotérone arrow:::fph
 acétate de médroxy-progestérone
-acétazolamide
+acétazolamide:::fph
 acétique
 acéto-acétate-décarboxylase
 acétone
@@ -4523,12 +4184,15 @@ acétylcholine
 acétylcholinestérase
 acétylcoenzyme A
 acétylcoenzyme A-synthétase
-acétylcystéine
+acétylcystéine:::fph
 acétyldigoxine
 acétylgalactosamine
 acétylglucosamine
 acétylglutamate
 acétylglutamate-synthétase
+acétylleucine:::fph
+acétylsalicylique acide en association avec des psycholeptiques:::fph
+acétylsalicylique acide:::fph
 acétyltransférase
 ad-hyoïdien
 adactylie
@@ -4536,9 +4200,9 @@ adalimumab:::fph
 adamantin
 adamantinome
 adamantoblaste
-adapalene teva:::fph
-adapalene zentiva:::fph
-adapalene:::fph
+adapalène teva:::fph
+adapalène zentiva:::fph
+adapalène:::fph
 adaptabilité
 adaptateur
 adaptation
@@ -5044,11 +4708,11 @@ agnosie spatiale unilatérale
 agnosie tactile
 agnosie visuelle
 agnostérol
-agomelatine biogaran:::fph
-agomelatine eg:::fph
-agomelatine viatris:::fph
-agomelatine zentiva:::fph
-agomelatine:::fph
+agomélatine biogaran:::fph
+agomélatine eg:::fph
+agomélatine viatris:::fph
+agomélatine zentiva:::fph
+agomélatine:::fph
 agonie
 agoniste
 agoniste adrénergique
@@ -5440,7 +5104,7 @@ aldéhyde-oxhydrase
 aldéhydes en médecine du travail
 alecensa:::fph
 alectinib:::fph
-alendronique acide et colecalciferol:::fph
+alendronique acide et colécalciférol:::fph
 alendronique acide:::fph
 alepsal:::fph
 alerte
@@ -5519,7 +5183,6 @@ aliivibrio logei:::fph
 aliivibrio salmonicida:::fph
 aliivibrio sifiae:::fph
 aliivibrio wodanis:::fph
-alimemazine:::fph
 aliment
 aliment fonctionnel
 aliment natif
@@ -5529,6 +5192,7 @@ alimentation parentérale
 alimentation particulière
 aliments ultra-transformés
 aliments:::fph
+alimémazine:::fph
 aliphacyl-synthétase
 aliphatique
 alipostsphénoïde
@@ -5562,7 +5226,7 @@ alistipes senegalensis:::fph
 alistipes shahii:::fph
 alistipes timonensis:::fph
 alitibacter langaaensis:::fph
-alitretinoine:::fph
+alitrétinoïne:::fph
 alizapride:::fph
 alizem:::fph
 aliénation
@@ -5769,7 +5433,6 @@ alopécie par chimiothérapie
 alopécie par traction
 alopécie syphilitique
 alopécie séborrhéique
-alpelisib:::fph
 alpha 1-antichymotrypsine
 alpha 1-antitrypsine
 alpha 1-fœtoprotéine
@@ -5809,6 +5472,7 @@ alprazolam:::fph
 alpress:::fph
 alprolix:::fph
 alprostadil:::fph
+alpélisib:::fph
 alsine
 alteribacillus iranensis:::fph
 alteribacillus persepolensis:::fph
@@ -5877,7 +5541,6 @@ aluminium
 aluminium hydroxyde:::fph
 aluminium phosphate:::fph
 alunbrig:::fph
-alverine en association:::fph
 alvesco:::fph
 alvéole
 alvéole dentale
@@ -5892,6 +5555,7 @@ alvéolite murale
 alvéolite pulmonaire
 alvéologramme aérien
 alvéolyse
+alvérine en association:::fph
 alvéus de l'hippocampe
 alymphocytose
 aléa médical
@@ -5925,7 +5589,6 @@ amaurose congénitale de type cone-rod et hypertrichose congénitale
 amaurose transitoire
 amaurose éclamptique
 amazie
-ambenonium:::fph
 ambidextre
 ambiguus
 ambigüité
@@ -5947,6 +5610,7 @@ ambrisentan:::fph
 ambulance
 ambulation
 ambulatoire
+ambénonium:::fph
 amedibacillus dolichus:::fph
 amelogenesis imperfecta
 amentia
@@ -6078,10 +5742,9 @@ amphithélique
 amphitriche
 ampholyte
 amphophile
-amphotericine b:::fph
 amphotère
-amphotéricine B
 amphotéricine B complexée avec des lipides
+amphotéricine b:::fph
 amphétamine
 amphétaminique
 amphétaminomanie
@@ -6438,14 +6101,14 @@ anaerovibrio lipolyticus:::fph
 anaerovibrio slackiae:::fph
 anafranil:::fph
 anaglyphe
-anagrelide arrow:::fph
-anagrelide biogaran:::fph
-anagrelide eg:::fph
-anagrelide sandoz:::fph
-anagrelide teva:::fph
-anagrelide viatris:::fph
-anagrelide zentiva:::fph
-anagrelide:::fph
+anagrélide arrow:::fph
+anagrélide biogaran:::fph
+anagrélide eg:::fph
+anagrélide sandoz:::fph
+anagrélide teva:::fph
+anagrélide viatris:::fph
+anagrélide zentiva:::fph
+anagrélide:::fph
 anakinra:::fph
 anal
 analbuminémie
@@ -7252,6 +6915,7 @@ anneau de ténia
 anneau du grand adducteur
 anneau du troisième adducteur
 anneau ectodermal primordial
+anneau fibreux droit et gauche du cœur
 anneau fibreux du disque intervertébral
 anneau fibrocartilagineux de la membrane du tympan
 anneau fémoral
@@ -7422,7 +7086,7 @@ antagoniste morphinique
 antagonistes des récepteurs de l'angiotensine II
 antalgique
 antalnox:::fph
-antarene codeine:::fph
+antarene codéine:::fph
 antarene:::fph
 antehypophyse
 antenne
@@ -7587,8 +7251,6 @@ antifoliniques
 antifolique
 antifongique
 antifongique topique
-antigene purifie de virus du zona:::fph
-antigenes polysaccharidiques tetravalents conjugues de meningocoque:::fph
 antiglaucomateux
 antiglutamate
 antigoutteux
@@ -7623,6 +7285,7 @@ antigène hempas
 antigène hépatique soluble
 antigène majeur d'histocompatibilité
 antigène marqué
+antigène purifie de virus du zona:::fph
 antigène rhésus
 antigène sla
 antigène somatique
@@ -7633,7 +7296,9 @@ antigène urothélial de surface
 antigène variable de surface
 antigène érythrocytaire
 antigènes ABH
+antigènes T-dépendants et T-indépendants
 antigènes leucocytaires communs
+antigènes polysaccharidiques tetravalents conjugues de meningocoque:::fph
 antigénicité
 antigénique
 antigénothérapie
@@ -7655,7 +7320,7 @@ antimitotique
 antimitotique topique
 antimoine
 antimoniate de N-méthylglucamine
-antimoniate de meglumine:::fph
+antimoniate de méglumine:::fph
 antimoniés pentavalents
 antimutagène
 antimycosique
@@ -8380,18 +8045,6 @@ apraxie oculomotrice
 apraxie oculomotrice de Cogan
 apraxie réflexive
 apraxie troncopodale
-apremilast:::fph
-aprepitant accord:::fph
-aprepitant arrow:::fph
-aprepitant biogaran:::fph
-aprepitant cristers:::fph
-aprepitant eg:::fph
-aprepitant evolugen:::fph
-aprepitant sandoz:::fph
-aprepitant teva:::fph
-aprepitant viatris:::fph
-aprepitant zentiva:::fph
-aprepitant:::fph
 aprexevo:::fph
 aprosexie
 aprosodie
@@ -8401,6 +8054,18 @@ aprovel:::fph
 après irradiation mort cellulaire
 après une irradiation réparation cellulaire
 après-coup
+aprémilast:::fph
+aprépitant accord:::fph
+aprépitant arrow:::fph
+aprépitant biogaran:::fph
+aprépitant cristers:::fph
+aprépitant eg:::fph
+aprépitant evolugen:::fph
+aprépitant sandoz:::fph
+aprépitant teva:::fph
+aprépitant viatris:::fph
+aprépitant zentiva:::fph
+aprépitant:::fph
 apsychognosie
 aptamère
 aptamère de riborégulateur bactérien
@@ -8713,12 +8378,10 @@ artefact de repliement en IRM
 artefact de susceptibilité magnétique
 artefact de susceptibilité magnétique en IRM
 artefact de troncature
-artefacts de.. en IRM flux
+artefacts de flux en IRM
 artefacts liés au flux
 artefacts métalliques
 artelac:::fph
-artemether et lumefantrine:::fph
-artenimol et piperaquine:::fph
 arteria articularis genu recurrens
 arteria cerebralis
 arteria colica media accessoria d'Hovelacque
@@ -9826,6 +9489,8 @@ artères épisclérales
 artères œsophagiennes
 artémisinine
 artéméther
+artéméther et luméfantrine:::fph
+arténimol et pipéraquine:::fph
 artérialisation
 artériectasie
 artériectomie
@@ -10078,7 +9743,7 @@ association synergique d'antibiotiques
 association tiliquinol-tilbroquinol
 associationnisme
 associations antitussives:::fph
-associations de levothyroxine et liothyronine:::fph
+associations de lévothyroxine et liothyronine:::fph
 associations de sels:::fph
 associations de vitamines:::fph
 associations néphalistes
@@ -10217,20 +9882,6 @@ atectura breezhaler:::fph
 atelier protégé
 atelier thérapeutique
 atenativ:::fph
-atenolol accord healthcare:::fph
-atenolol arrow:::fph
-atenolol biogaran:::fph
-atenolol cristers:::fph
-atenolol eg:::fph
-atenolol et autres antihypertenseurs:::fph
-atenolol et thiazidiques:::fph
-atenolol evolugen pharma:::fph
-atenolol sandoz:::fph
-atenolol teva:::fph
-atenolol viatris:::fph
-atenolol zentiva:::fph
-atenolol zydus:::fph
-atenolol:::fph
 athalamie
 athrocytose
 athymhormie
@@ -10258,7 +9909,7 @@ atlas de Hardy-Rand-Rittler
 atlas de Polack
 atlas pseudo-isochromatique
 atlodyme
-atloïdien adj.
+atloïdien
 atmosphère
 atmosphère absolue
 atome
@@ -10273,7 +9924,7 @@ atopobium fossor:::fph
 atopobium minutum:::fph
 atopomonas hussainii:::fph
 atorvastatine et amlodipine:::fph
-atorvastatine et ezetimibe:::fph
+atorvastatine et ézétimibe:::fph
 atorvastatine:::fph
 atovaquone:::fph
 atractylate
@@ -10444,6 +10095,20 @@ atélectasie pulmonaire
 atélectasie ronde
 atélocardie
 atélosteogénèse
+aténolol accord healthcare:::fph
+aténolol arrow:::fph
+aténolol biogaran:::fph
+aténolol cristers:::fph
+aténolol eg:::fph
+aténolol et autres antihypertenseurs:::fph
+aténolol et thiazidiques:::fph
+aténolol evolugen pharma:::fph
+aténolol sandoz:::fph
+aténolol teva:::fph
+aténolol viatris:::fph
+aténolol zentiva:::fph
+aténolol zydus:::fph
+aténolol:::fph
 aubagio:::fph
 audimutité
 audiogramme
@@ -10606,9 +10271,9 @@ autres elements mineraux:::fph
 autres medicaments des desordres musculo-squelettiques:::fph
 autres medicaments pour diagnostic:::fph
 autres medicaments urologiques:::fph
-autres preparations antiacneiques a usage systemique:::fph
-autres preparations antiacneiques a usage topique:::fph
-autres preparations en association:::fph
+autres préparations antiacneiques a usage systemique:::fph
+autres préparations antiacneiques a usage topique:::fph
+autres préparations en association:::fph
 auxiliaire
 auxiliaire de puériculture
 auxiliaire de vie
@@ -10736,7 +10401,6 @@ azacitidine:::fph
 azactam:::fph
 azarga:::fph
 azathioprine:::fph
-azelastine:::fph
 azidothymidine
 azilect:::fph
 azine
@@ -10756,12 +10420,12 @@ azoturie
 azoté
 azotémie
 azoïque
-aztreonam:::fph
-aztréonam
+aztréonam:::fph
 azurocidine
 azurophile
 azygographie
 azyter:::fph
+azélastine:::fph
 aérateur transtympanique
 aération
 aérium
@@ -10956,12 +10620,12 @@ bacillus zanthoxyli:::fph
 bacillus zhangzhouensis:::fph
 bacitracine
 baclocur:::fph
-baclofene biogaran:::fph
-baclofene eg:::fph
-baclofene viatris:::fph
-baclofene zentiva:::fph
-baclofene zydus:::fph
-baclofene:::fph
+baclofène biogaran:::fph
+baclofène eg:::fph
+baclofène viatris:::fph
+baclofène zentiva:::fph
+baclofène zydus:::fph
+baclofène:::fph
 bacterial permeability-increasing protein
 bacteroides acidifaciens:::fph
 bacteroides caccae:::fph
@@ -11122,7 +10786,7 @@ balneatrix alpica:::fph
 balnéopuvathérapie
 balnéothérapie
 balversa:::fph
-bambuterol:::fph
+bambutérol:::fph
 bancroftose
 band cell
 bandage
@@ -11431,9 +11095,6 @@ bec du sphénoïde
 bec scléral
 becilan:::fph
 beclojet:::fph
-beclometasone chiesi:::fph
-beclometasone teva:::fph
-beclometasone:::fph
 beclospin:::fph
 beclospray:::fph
 beconase:::fph
@@ -11441,21 +11102,15 @@ becotide:::fph
 becquerel
 bed nucleus of stria terminalis
 bed nucleus of the accessory olfactory tract 1 de Paxinos
-bedaquiline:::fph
 befizal:::fph
+behaviorisme
 behaviour, behavior therapy
 bejel
 bel
-belatacept:::fph
-belimumab:::fph
 belladone
 belustine:::fph
 bemedrex easyhaler:::fph
 bemfola:::fph
-benazepril arrow:::fph
-benazepril eg:::fph
-benazepril et diuretiques:::fph
-benazepril:::fph
 bending test
 bends
 benefix:::fph
@@ -11463,7 +11118,7 @@ benepali:::fph
 benflumétol
 benlysta:::fph
 benralizumab:::fph
-benzathine benzylpenicilline:::fph
+benzathine benzylpénicilline:::fph
 benzathine-pénicilline
 benzidine
 benzimidazolés
@@ -11485,7 +11140,6 @@ bergeyella porcorum:::fph
 bergeyella zoohelcum:::fph
 berinert:::fph
 bernardetia litoralis:::fph
-berotralstat:::fph
 bertiellose
 besoin
 besoin d'uriner
@@ -11498,31 +11152,7 @@ betadine scrub:::fph
 betafact:::fph
 betaferon:::fph
 betagan:::fph
-betahistine accord:::fph
-betahistine arrow generiques:::fph
-betahistine arrow:::fph
-betahistine biogaran:::fph
-betahistine cristers:::fph
-betahistine eg:::fph
-betahistine sandoz:::fph
-betahistine teva:::fph
-betahistine viatris:::fph
-betahistine zentiva:::fph
-betahistine zydus france:::fph
-betahistine:::fph
-betaine:::fph
-betamethasone arrow:::fph
-betamethasone biogaran:::fph
-betamethasone eg:::fph
-betamethasone zentiva:::fph
-betamethasone:::fph
 betaserc:::fph
-betaxolol biogaran:::fph
-betaxolol eg:::fph
-betaxolol sandoz:::fph
-betaxolol teva sante:::fph
-betaxolol viatris:::fph
-betaxolol:::fph
 betesil:::fph
 betnesol:::fph
 betneval lotion:::fph
@@ -11530,11 +11160,10 @@ betneval:::fph
 betoptic:::fph
 bevacizumab
 bevitine:::fph
-bexarotene cipla:::fph
-bexarotene:::fph
+bexarotène cipla:::fph
+bexarotène:::fph
 bexsero:::fph
 beyfortus:::fph
-bezafibrate:::fph
 bhang
 bhargavaea beijingensis:::fph
 bhargavaea cecembensis:::fph
@@ -11746,11 +11375,11 @@ bilophila wadsworthia:::fph
 biltricide:::fph
 bimalléolaire
 bimatoprost:::fph
-bimekizumab:::fph
 bimoléculaire
 bimzelx:::fph
+bimékizumab:::fph
 binaural
-binimetinib:::fph
+binimétinib:::fph
 binocrit:::fph
 binoculaire
 binocularité
@@ -11884,11 +11513,11 @@ bioéquivalent
 bioéthique
 bipariéto-malaire
 bipartition vésicale
-biperidene:::fph
 biphakie
 bipolaire
 bipreterax:::fph
 biprisme de Gracis
+bipéridène:::fph
 birodogyl:::fph
 biseptine:::fph
 bisexualité
@@ -11897,7 +11526,7 @@ bisexué
 bisgaardia hudsonensis:::fph
 bisgaardia miroungae:::fph
 bismuth
-bismuth potassique, tetracycline et metronidazole:::fph
+bismuth potassique, tétracycline et métronidazole:::fph
 bisoce:::fph
 bisoprolol et thiazidiques:::fph
 bisoprolol:::fph
@@ -11982,8 +11611,6 @@ blebs
 blennorragie
 blennorragique
 blennorrhée
-bleomycine bellon:::fph
-bleomycine:::fph
 blessure
 blessure auriculaire par souffle
 blessure laryngotrachéale par souffle
@@ -12012,6 +11639,7 @@ bloc de la 11 bêta-hydroxylase
 bloc de la 11 bêta-hydroxystéroïde déshydrogénase
 bloc de la 17 alpha-hydroxylase
 bloc de la 18-déshydrogénase ou 18-aldolase
+bloc de la 20-22-desmolase
 bloc de la 21-hydroxylase
 bloc de la 3 bêta-hydroxystéroïde déshydrogénase
 bloc des nerfs honteux internes
@@ -12041,7 +11669,8 @@ bloquant
 bloqueur bronchique
 blot
 blue tongue
-bléomycine
+bléomycine bellon:::fph
+bléomycine:::fph
 blépharite
 blépharite ciliaire
 blépharo-conjonctivite
@@ -12659,6 +12288,7 @@ bras conjonctival antérieur
 bras conjonctival inférieur
 bras conjonctival postérieur
 bras conjonctival supérieur
+bras de Boston
 bras du colliculus inférieur
 bras du colliculus supérieur
 bras du tubercule quadrijumeau antérieur
@@ -12832,25 +12462,24 @@ brintellix:::fph
 brinzolamide en association:::fph
 brinzolamide:::fph
 brisement forcé
-brivaracetam:::fph
+brivaracétam:::fph
 briviact:::fph
 brièveté du cordon ombilical
 broche
 broche de Kirschner
 brodalumab:::fph
 brolucizumab:::fph
-bromazepam arrow:::fph
-bromazepam biogaran:::fph
-bromazepam cristers:::fph
-bromazepam eg:::fph
-bromazepam teva:::fph
-bromazepam viatris:::fph
-bromazepam zentiva:::fph
-bromazepam zydus:::fph
-bromazepam:::fph
-bromazépam
+bromazépam arrow:::fph
+bromazépam biogaran:::fph
+bromazépam cristers:::fph
+bromazépam eg:::fph
+bromazépam teva:::fph
+bromazépam viatris:::fph
+bromazépam zentiva:::fph
+bromazépam zydus:::fph
+bromazépam:::fph
 brome
-bromfenac sodium sesquihydrate:::fph
+bromfénac sodium sesquihydraté:::fph
 bromhidrose
 bromide
 bromocriptine:::fph
@@ -13043,19 +12672,19 @@ buchananella hordeovulneris:::fph
 bucking
 bucky
 buckythérapie
-budesonide arrow:::fph
-budesonide biogaran:::fph
-budesonide cristers:::fph
-budesonide eg:::fph
-budesonide evolugen:::fph
-budesonide sandoz:::fph
-budesonide teva sante:::fph
-budesonide teva:::fph
-budesonide viatris:::fph
-budesonide zentiva:::fph
-budesonide:::fph
 budvicia aquatica:::fph
 budvicia diplopodorum:::fph
+budésonide arrow:::fph
+budésonide biogaran:::fph
+budésonide cristers:::fph
+budésonide eg:::fph
+budésonide evolugen:::fph
+budésonide sandoz:::fph
+budésonide teva sante:::fph
+budésonide teva:::fph
+budésonide viatris:::fph
+budésonide zentiva:::fph
+budésonide:::fph
 bufothionine
 bufoténine
 bulbe
@@ -13082,7 +12711,6 @@ bulbe vaginal
 bulbe vestibulaire
 bulbes d'oignon
 bulbite
-bulevirtide:::fph
 bulge
 bulle
 bulle d'emphysème pulmonaire
@@ -13093,18 +12721,18 @@ bulle sous-épidermique
 bulleidia extructa:::fph
 bulletin épidémiologique hebdomadaire
 bullose diabétique
-bumetanide:::fph
+bulévirtide:::fph
+bumétanide:::fph
 bungarotoxine
 buphtalmie
 bupivacaïne
-buprenorphine arrow:::fph
-buprenorphine biogaran:::fph
-buprenorphine en association:::fph
-buprenorphine sandoz:::fph
-buprenorphine teva:::fph
-buprenorphine viatris:::fph
-buprenorphine:::fph
-buprénorphine
+buprénorphine arrow:::fph
+buprénorphine biogaran:::fph
+buprénorphine en association:::fph
+buprénorphine sandoz:::fph
+buprénorphine teva:::fph
+buprénorphine viatris:::fph
+buprénorphine:::fph
 bureau d'aide sociale
 burinex:::fph
 burkholderia aenigmatica:::fph
@@ -13212,18 +12840,51 @@ béance glottique
 béance tubaire volontaire
 bébé arlequin
 bébé collodion
+béclométasone chiesi:::fph
+béclométasone teva:::fph
+béclométasone:::fph
 bécégite
+bédaquiline:::fph
 bégaiement
-béhaviorisme
+bélatacept:::fph
+bélimumab:::fph
+bénazépril arrow:::fph
+bénazépril eg:::fph
+bénazépril et diuretiques:::fph
+bénazépril:::fph
 bénin, malin dysembryome
 béniqué
 bénéfices tirés de la maladie
 béquille
 béribéri
+bérotralstat:::fph
 bérylliose
 béryllium
-bétaïne
-bézafibrate
+bétahistine accord:::fph
+bétahistine arrow generiques:::fph
+bétahistine arrow:::fph
+bétahistine biogaran:::fph
+bétahistine cristers:::fph
+bétahistine eg:::fph
+bétahistine sandoz:::fph
+bétahistine teva:::fph
+bétahistine viatris:::fph
+bétahistine zentiva:::fph
+bétahistine zydus france:::fph
+bétahistine:::fph
+bétaméthasone arrow:::fph
+bétaméthasone biogaran:::fph
+bétaméthasone eg:::fph
+bétaméthasone zentiva:::fph
+bétaméthasone:::fph
+bétaxolol biogaran:::fph
+bétaxolol eg:::fph
+bétaxolol sandoz:::fph
+bétaxolol teva sante:::fph
+bétaxolol viatris:::fph
+bétaxolol:::fph
+bétaïne:::fph
+bézafibrate:::fph
 bézoard
 bêta 1-glycoprotéine
 bêta-2-macroglobuline
@@ -13273,7 +12934,6 @@ bêtaméthasone
 bêtathérapie
 bêtatron
 c-Mpl
-c-Myc gene
 cDNA
 caballeronia arationis:::fph
 caballeronia arvi:::fph
@@ -13312,7 +12972,7 @@ cabinet de groupe
 cabinet médical
 cablivi:::fph
 cabometyx:::fph
-cabotegravir:::fph
+cabotégravir:::fph
 cabozantinib:::fph
 cabrage
 cacao
@@ -13365,8 +13025,7 @@ caduque utérine
 caduque utéroplacentaire
 caduque vraie
 cafard
-cafeine:::fph
-caféine
+caféine:::fph
 caféisme
 cage de Faraday
 cage de Faraday en IRM
@@ -13405,9 +13064,6 @@ calcar avis
 calcar de la sclère
 calcidia:::fph
 calcidiol
-calcifediol desma:::fph
-calcifediol gerda:::fph
-calcifediol:::fph
 calcification
 calcification cérébrale des noyaux de la base
 calcification cérébrale non artérioscléreuse
@@ -13432,6 +13088,9 @@ calcifications mammaires
 calcifications pancréatiques
 calcifications rénales
 calciforte:::fph
+calcifédiol desma:::fph
+calcifédiol gerda:::fph
+calcifédiol:::fph
 calciférol
 calcimimétique
 calcimoduline
@@ -13470,7 +13129,7 @@ calcium carbonate:::fph
 calcium folinate:::fph
 calcium gluconate:::fph
 calcium ionisé
-calcium levofolinate:::fph
+calcium lévofolinate:::fph
 calcium radioactif
 calcium:::fph
 calciurie
@@ -14001,21 +13660,6 @@ cancérogène
 cancérologie
 cancérophobie
 candazol:::fph
-candesartan arrow lab:::fph
-candesartan arrow:::fph
-candesartan biogaran:::fph
-candesartan cristers pharma:::fph
-candesartan cristers:::fph
-candesartan eg labo:::fph
-candesartan eg:::fph
-candesartan et diuretiques:::fph
-candesartan evolugen:::fph
-candesartan hcs:::fph
-candesartan sandoz:::fph
-candesartan teva:::fph
-candesartan viatris:::fph
-candesartan zentiva:::fph
-candesartan:::fph
 candidiasis
 candidine
 candidose
@@ -14038,6 +13682,21 @@ candidoses cutanées et unguéales
 candidurie
 candidémie
 candéla
+candésartan arrow lab:::fph
+candésartan arrow:::fph
+candésartan biogaran:::fph
+candésartan cristers pharma:::fph
+candésartan cristers:::fph
+candésartan eg labo:::fph
+candésartan eg:::fph
+candésartan et diuretiques:::fph
+candésartan evolugen:::fph
+candésartan hcs:::fph
+candésartan sandoz:::fph
+candésartan teva:::fph
+candésartan viatris:::fph
+candésartan zentiva:::fph
+candésartan:::fph
 canibacter oris:::fph
 canibacter zhoujuaniae:::fph
 canibacter zhuwentaonis:::fph
@@ -14101,15 +13760,6 @@ capacité vitale forcée
 capacité vésicale
 capacités intrinsèques d'un individu
 cape cervicale
-capecitabine accord:::fph
-capecitabine arrow:::fph
-capecitabine biogaran:::fph
-capecitabine eg:::fph
-capecitabine sandoz:::fph
-capecitabine teva:::fph
-capecitabine viatris:::fph
-capecitabine zentiva:::fph
-capecitabine:::fph
 capillaire
 capillaire alvéolaire
 capillaire lymphatique
@@ -14225,7 +13875,15 @@ capuchon du clitoris
 caput valgum
 caput varum
 capvaxive:::fph
-capécitabine
+capécitabine accord:::fph
+capécitabine arrow:::fph
+capécitabine biogaran:::fph
+capécitabine eg:::fph
+capécitabine sandoz:::fph
+capécitabine teva:::fph
+capécitabine viatris:::fph
+capécitabine zentiva:::fph
+capécitabine:::fph
 caractère
 caractère anal
 caractère génique
@@ -14253,8 +13911,7 @@ caraté
 carbachol
 carbaglu:::fph
 carbamates
-carbamazepine:::fph
-carbamazépine
+carbamazépine:::fph
 carbaminohémoglobine
 carbamoyl-phosphate
 carbamoyl-phosphate synthétase
@@ -14586,7 +14243,6 @@ carte intracistronique
 carte physique
 carte sanitaire
 carteol:::fph
-carteolol:::fph
 cartes de Teller
 cartilage
 cartilage accessoire antérieur de Sappey
@@ -14653,12 +14309,13 @@ cartographie endocavitaire
 cartographie isotopique
 cartographie par hétéroduplex
 cartrex:::fph
-carvedilol arrow:::fph
-carvedilol biogaran:::fph
-carvedilol eg:::fph
-carvedilol teva:::fph
-carvedilol viatris:::fph
-carvedilol:::fph
+cartéolol:::fph
+carvédilol arrow:::fph
+carvédilol biogaran:::fph
+carvédilol eg:::fph
+carvédilol teva:::fph
+carvédilol viatris:::fph
+carvédilol:::fph
 caryocinèse
 caryoclasique
 caryodiérèse
@@ -14934,25 +14591,7 @@ cedecea davisae:::fph
 cedecea lapagei:::fph
 cedecea neteri:::fph
 cedecea selenatireducens:::fph
-cefaclor:::fph
-cefadroxil biogaran:::fph
-cefadroxil:::fph
-cefalexine:::fph
-cefazoline:::fph
-cefepime stragen:::fph
-cefepime viatris:::fph
-cefepime:::fph
-cefixime almus:::fph
-cefixime arrow enfants:::fph
-cefixime arrow lab:::fph
-cefixime biogaran:::fph
-cefixime cristers:::fph
-cefixime eg:::fph
-cefixime evolugen:::fph
-cefixime viatris:::fph
-cefixime:::fph
 cefotiam hexétil
-cefoxitine:::fph
 cefpirome
 cefpodoxime proxétil
 cefpodoxime:::fph
@@ -14960,13 +14599,6 @@ cefsulodine
 ceftazidime:::fph
 ceftizoxime
 ceftriaxone:::fph
-cefuroxime arrow:::fph
-cefuroxime biogaran:::fph
-cefuroxime cristers:::fph
-cefuroxime sandoz:::fph
-cefuroxime viatris:::fph
-cefuroxime zentiva:::fph
-cefuroxime:::fph
 cegfila:::fph
 ceinture
 ceinture du membre inférieur
@@ -14977,30 +14609,8 @@ ceinture pectorale
 ceinture pelvienne
 ceinture scapulaire
 celebrex:::fph
-celecoxib arrow lab:::fph
-celecoxib biogaran:::fph
-celecoxib cristers:::fph
-celecoxib eg:::fph
-celecoxib hcs:::fph
-celecoxib sandoz:::fph
-celecoxib teva:::fph
-celecoxib viatris:::fph
-celecoxib zentiva:::fph
-celecoxib zydus:::fph
-celecoxib:::fph
 celectol:::fph
 celestene:::fph
-celiprolol arrow:::fph
-celiprolol biogaran:::fph
-celiprolol cristers:::fph
-celiprolol eg:::fph
-celiprolol evolugen:::fph
-celiprolol sandoz:::fph
-celiprolol teva:::fph
-celiprolol viatris:::fph
-celiprolol zentiva:::fph
-celiprolol zydus:::fph
-celiprolol:::fph
 cell Pit
 cell-free DNA
 cellcept:::fph
@@ -15315,7 +14925,6 @@ cellulosimicrobium terreum:::fph
 celluvisc:::fph
 celsentri:::fph
 celule d'Onodi
-cenobamate:::fph
 censure
 centimorgan
 centimètre d'eau
@@ -15431,13 +15040,12 @@ cereibacter ovatus:::fph
 cereibacter sphaeroides:::fph
 cerezyme:::fph
 ceris:::fph
-ceritinib:::fph
 cernevit:::fph
 certican:::fph
 certificat de grossesse
 certificat prénuptial
 certification d'un dispositif médical
-certolizumab pegol:::fph
+certolizumab pégol:::fph
 ceruminous adenocarcinoma
 cervarix:::fph
 cerveau
@@ -15463,22 +15071,8 @@ cervicothoracique
 cervicotomie
 cestode
 cestodose
-cethexonium:::fph
-cetirizine almus:::fph
-cetirizine arrow lab:::fph
-cetirizine arrow:::fph
-cetirizine biogaran:::fph
-cetirizine cristers pharma:::fph
-cetirizine eg:::fph
-cetirizine evolugen:::fph
-cetirizine sandoz:::fph
-cetirizine teva sante:::fph
-cetirizine viatris:::fph
-cetirizine zentiva:::fph
-cetirizine:::fph
 cetobacterium ceti:::fph
 cetobacterium somerae:::fph
-cetrorelix:::fph
 cetrotide:::fph
 ceziboe:::fph
 cf DNA
@@ -15659,7 +15253,6 @@ chemiluminescent, e
 chenille
 chenille processionnaire
 chenodeox.acid.ldt250mg:::fph
-chenodesoxycholique acide:::fph
 chevauchement
 chevauchement de l'aorte
 chevauchement des os du crâne
@@ -15841,7 +15434,7 @@ chlore
 chlorhexidine en association:::fph
 chlorhexidine:::fph
 chlormadinone:::fph
-chlormethine:::fph
+chlorméthine:::fph
 chlorodinitrobenzène
 chlorome
 chlorométhane
@@ -15929,17 +15522,6 @@ cholangite biliaire primitive
 cholangite ischémique
 cholangite sclérosante
 cholangographie rétrograde endoscopique
-cholecalciferol arrow:::fph
-cholecalciferol biogaran:::fph
-cholecalciferol cristers:::fph
-cholecalciferol eg:::fph
-cholecalciferol evolugen:::fph
-cholecalciferol sandoz:::fph
-cholecalciferol substipharm:::fph
-cholecalciferol teva:::fph
-cholecalciferol viatris:::fph
-cholecalciferol zentiva:::fph
-cholecalciferol zydus:::fph
 cholestane
 cholestanol
 cholestase
@@ -15979,6 +15561,17 @@ cholostase
 cholostase avec sténose pulmonaire périphérique
 cholurso:::fph
 cholécalciférol
+cholécalciférol arrow:::fph
+cholécalciférol biogaran:::fph
+cholécalciférol cristers:::fph
+cholécalciférol eg:::fph
+cholécalciférol evolugen:::fph
+cholécalciférol sandoz:::fph
+cholécalciférol substipharm:::fph
+cholécalciférol teva:::fph
+cholécalciférol viatris:::fph
+cholécalciférol zentiva:::fph
+cholécalciférol zydus:::fph
 cholécystectasie
 cholécystectomie
 cholécystendèse
@@ -16457,6 +16050,7 @@ chémokine
 chémorécepteur
 chémosis
 chémotaxis
+chénodésoxycholique acide:::fph
 chérubisme
 chômage et psychiatrie
 cibadrex:::fph
@@ -16475,15 +16069,15 @@ cicatrice stellaire spontanée
 cicatrice vicieuse
 cicatriciel
 cicatrisation
-ciclesonide:::fph
-cicletanine biogaran:::fph
-cicletanine teva:::fph
-cicletanine viatris:::fph
-cicletanine:::fph
 ciclograft:::fph
 ciclopirox:::fph
 ciclopiroxolamine
 ciclosporine:::fph
+ciclésonide:::fph
+ciclétanine biogaran:::fph
+ciclétanine teva:::fph
+ciclétanine viatris:::fph
+ciclétanine:::fph
 ciflox:::fph
 cignoline
 ciguatera
@@ -16501,10 +16095,9 @@ cils longs et retard mental
 cils palpébraux
 ciment
 ciment acrylique
-cimetidine arrow:::fph
-cimetidine:::fph
 cimzia:::fph
-cimétidine
+cimétidine arrow:::fph
+cimétidine:::fph
 cinacalcet:::fph
 cinca
 cinchonisme
@@ -16705,8 +16298,8 @@ clapotement
 claquage musculaire
 claquement
 claquement d'ouverture mitrale
-claradol cafeine:::fph
-claradol codeine:::fph
+claradol caféine:::fph
+claradol codéine:::fph
 claradol:::fph
 clarelux:::fph
 clarification hépatocytaire
@@ -16941,9 +16534,9 @@ clivus de la fovéa
 clivus de la partie basilaire de l'os occipital
 cloaque
 clobazam:::fph
-clobetasol substipharm:::fph
-clobetasol:::fph
 clobex:::fph
+clobétasol substipharm:::fph
+clobétasol:::fph
 clodronique acide:::fph
 clofazimine:::fph
 cloison des bourses
@@ -16969,8 +16562,7 @@ cloisonnement du vagin
 cloisonné
 cloisons testiculaires
 clomid:::fph
-clomifene:::fph
-clomifène
+clomifène:::fph
 clomipramine:::fph
 clonage
 clonage aveugle
@@ -16981,8 +16573,7 @@ clonage reproductif par transfert nucléaire
 clonage shotgun
 clonage à fin thérapeutique
 clonal
-clonazepam:::fph
-clonazépam
+clonazépam:::fph
 clone
 clone cellulaire
 cloner
@@ -16995,8 +16586,8 @@ clonus retractorius
 clopidogrel:::fph
 clopixol action prolongee:::fph
 clopixol:::fph
-clorazepate potassique:::fph
 clorazépate
+clorazépate potassique:::fph
 closalis:::fph
 clostridioides difficile:::fph
 clostridium acetireducens:::fph
@@ -17172,7 +16763,7 @@ clostridium weizhouense:::fph
 clostridium zeae:::fph
 clostripaïne
 clostrum
-clotiazepam:::fph
+clotiazépam:::fph
 clotrimazole
 clottafact:::fph
 clou
@@ -17235,7 +16826,7 @@ cobamide
 cobamide-coenzyme
 cobblestone
 cobetia marina:::fph
-cobimetinib:::fph
+cobimétinib:::fph
 cobra
 cocaïne
 cocaïnisme
@@ -17262,8 +16853,6 @@ code de la santé publique
 code de la sécurité sociale
 code du travail
 code génétique
-codeine-erysimum mayoly spindler sans sucre:::fph
-codeine:::fph
 coder
 codoc
 codocyte
@@ -17284,7 +16873,8 @@ codon stop
 codon-sens
 codonolyse
 codéhydrase I
-codéine
+codéine-érysimum mayoly spindler sans sucre:::fph
+codéine:::fph
 codéshydrogénase
 codéshydrogénase I
 coefficient Kappa pondéré
@@ -17408,7 +16998,6 @@ colchicine:::fph
 colchicothérapie
 colchimax:::fph
 cold-cream
-colecalciferol:::fph
 colectasie
 colectomie
 colectomie droite
@@ -17650,6 +17239,7 @@ columelle nasale
 columelle pendante
 columelle rentrante
 colère
+colécalciférol:::fph
 coléorrhexie
 coma
 coma carus
@@ -17873,7 +17463,7 @@ complexe majeur d'histocompatibilité
 complexe méridien
 complexe ophtalmoganglionnaire
 complexe primaire
-complexe prothrombique active:::fph
+complexe prothrombique activé:::fph
 complexe psychique
 complexe sclérose latérale amyotrophique-syndrome parkinsonien-démence
 complexe soluble de fibrine
@@ -17907,7 +17497,7 @@ complications nerveuses de la radiothérapie
 complications neurologiques au cours de la grossesse
 complications neurologiques de l'alcoolisme
 complications neurologiques de l'arthrose vertébrale
-complications neurologiques de l'intoxication alcoolique aigue.
+complications neurologiques de l'intoxication alcoolique aigue
 complications neurologiques de l'intoxication alcoolique chronique
 complications neurologiques de la rachianesthésie
 complications neurologiques de la réanimation
@@ -18270,7 +17860,7 @@ constante d'Ambard
 constante de Michaelis
 constante de débit de kerma
 constante de temps
-constante de temps de.. en IRM relaxation
+constante de temps de relaxation en IRM
 constante gyromagnétique
 constante radioactive
 constante spécifique gamma
@@ -19438,7 +19028,7 @@ crise épileptique réflexe
 crise épileptique vertigineuse
 crise épileptique épigastrique
 crises comitiales fébriles familiales
-crises comitiales plus, type 7
+crises comitiales plus de type 7
 crises familiales infantiles bégnines
 crises partielles migrantes malignes du nourrisson
 crises partielles migratrices malignes de l'enfance
@@ -19581,7 +19171,7 @@ cryptochrome
 cryptococcose
 cryptocoque
 cryptogène
-cryptogénétique adj.
+cryptogénétique
 cryptoménorrhée
 cryptophtalmie et autres malformations
 cryptorchidie
@@ -19934,11 +19524,10 @@ cuves de stockage
 cuves tampons
 cuvette sternale
 cuvitru:::fph
-cyamemazine arrow:::fph
-cyamemazine biogaran:::fph
-cyamemazine viatris:::fph
-cyamemazine:::fph
-cyamémazine
+cyamémazine arrow:::fph
+cyamémazine biogaran:::fph
+cyamémazine viatris:::fph
+cyamémazine:::fph
 cyanobactéries
 cyanocobalamine:::fph
 cyanopsie
@@ -19985,8 +19574,8 @@ cycle respiratoire
 cycle tricarboxylique
 cycle veille-sommeil
 cycle évolutif
-cyclin dependent kinase-like 5 gene
 cycline
+cycline B cdk1
 cyclines
 cyclite
 cyclite hétérochromique
@@ -20049,9 +19638,9 @@ cyphose juvénile
 cyphose nasale
 cyphose sacrée
 cyphose thoracique
-cyproterone biogaran:::fph
-cyproterone et estrogene:::fph
-cyproterone:::fph
+cyprotérone biogaran:::fph
+cyprotérone et estrogene:::fph
+cyprotérone:::fph
 cys118del rétinite pigmentaire liée à la périphérine
 cystadane:::fph
 cystadrops:::fph
@@ -20265,24 +19854,63 @@ cécité rétinienne congénitale
 cécité totale aux couleurs
 cécité verbale pure
 cécités nocturnes congénitales stationnaires
-céfaclor
-céfadroxil
-céfalexine
+céfaclor:::fph
+céfadroxil biogaran:::fph
+céfadroxil:::fph
+céfalexine:::fph
 céfamandole
 céfapirine
 céfatrizine
-céfazoline
-céfixime
+céfazoline:::fph
+céfixime almus:::fph
+céfixime arrow enfants:::fph
+céfixime arrow lab:::fph
+céfixime biogaran:::fph
+céfixime cristers:::fph
+céfixime eg:::fph
+céfixime evolugen:::fph
+céfixime viatris:::fph
+céfixime:::fph
 céfopérazone
 céfotaxime
 céfotétan
-céfoxitine
+céfoxitine:::fph
 céfradine
-céfuroxime
+céfuroxime arrow:::fph
 céfuroxime axétil
-céfépime
+céfuroxime biogaran:::fph
+céfuroxime cristers:::fph
+céfuroxime sandoz:::fph
+céfuroxime viatris:::fph
+céfuroxime zentiva:::fph
+céfuroxime:::fph
+céfépime stragen:::fph
+céfépime viatris:::fph
+céfépime:::fph
+céliprolol arrow:::fph
+céliprolol biogaran:::fph
+céliprolol cristers:::fph
+céliprolol eg:::fph
+céliprolol evolugen:::fph
+céliprolol sandoz:::fph
+céliprolol teva:::fph
+céliprolol viatris:::fph
+céliprolol zentiva:::fph
+céliprolol zydus:::fph
+céliprolol:::fph
 célosome
 célosomien
+célécoxib arrow lab:::fph
+célécoxib biogaran:::fph
+célécoxib cristers:::fph
+célécoxib eg:::fph
+célécoxib hcs:::fph
+célécoxib sandoz:::fph
+célécoxib teva:::fph
+célécoxib viatris:::fph
+célécoxib zentiva:::fph
+célécoxib zydus:::fph
+célécoxib:::fph
 célérigrade
 cément
 cémentoblaste
@@ -20292,6 +19920,7 @@ cémentome
 cénapse
 cénesthésie
 cénestopathie
+cénobamate:::fph
 cénure
 cénurose
 céphalhématome
@@ -20333,6 +19962,7 @@ cérasine
 cérat
 cérexine
 céride
+céritinib:::fph
 cérium
 céroïde
 céroïde lipofuscinose de type 4
@@ -20377,6 +20007,19 @@ césarienne-hystérectomie
 césium
 césium 137
 césure
+céthexonium:::fph
+cétirizine almus:::fph
+cétirizine arrow lab:::fph
+cétirizine arrow:::fph
+cétirizine biogaran:::fph
+cétirizine cristers pharma:::fph
+cétirizine eg:::fph
+cétirizine evolugen:::fph
+cétirizine sandoz:::fph
+cétirizine teva sante:::fph
+cétirizine viatris:::fph
+cétirizine zentiva:::fph
+cétirizine:::fph
 céto-11-étiocholanolone
 cétoacidurie à chaînes ramifiées
 cétodécarboxylase
@@ -20393,6 +20036,7 @@ cétose
 cétostéroïde
 cétotriose
 cétotétrose
+cétrorélix:::fph
 côlon
 côlon ascendant
 côlon descendant
@@ -20407,7 +20051,7 @@ cône rétinien
 cône terminal
 cône égalisateur
 cône élastique
-cône élastique du larynx.
+cône élastique du larynx
 cônes de Haller
 cônes efférents
 cônes efférents du testicule
@@ -20488,7 +20132,7 @@ dGalIgA1
 dTT
 dabigatran:::fph
 dabigratan etexilate
-dabrafenib:::fph
+dabrafénib:::fph
 dacarbazine
 daclastavir
 dacron
@@ -20509,21 +20153,21 @@ dactylogramme
 dactylomégalie
 dactylose spontanée
 dafalgan adultes:::fph
-dafalgan codeine:::fph
+dafalgan codéine:::fph
 dafalgan:::fph
 daily:::fph
 daivobet:::fph
 daivonex:::fph
-dakin cooper stabilise:::fph
+dakin cooper stabilisé:::fph
 daktarin:::fph
 dalacine:::fph
 dalbergiones
 dalfopristine
-dalteparine:::fph
 dalton
 daltonisme
+daltéparine:::fph
 damètre bi-ischiatique
-danaparoide:::fph
+danaparoïde:::fph
 danaporoïde
 danatrol:::fph
 danazol:::fph
@@ -20533,14 +20177,13 @@ danicopan:::fph
 danse de Saint Guy
 danse des hiles
 dantrium:::fph
-dantrolene:::fph
-dantrolène
+dantrolène:::fph
 daonil:::fph
 dapagliflozine:::fph
 dapaglifozine
 dapsone:::fph
 daratumumab
-darbepoetine alfa:::fph
+darbépoétine alfa:::fph
 daridorexant:::fph
 darmous
 darolutamide:::fph
@@ -20579,22 +20222,10 @@ debridat:::fph
 decapeptyl lp:::fph
 decapeptyl:::fph
 decay accelerating factor
-decongestionnants et autres preparations nasales, corticosteroides en association:::fph
+decongestionnants et autres préparations nasales, corticosteroides en association:::fph
 dectancyl:::fph
 dedrogyl:::fph
-deferasirox accord:::fph
-deferasirox arrow:::fph
-deferasirox biogaran:::fph
-deferasirox mylan:::fph
-deferasirox sandoz:::fph
-deferasirox teva:::fph
-deferasirox zentiva:::fph
-deferasirox:::fph
-deferiprone:::fph
-deferoxamine:::fph
 deficit bêta-cétothiolase
-degarelix accord:::fph
-degarelix:::fph
 degré alcoolique
 degré chlorométrique
 degré de Broders
@@ -20602,8 +20233,6 @@ degré de gravité des brûlure
 degré de liberté
 degré de signification
 degré volumique
-delafloxacine:::fph
-delamanid:::fph
 delangine
 delavirdine
 delftia acidovorans:::fph
@@ -20627,7 +20256,6 @@ deltyba:::fph
 delursan:::fph
 demande
 demande ventilatoire
-demeclocycline acetlab:::fph
 demi-frère
 demi-matrice
 demi-muqueuse
@@ -20647,7 +20275,6 @@ dendrosporobacter quercicolus:::fph
 dengue
 dengue hémorragique
 denitrificimonas caeni:::fph
-denosumab:::fph
 denrée alimentaire
 densaplasie
 densitomètre
@@ -20690,7 +20317,6 @@ depamide:::fph
 depo prodasone:::fph
 depo provera:::fph
 deprenyl:::fph
-derives de la diphenylpropylamine:::fph
 dermabacter hominis:::fph
 dermabacter jinjuensis:::fph
 dermabacter vaginalis:::fph
@@ -20749,7 +20375,6 @@ dermatofibrose lenticulaire disséminée de Schreus
 dermatoglyphe
 dermatohistopathologie
 dermatologie
-dermatologie et thermalisme
 dermatolysie
 dermatome
 dermatomycose
@@ -20907,12 +20532,6 @@ desmospora profundinema:::fph
 desmostérol
 desmotropie
 desmoyokine
-desogestrel biogaran:::fph
-desogestrel cristers:::fph
-desogestrel sandoz:::fph
-desogestrel viatris sante:::fph
-desogestrel:::fph
-desonide:::fph
 desquamation
 desquamation estivale en aires
 desquamation familiale continue
@@ -21017,11 +20636,10 @@ devinement de la pensée
 devriesea agamarum:::fph
 dexafree:::fph
 dexambutol:::fph
-dexamethasone et antiinfectieux:::fph
-dexamethasone viatris:::fph
-dexamethasone:::fph
-dexaméthasone
+dexaméthasone et antiinfectieux:::fph
 dexaméthasone et prématurité
+dexaméthasone viatris:::fph
+dexaméthasone:::fph
 dexatopia:::fph
 dexocol:::fph
 dextranase
@@ -21035,8 +20653,8 @@ dextrocardie
 dextrocardie avec anomalie de la face et microphtalmie
 dextrocardie, bronchiectasies et sinusite
 dextrocycloversion
-dextromethorphane biogaran:::fph
-dextromethorphane:::fph
+dextrométhorphane biogaran:::fph
+dextrométhorphane:::fph
 dextroposition aortique
 dextroposition du cœur
 dextrorotation cardiaque
@@ -21270,13 +20888,14 @@ diatomée
 diatrizoique acide:::fph
 diauxie
 diazanalgésie
-diazepam accord:::fph
-diazepam arrow:::fph
-diazepam teva:::fph
-diazepam:::fph
+diazepam
 diazoréaction
 diazote
 diazoxide:::fph
+diazépam accord:::fph
+diazépam arrow:::fph
+diazépam teva:::fph
+diazépam:::fph
 dibencozide
 diblastique
 dibékacine
@@ -21299,21 +20918,21 @@ dichroïque
 dichroïsme
 dickeya chrysanthemi:::fph
 dickeya paradisiaca:::fph
-diclofenac arrow:::fph
-diclofenac bgr:::fph
-diclofenac biogaran lp:::fph
-diclofenac biogaran:::fph
-diclofenac cristers:::fph
-diclofenac eg:::fph
-diclofenac ref:::fph
-diclofenac sandoz:::fph
-diclofenac teva classics:::fph
-diclofenac teva:::fph
-diclofenac viatris lp:::fph
-diclofenac viatris sante:::fph
-diclofenac viatris:::fph
-diclofenac zentiva:::fph
-diclofenac:::fph
+diclofénac arrow:::fph
+diclofénac bgr:::fph
+diclofénac biogaran lp:::fph
+diclofénac biogaran:::fph
+diclofénac cristers:::fph
+diclofénac eg:::fph
+diclofénac ref:::fph
+diclofénac sandoz:::fph
+diclofénac teva classics:::fph
+diclofénac teva:::fph
+diclofénac viatris lp:::fph
+diclofénac viatris sante:::fph
+diclofénac viatris:::fph
+diclofénac zentiva:::fph
+diclofénac:::fph
 dicodin:::fph
 dicoumarinique
 dicrocœliose
@@ -21327,8 +20946,6 @@ diductus
 didymospore
 dieldrine
 diencéphale
-dienogest laboratoires majorelle:::fph
-dienogest:::fph
 diergospray:::fph
 dietzia aerolata:::fph
 dietzia alimentaria:::fph
@@ -21403,7 +21020,7 @@ dihybride
 dihybridisme
 dihydralazine
 dihydrocholestérol
-dihydrocodeine:::fph
+dihydrocodéine:::fph
 dihydroergocristine
 dihydroergotamine:::fph
 dihydroergotoxine
@@ -21486,7 +21103,7 @@ diphosphonate
 diphosphopyridine-nucléotide
 diphtamide
 diphterie-coqueluche-poliomyelite-tetanos:::fph
-diphterie-haemophilus influenzae b-coqueluche-poliomyelite-tetanos-hepatite b:::fph
+diphterie-haemophilus influenzae b-coqueluche-poliomyelite-tetanos-hépatite b:::fph
 diphterie-haemophilus influenzae b-coqueluche-poliomyelite-tetanos:::fph
 diphterie-polyomielite-tetanos:::fph
 diphtérie
@@ -21760,6 +21377,8 @@ dizygotique
 dizygotisme
 diète
 diénestrol
+diénogest laboratoires majorelle:::fph
+diénogest:::fph
 diéthyl-éther
 diéthylcarbamazine
 diéthylstilboestrol
@@ -21803,7 +21422,7 @@ dolko:::fph
 dolosicoccus paucivorans:::fph
 dolosigranulum pigrum:::fph
 dolosigranulum savutiense:::fph
-dolutegravir:::fph
+dolutégravir:::fph
 domaine
 domaine LR
 domaine RING
@@ -21828,14 +21447,13 @@ dominance variable
 dominant
 dommage
 dommages dus à la ventilation mécanique
-domperidone arrow:::fph
-domperidone biogaran:::fph
-domperidone eg:::fph
-domperidone teva:::fph
-domperidone viatris:::fph
-domperidone zydus:::fph
-domperidone:::fph
-dompéridone
+dompéridone arrow:::fph
+dompéridone biogaran:::fph
+dompéridone eg:::fph
+dompéridone teva:::fph
+dompéridone viatris:::fph
+dompéridone zydus:::fph
+dompéridone:::fph
 don d'embryons
 don d'organes
 don d'ovocyte
@@ -21940,7 +21558,7 @@ dosiseptine:::fph
 dossier médical personnalisé
 dossier pharmaceutique
 dostinex:::fph
-dosulepine:::fph
+dosulépine:::fph
 dothiénenterie
 double arthrodèse
 double aveugle
@@ -21984,12 +21602,13 @@ douzième veine intercostale
 dovato:::fph
 down regulation
 doxazosine:::fph
-doxepine:::fph
 doxorubicine
 doxy:::fph
 doxycycline:::fph
 doxylis:::fph
 doxypalu:::fph
+doxépine:::fph
+dp sur dt
 dracunculose
 dragonneau
 dragée
@@ -22050,19 +21669,19 @@ ductus venosus
 duffyella gerundensis:::fph
 dulaglutide:::fph
 dulcilarmes:::fph
-duloxetine accord:::fph
-duloxetine almus:::fph
-duloxetine alter:::fph
-duloxetine arrow:::fph
-duloxetine biogaran:::fph
-duloxetine eg:::fph
-duloxetine evolugen:::fph
-duloxetine sandoz:::fph
-duloxetine teva:::fph
-duloxetine viatris sante:::fph
-duloxetine zentiva:::fph
-duloxetine zydus:::fph
-duloxetine:::fph
+duloxétine accord:::fph
+duloxétine almus:::fph
+duloxétine alter:::fph
+duloxétine arrow:::fph
+duloxétine biogaran:::fph
+duloxétine eg:::fph
+duloxétine evolugen:::fph
+duloxétine sandoz:::fph
+duloxétine teva:::fph
+duloxétine viatris sante:::fph
+duloxétine zentiva:::fph
+duloxétine zydus:::fph
+duloxétine:::fph
 dumping syndrome
 duncaniella dubosii:::fph
 duncaniella freteri:::fph
@@ -22114,20 +21733,20 @@ durée du transit du grêle
 durée expiratoire
 durée inspiratoire
 durée légale de la grossesse
-dutasteride accord:::fph
-dutasteride arrow lab:::fph
-dutasteride arrow:::fph
-dutasteride biogaran:::fph
-dutasteride cristers:::fph
-dutasteride eg:::fph
-dutasteride evolugen:::fph
-dutasteride fairmed:::fph
-dutasteride krka:::fph
-dutasteride sandoz:::fph
-dutasteride teva:::fph
-dutasteride viatris:::fph
-dutasteride zentiva lab:::fph
-dutasteride:::fph
+dutastéride accord:::fph
+dutastéride arrow lab:::fph
+dutastéride arrow:::fph
+dutastéride biogaran:::fph
+dutastéride cristers:::fph
+dutastéride eg:::fph
+dutastéride evolugen:::fph
+dutastéride fairmed:::fph
+dutastéride krka:::fph
+dutastéride sandoz:::fph
+dutastéride teva:::fph
+dutastéride viatris:::fph
+dutastéride zentiva lab:::fph
+dutastéride:::fph
 duvet
 dyade
 dyadobacter alkalitolerans:::fph
@@ -22161,9 +21780,9 @@ dyadobacter soli:::fph
 dyadobacter subterraneus:::fph
 dyadobacter terricola:::fph
 dyadobacter tibetensis:::fph
-dydrogesterone et estrogene:::fph
-dydrogesterone:::fph
 dydrogestone
+dydrogestérone et estrogene:::fph
+dydrogestérone:::fph
 dye-test
 dyella acidiphila:::fph
 dyella acidisoli:::fph
@@ -23001,6 +22620,7 @@ décroissance de la précession libre
 décroissance radioactive
 décrément
 décubitus
+décussation
 décussation de Forel
 décussation de Meynert
 décussation des fibres du nerf trochléaire
@@ -23264,14 +22884,26 @@ déformé
 défrénation cardiaque
 défécation
 défécographie
+déférasirox accord:::fph
+déférasirox arrow:::fph
+déférasirox biogaran:::fph
+déférasirox mylan:::fph
+déférasirox sandoz:::fph
+déférasirox teva:::fph
+déférasirox zentiva:::fph
+déférasirox:::fph
 déférentite
 déférentographie
+défériprone:::fph
+déféroxamine:::fph
 dégagement
 dégagement assisté
 dégagement des bras
 dégagement du bras antérieur
 dégagement du bras postérieur
 dégantage
+dégarélix accord:::fph
+dégarélix:::fph
 dégenerscence spinocérébelleuse et dystrophie de cornée
 déglutition
 déglutition clignotante
@@ -23386,9 +23018,11 @@ déhydroascorbate
 déhydrocorticostérone
 déhydroquinase
 déhydroépiandrostérone
+délafloxacine:::fph
 délai de viduité
 délai en électrophysiologie
 délai intercoupe
+délamanid:::fph
 délamination
 déleucocytation
 déleucocyter
@@ -23493,6 +23127,7 @@ démographie
 démographie médicale
 démonopathie
 démutisation
+déméclocycline acetlab:::fph
 démégestone
 déméthylase
 déméthylation
@@ -23509,6 +23144,7 @@ dénombrement des Escherichia coli dans les eaux
 dénomination commune internationale
 dénomination linnéenne
 dénominations des vaccins
+dénosumab:::fph
 dénutrition
 dénégation
 déodorant
@@ -23584,6 +23220,7 @@ dérivation urinaire du suc pancréatique
 dérivations électrocardiographiques
 dérive génétique
 dérivé morphinique
+dérivés de la diphenylpropylamine:::fph
 dérivés müllériens persistant
 dérivés nitrés
 dérivés réactifs de l'oxygène
@@ -23654,7 +23291,13 @@ désir en psychanalyse
 désoblitération vasculaire
 désobstruction
 désodorisant
+désogestrel biogaran:::fph
+désogestrel cristers:::fph
+désogestrel sandoz:::fph
+désogestrel viatris sante:::fph
+désogestrel:::fph
 désolidarisation de la tête fœtale
+désonide:::fph
 désordre congénital de la glycosylation type 1
 désordre myéloprolifératif
 désorientation calicielle
@@ -23802,17 +23445,6 @@ eau résiduaire
 eau usée
 eaux destinées à un usage alimentaire
 eaux usées
-ebastine arrow lab:::fph
-ebastine arrow:::fph
-ebastine biogaran:::fph
-ebastine cristers:::fph
-ebastine eg:::fph
-ebastine sandoz:::fph
-ebastine teva:::fph
-ebastine viatris:::fph
-ebastine zentiva:::fph
-ebastine zydus:::fph
-ebastine:::fph
 ebglyss:::fph
 ebilfumin:::fph
 ecbolique
@@ -23822,14 +23454,6 @@ eccrine
 echelle d'intelligence de Wechsler-Bellevue adaptée aux enfants
 ecmnésie
 ecobec:::fph
-econazole arrow:::fph
-econazole biogaran:::fph
-econazole eg:::fph
-econazole sandoz:::fph
-econazole teva sante:::fph
-econazole viatris:::fph
-econazole zentiva lp:::fph
-econazole:::fph
 ecstasy
 ectasie
 ectasie canalaire sécrétante
@@ -23919,7 +23543,6 @@ eczématide
 eczématide achromiante
 eczématide like purpura
 eczématisation
-edetate de fer sodique:::fph
 edex:::fph
 eductyl adultes:::fph
 eductyl enfants:::fph
@@ -23929,11 +23552,7 @@ edwardsiella hoshinae:::fph
 edwardsiella ictaluri:::fph
 edwardsiella piscicida:::fph
 edwardsiella tarda:::fph
-efavirenz arrow:::fph
-efavirenz sandoz:::fph
-efavirenz teva:::fph
-efavirenz viatris:::fph
-efavirenz:::fph
+efavirenz
 effacement des graisses en IRM
 effacement du col utérin
 effecteur
@@ -24086,18 +23705,8 @@ elebrato ellipta:::fph
 electrolytes avec hydrates de carbone:::fph
 electrolytes:::fph
 electron-transferring flavoprotein
-eletriptan arrow:::fph
-eletriptan bgr:::fph
-eletriptan eg:::fph
-eletriptan quiver lab:::fph
-eletriptan quiver:::fph
-eletriptan viatris:::fph
-eletriptan zentiva:::fph
-eletriptan zydus:::fph
-eletriptan:::fph
 elfasette:::fph
 eligard:::fph
-eliglustat:::fph
 eliquis:::fph
 elizabethkingia anophelis:::fph
 elizabethkingia argenteiflava:::fph
@@ -24109,8 +23718,8 @@ elizabethkingia ursingii:::fph
 ellaone:::fph
 elle interstitiel
 ellipse d'engagement
-ellipt.ocytose
 elliptocyte
+elliptocytose
 elliptocytose héréditaire
 elmiron:::fph
 elocta:::fph
@@ -24198,7 +23807,6 @@ embryotoxon postérieur
 embryoïde
 emend:::fph
 emerade:::fph
-emicizumab:::fph
 eminentia abducentis
 eminentia arcuata
 eminentia teres
@@ -24256,10 +23864,10 @@ empyème pleural
 empyème sous-dural
 empyème vésical
 empéripoïèse
-emtricitabine, tenofovir alafenamide, elvitegravir et cobicistat:::fph
-emtricitabine, tenofovir disoproxil et efavirenz:::fph
-emtricitabine, tenofovir disoproxil et rilpivirine:::fph
-emtricitabine, tenofovir disoproxil, elvitegravir et cobicistat:::fph
+emtricitabine, ténofovir alafénamide, elvitégravir et cobicistat:::fph
+emtricitabine, ténofovir disoproxil et rilpivirine:::fph
+emtricitabine, ténofovir disoproxil et éfavirenz:::fph
+emtricitabine, ténofovir disoproxil, elvitégravir et cobicistat:::fph
 emtricitabine:::fph
 emtriva:::fph
 emylif:::fph
@@ -24300,17 +23908,6 @@ en échographie artefact de réverbération
 en échographie fréquence de récurrence
 en échographie fréquence de répétition des impulsions
 en électromyographie fréquence de battement
-enalapril accord:::fph
-enalapril arrow lab:::fph
-enalapril biogaran:::fph
-enalapril eg:::fph
-enalapril et diuretiques:::fph
-enalapril et lercanidipine:::fph
-enalapril sandoz:::fph
-enalapril teva sante:::fph
-enalapril viatris:::fph
-enalapril zentiva:::fph
-enalapril:::fph
 enantone lp:::fph
 enasidenib:::fph
 enbrel:::fph
@@ -24344,7 +23941,7 @@ encoches costales
 encodage
 encoder
 encoprésie
-encorafenib:::fph
+encorafénib:::fph
 encéphale
 encéphalite
 encéphalite aigüe nécrosante de la rougeole
@@ -24671,13 +24268,6 @@ engrènement
 enjambement
 enkystement
 enképhaline
-enoxaparine arrow:::fph
-enoxaparine becat:::fph
-enoxaparine biogaran:::fph
-enoxaparine crusia:::fph
-enoxaparine eg:::fph
-enoxaparine teva:::fph
-enoxaparine:::fph
 enquête cas-témoin
 enquête de personnalité
 enquête longitudinale
@@ -24698,17 +24288,6 @@ entacapone:::fph
 entactine
 entaillase
 entaille
-entecavir accord:::fph
-entecavir arrow:::fph
-entecavir biogaran:::fph
-entecavir cristers:::fph
-entecavir eg:::fph
-entecavir evolugen:::fph
-entecavir sandoz:::fph
-entecavir teva:::fph
-entecavir viatris:::fph
-entecavir zydus:::fph
-entecavir:::fph
 enterobacter asburiae:::fph
 enterobacter bugandensis:::fph
 enterobacter cancerogenus:::fph
@@ -24857,6 +24436,17 @@ entropion palpébral
 entropion palpébral congénital
 entypie
 entyvio:::fph
+entécavir accord:::fph
+entécavir arrow:::fph
+entécavir biogaran:::fph
+entécavir cristers:::fph
+entécavir eg:::fph
+entécavir evolugen:::fph
+entécavir sandoz:::fph
+entécavir teva:::fph
+entécavir viatris:::fph
+entécavir zydus:::fph
+entécavir:::fph
 entéral
 entéramine
 entérite
@@ -24936,7 +24526,6 @@ epidermolysis necroticans combustiformis
 epidyolex:::fph
 epilepsie et grossesse
 epilithonimonas vandammei:::fph
-epinastine:::fph
 epinephrine:::fph
 epinitril:::fph
 epipen:::fph
@@ -24944,20 +24533,7 @@ epithelioid and spindle cell nævus
 epitomax:::fph
 epitopic:::fph
 epivir:::fph
-eplerenone accord:::fph
-eplerenone arrow:::fph
-eplerenone biogaran:::fph
-eplerenone cristers:::fph
-eplerenone eg:::fph
-eplerenone krka:::fph
-eplerenone sandoz:::fph
-eplerenone teva:::fph
-eplerenone viatris:::fph
-eplerenone zentiva:::fph
-eplerenone zydus:::fph
-eplerenone:::fph
 eplérénone
-epoprostenol:::fph
 eporatio:::fph
 eprex:::fph
 epsilon-lysylal
@@ -24965,8 +24541,7 @@ eqwilate:::fph
 erdafitinib:::fph
 erelzi:::fph
 ergastoplasme
-ergocalciferol:::fph
-ergocalciférol
+ergocalciférol:::fph
 ergographe
 ergomètre
 ergométrie
@@ -24989,8 +24564,8 @@ erreur de deuxième espèce
 erreur de première espèce
 erreur de troisième espèce
 erreur standard
-ertapenem:::fph
 ertapeneme:::fph
+ertapénem:::fph
 ertapénème
 ertuglifozine
 erwinia aeris:::fph
@@ -25040,8 +24615,6 @@ erythema infectiosum
 erythrogel:::fph
 erythrokeratodermia variabilis de Mendes da Costa
 erythromelanosis interfollicularis colli
-erythromycine bailleul:::fph
-erythromycine:::fph
 erythropoietine:::fph
 erythropsine
 erythrosis interfocullaris colli de Leder
@@ -25062,28 +24635,9 @@ escitalopram:::fph
 eshraghiella crossota:::fph
 esidrex:::fph
 eskazole:::fph
-esketamine:::fph
-eslicarbazepine arrow:::fph
-eslicarbazepine:::fph
-esomeprazole almus:::fph
-esomeprazole alter:::fph
-esomeprazole arrow lab:::fph
-esomeprazole arrow:::fph
-esomeprazole biogaran:::fph
-esomeprazole cristers pharma:::fph
-esomeprazole eg labo:::fph
-esomeprazole eg:::fph
-esomeprazole ethypharm:::fph
-esomeprazole evolugen pharma:::fph
-esomeprazole evolugen:::fph
-esomeprazole gnr:::fph
-esomeprazole hcs:::fph
-esomeprazole sandoz:::fph
-esomeprazole teva:::fph
-esomeprazole viatris:::fph
-esomeprazole zentiva:::fph
-esomeprazole zydus:::fph
-esomeprazole:::fph
+eskétamine:::fph
+eslicarbazépine arrow:::fph
+eslicarbazépine:::fph
 espace HR
 espace PR
 espace alvéolaire pulmonaire
@@ -25215,27 +24769,11 @@ estrone
 estrone-sulfokinase
 estérase
 et insuffisance rénale radiothérapie
-etanercept:::fph
-ethambutol:::fph
 ethmoïde
 ethmoïdectomie
 ethmoïdite
 ethmoïditeaigüe
 ethnopsychiatrie
-ethosuximide:::fph
-ethyle loflazepate:::fph
-etodolac:::fph
-etonogestrel:::fph
-etoposide:::fph
-etoricoxib arrow:::fph
-etoricoxib biogaran:::fph
-etoricoxib krka:::fph
-etoricoxib sandoz:::fph
-etoricoxib viatris:::fph
-etoricoxib zydus france:::fph
-etoricoxib:::fph
-etrasimod:::fph
-etravirine:::fph
 eubacterium aggregans:::fph
 eubacterium album:::fph
 eubacterium barkeri:::fph
@@ -25320,17 +24858,8 @@ evansella clarkii:::fph
 evansella polygoni:::fph
 evansella tamaricis:::fph
 evansella vedderi:::fph
-everolimus arrow:::fph
-everolimus biogaran:::fph
-everolimus eg:::fph
-everolimus sandoz:::fph
-everolimus teva:::fph
-everolimus viatris:::fph
-everolimus zentiva:::fph
-everolimus:::fph
 eviplera:::fph
 evista:::fph
-evolocumab:::fph
 evrenzo:::fph
 evrysdi:::fph
 ewingella americana:::fph
@@ -25396,20 +24925,6 @@ excès d'antigènes
 excès de liquide amniotique
 excès de volume du fœtus
 excès de volume foetal localisé
-exemestane accord:::fph
-exemestane arrow:::fph
-exemestane bgr:::fph
-exemestane cristers:::fph
-exemestane eg:::fph
-exemestane evolugen:::fph
-exemestane pfizer:::fph
-exemestane sandoz:::fph
-exemestane teva:::fph
-exemestane viatris:::fph
-exemestane zentiva:::fph
-exemestane zydus france:::fph
-exemestane:::fph
-exenatide:::fph
 exencéphale
 exencéphalien
 exentération orbitaire
@@ -25640,28 +25155,26 @@ extéroceptive
 exulcération
 exulératio simplex
 exuvie
-exénatide
+exémestane accord:::fph
+exémestane arrow:::fph
+exémestane bgr:::fph
+exémestane cristers:::fph
+exémestane eg:::fph
+exémestane evolugen:::fph
+exémestane pfizer:::fph
+exémestane sandoz:::fph
+exémestane teva:::fph
+exémestane viatris:::fph
+exémestane zentiva:::fph
+exémestane zydus france:::fph
+exémestane:::fph
+exénatide:::fph
 exérèse digestive
 exérèse pulmonaire élargie
 eylea:::fph
 ezakiella coagulans:::fph
 ezakiella massiliensis:::fph
 ezakiella peruensis:::fph
-ezetimibe accord:::fph
-ezetimibe almus:::fph
-ezetimibe alter:::fph
-ezetimibe arrow:::fph
-ezetimibe biogaran:::fph
-ezetimibe cristers pharma:::fph
-ezetimibe eg:::fph
-ezetimibe evolugen:::fph
-ezetimibe krka:::fph
-ezetimibe sandoz:::fph
-ezetimibe teva:::fph
-ezetimibe viatris:::fph
-ezetimibe zentiva:::fph
-ezetimibe zydus:::fph
-ezetimibe:::fph
 ezetrol:::fph
 ezrine
 fabella
@@ -25777,6 +25290,7 @@ face postérieure du radius
 face postérieure du rein
 face postérieure du tibia
 face postéro-supérieure du rocher
+face pulmonaire droite et gauche du cœur
 face rénale de la glande suprarénale
 face rénale de la rate
 face sacro-pelvienne de l'ilion
@@ -25976,7 +25490,7 @@ facteurs de terminaison
 facteurs génétiques du mélanome uvéal
 facteurs pro-angiogéniques
 factorielle
-facès hippocratique .
+facès hippocratique
 fadenoperation
 fading mental
 faecalibacterium butyricigenerans:::fph
@@ -26160,7 +25674,7 @@ famciclovir:::fph
 familial
 familial atypical multiple mole melanoma
 famille
-famille HECT sigle angl. pour
+famille HECT
 famille de gènes
 famille de médicaments
 famille de protéines
@@ -26340,47 +25854,19 @@ favisme
 favus
 fazol:::fph
 faîte du ligament large
-febuxostat accord:::fph
-febuxostat almus:::fph
-febuxostat biogaran:::fph
-febuxostat cristers:::fph
-febuxostat eg:::fph
-febuxostat evolugen:::fph
-febuxostat sandoz:::fph
-febuxostat teva sante:::fph
-febuxostat viatris:::fph
-febuxostat zentiva lab:::fph
-febuxostat zydus france:::fph
-febuxostat:::fph
-fedratinib:::fph
 fegenor:::fph
 feiba:::fph
 felbamate:::fph
 feldene dispersible:::fph
 feldene:::fph
-felodipine:::fph
 femara:::fph
 femelle
 femsept:::fph
 femseptevo:::fph
 femto
 fenfluramine:::fph
-fenofibrate almus:::fph
-fenofibrate arrow lab:::fph
-fenofibrate arrow:::fph
-fenofibrate biogaran:::fph
-fenofibrate cristers pharma:::fph
-fenofibrate eg:::fph
-fenofibrate sandoz:::fph
-fenofibrate teva sante:::fph
-fenofibrate teva:::fph
-fenofibrate viatris:::fph
-fenofibrate zentiva:::fph
-fenofibrate zydus:::fph
-fenofibrate:::fph
 fenollaria massiliensis:::fph
 fenollaria timonensis:::fph
-fenoterol et bromure d'ipratropium:::fph
 fentanyl:::fph
 fente cérébrale de Bichat
 fente de Larrey
@@ -26472,13 +25958,6 @@ ferroxydase
 fertifol:::fph
 fertilité
 fertistartkit:::fph
-fesoterodine arrow lp:::fph
-fesoterodine biogaran lp:::fph
-fesoterodine cristers lp:::fph
-fesoterodine eg lp:::fph
-fesoterodine teva lp:::fph
-fesoterodine zentiva lp:::fph
-fesoterodine:::fph
 fesse
 festination
 feston vertébral
@@ -26495,12 +25974,12 @@ feuillet viscéral de la tunique vaginale du testicule
 feuillet viscéral du péricarde séreux
 feuillées
 feux croisés
-fexofenadine arrow:::fph
-fexofenadine biogaran:::fph
-fexofenadine viatris sante:::fph
-fexofenadine viatris:::fph
-fexofenadine zentiva:::fph
-fexofenadine:::fph
+fexofénadine arrow:::fph
+fexofénadine biogaran:::fph
+fexofénadine viatris sante:::fph
+fexofénadine viatris:::fph
+fexofénadine zentiva:::fph
+fexofénadine:::fph
 fiabilité
 fiable
 fiasp flextouch:::fph
@@ -26602,8 +26081,8 @@ fibrine
 fibrine-polymérase
 fibrinocruorique
 fibrinoformation
-fibrinogene humain:::fph
 fibrinogène
+fibrinogène humain:::fph
 fibrinogénolytique
 fibrinogénopénie
 fibrinogénémie
@@ -26886,19 +26365,19 @@ fimbrine
 fimbriolyse
 fimbrioplastie
 fin de vie
-finasteride accord:::fph
-finasteride almus:::fph
-finasteride arrow lab:::fph
-finasteride biogaran:::fph
-finasteride cristers:::fph
-finasteride eg:::fph
-finasteride la colina:::fph
-finasteride sandoz:::fph
-finasteride teva:::fph
-finasteride viatris:::fph
-finasteride zentiva:::fph
-finasteride zydus:::fph
-finasteride:::fph
+finastéride accord:::fph
+finastéride almus:::fph
+finastéride arrow lab:::fph
+finastéride biogaran:::fph
+finastéride cristers:::fph
+finastéride eg:::fph
+finastéride la colina:::fph
+finastéride sandoz:::fph
+finastéride teva:::fph
+finastéride viatris:::fph
+finastéride zentiva:::fph
+finastéride zydus:::fph
+finastéride:::fph
 finegoldia dalianensis:::fph
 finegoldia magna:::fph
 fingolimod:::fph
@@ -27122,6 +26601,7 @@ fièvre des tranchées
 fièvre des trois jours
 fièvre du Kenya
 fièvre du Queensland
+fièvre du Texas
 fièvre du lundi
 fièvre du travail
 fièvre dum-dum
@@ -27191,7 +26671,7 @@ flamme
 flammeovirga aprica:::fph
 flanc
 flapping tremor
-flare up l. angl.
+flare up
 flascospasmodique
 flash
 flasque
@@ -27588,14 +27068,6 @@ flavoxate:::fph
 flebogamma:::fph
 flebogammadif:::fph
 flecaine:::fph
-flecainide arrow lab:::fph
-flecainide biogaran lp:::fph
-flecainide biogaran:::fph
-flecainide teva lp:::fph
-flecainide viatris lp:::fph
-flecainide viatris:::fph
-flecainide zentiva lp:::fph
-flecainide:::fph
 flecaïne:::fph
 flecaïnide:::fph
 flector:::fph
@@ -27678,8 +27150,8 @@ fluorochrome
 fluorodopa 18F
 fluorodésoxyglucose marqué
 fluorographie
-fluorometholone:::fph
 fluoromébendazole
+fluorométholone:::fph
 fluorophore
 fluorophotométrie
 fluoroquinolones
@@ -27690,25 +27162,24 @@ fluorose
 fluorouracile:::fph
 fluorure
 fluosterol:::fph
-fluoxetine accord:::fph
-fluoxetine almus:::fph
-fluoxetine alter:::fph
-fluoxetine arrow lab:::fph
-fluoxetine arrow:::fph
-fluoxetine biogaran:::fph
-fluoxetine cristers:::fph
-fluoxetine eg:::fph
-fluoxetine sandoz:::fph
-fluoxetine teva sante:::fph
-fluoxetine teva:::fph
-fluoxetine viatris:::fph
-fluoxetine zentiva:::fph
-fluoxetine zydus:::fph
-fluoxetine:::fph
-fluoxétine
+fluoxétine accord:::fph
+fluoxétine almus:::fph
+fluoxétine alter:::fph
+fluoxétine arrow lab:::fph
+fluoxétine arrow:::fph
+fluoxétine biogaran:::fph
+fluoxétine cristers:::fph
+fluoxétine eg:::fph
+fluoxétine sandoz:::fph
+fluoxétine teva sante:::fph
+fluoxétine teva:::fph
+fluoxétine viatris:::fph
+fluoxétine zentiva:::fph
+fluoxétine zydus:::fph
+fluoxétine:::fph
 flupentixol:::fph
 fluphénazin
-flurbiprofene:::fph
+flurbiprofène:::fph
 flush
 fluticasone furoate:::fph
 fluticasone:::fph
@@ -27744,6 +27215,14 @@ flèche lombaire
 flèche sacrée
 flèche thoracique
 flèche totale
+flécaïnide arrow lab:::fph
+flécaïnide biogaran lp:::fph
+flécaïnide biogaran:::fph
+flécaïnide teva lp:::fph
+flécaïnide viatris lp:::fph
+flécaïnide viatris:::fph
+flécaïnide zentiva lp:::fph
+flécaïnide:::fph
 fléchisseur
 focal
 focale
@@ -28073,14 +27552,14 @@ formodual:::fph
 formol
 formol-leucogélification
 formolisation vésicale
-formoterol biogaran:::fph
-formoterol eg:::fph
-formoterol et beclometasone:::fph
-formoterol et budesonide:::fph
-formoterol et fluticasone:::fph
-formoterol viatris:::fph
-formoterol zentiva:::fph
-formoterol:::fph
+formotérol biogaran:::fph
+formotérol eg:::fph
+formotérol et budésonide:::fph
+formotérol et béclométasone:::fph
+formotérol et fluticasone:::fph
+formotérol viatris:::fph
+formotérol zentiva:::fph
+formotérol:::fph
 formule MDRD
 formule antigénique
 formule d'Arneth
@@ -28119,7 +27598,7 @@ forxiga:::fph
 forçage génétique
 forçage vocal
 fosamax:::fph
-fosamprenavir:::fph
+fosamprénavir:::fph
 fosavance:::fph
 foscarnet
 fosfestrol tétrasodique
@@ -28420,7 +27899,7 @@ fracture exposée
 fracture fermée
 fracture itérative
 fracture obstétricale
-fracture obstétricale du nouveau-né l.f. à tuer ???
+fracture obstétricale du nouveau-né
 fracture orbitaire
 fracture ostéochondrale
 fracture ouverte
@@ -28654,20 +28133,20 @@ furfurilactobacillus siliginis:::fph
 furine
 furocoumarine
 furoncle
-furoncle de l'aile du nez.
-furoncle du conduit auditif externe.
+furoncle de l'aile du nez
+furoncle du conduit auditif externe
 furonculeux
 furonculose
-furosemide arrow:::fph
-furosemide biogaran:::fph
-furosemide eg:::fph
-furosemide et epargneurs potassiques:::fph
-furosemide sandoz:::fph
-furosemide teva:::fph
-furosemide viatris:::fph
-furosemide zentiva:::fph
-furosemide zydus:::fph
-furosemide:::fph
+furosémide arrow:::fph
+furosémide biogaran:::fph
+furosémide eg:::fph
+furosémide et epargneurs potassiques:::fph
+furosémide sandoz:::fph
+furosémide teva:::fph
+furosémide viatris:::fph
+furosémide zentiva:::fph
+furosémide zydus:::fph
+furosémide:::fph
 fusariose
 fuseau
 fuseau achromatique
@@ -28728,12 +28207,24 @@ fébricitant
 fébricule
 fébrifuge
 fébrile
+fébuxostat accord:::fph
+fébuxostat almus:::fph
+fébuxostat biogaran:::fph
+fébuxostat cristers:::fph
+fébuxostat eg:::fph
+fébuxostat evolugen:::fph
+fébuxostat sandoz:::fph
+fébuxostat teva sante:::fph
+fébuxostat viatris:::fph
+fébuxostat zentiva lab:::fph
+fébuxostat zydus france:::fph
+fébuxostat:::fph
 fécal
 fécalogramme
 fécalome
 fécaloïde
 fécalurie
-fécond adj.
+fécond
 fécondabilité
 fécondance
 fécondation
@@ -28741,6 +28232,8 @@ fécondation assistée
 fécondation in vitro
 fécondation in vitro avec transfert d'embryon
 fécondité
+fédratinib:::fph
+félodipine:::fph
 féminisant
 féminisation
 féminisme
@@ -28752,8 +28245,29 @@ fénestration des membranes
 fénestration labyrinthique
 fénestration valvulaire
 fénitrothion
+fénofibrate almus:::fph
+fénofibrate arrow lab:::fph
+fénofibrate arrow:::fph
+fénofibrate biogaran:::fph
+fénofibrate cristers pharma:::fph
+fénofibrate eg:::fph
+fénofibrate sandoz:::fph
+fénofibrate teva sante:::fph
+fénofibrate teva:::fph
+fénofibrate viatris:::fph
+fénofibrate zentiva:::fph
+fénofibrate zydus:::fph
+fénofibrate:::fph
 fénotérol
+fénotérol et bromure d'ipratropium:::fph
 férine
+fésotérodine arrow lp:::fph
+fésotérodine biogaran lp:::fph
+fésotérodine cristers lp:::fph
+fésotérodine eg lp:::fph
+fésotérodine teva lp:::fph
+fésotérodine zentiva lp:::fph
+fésotérodine:::fph
 fétichisme
 fétuine
 fœtal
@@ -28780,8 +28294,8 @@ gadobutrol:::fph
 gadolinium
 gadolinium DTPA
 gadolinium-DOTA
-gadoteridol:::fph
-gadoterique acide:::fph
+gadotéridol:::fph
+gadotérique acide:::fph
 gadovist:::fph
 gain d'un amplificateur de luminance
 gain d'un antigène
@@ -29289,9 +28803,9 @@ gangrène synergistique
 gangrène utérine
 gangrène utérine puerpérale
 gangrène vulvo-vaginale
-ganirelix eg:::fph
-ganirelix theramex:::fph
-ganirelix:::fph
+ganirélix eg:::fph
+ganirélix theramex:::fph
+ganirélix:::fph
 ganjah
 gap junction
 gardasil:::fph
@@ -29377,11 +28891,6 @@ gaz rare
 gaze nystagmus
 gaze-evoked nystagmus
 gazométrie
-gefitinib biogaran:::fph
-gefitinib sandoz:::fph
-gefitinib teva:::fph
-gefitinib zentiva:::fph
-gefitinib:::fph
 gel
 gel de contact
 gel de couplage
@@ -29406,15 +28915,365 @@ gemfibrozil:::fph
 gemini conducti
 gencive
 gene 19q13.3-q13.4
+gene ABC7
+gene ABCA4
+gene ABCB7
 gene ABCC6
+gene ABCG5
+gene ABL
+gene ABL1
+gene ACADM
+gene ACTA2
+gene ACVR1
+gene ADAMTS 10
+gene AGS
+gene AHD
+gene AIED
+gene AIRE
+gene ALAS-2
+gene AMH
+gene ANGPTL4
+gene ANKRD11
+gene ARX
+gene ASAH1
+gene ASXL1
+gene ATM
+gene ATRX
+gene AWS
+gene Apo E
+gene B3GALTL
+gene BARD 1
+gene BBS1
+gene BBS2
+gene BBS4
+gene BBS5
+gene BBS7
+gene BBS8
+gene BCKBB
+gene BCOR
+gene BEST1
+gene BRAF
+gene BRCA
+gene BTK
+gene Bcr-abl
 gene C-myc
+gene CACNA1C
+gene CACNA1F
+gene CACNA1S
+gene CACNB2
+gene CALR
+gene CANT1
+gene CASP 1
+gene CASR
+gene CAV3
+gene CBX2
+gene CCR 5
+gene CD19
+gene CDH 1
+gene CDKL5
+gene CDKN1C
+gene CEBPA
+gene CEP290
+gene CFAP247
+gene CIASI
+gene CLCN5
+gene CLCNKB
+gene CLN3
+gene CLN6
+gene CNGB3
+gene COL1A1
+gene COL2A1
+gene COL4A1
+gene COL4A3
+gene COL4A5
+gene COL4A6
+gene COL9A1
+gene COL9A2
+gene COL9A3
+gene COLEC11
+gene COMP
+gene CRB1
+gene CREBBP
+gene CRX
+gene CRYBB2
+gene CSF3R
+gene CTLA4
+gene CX 32
+gene CYBA
+gene CYBB
+gene CYLD
+gene CYMD
+gene CYP11A1
+gene CYP11B1
+gene CYP11B2
+gene CYP17A1
+gene DAG1
+gene DAX1
+gene DBT
+gene DCX
+gene DHH
+gene DKC1
+gene DMD
+gene DMRT1
+gene DNAH5
+gene DPM3
+gene DYNC2H1
+gene ECM1
+gene ELN
+gene EPM2A
+gene EPM2B
 gene ETV6
+gene ETV6-PDGFRB
 gene EZH2
+gene F2
+gene FANCA
+gene FAS
+gene FGF10
+gene FGFR1
+gene FGFR2
+gene FGFR3
+gene FKBP10
+gene FKRP
+gene FKTN
+gene FLT3
+gene FLT4
+gene FMR1
+gene FNB1
+gene FOXC1
+gene FOXC2
+gene FTL
+gene FTO
 gene Foxp2
+gene GABRD
+gene GABRG2
+gene GATA2
+gene GHR
+gene GJA1
+gene GJB1
+gene GLA
+gene GNAS
+gene GNPTAB
+gene GP1BA
+gene GP1BB
+gene GP9
+gene GPBV
+gene GPD1-L
+gene GRK1
+gene GUCY2D
+gene Gan
+gene HADHA
+gene HADHB
+gene HBA1
+gene HBA2
+gene HEY2
+gene HGD
+gene HGPRT1
 gene HK1
+gene HOX
+gene HOXA13
+gene HPS
+gene HSD11B2
+gene HSD3B2
+gene HTT
+gene ICOS
+gene IFT80
+gene IGF2
+gene INSR
+gene IRF4
+gene ISPD
+gene IT15
+gene JAK2V 617F
+gene JMS
+gene KAL1
+gene KCNE1
+gene KCNE2
+gene KCNE3
+gene KCNH2
+gene KCNJ1
+gene KCNJ2
+gene KCNQ1
+gene KCNQ1OT1
+gene KCNT1
+gene KIF11
+gene KIT
+gene KMT2A
+gene L1CAM
+gene LARGE1
+gene LCAT
+gene LHX4
+gene LIS1
+gene LMNA
+gene LMX1B
+gene LPL
+gene LRP2
+gene MAP3K1
+gene MATN3
+gene MC4R
+gene MCOPS3
+gene MCPH1
+gene MEN1
+gene MGC2413
+gene MKKS
+gene MMP14
+gene MOCS1
+gene MOCS2
+gene MOCS3
+gene MPL
+gene MS4A1
+gene MT-ATP6
+gene MT-CO1
+gene MT-CO3
+gene MT-CYB
+gene MT-ND1
+gene MT-ND2
+gene MT-ND4
+gene MT-ND5
+gene MT-ND6
+gene MYCN
+gene MYH9
+gene MeCP2
+gene NBEAL2
+gene NF1
+gene NF2
+gene NLRP3
+gene NPC2
+gene NPHS1
+gene NPM1
+gene NPR2
+gene NR0B1
+gene NR5A1
+gene NRAS
+gene NUP62
+gene Neu1
+gene OA3
+gene OASD
+gene OAT
+gene OCA2
+gene OCRL
+gene OPA1
+gene OPN1MW
+gene PAFAH1B1
+gene PAH
+gene PALB2
+gene PANK2
+gene PAX3
+gene PCDH19
+gene PDC
+gene PDE6A
+gene PDE6B
+gene PDE6G
+gene PDGFRA
+gene PDGFRB
+gene PEPD
+gene PHGDH
+gene PIGA
+gene PKD1
+gene PKD2
+gene PKD3
+gene PLA2G6
+gene PMI
+gene POMT1
+gene POMT2
+gene PRKAR1A
+gene PRNP
+gene PSTA1
+gene PTCH1
+gene PTEN
+gene PTPN11
+gene PTPN22
+gene PTS
+gene PUS1
+gene Pax6
+gene PfMDR
+gene QDPR
+gene RAB18
+gene RAB3GAP2
+gene RBP1
+gene RDH12
+gene RET
+gene RHBDF2
+gene RPS19
+gene RTEL1
+gene RTPG
+gene RUNX1
+gene RYR 1
+gene SCN10A
+gene SCN1B
+gene SCN2A
+gene SCN3B
+gene SCN4B
+gene SCN5A
+gene SCN9A
+gene SF3B1
+gene SHANK3
+gene SHOX
+gene SLC12A1
+gene SLC12A3
+gene SLC25A15
+gene SLC25A38
+gene SLC26A2
+gene SLC45A2
+gene SLC52A3
+gene SLC6A19
+gene SMA
+gene SMN2
+gene SMPD1
+gene SNAI2
+gene SOST
+gene SOX11
+gene SOX2
+gene SOX9
+gene SRCAP
 gene SRP72
 gene SRSF2
+gene SRY
 gene STAG2
+gene STAT3
+gene STK9
+gene STS
+gene SUOX
+gene SURF1
+gene TAZ
+gene TBC1D20
+gene TCF4
+gene TCOF1
+gene TET2
+gene TGFBR1
+gene TGFBR2
+gene TINF2
+gene TNFRSF13C
+gene TP53
+gene TRAF1
+gene TRIP11
+gene TTC 8
+gene TTC21B
+gene TTR
+gene TUBA1A
+gene TWIST2
+gene TWNK
+gene TYR
+gene TYRP1
+gene U2AF1
+gene UBE3A
+gene UGT1A1
+gene VHL
+gene WBS
+gene WDR19
+gene WNK1
+gene WNK4
+gene WRN
+gene YARS2
+gene ZBTB20
+gene ZFPM2
+gene ZMPSTE24
+gene ZMYM2
+gene ZNF198
+gene c-Myc
+gene cyclin dependent kinase-like 5
+gene leucémie chronique à éosinophile associée à FIP1L1-PDGFRA
+gene leucémie chronique à éosinophiles associée à PDGFRB
+gene recA
+gene serine threonine kinase 9
 geniculum du canal facial
 genotonorm miniquick:::fph
 genotonorm:::fph
@@ -29484,7 +29343,7 @@ gigantisme sinusien
 gigantomastie
 gigaxonine
 gilenya:::fph
-gilteritinib:::fph
+giltéritinib:::fph
 gingipaïnes
 gingivite
 gingivite desquamative
@@ -29672,7 +29531,7 @@ glandule thyroïde de Nicolas
 glandule thyroïdienne de Gley
 glandulokystique
 glatiramer viatris:::fph
-glatiramere acetate:::fph
+glatiramère acétate:::fph
 glaucome
 glaucome capsulaire
 glaucome congénital
@@ -29710,19 +29569,19 @@ gliclazide:::fph
 glie
 gliflozine
 glifozine
-glimepiride accord healthcare:::fph
-glimepiride arrow generiques:::fph
-glimepiride bgr:::fph
-glimepiride cristers:::fph
-glimepiride eg:::fph
-glimepiride evolugen:::fph
-glimepiride sandoz:::fph
-glimepiride teva sante:::fph
-glimepiride viatris:::fph
-glimepiride zentiva:::fph
-glimepiride zydus:::fph
-glimepiride:::fph
 glimezit:::fph
+glimépiride accord healthcare:::fph
+glimépiride arrow generiques:::fph
+glimépiride bgr:::fph
+glimépiride cristers:::fph
+glimépiride eg:::fph
+glimépiride evolugen:::fph
+glimépiride sandoz:::fph
+glimépiride teva sante:::fph
+glimépiride viatris:::fph
+glimépiride zentiva:::fph
+glimépiride zydus:::fph
+glimépiride:::fph
 glioblastome
 gliomatose cérébrale
 gliomatose leptoméningée
@@ -29921,7 +29780,6 @@ gluténine
 gly
 glycanne
 glycation
-glycerol phenylbutyrate:::fph
 glycine
 glycine-oxhydrase
 glycine-oxydase
@@ -29998,6 +29856,7 @@ glycératurie
 glycéride
 glycérine
 glycérol
+glycérol phénylbutyrate:::fph
 glycérol-kinase
 glycérophosphate
 glycérophosphate-déshydrogénase
@@ -30046,8 +29905,7 @@ gonadique
 gonadoblastome
 gonadocrinine
 gonadolibérine
-gonadoreline:::fph
-gonadoréline
+gonadoréline:::fph
 gonadostimuline
 gonadotrope
 gonadotrophin releasing factor
@@ -30140,8 +29998,8 @@ gordonibacter faecis:::fph
 gordonibacter pamelaeae:::fph
 gordonibacter urolithinfaciens:::fph
 gorge
-gosereline:::fph
 gosier
+goséréline:::fph
 gottfriedia acidiceleris:::fph
 gottfriedia luciferensis:::fph
 gottfriedia solisilvae:::fph
@@ -30328,7 +30186,7 @@ grande- veine de Galien
 grande- échancrure sciatique
 grandes lèvres
 granine
-granisetron:::fph
+granisétron:::fph
 granocyte:::fph
 granpidam:::fph
 granudoxy:::fph
@@ -30523,7 +30381,7 @@ grippe
 grippe aviaire
 grippe commune
 grippe maligne
-grippe, virus fractionne inactive ou antigene purifie:::fph
+grippe, virus fractionne inactivé ou antigène purifie:::fph
 griséofulvine
 gros fœtus
 gros intestin
@@ -30696,7 +30554,7 @@ gymnastique de forme
 gymnothèce
 gynandroblastome
 gynandroïde
-gynergene cafeine:::fph
+gynergene caféine:::fph
 gyno trosyd:::fph
 gyno-pevaryl:::fph
 gynogenèse
@@ -30704,7 +30562,6 @@ gynolactose
 gynoïde
 gynécographie
 gynécologie
-gynécologie et thermalisme
 gynécologique
 gynécomastie
 gynécoïde
@@ -30794,6 +30651,11 @@ gènes dépendants
 gènes indépendants
 gènes liés
 gènomisotopie
+géfitinib biogaran:::fph
+géfitinib sandoz:::fph
+géfitinib teva:::fph
+géfitinib zentiva:::fph
+géfitinib:::fph
 gélatinase
 gélatine
 gélifiable
@@ -30868,6 +30730,7 @@ gérontophilie
 gérontopsychiatrie
 gérontoxon
 gésine
+gêne Oct4
 hGH
 hGM-CSF
 hRFVT-3
@@ -30889,7 +30752,7 @@ haemophilus ducreyi:::fph
 haemophilus felis:::fph
 haemophilus haemoglobinophilus:::fph
 haemophilus haemolyticus:::fph
-haemophilus influenzae b, antigene purifie conjugue:::fph
+haemophilus influenzae b, antigène purifie conjugué:::fph
 haemophilus influenzae:::fph
 haemophilus massiliensis:::fph
 haemophilus paracuniculus:::fph
@@ -31103,7 +30966,6 @@ halomonas zhangzhouensis:::fph
 halomonas zhanjiangensis:::fph
 halomonas zhuhanensis:::fph
 halomonas zincidurans:::fph
-haloperidol:::fph
 halophile
 halopseudomonas aestusnigri:::fph
 halopseudomonas bauzanensis:::fph
@@ -31120,9 +30982,9 @@ halopseudomonas salegens:::fph
 halopseudomonas salina:::fph
 halopseudomonas xiamenensis:::fph
 halopseudomonas xinjiangensis:::fph
-halopéridol
+halopéridol:::fph
 halosaccharopolyspora lacisalsi:::fph
-halothane.
+halothane
 halovibrio variabilis:::fph
 haloxegol:::fph
 halzoun
@@ -31259,7 +31121,6 @@ helcobacillus massiliensis:::fph
 helcococcus kunzii:::fph
 helcococcus ovis:::fph
 helcococcus sueciensis:::fph
-helicidine:::fph
 helicobacter acinonychis:::fph
 helicobacter ailurogastricus:::fph
 helicobacter anatolicus:::fph
@@ -31334,11 +31195,7 @@ hemlibra:::fph
 hemmage
 hemoleven:::fph
 henné
-heparine choay:::fph
-heparine:::fph
 hepatic bacteriocidal protein
-hepatite a, virus entier inactive:::fph
-hepatite b, antigene purifie:::fph
 hepatotropic
 hepcidine
 hepcidino-déficience
@@ -31383,6 +31240,7 @@ hernie diaphragmatique du nouveau-né
 hernie diaphragmatique traumatique
 hernie diaphragmatique, exomphalocèle, absence de corps calleux, hypertélorisme, myopie et surdité neurosensorielle
 hernie discale
+hernie du foramen de Bochdalek
 hernie du vitré
 hernie extra foraminale
 hernie foraminale
@@ -31425,8 +31283,8 @@ herpès génital
 herpès iris
 herpès néonatal
 herpès récurrent
-herpétiforme adj.
-herpétique adj.
+herpétiforme
+herpétique
 hertz
 hespéranopsie
 heterorhizobium halophytocola:::fph
@@ -31984,7 +31842,7 @@ hydrochlorothiazide et epargneurs potassiques:::fph
 hydrochlorothiazide:::fph
 hydrocolpos du nouveau-né
 hydrocortancyl:::fph
-hydrocortisone aceponate:::fph
+hydrocortisone acéponate:::fph
 hydrocortisone butyrate:::fph
 hydrocortisone:::fph
 hydrocution
@@ -32879,6 +32737,7 @@ hélice de Milan-Markley
 hélice de Wakil-Lynen
 hélice de Watson et Crick
 hélice pi
+hélicidine:::fph
 hélicoptère
 hélicotrème
 héliodermie
@@ -33183,7 +33042,7 @@ hémochorial
 hémochromatose de type 2 A
 hémochromatose de type 3
 hémochromatose des Bantous
-hémochromatose génétique de type HFE 1.
+hémochromatose génétique de type HFE 1
 hémochromatose juvénile
 hémochromatose néonatale
 hémochromatose secondaire
@@ -33334,7 +33193,7 @@ hémorragiose constitutionnelle anhémopathique
 hémorragipare
 hémorragique
 hémorrhée
-hémorroïdal adj.
+hémorroïdal
 hémorroïdectomie
 hémorroïdes
 hémoréomètre
@@ -33371,8 +33230,9 @@ héméralopie et myopie maligne
 héparane
 héparane-sulfate
 héparinase
-héparine
+héparine choay:::fph
 héparine de bas poids moléculaire
+héparine:::fph
 héparinisation
 héparinémie
 hépascore
@@ -33391,12 +33251,14 @@ hépatite C
 hépatite D
 hépatite E
 hépatite G
+hépatite a, virus entier inactivé:::fph
 hépatite aigüe
 hépatite alcoolique
 hépatite allo-immune congénitale
 hépatite amarile
 hépatite amibienne
 hépatite auto-immune
+hépatite b, antigène purifie:::fph
 hépatite cholestatique
 hépatite chronique
 hépatite delta
@@ -33607,23 +33469,23 @@ ibiron:::fph
 ibrance:::fph
 ibrutinib:::fph
 ibufetum:::fph
-ibuprofene almus:::fph
-ibuprofene arrow lab:::fph
-ibuprofene arrow:::fph
-ibuprofene biogaran:::fph
-ibuprofene cristers:::fph
-ibuprofene eg:::fph
-ibuprofene evolugen pharma:::fph
-ibuprofene evolugen:::fph
-ibuprofene sandoz:::fph
-ibuprofene teva:::fph
-ibuprofene viatris sante:::fph
-ibuprofene viatris:::fph
-ibuprofene zentiva lab:::fph
-ibuprofene zentiva:::fph
-ibuprofene zydus france:::fph
-ibuprofene zydus:::fph
-ibuprofene:::fph
+ibuprofène almus:::fph
+ibuprofène arrow lab:::fph
+ibuprofène arrow:::fph
+ibuprofène biogaran:::fph
+ibuprofène cristers:::fph
+ibuprofène eg:::fph
+ibuprofène evolugen pharma:::fph
+ibuprofène evolugen:::fph
+ibuprofène sandoz:::fph
+ibuprofène teva:::fph
+ibuprofène viatris sante:::fph
+ibuprofène viatris:::fph
+ibuprofène zentiva lab:::fph
+ibuprofène zentiva:::fph
+ibuprofène zydus france:::fph
+ibuprofène zydus:::fph
+ibuprofène:::fph
 icatibant:::fph
 icaz lp:::fph
 iccosome
@@ -33688,8 +33550,7 @@ ictère récidivant de la grossesse
 ictère simple du nouveau-né
 icélostérie
 idacio:::fph
-idebenone:::fph
-idelalisib:::fph
+idelalisib
 idelvion:::fph
 identification
 identification génétique
@@ -33730,6 +33591,7 @@ idradénome de la vulve
 idursulfase:::fph
 idéal du moi
 idéalisme passionné
+idébénone:::fph
 idée de damnation
 idée de protection
 idée fixe
@@ -33743,6 +33605,7 @@ idées délirantes de référence
 idées délirantes mystiques
 idées médiumniques
 idées, syndrome d'influence
+idélalisib:::fph
 ienne détrusorien
 ifirmacombi:::fph
 ifirmasta:::fph
@@ -33918,8 +33781,7 @@ imeth:::fph
 imidazole
 imidazole aminoacidurie
 imidazolés
-imiglucerase:::fph
-imiglucérase
+imiglucérase:::fph
 imigrane:::fph
 imiject:::fph
 imine
@@ -33999,7 +33861,7 @@ immunoglobuline E
 immunoglobuline G
 immunoglobuline G STS
 immunoglobuline M
-immunoglobuline anti hepatite b:::fph
+immunoglobuline anti hépatite b:::fph
 immunoglobuline anti-D
 immunoglobuline antitetanique:::fph
 immunoglobuline monoclonale
@@ -34366,13 +34228,14 @@ incurvation de verge
 incus
 incycloduction
 incyclovergence
-indacaterol et bromure de glycopyrronium:::fph
-indacaterol:::fph
+indacatérol et bromure de glycopyrronium:::fph
+indacatérol:::fph
 indapamide:::fph
 indemnisation accidents du travail et maladies professionnelles
 indemnité journalière
 indentation sclérale externe
 index
+index Kt sur V
 index articulaire
 index bactériologique de Ridley
 index bispectral
@@ -34506,8 +34369,7 @@ indocollyre:::fph
 indolacéturie
 indole
 indolurie
-indometacine:::fph
-indométacine
+indométacine:::fph
 indosable
 indosé
 indoxyle
@@ -34955,13 +34817,13 @@ insufflation tubaire
 insulatard flexpen:::fph
 insulatard penfill:::fph
 insulatard:::fph
-insulin-like Growth Factor-I l.angl.
+insulin-like Growth Factor-I
 insulinase
 insuline
 insuline aspart:::fph
-insuline degludec et liraglutide:::fph
-insuline degludec:::fph
-insuline detemir:::fph
+insuline dégludec et liraglutide:::fph
+insuline dégludec:::fph
+insuline détémir:::fph
 insuline glargine:::fph
 insuline glulisine:::fph
 insuline humaine:::fph
@@ -35012,9 +34874,6 @@ interface
 interface cerveau-machine
 interface vitréomaculaire
 interface-fabricant d'une prise murale de gaz
-interferon beta-1a:::fph
-interferon beta-1b:::fph
-interferon gamma:::fph
 interferon regulatory factor 6
 interférence
 interférence ARN
@@ -35023,6 +34882,9 @@ interférence pharmacocinétique
 interférence transcriptionnelle
 interféron
 interféron alpha-2b pégylé
+interféron beta-1a:::fph
+interféron beta-1b:::fph
+interféron gamma:::fph
 interférons et sclérose en plaques
 interhésion
 interleukine
@@ -35232,9 +35094,8 @@ iodure
 iodurie
 iodémie
 iohexol:::fph
-iomeprol:::fph
 iomeron:::fph
-ioméprol
+ioméprol:::fph
 ion
 ion hydrogène
 ionique
@@ -35260,20 +35121,20 @@ ipilimumab
 ipratropium bromure:::fph
 iproniazide
 ipsilatéral
-irbesartan accord:::fph
-irbesartan arrow:::fph
-irbesartan bgr:::fph
-irbesartan cristers pharma:::fph
-irbesartan cristers:::fph
-irbesartan eg:::fph
-irbesartan et diuretiques:::fph
-irbesartan evolugen:::fph
-irbesartan sandoz:::fph
-irbesartan teva:::fph
-irbesartan viatris:::fph
-irbesartan zentiva:::fph
-irbesartan zydus:::fph
-irbesartan:::fph
+irbésartan accord:::fph
+irbésartan arrow:::fph
+irbésartan bgr:::fph
+irbésartan cristers pharma:::fph
+irbésartan cristers:::fph
+irbésartan eg:::fph
+irbésartan et diuretiques:::fph
+irbésartan evolugen:::fph
+irbésartan sandoz:::fph
+irbésartan teva:::fph
+irbésartan viatris:::fph
+irbésartan zentiva:::fph
+irbésartan zydus:::fph
+irbésartan:::fph
 iridectomie
 iridectomie périphérique
 iridectomie sectorielle
@@ -35416,10 +35277,9 @@ isotonie
 isotonique
 isotope
 isotransplantation
-isotretinoine acnetrait:::fph
-isotretinoine:::fph
 isotrope
-isotrétinoïne
+isotrétinoïne acnetrait:::fph
+isotrétinoïne:::fph
 isotype
 isovalthine
 isovaléryl-coenzyme A déshydrogénase
@@ -35464,14 +35324,14 @@ ivabradine:::fph
 ivacaftor:::fph
 ivermectine:::fph
 ivhebex:::fph
-ivosidenib:::fph
+ivosidénib:::fph
 ivresse alcoolique
 ivresse convulsivante
 ixazomib:::fph
-ixekizumab:::fph
 ixioïde
 ixothymie
 ixprim:::fph
+ixékizumab:::fph
 izalgi:::fph
 izilox:::fph
 izinova:::fph
@@ -35660,32 +35520,8 @@ kesimpta:::fph
 kestin:::fph
 kestinlyo:::fph
 ketazed:::fph
-ketoconazole arrow:::fph
-ketoconazole biogaran:::fph
-ketoconazole cristers:::fph
-ketoconazole eg:::fph
-ketoconazole esteve:::fph
-ketoconazole sandoz:::fph
-ketoconazole teva:::fph
-ketoconazole viatris:::fph
-ketoconazole zentiva:::fph
-ketoconazole:::fph
 ketoderm:::fph
-ketoprofene arrow lp:::fph
-ketoprofene biogaran lp:::fph
-ketoprofene cristers lp:::fph
-ketoprofene cristers:::fph
-ketoprofene eg lp:::fph
-ketoprofene gnr lp:::fph
-ketoprofene pharmy ii:::fph
-ketoprofene sandoz lp:::fph
-ketoprofene teva lp:::fph
-ketoprofene viatris lp:::fph
-ketoprofene zentiva lp:::fph
-ketoprofene:::fph
-ketorolac:::fph
 ketosteril:::fph
-ketotifene:::fph
 ketum:::fph
 kevzara:::fph
 kexine
@@ -36183,13 +36019,36 @@ kéraunose
 kérion de Celse
 kérose
 kétamine
-kétoconazole
+kétoconazole arrow:::fph
+kétoconazole biogaran:::fph
+kétoconazole cristers:::fph
+kétoconazole eg:::fph
+kétoconazole esteve:::fph
+kétoconazole sandoz:::fph
+kétoconazole teva:::fph
+kétoconazole viatris:::fph
+kétoconazole zentiva:::fph
+kétoconazole:::fph
 kétolides
+kétoprofène arrow lp:::fph
+kétoprofène biogaran lp:::fph
+kétoprofène cristers lp:::fph
+kétoprofène cristers:::fph
+kétoprofène eg lp:::fph
+kétoprofène gnr lp:::fph
+kétoprofène pharmy ii:::fph
+kétoprofène sandoz lp:::fph
+kétoprofène teva lp:::fph
+kétoprofène viatris lp:::fph
+kétoprofène zentiva lp:::fph
+kétoprofène:::fph
+kétorolac:::fph
+kétotifène:::fph
 l lèpre borderline borderline
 l-thyroxin henning:::fph
 l-thyroxine serb:::fph
 lab-ferment
-labetalol:::fph
+labetalol
 labial
 labilité émotionnelle
 labioplastie
@@ -36220,6 +36079,7 @@ labyrinthe vestibulaire
 labyrinthectomie
 labyrinthite
 labyrinthotomie
+labétalol:::fph
 lac biliaire
 lac cérébelleux inférieur
 lac lacrymal
@@ -36603,14 +36463,14 @@ laminotomie
 lamisil:::fph
 lamisildermgel:::fph
 lamivudine et abacavir:::fph
-lamivudine, abacavir et dolutegravir:::fph
+lamivudine, abacavir et dolutégravir:::fph
 lamivudine:::fph
 lamotrigine:::fph
 lampe de Macbeth
 lampe à fente
 lampe à fente photographique
 lamprene:::fph
-lanadelumab:::fph
+lanadélumab:::fph
 lanatoside
 lancefieldella parvula:::fph
 lancefieldella rimae:::fph
@@ -36632,7 +36492,7 @@ lanoline
 lanoléine
 lanostérol
 lanoteplase
-lanreotide:::fph
+lanréotide:::fph
 lansoprazole:::fph
 lanterne
 lanterne de Beyne
@@ -36668,7 +36528,7 @@ lariam:::fph
 laribacter hongkongensis:::fph
 larmabak:::fph
 larme
-larmes artificielles et diverses autres preparations:::fph
+larmes artificielles et diverses autres préparations:::fph
 larmes artificielles martinet:::fph
 larmoiement
 larotrectinib:::fph
@@ -36779,7 +36639,6 @@ laxité palpébrale
 lazaroïde
 leader
 leak point pressure
-lebrikizumab:::fph
 leclercia adecarboxylata:::fph
 leclercia pneumoniae:::fph
 leclercia tamurae:::fph
@@ -36797,12 +36656,6 @@ lederfoline:::fph
 leeloo continu:::fph
 leeloo:::fph
 leeuwenhoekiella marinoflava:::fph
-leflunomide biogaran:::fph
-leflunomide eg:::fph
-leflunomide ratiopharm:::fph
-leflunomide viatris:::fph
-leflunomide zentiva:::fph
-leflunomide:::fph
 legionella adelaidensis:::fph
 legionella anisa:::fph
 legionella antarctica:::fph
@@ -36914,9 +36767,6 @@ leminorella richardii:::fph
 lemniscus
 lemniscus latéral
 lemniscus médial
-lenacapavir:::fph
-lenalidomide:::fph
-lenograstim:::fph
 lensectomie
 lente
 lenticône
@@ -37094,23 +36944,6 @@ lercanidipine:::fph
 lercapress:::fph
 lesbianisme
 lescol:::fph
-letermovir:::fph
-letrozole accord healthcare:::fph
-letrozole almus:::fph
-letrozole alter:::fph
-letrozole arrow lab:::fph
-letrozole arrow:::fph
-letrozole biogaran:::fph
-letrozole cristers pharma:::fph
-letrozole cristers:::fph
-letrozole eg:::fph
-letrozole evolugen:::fph
-letrozole sandoz:::fph
-letrozole teva:::fph
-letrozole viatris:::fph
-letrozole zentiva:::fph
-letrozole zydus:::fph
-letrozole:::fph
 leucaphérèse
 leucine
 leucine-aminopeptidase
@@ -37244,15 +37077,14 @@ leucémie aigüe promyélocytaire
 leucémie aigüe à basophiles
 leucémie aigüe à mégacaryoblastes
 leucémie chronique à neutrophiles
-leucémie chronique à éosinophile associée à FIP1L1-PDGFRA gene
 leucémie chronique à éosinophiles
-leucémie chronique à éosinophiles associée à PDGFRB gene
 leucémie lymphoïde chronique
 leucémie myélomonocytaire chronique
 leucémie myélomonocytaire chronique de l'enfant
 leucémie myéloïde chronique
 leucémie myéloïde chronique atypique
 leucémie oligoblastique
+leucémie ou lymphome T de l'adulte
 leucémie à mastocytes
 leucémie à plasmocytes
 leucémie à prolymphocytes
@@ -37261,26 +37093,9 @@ leukine
 leukoderma acquisitum centrifugum
 leukozyme
 leupeptine
-leuproreline:::fph
+leuproréline:::fph
 levemir flexpen:::fph
 levemir penfill:::fph
-levetiracetam accord:::fph
-levetiracetam arrow lab:::fph
-levetiracetam arrow:::fph
-levetiracetam biogaran:::fph
-levetiracetam cristers pharma:::fph
-levetiracetam cristers:::fph
-levetiracetam eg labo:::fph
-levetiracetam eg:::fph
-levetiracetam evolugen:::fph
-levetiracetam krka:::fph
-levetiracetam medipha sante:::fph
-levetiracetam sandoz:::fph
-levetiracetam teva:::fph
-levetiracetam viatris:::fph
-levetiracetam zentiva:::fph
-levetiracetam zydus:::fph
-levetiracetam:::fph
 levidcen:::fph
 levilactobacillus acidifarinae:::fph
 levilactobacillus angrenensis:::fph
@@ -37307,37 +37122,11 @@ levilactobacillus tongjiangensis:::fph
 levilactobacillus yonginensis:::fph
 levilactobacillus zymae:::fph
 levmentin:::fph
-levobunolol:::fph
-levocabastine:::fph
 levocarnil:::fph
-levocarnitine:::fph
-levocetirizine arrow:::fph
-levocetirizine biogaran:::fph
-levocetirizine cristers:::fph
-levocetirizine eg:::fph
-levocetirizine krka:::fph
-levocetirizine sandoz:::fph
-levocetirizine teva:::fph
-levocetirizine viatris:::fph
-levocetirizine zentiva:::fph
-levocetirizine zydus:::fph
-levocetirizine:::fph
-levodopa et inhibiteur de la decarboxylase:::fph
-levodopa, inhibiteur de la decarboxylase et inhibiteur de la comt:::fph
-levofloxacine:::fph
 levofree:::fph
-levomepromazine:::fph
-levonorgestrel biogaran:::fph
-levonorgestrel cristers:::fph
-levonorgestrel eg:::fph
-levonorgestrel et estrogene:::fph
-levonorgestrel viatris:::fph
-levonorgestrel zentiva:::fph
-levonorgestrel:::fph
 levophta:::fph
 levosolo:::fph
 levothyrox:::fph
-levothyroxine sodique:::fph
 levotonine:::fph
 levunique:::fph
 levure
@@ -37408,9 +37197,8 @@ lichen vulvaire
 lichen érosif
 lichénification
 lichénisation
-lidocaine en association:::fph
-lidocaine:::fph
-lidocaïne
+lidocaïne en association:::fph
+lidocaïne:::fph
 lieur
 life sustaining device
 lifog:::fph
@@ -38083,6 +37871,7 @@ ligne de Twining
 ligne de Voigt
 ligne de Wackenheim
 ligne de base
+ligne de base de Reid
 ligne de confusion
 ligne de de Salle
 ligne de direction
@@ -38240,7 +38029,6 @@ lincosamides
 lindane
 lindilane:::fph
 linea fusca
-linezolide:::fph
 lingual
 linguatulose
 linguistique
@@ -38260,7 +38048,7 @@ linkat
 linnéen
 linsidomine
 linéa temporalis
-linézolide
+linézolide:::fph
 lioresal:::fph
 liothyronine sodique:::fph
 lipacidurie
@@ -38516,7 +38304,7 @@ lithiase biliaire à faible niveau de phospholipides
 lithiase calcique
 lithiase coralliforme
 lithiase cystinique
-lithiase de la voie biliaire principale ou lithiase du canal cholédoque.
+lithiase de la voie biliaire principale ou lithiase du canal cholédoque
 lithiase médicamenteuse
 lithiase oxalique
 lithiase pancréatique
@@ -38826,6 +38614,7 @@ loméfloxacine
 long ARN non codant
 long acting thyroid stimulator
 long chain 3-ketoacyl-CoA thiolase
+long columelle avec fente lèvre et palais, anomalies oculaires, cardiaques et intestinales
 long séjour
 longiligne
 longitudinal
@@ -38841,36 +38630,35 @@ lonoten:::fph
 lonquex:::fph
 lonsdalea quercina:::fph
 lonsurf:::fph
-loperamide almus:::fph
-loperamide arrow lab:::fph
-loperamide arrow:::fph
-loperamide biogaran:::fph
-loperamide eg:::fph
-loperamide evolugen:::fph
-loperamide lyoc:::fph
-loperamide sandoz:::fph
-loperamide teva:::fph
-loperamide viatris:::fph
-loperamide zentiva:::fph
-loperamide zydus:::fph
-loperamide:::fph
 lophotriche
 lopinavir
 lopinavir et ritonavir:::fph
 loprazolam:::fph
 lopressor:::fph
+lopéramide almus:::fph
+lopéramide arrow lab:::fph
+lopéramide arrow:::fph
+lopéramide biogaran:::fph
+lopéramide eg:::fph
+lopéramide evolugen:::fph
+lopéramide lyoc:::fph
+lopéramide sandoz:::fph
+lopéramide teva:::fph
+lopéramide viatris:::fph
+lopéramide zentiva:::fph
+lopéramide zydus:::fph
+lopéramide:::fph
 loramyc:::fph
 loratadine:::fph
-lorazepam viatris:::fph
-lorazepam:::fph
-lorazépam
+lorazépam viatris:::fph
+lorazépam:::fph
 lordose
 lordose cervicale
 lordose lombaire
 loricrine
 lorlatinib:::fph
-lormetazepam arrow:::fph
-lormetazepam:::fph
+lormétazépam arrow:::fph
+lormétazépam:::fph
 lorviqua:::fph
 losange de Michaelis
 losangique
@@ -39043,8 +38831,6 @@ lycanthropie
 lycopène
 lycopénémie
 lycée climatique
-lymecycline arrow:::fph
-lymecycline:::fph
 lymphadenectomie médiastinale
 lymphadenosis benigna cutis
 lymphadénectomie
@@ -39203,6 +38989,8 @@ lymphœdème de Milroy-Meige
 lymphœdème des jambes et ptosis
 lymphœdème du membre supérieur
 lymphœdème microcéphalie et anomalies chorio-rétiniennes
+lymécycline arrow:::fph
+lymécycline:::fph
 lynestrénol
 lynparza:::fph
 lyo-enzyme
@@ -39323,6 +39111,7 @@ lèvre supérieure de la bouche
 lèvre tympanique du limbe de la lame spirale osseuse
 lèvre vestibulaire du limbe de la lame spirale osseuse
 lèvres de la bouche
+lébrikizumab:::fph
 lécithinase
 lécithine
 lécithine-cholestérol-acyltransférase
@@ -39330,7 +39119,12 @@ lécithocèle
 lécithocèle primaire
 lécithocèle secondaire
 lédipasvir
-léflunomide
+léflunomide biogaran:::fph
+léflunomide eg:::fph
+léflunomide ratiopharm:::fph
+léflunomide viatris:::fph
+léflunomide zentiva:::fph
+léflunomide:::fph
 légal
 légalité
 légionellose
@@ -39342,8 +39136,11 @@ léiomyome pulmonaire
 léiomyome utérin
 léiomyosarcome
 léiomyosarcome cutané
+lénacapavir:::fph
+lénalidomide:::fph
 léniceps
 léniceps de Mattei
+lénograstim:::fph
 lépidique
 lépothrix
 lépreux
@@ -39380,19 +39177,76 @@ lésions osseuses de l'acidose tubulaire chronique
 létal
 létalité
 létalité synthétique
+létermovir:::fph
 léthargie
-létrozole
+létrozole accord healthcare:::fph
+létrozole almus:::fph
+létrozole alter:::fph
+létrozole arrow lab:::fph
+létrozole arrow:::fph
+létrozole biogaran:::fph
+létrozole cristers pharma:::fph
+létrozole cristers:::fph
+létrozole eg:::fph
+létrozole evolugen:::fph
+létrozole sandoz:::fph
+létrozole teva:::fph
+létrozole viatris:::fph
+létrozole zentiva:::fph
+létrozole zydus:::fph
+létrozole:::fph
 lévamisole
 lévane
 lévane-sucrase
+lévobunolol:::fph
+lévocabastine:::fph
 lévocardie
 lévocardiogramme
-lévofloxacine
-lévomépromazine
+lévocarnitine:::fph
+lévocétirizine arrow:::fph
+lévocétirizine biogaran:::fph
+lévocétirizine cristers:::fph
+lévocétirizine eg:::fph
+lévocétirizine krka:::fph
+lévocétirizine sandoz:::fph
+lévocétirizine teva:::fph
+lévocétirizine viatris:::fph
+lévocétirizine zentiva:::fph
+lévocétirizine zydus:::fph
+lévocétirizine:::fph
+lévodopa et inhibiteur de la decarboxylase:::fph
+lévodopa, inhibiteur de la decarboxylase et inhibiteur de la comt:::fph
+lévofloxacine:::fph
+lévomépromazine:::fph
+lévonorgestrel biogaran:::fph
+lévonorgestrel cristers:::fph
+lévonorgestrel eg:::fph
+lévonorgestrel et estrogene:::fph
+lévonorgestrel viatris:::fph
+lévonorgestrel zentiva:::fph
+lévonorgestrel:::fph
 lévorotation du cœur
+lévothyroxine sodique:::fph
 lévoversion du cœur
 lévoversion oculaire
 lévulose
+lévétiracétam accord:::fph
+lévétiracétam arrow lab:::fph
+lévétiracétam arrow:::fph
+lévétiracétam biogaran:::fph
+lévétiracétam cristers pharma:::fph
+lévétiracétam cristers:::fph
+lévétiracétam eg labo:::fph
+lévétiracétam eg:::fph
+lévétiracétam evolugen:::fph
+lévétiracétam krka:::fph
+lévétiracétam medipha sante:::fph
+lévétiracétam sandoz:::fph
+lévétiracétam teva:::fph
+lévétiracétam viatris:::fph
+lévétiracétam zentiva:::fph
+lévétiracétam zydus:::fph
+lévétiracétam:::fph
 m-m-rvaxpro:::fph
 mRNA
 machine de Belzer
@@ -39510,10 +39364,10 @@ maduromycose
 maduromycétome
 magainine
 maginjectable:::fph
-magnesium pidolate:::fph
 magnetospirillum magnetotacticum:::fph
 magnosystème
 magnésium
+magnésium pidolate:::fph
 magnésiémie
 magnétique bas champ
 magnétique haut champ
@@ -39791,6 +39645,7 @@ maladie de Hand-Schüller-Christian
 maladie de Hansen
 maladie de Harada
 maladie de Hashimoto-Pritzker
+maladie de Heberden
 maladie de Hebra-Kaposi
 maladie de Heine-Medin
 maladie de Henderson-Jones
@@ -40066,6 +39921,7 @@ maladie de Willis-Ekbom
 maladie de Wilson
 maladie de Wilson-Brocq
 maladie de Winchester
+maladie de Woakes
 maladie de Wolman
 maladie de Worth et Wollin
 maladie de Wunderlich
@@ -40776,12 +40632,7 @@ maîtrise des dépenses
 maïeuticien
 maïeutique
 mcd
-mebeverine zentiva:::fph
-mebeverine zydus:::fph
-mebeverine:::fph
-mecasermine:::fph
 mecir:::fph
-meclozine:::fph
 mediastinum testis
 mediatensyl lp:::fph
 medicaments a base d'oxyde de zinc:::fph
@@ -40797,13 +40648,8 @@ mediterraneibacter hominis:::fph
 mediterraneibacter massiliensis:::fph
 mediterraneibacter torques:::fph
 mednutriflex e:::fph
-mednutriflex omega e:::fph
-medrogestone:::fph
+mednutriflex oméga e:::fph
 medrol:::fph
-medroxyprogesterone et estrogene:::fph
-medroxyprogesterone:::fph
-mefenamique acide:::fph
-mefloquine:::fph
 megace:::fph
 megalodesulfovibrio gigas:::fph
 megalodesulfovibrio paquesii:::fph
@@ -40826,7 +40672,6 @@ megasphaera paucivorans:::fph
 megasphaera stantonii:::fph
 megasphaera sueciensis:::fph
 megasphaera vaginalis:::fph
-megestrol:::fph
 meibomite
 mekinist:::fph
 mektovi:::fph
@@ -40836,15 +40681,8 @@ melanodontie infantile
 melanomalignom
 melanosis lenticularis generalisata
 melanosis oculi
-melatonine:::fph
 melaxose:::fph
 melissococcus plutonius:::fph
-meloxicam biogaran:::fph
-meloxicam eg:::fph
-meloxicam sandoz:::fph
-meloxicam teva:::fph
-meloxicam zentiva:::fph
-meloxicam:::fph
 melphalan:::fph
 melæna
 melæna du nouveau-né
@@ -40975,7 +40813,7 @@ menace d'infarctus
 mendélien
 mendélisme
 meningocoque b, vaccin multicomposants:::fph
-meningocoque c, antigenes polysaccharidiques conjugues:::fph
+meningocoque c, antigènes polysaccharidiques conjugues:::fph
 menjugate:::fph
 menopur:::fph
 menquadfi:::fph
@@ -40990,8 +40828,6 @@ menton
 mentophyma
 mentoplastie
 menveo:::fph
-mepolizumab:::fph
-mequitazine:::fph
 mercaptalbumine
 mercaptamine:::fph
 mercaptan
@@ -41001,10 +40837,6 @@ mergibacter septicus:::fph
 merkelome
 merline
 meronem:::fph
-meropenem arrow lab:::fph
-meropenem arrow:::fph
-meropenem:::fph
-mesalazine:::fph
 mescaline
 mesna:::fph
 meso pulmonum
@@ -41137,9 +40969,6 @@ metformine et saxagliptine:::fph
 metformine et sitagliptine:::fph
 metformine et vildagliptine:::fph
 metformine:::fph
-methadone ah-hp:::fph
-methadone ap-hp:::fph
-methadone:::fph
 methanobrevibacter acididurans:::fph
 methanobrevibacter arboriphilicus:::fph
 methanobrevibacter boviskoreani:::fph
@@ -41157,14 +40986,7 @@ methanobrevibacter thaueri:::fph
 methanobrevibacter woesei:::fph
 methanobrevibacter wolinii:::fph
 methergin:::fph
-methotrexate accord:::fph
-methotrexate:::fph
-methoxsalene:::fph
-methoxy polyethylene glycol-epoetine beta:::fph
 methylarcula marina:::fph
-methyle aminolevulinate:::fph
-methylergometrine:::fph
-methylnaltrexone bromure:::fph
 methylobacterium adhaesivum:::fph
 methylobacterium aerolatum:::fph
 methylobacterium ajmalii:::fph
@@ -41240,50 +41062,24 @@ methylorubrum subtropicum:::fph
 methylorubrum suomiense:::fph
 methylorubrum thiocyanatum:::fph
 methylorubrum zatmanii:::fph
-methylphenidate arrow lp:::fph
-methylphenidate biogaran lp:::fph
-methylphenidate eg lp:::fph
-methylphenidate viatris lp:::fph
-methylphenidate:::fph
-methylprednisolone:::fph
-metoclopramide sandoz:::fph
-metoclopramide viatris:::fph
-metoclopramide:::fph
 metoject:::fph
-metopimazine arrow:::fph
-metopimazine venipharm:::fph
-metopimazine:::fph
 metopirone:::fph
-metoprolol accord:::fph
-metoprolol arrow lab:::fph
-metoprolol et autres antihypertenseurs:::fph
-metoprolol sandoz:::fph
-metoprolol viatris:::fph
-metoprolol:::fph
 metotab:::fph
-metreleptine:::fph
-metronidazole arrow:::fph
-metronidazole biogaran:::fph
-metronidazole:::fph
 metvixia:::fph
-metyrapone esteve:::fph
-metyrapone:::fph
 meulage
-mexiletine:::fph
-mexilétine
+mexilétine:::fph
 mezlocilline
 mgh
 miRNA
-mianserine arrow:::fph
-mianserine biogaran:::fph
-mianserine cristers:::fph
-mianserine eg:::fph
-mianserine sandoz:::fph
-mianserine teva:::fph
-mianserine viatris:::fph
-mianserine zentiva:::fph
-mianserine:::fph
-miansérine
+miansérine arrow:::fph
+miansérine biogaran:::fph
+miansérine cristers:::fph
+miansérine eg:::fph
+miansérine sandoz:::fph
+miansérine teva:::fph
+miansérine viatris:::fph
+miansérine zentiva:::fph
+miansérine:::fph
 mibiscan
 micafungine:::fph
 micardis:::fph
@@ -41882,7 +41678,7 @@ mobiluncus massiliensis:::fph
 mobiluncus mulieris:::fph
 mobiluncus porci:::fph
 moclamine:::fph
-moclobemide:::fph
+moclobémide:::fph
 modafinil:::fph
 modamide:::fph
 mode
@@ -41980,21 +41776,21 @@ molécule d'adhésion vasculaire
 molécule de lésion rénale
 molécule de signalisation
 molécule-gramme
-momelotinib:::fph
 moment cinétique
 moment magnétique
-mometasone alter:::fph
-mometasone arrow:::fph
-mometasone biogaran:::fph
-mometasone cristers:::fph
-mometasone eg:::fph
-mometasone en association:::fph
-mometasone sandoz:::fph
-mometasone teva:::fph
-mometasone viatris:::fph
-mometasone zentiva:::fph
-mometasone:::fph
 momification
+momélotinib:::fph
+mométasone alter:::fph
+mométasone arrow:::fph
+mométasone biogaran:::fph
+mométasone cristers:::fph
+mométasone eg:::fph
+mométasone en association:::fph
+mométasone sandoz:::fph
+mométasone teva:::fph
+mométasone viatris:::fph
+mométasone zentiva:::fph
+mométasone:::fph
 monaural
 monazol:::fph
 mongolien
@@ -42140,27 +41936,28 @@ mont de Vénus
 mont pubien
 montage anesthésique
 montage isocentrique
-montelukast accord healthcare:::fph
-montelukast accord:::fph
-montelukast almus:::fph
-montelukast alter:::fph
-montelukast arrow lab:::fph
-montelukast arrow:::fph
-montelukast bgr:::fph
-montelukast cristers pharma:::fph
-montelukast cristers:::fph
-montelukast eg:::fph
-montelukast evolugen:::fph
-montelukast krka:::fph
-montelukast sandoz:::fph
-montelukast teva:::fph
-montelukast viatris:::fph
-montelukast zentiva:::fph
-montelukast zydus:::fph
-montelukast:::fph
+montelukast
 monture d'essai
 monture de lunettes
 montée de lait
+montélukast accord healthcare:::fph
+montélukast accord:::fph
+montélukast almus:::fph
+montélukast alter:::fph
+montélukast arrow lab:::fph
+montélukast arrow:::fph
+montélukast bgr:::fph
+montélukast cristers pharma:::fph
+montélukast cristers:::fph
+montélukast eg:::fph
+montélukast evolugen:::fph
+montélukast krka:::fph
+montélukast sandoz:::fph
+montélukast teva:::fph
+montélukast viatris:::fph
+montélukast zentiva:::fph
+montélukast zydus:::fph
+montélukast:::fph
 monuril:::fph
 mopral:::fph
 moranyl
@@ -43076,7 +42873,7 @@ muscles papillaires du cœur
 muscles pectinés de l'atrium droit
 muscles pectinés de l'atrium gauche
 muscles pelvi-trochantériens
-muscles recto-uréthraux.
+muscles recto-uréthraux
 muscles rotateurs
 muscles rotateurs des lombes
 muscles rotateurs du cou
@@ -43180,6 +42977,7 @@ myalgie
 myalgie épidémique
 myasthénie
 myasthénie congénitale
+myasthénie congénitale ou dystrophie des ceintures
 myasthénie et D-pénicillamine
 myasthénie familiale du nourrisson
 myasthénie grave familiale infantile
@@ -43431,13 +43229,13 @@ mycolactone
 mycolicibacterium chengduense:::fph
 mycolicibacterium sichuanense:::fph
 mycologie
-mycophenolate mofetil arrow:::fph
-mycophenolate mofetil biogaran:::fph
-mycophenolate mofetil sandoz:::fph
-mycophenolate mofetil teva:::fph
-mycophenolate mofetil viatris:::fph
-mycophenolique acide:::fph
 mycophénolate mofetil
+mycophénolate mofétil arrow:::fph
+mycophénolate mofétil biogaran:::fph
+mycophénolate mofétil sandoz:::fph
+mycophénolate mofétil teva:::fph
+mycophénolate mofétil viatris:::fph
+mycophénolique acide:::fph
 mycoplana azooxidifex:::fph
 mycoplana bullata:::fph
 mycoplasma amphoriforme:::fph
@@ -43642,7 +43440,7 @@ myoclonies vélopalatines et squelettiques
 myoclonus
 myoclonus baltique
 myoclonus fibrillaire de Kny
-myoclonus multiplex fibrillaire de Kule.
+myoclonus multiplex fibrillaire de Kule
 myoclonus méditerranéen
 myocyte
 myodésopsie
@@ -43789,7 +43587,7 @@ myotubularine
 myoépithéliome
 myoépithéliome à cellules claires de Lever
 myrelez:::fph
-myringien adj.
+myringien
 myringite
 myringite virale
 myringoplastie
@@ -43904,6 +43702,9 @@ méatoplastie
 méatostomie
 méats doubles
 mébendazole
+mébévérine zentiva:::fph
+mébévérine zydus:::fph
+mébévérine:::fph
 mécanique obstétricale
 mécanique ondulatoire
 mécanisme d'action des antibiotiques
@@ -43921,7 +43722,9 @@ mécanocardiographie
 mécanogramme
 mécanorécepteur
 mécanotransduction
+mécasermine:::fph
 méchystase
+méclozine:::fph
 méconial
 méconium
 méconnaissance
@@ -44054,8 +43857,9 @@ médiorénal
 méditation transcendantale
 méditest
 médius
-médrogestone
-médroxyprogestérone
+médrogestone:::fph
+médroxyprogestérone et estrogene:::fph
+médroxyprogestérone:::fph
 médullaire d'un nœud lymphatique
 médullaire de l'ovaire
 médullaire de la glande suprarénale
@@ -44067,7 +43871,8 @@ médulloblastome
 médullosurrénale
 médulloépithéliome
 méfiance
-méfloquine
+méfloquine:::fph
+méfénamique acide:::fph
 méga-aorte
 méga-artère
 méga-uretère
@@ -44105,6 +43910,7 @@ mégasplanchnie
 mégaspore
 mégavertèbre
 mégavessie
+mégestrol:::fph
 méglumine
 méiocyte
 méiose
@@ -44200,7 +44006,7 @@ mélanotropine
 mélanurie
 mélarsoprol
 mélasma
-mélatonine
+mélatonine:::fph
 mélibiose
 mélioïdose
 mélitine
@@ -44210,6 +44016,12 @@ méliturie
 mélomèle
 mélorhéostose
 mélotomie
+méloxicam biogaran:::fph
+méloxicam eg:::fph
+méloxicam sandoz:::fph
+méloxicam teva:::fph
+méloxicam zentiva:::fph
+méloxicam:::fph
 méléna
 mémoire
 mémoire de travail
@@ -44279,6 +44091,8 @@ ménopause précoce neurogène
 ménorrhagie
 ménorrhée
 ménothermique
+mépolizumab:::fph
+méquitazine:::fph
 méralgie paresthésique
 méralgie paresthésique de Roth
 méralgie paresthésique du nerf cutané fémoral latéral
@@ -44290,6 +44104,9 @@ mérogamie
 méromyosine
 méromélie
 méromélie longitudinale radiale
+méropénem arrow lab:::fph
+méropénem arrow:::fph
+méropénem:::fph
 méropénème
 mérosine
 mérospore
@@ -44297,6 +44114,7 @@ mérosporocyste
 mérozoïte
 mérozygote
 mérycisme en psychiatrie
+mésalazine:::fph
 mésangiolyse
 mésangium glomérulaire
 mésappariement
@@ -44463,7 +44281,9 @@ métatropique
 métatropique dysplasie de type II
 métazoaire
 métencéphale
-méthadone
+méthadone ah-hp:::fph
+méthadone ap-hp:::fph
+méthadone:::fph
 méthanal
 méthane
 méthanogène
@@ -44522,6 +44342,7 @@ méthode de Kakkar
 méthode de Kaplan-Meier
 méthode de Karman
 méthode de Kato
+méthode de Kirschner
 méthode de Knaus
 méthode de Kober
 méthode de Kouwenhoven
@@ -44584,8 +44405,11 @@ méthodes multifactorielles prédictives
 méthodes prédictives
 méthodes substitutives
 méthohexital
-méthotrexate
+méthotrexate accord:::fph
+méthotrexate:::fph
 méthoxatine
+méthoxsalène:::fph
+méthoxy polyéthylène glycol-époétine beta:::fph
 méthoxy-
 méthoxypsoralène
 méthyl sulfonyl méthane
@@ -44595,18 +44419,26 @@ méthylation
 méthylcellulose
 méthylcobalamine
 méthyle
-méthylergométrine
+méthyle aminolévulinate:::fph
+méthylergométrine:::fph
 méthylglucamine
 méthylhistidine
 méthylmalonicacidurie
 méthylmalonicurie
 méthylmalonyl-coenzyme A
 méthylmercaptan
+méthylnaltrexone bromure:::fph
 méthylnicotinamide
 méthylome
 méthyloxydase
 méthylpentose
+méthylphénidate arrow lp:::fph
+méthylphénidate biogaran lp:::fph
+méthylphénidate eg lp:::fph
+méthylphénidate viatris lp:::fph
+méthylphénidate:::fph
 méthylphényltétrahydropyridine
+méthylprednisolone:::fph
 méthylterbutyléther
 méthyltransférase
 méthylvaline
@@ -44623,10 +44455,21 @@ méticilline
 métis
 métissage
 méto-éconématose
-métoclopramide
+métoclopramide sandoz:::fph
+métoclopramide viatris:::fph
+métoclopramide:::fph
 métonymie
 métopage
+métopimazine arrow:::fph
+métopimazine venipharm:::fph
+métopimazine:::fph
 métopite
+métoprolol accord:::fph
+métoprolol arrow lab:::fph
+métoprolol et autres antihypertenseurs:::fph
+métoprolol sandoz:::fph
+métoprolol viatris:::fph
+métoprolol:::fph
 métribolone
 métrite corporéale
 métrite parenchymateuse puerpérale
@@ -44634,12 +44477,17 @@ métrite parenchymateuse simple
 métrite parenchymateuse suppurée
 métrite puerpérale
 métrizamide
-métronidazole
+métronidazole arrow:::fph
+métronidazole biogaran:::fph
+métronidazole:::fph
 métroplastie
 métrorragie
 métrorragie rétrograde
 métrotomie
+métréleptine:::fph
 métule
+métyrapone esteve:::fph
+métyrapone:::fph
 météorisme
 météoropathologie
 mévalonate
@@ -44667,12 +44515,12 @@ nCoV-2019
 naabak:::fph
 naaxia:::fph
 nabucox:::fph
-nabumetone:::fph
+nabumétone:::fph
 nadolol:::fph
 nadroparine:::fph
 naevus de Unna
 naevus verrue molle
-nafareline:::fph
+nafaréline:::fph
 naftidrofuryl
 nagana
 nain
@@ -44683,8 +44531,8 @@ naissance vivante
 naissance à terme
 nalbufine:::fph
 nalbuphine:::fph
-naldemedine:::fph
-nalmefene:::fph
+naldémédine:::fph
+nalméfène:::fph
 nalorphine
 naloxone:::fph
 naltrexone:::fph
@@ -44739,7 +44587,7 @@ nanosphère
 nanotechnologie
 napkin psoriasis
 naprosyne:::fph
-naproxene:::fph
+naproxène:::fph
 naramig:::fph
 naratriptan:::fph
 narcissique
@@ -44780,32 +44628,9 @@ navelbine:::fph
 naïf
 nebcine:::fph
 nebilox:::fph
-nebivolol almus:::fph
-nebivolol arrow lab:::fph
-nebivolol arrow:::fph
-nebivolol biogaran:::fph
-nebivolol cristers:::fph
-nebivolol eg:::fph
-nebivolol et thiazidiques:::fph
-nebivolol evolugen:::fph
-nebivolol krka:::fph
-nebivolol sandoz:::fph
-nebivolol teva:::fph
-nebivolol viatris sante:::fph
-nebivolol viatris:::fph
-nebivolol zentiva:::fph
-nebivolol zydus:::fph
-nebivolol:::fph
 necrobiosis lipoidica diabeticorum
 necropsobacter rosorum:::fph
 nectinepsine
-nefopam arrow:::fph
-nefopam biogaran:::fph
-nefopam medisol:::fph
-nefopam panpharma:::fph
-nefopam teva:::fph
-nefopam viatris:::fph
-nefopam:::fph
 negaban:::fph
 negativicoccus massiliensis:::fph
 negativicoccus succinicivorans:::fph
@@ -44890,7 +44715,6 @@ neoroseomonas rubea:::fph
 neoroseomonas sediminicola:::fph
 neoroseomonas soli:::fph
 neoroseomonas terrae:::fph
-neostigmine:::fph
 neosynephrine:::fph
 nepexto:::fph
 nephropathia epidemica
@@ -45553,13 +45377,6 @@ neutropénie
 neutropénie allo-immune
 neutropénie auto-immune
 neutropénie familiale de Gänsslen
-nevirapine arrow lab:::fph
-nevirapine cristers lp:::fph
-nevirapine sandoz lp:::fph
-nevirapine sandoz:::fph
-nevirapine teva lp:::fph
-nevirapine viatris:::fph
-nevirapine:::fph
 nevrilème
 nevus
 nexavar:::fph
@@ -45592,7 +45409,7 @@ nicopass menthe fraicheur:::fph
 nicopass:::fph
 nicopatchlib:::fph
 nicorandil:::fph
-nicorette menthe fraiche:::fph
+nicorette menthe fraîche:::fph
 nicorette microtab:::fph
 nicorette:::fph
 nicoretteskin:::fph
@@ -45613,7 +45430,6 @@ nid épidermique de Darier
 nidation
 nidogène
 nidus
-nifedipine:::fph
 nifexine:::fph
 niflugel:::fph
 niflumique acide:::fph
@@ -45623,7 +45439,7 @@ nifluril:::fph
 nifuroxazide
 nifurtimox
 nifurzide
-nifédipine
+nifédipine:::fph
 nilemdo:::fph
 nilotinib:::fph
 nilutamide:::fph
@@ -45633,11 +45449,11 @@ nimorazole
 nimotop:::fph
 ninhydrine
 ninlaro:::fph
-nintedanib:::fph
+nintédanib:::fph
 niosome
 niquitin:::fph
 niraparib:::fph
-nirsevimab:::fph
+nirsévimab:::fph
 nisatidine
 nisine
 nit
@@ -45655,8 +45471,7 @@ nitriliruptor alkaliphilus:::fph
 nitrique
 nitro-5-imidazolés
 nitrofurane
-nitrofurantoine:::fph
-nitrofurantoïne
+nitrofurantoïne:::fph
 nitroglycerine:::fph
 nitrogénase
 nitroprussiate de sodium
@@ -45952,10 +45767,6 @@ nombre de masse
 nombre de torsions de l'adn
 nombres au hasard
 nombril
-nomegestrol biogaran:::fph
-nomegestrol sandoz:::fph
-nomegestrol viatris:::fph
-nomegestrol:::fph
 nomenclature
 nomenclature de l'appareillage
 nomenclature des actes de biologie
@@ -45968,6 +45779,10 @@ nomenclature générale des actes professionnels
 nomenclature internationale francisée
 nomina anatomica
 nomogramme de Olsson et Siroky
+nomégestrol biogaran:::fph
+nomégestrol sandoz:::fph
+nomégestrol viatris:::fph
+nomégestrol:::fph
 non alcoholic fatty liver diseases
 non alcoholic steato hepatitis
 non attachement congénital de la rétine
@@ -46009,7 +45824,6 @@ noradrénergique
 norcholestérol marqué
 nordimet:::fph
 norditropine flexpro:::fph
-norethisterone et estrogene:::fph
 norfloxacine:::fph
 noriodocholestérol
 norleucine
@@ -46039,6 +45853,7 @@ norvaline
 norvir:::fph
 norépinéphrine
 noréthistérone
+noréthistérone et estrogene:::fph
 nosencéphale
 nosocomial
 nosographie
@@ -46093,6 +45908,8 @@ noxafil:::fph
 noyada:::fph
 noyade
 noyau
+noyau D et D'de Völsch
+noyau E1 et E2 de Völsch
 noyau M
 noyau T
 noyau accumbens
@@ -46419,6 +46236,22 @@ nævus épidermique de Solomon
 nævus épidermique verruqueux inflammatoire linéaire
 nævus épithélial de la muqueuse buccale
 néarthrose
+nébivolol almus:::fph
+nébivolol arrow lab:::fph
+nébivolol arrow:::fph
+nébivolol biogaran:::fph
+nébivolol cristers:::fph
+nébivolol eg:::fph
+nébivolol et thiazidiques:::fph
+nébivolol evolugen:::fph
+nébivolol krka:::fph
+nébivolol sandoz:::fph
+nébivolol teva:::fph
+nébivolol viatris sante:::fph
+nébivolol viatris:::fph
+nébivolol zentiva:::fph
+nébivolol zydus:::fph
+nébivolol:::fph
 nébuline
 nébuliseur
 nécrobiose aseptique d'un léiomyome utérin
@@ -46459,6 +46292,13 @@ nécrotique
 nécrozoospermie
 nédaplatine
 nédocromil
+néfopam arrow:::fph
+néfopam biogaran:::fph
+néfopam medisol:::fph
+néfopam panpharma:::fph
+néfopam teva:::fph
+néfopam viatris:::fph
+néfopam:::fph
 négativisme
 négaton
 négatoscope
@@ -46501,7 +46341,7 @@ néopupille
 néorétinal
 néorétinol
 néorétinène
-néostigmine
+néostigmine:::fph
 néotype
 néoténie
 néovagin
@@ -46623,7 +46463,13 @@ néprilysine
 nésidioblastome
 nétilmicine
 nétrine
-névirapine
+névirapine arrow lab:::fph
+névirapine cristers lp:::fph
+névirapine sandoz lp:::fph
+névirapine sandoz:::fph
+névirapine teva lp:::fph
+névirapine viatris:::fph
+névirapine:::fph
 névralgie
 névralgie amyotrophiante de l'épaule
 névralgie cervico-brachiale
@@ -46869,7 +46715,6 @@ nœuds lymphatiques viscéraux pelviens
 nœuds lymphatiques vésicaux latéraux
 nœuds lymphatiques épigastriques inférieurs
 oat cells
-obeticholique acide:::fph
 obex
 objectal
 objet
@@ -46939,6 +46784,7 @@ obésité sarcopénique
 obésité surrénale
 obésité viscérale
 obéstatine
+obéticholique acide:::fph
 ocaliva:::fph
 occipital
 occipitalisation de l'atlas
@@ -46994,10 +46840,10 @@ octet
 octopamine
 octopine
 octopus
-octreotide arrow:::fph
-octreotide teva lp:::fph
-octreotide:::fph
+octréotide arrow:::fph
 octréotide marqué
+octréotide teva lp:::fph
+octréotide:::fph
 ocufen:::fph
 oculariste
 ocularité
@@ -47017,7 +46863,6 @@ ocytocique
 oddite
 odds ratio
 odefsey:::fph
-odevixibat:::fph
 odomzo:::fph
 odonto-stomatologie
 odontoblaste
@@ -47028,6 +46873,7 @@ odoribacter lunatus:::fph
 odoribacter splanchnicus:::fph
 odrik:::fph
 odynophagie
+odévixibat:::fph
 oeil
 oenococcus oeni:::fph
 oerskovia douganii:::fph
@@ -47100,7 +46946,7 @@ oligémie pulmonaire
 olimel n:::fph
 olipudase alfa:::fph
 olive bulbaire
-olodaterol:::fph
+olodatérol:::fph
 olopatadine:::fph
 olsalazine:::fph
 olsenella absiana:::fph
@@ -47139,23 +46985,6 @@ ombres de Gumprecht
 omentectomie
 omentopexie
 omentoplastie
-omeprazole almus:::fph
-omeprazole arrow lab:::fph
-omeprazole arrow:::fph
-omeprazole biogaran:::fph
-omeprazole cristers lab:::fph
-omeprazole cristers pharma:::fph
-omeprazole eg:::fph
-omeprazole evolugen pharma:::fph
-omeprazole krka:::fph
-omeprazole sandoz:::fph
-omeprazole teva pharma:::fph
-omeprazole teva sante:::fph
-omeprazole towa pharmaceutical europe:::fph
-omeprazole viatris:::fph
-omeprazole zentiva lab:::fph
-omeprazole zydus france:::fph
-omeprazole:::fph
 omexel:::fph
 omics
 omission vestibulaire
@@ -47183,7 +47012,23 @@ omphalotribe
 omphalotripsie
 oméga-3
 oméga-6
-oméprazole
+oméprazole almus:::fph
+oméprazole arrow lab:::fph
+oméprazole arrow:::fph
+oméprazole biogaran:::fph
+oméprazole cristers lab:::fph
+oméprazole cristers pharma:::fph
+oméprazole eg:::fph
+oméprazole evolugen pharma:::fph
+oméprazole krka:::fph
+oméprazole sandoz:::fph
+oméprazole teva pharma:::fph
+oméprazole teva sante:::fph
+oméprazole towa pharmaceutical europe:::fph
+oméprazole viatris:::fph
+oméprazole zentiva lab:::fph
+oméprazole zydus france:::fph
+oméprazole:::fph
 onanisme
 onbrez breezhaler:::fph
 onchocercome
@@ -47203,15 +47048,15 @@ oncomoduline
 oncopharmacologie
 oncornavirus
 oncotique
-ondansetron arrow:::fph
-ondansetron biogaran:::fph
-ondansetron cristers:::fph
-ondansetron eg:::fph
-ondansetron teva:::fph
-ondansetron viatris:::fph
-ondansetron zentiva:::fph
-ondansetron zydus:::fph
-ondansetron:::fph
+ondansétron arrow:::fph
+ondansétron biogaran:::fph
+ondansétron cristers:::fph
+ondansétron eg:::fph
+ondansétron teva:::fph
+ondansétron viatris:::fph
+ondansétron zentiva:::fph
+ondansétron zydus:::fph
+ondansétron:::fph
 onde
 onde F
 onde F de l'électromyogramme
@@ -48091,8 +47936,7 @@ oscillométrique
 oscillopie
 oscillopsie secondaire
 ose
-oseltamivir zentiva:::fph
-oseltamivir:::fph
+oseltamivir
 osidase
 oside
 osilodrostat:::fph
@@ -48128,7 +47972,9 @@ ossification endométriale
 ossification périostale
 ossifluent
 osteogenesis imperfecta
+osteogenesis imperfecta de type II et III de Sillence
 osteogenesis imperfecta de type IIA
+osteogenesis imperfecta de type III et IV
 osteogenesis imperfecta forme oculaire
 osteogenesis imperfecta progressivement déformante avec sclères normales
 osteogenesis imperfecta tardive
@@ -48229,6 +48075,7 @@ ostéogénie
 ostéogénique
 ostéogénèse imparfaite tardive
 ostéogénèse imparfaite type 1 avec dentinogenése imparfaite
+ostéogénèse imparfaite type 2 et 3 de Sillence
 ostéogénèse imparfaite type 2A
 ostéogénèse imparfaite type 3
 ostéogénèse imparfaite type 4
@@ -48323,6 +48170,8 @@ ostéotomies de Sofield
 ostéoïde
 ostéoïdose
 osvyrti:::fph
+oséltamivir zentiva:::fph
+oséltamivir:::fph
 otage
 otalgie
 otezla:::fph
@@ -48444,17 +48293,15 @@ oxalophagus oxalicus:::fph
 oxalose
 oxalose osseuse
 oxalurie
-oxazepam biogaran:::fph
-oxazepam substipharm:::fph
-oxazepam:::fph
 oxazolidinone
-oxazépam
+oxazépam biogaran:::fph
+oxazépam substipharm:::fph
+oxazépam:::fph
 oxbryta:::fph
-oxcarbazepine sandoz:::fph
-oxcarbazepine viatris:::fph
-oxcarbazepine:::fph
+oxcarbazépine sandoz:::fph
+oxcarbazépine viatris:::fph
+oxcarbazépine:::fph
 oxeol:::fph
-oxetorone:::fph
 oxhydrase
 oxhydrile
 oxiconazole:::fph
@@ -48463,15 +48310,15 @@ oxitriptan:::fph
 oxlumo:::fph
 oxo-
 oxobacter pfennigii:::fph
-oxomemazine arrow:::fph
-oxomemazine biogaran:::fph
-oxomemazine cristers:::fph
-oxomemazine eg:::fph
-oxomemazine sandoz:::fph
-oxomemazine teva:::fph
-oxomemazine viatris:::fph
-oxomemazine zentiva:::fph
-oxomemazine:::fph
+oxomémazine arrow:::fph
+oxomémazine biogaran:::fph
+oxomémazine cristers:::fph
+oxomémazine eg:::fph
+oxomémazine sandoz:::fph
+oxomémazine teva:::fph
+oxomémazine viatris:::fph
+oxomémazine zentiva:::fph
+oxomémazine:::fph
 oxsynia lp:::fph
 oxybate:::fph
 oxybutynine:::fph
@@ -48507,11 +48354,11 @@ oxygénothérapie hyperbare
 oxygénothérapie normobare
 oxyhydroxyde sucro-ferrique:::fph
 oxyhémoglobine
-oxymetazoline:::fph
 oxymyoglobine
 oxymètre
 oxymètre de pouls
 oxymètre par réflexion
+oxymétazoline:::fph
 oxymétrie
 oxynorm:::fph
 oxynormoro:::fph
@@ -48526,6 +48373,7 @@ oxytocine
 oxytocique
 oxyure
 oxyurose
+oxétorone:::fph
 ozawade:::fph
 ozempic:::fph
 ozone
@@ -48967,9 +48815,9 @@ palinacousie
 palindrome
 palingénèse
 palinopsie
-paliperidone biogaran:::fph
-paliperidone teva:::fph
-paliperidone:::fph
+palipéridone biogaran:::fph
+palipéridone teva:::fph
+palipéridone:::fph
 palissade
 palivizumab:::fph
 pallesthésie
@@ -48986,7 +48834,7 @@ palmityl-coenzyme A-réductase
 palmure
 palmure laryngée
 palmé
-palonosetron en association:::fph
+palonosétron en association:::fph
 palpateur
 palpation abdominale obstétricale
 palpation thoracique
@@ -49381,31 +49229,6 @@ paracentèse d'ascite
 paracentèse de la cornée
 paracervical
 paracervix
-paracetamol accord:::fph
-paracetamol almus:::fph
-paracetamol alter:::fph
-paracetamol arrow lab:::fph
-paracetamol arrow:::fph
-paracetamol benta:::fph
-paracetamol biogaran:::fph
-paracetamol cristers pharma:::fph
-paracetamol cristers:::fph
-paracetamol eg:::fph
-paracetamol en association avec des psycholeptiques:::fph
-paracetamol en association sauf psycholeptiques:::fph
-paracetamol evolugen pharma:::fph
-paracetamol evolugen:::fph
-paracetamol krka:::fph
-paracetamol sandoz:::fph
-paracetamol sun:::fph
-paracetamol teva sante:::fph
-paracetamol teva:::fph
-paracetamol viatris:::fph
-paracetamol zentiva lab:::fph
-paracetamol zentiva:::fph
-paracetamol zydus france:::fph
-paracetamol zydus:::fph
-paracetamol:::fph
 paracholeplasma manati:::fph
 paraclostridium benzoelyticum:::fph
 paraclostridium bifermentans bifermentans:::fph
@@ -49515,7 +49338,31 @@ paracousie de Willis
 paracrine
 paracrinie
 paracéphalien
-paracétamol
+paracétamol accord:::fph
+paracétamol almus:::fph
+paracétamol alter:::fph
+paracétamol arrow lab:::fph
+paracétamol arrow:::fph
+paracétamol benta:::fph
+paracétamol biogaran:::fph
+paracétamol cristers pharma:::fph
+paracétamol cristers:::fph
+paracétamol eg:::fph
+paracétamol en association avec des psycholeptiques:::fph
+paracétamol en association sauf psycholeptiques:::fph
+paracétamol evolugen pharma:::fph
+paracétamol evolugen:::fph
+paracétamol krka:::fph
+paracétamol sandoz:::fph
+paracétamol sun:::fph
+paracétamol teva sante:::fph
+paracétamol teva:::fph
+paracétamol viatris:::fph
+paracétamol zentiva lab:::fph
+paracétamol zentiva:::fph
+paracétamol zydus france:::fph
+paracétamol zydus:::fph
+paracétamol:::fph
 paradiabète
 paradidyme
 paradidyme de Waldeyer
@@ -49800,23 +49647,22 @@ parotidomégalie
 parotidose
 parotidotomie
 parovarium
-paroxetine almus pharma:::fph
-paroxetine almus:::fph
-paroxetine alter:::fph
-paroxetine arrow:::fph
-paroxetine biogaran:::fph
-paroxetine cristers:::fph
-paroxetine eg:::fph
-paroxetine evolugen:::fph
-paroxetine sandoz:::fph
-paroxetine teva sante:::fph
-paroxetine teva:::fph
-paroxetine viatris:::fph
-paroxetine zentiva:::fph
-paroxetine zydus:::fph
-paroxetine:::fph
 paroxysmes électroencéphalographiques
-paroxétine
+paroxétine almus pharma:::fph
+paroxétine almus:::fph
+paroxétine alter:::fph
+paroxétine arrow:::fph
+paroxétine biogaran:::fph
+paroxétine cristers:::fph
+paroxétine eg:::fph
+paroxétine evolugen:::fph
+paroxétine sandoz:::fph
+paroxétine teva sante:::fph
+paroxétine teva:::fph
+paroxétine viatris:::fph
+paroxétine zentiva:::fph
+paroxétine zydus:::fph
+paroxétine:::fph
 parricide
 pars caduca
 pars centralis ventriculi lateralis
@@ -50106,7 +49952,7 @@ pas d'ours
 pas d'échantillonnage d'un gradient de champ magnétique
 pas de l'hélice
 pascal
-pasireotide:::fph
+pasiréotide:::fph
 passage de Hering
 passage placentaire
 passage à l'acte
@@ -50264,10 +50110,10 @@ pedobacter heparinus:::fph
 peeling
 peeling skin syndrome
 pegasys:::fph
-pegcetacoplan:::fph
+pegcétacoplan:::fph
 pegfilgrastim:::fph
-peginterferon alfa-2a:::fph
-peginterferon beta-1a:::fph
+peginterféron alfa-2a:::fph
+peginterféron beta-1a:::fph
 pegvisomant:::fph
 pelade
 pelade des sourcils
@@ -50318,7 +50164,6 @@ pelvispondylite rhumatismale
 pelvispondylite rhumatismale à début infantile
 pelvitomie
 pemazyre:::fph
-pemigatinib:::fph
 pemphigoïde
 pemphigoïde bulleuse
 pemphigoïde bénigne des muqueuses
@@ -50355,7 +50200,6 @@ pemphigus érythémateux
 pendaison
 pendelluft
 pendrine
-penicillamine:::fph
 penicillin binding proteins
 penile horn
 pension d'invalidité
@@ -50467,7 +50311,6 @@ peptostreptococcus porci:::fph
 peptostreptococcus russellii:::fph
 peptostreptococcus stomatis:::fph
 per os
-perampanel:::fph
 perce-membrane
 percept
 perception
@@ -50523,11 +50366,7 @@ periciazine:::fph
 perifolliculitis capitis abscedens et suffodiens d'Hoffmann
 perifolliculitis capitis abscediens et suffodiens de Hoffmann
 perikabiven:::fph
-perindopril et amlodipine:::fph
-perindopril et bisoprolol:::fph
-perindopril et diuretiques:::fph
-perindopril:::fph
-perinutriflex omega e:::fph
+perinutriflex oméga e:::fph
 perionyxis candidosique
 periostine
 periweissella beninensis:::fph
@@ -50544,13 +50383,12 @@ perlèche candidosique
 perlécane
 permanencier
 permanente
-permethrine:::fph
 permixon:::fph
 perméabilité cutanée
 perméabilité vasculaire
 perméabilité à l'oxygène
 perméase
-perméthrine
+perméthrine:::fph
 pernazene:::fph
 perniose
 peroxisome proliferator-activated receptor
@@ -50607,6 +50445,7 @@ personnalité, typus mélancolique
 personne vulnérable
 personne à risque
 personne âgée
+personne-année
 personnel de santé
 personnel paramédical
 persévération
@@ -50851,12 +50690,7 @@ phase évolutive du cancer du sein
 phaseolibacter flectens:::fph
 phases de croissance
 pheburane:::fph
-phenobarbital:::fph
-phenoxymethylpenicilline:::fph
 phentolamine
-phenylbutyrate sodique:::fph
-phenylephrine:::fph
-phenytoine:::fph
 phialide
 philobate
 philtrum
@@ -51318,8 +51152,7 @@ phytocénose
 phytodermatose
 phytohémagglutinine
 phytol
-phytomenadione:::fph
-phytoménadione
+phytoménadione:::fph
 phytonadione
 phytooestrogène
 phytophotodermatose
@@ -51329,7 +51162,7 @@ phæohyphomycoses
 phæomélanine
 phæomélanosome
 phénicolés
-phénobarbital
+phénobarbital:::fph
 phénocopie
 phénogénétique
 phénol
@@ -51393,12 +51226,16 @@ phénotype ermine albinisme avec surdité
 phénotype intermédiaire
 phénotype mutateur
 phénotypique
+phénoxyméthylpénicilline:::fph
 phénylalanine
 phénylalanine-hydroxylase
+phénylbutyrate sodique:::fph
 phénylcyclidine
 phénylcétonurie
 phénylméthanol
+phényléphrine:::fph
 phényléthylamine
+phénytoïne:::fph
 phéochromocytome
 phéomélanine
 phéromone
@@ -51515,12 +51352,12 @@ pilus sexuel
 pilus tortus
 pimecrolimus
 pimozide:::fph
-pinaverium arrow:::fph
-pinaverium biogaran:::fph
-pinaverium eg:::fph
-pinaverium teva sante:::fph
-pinaverium viatris:::fph
-pinaverium:::fph
+pinavérium arrow:::fph
+pinavérium biogaran:::fph
+pinavérium eg:::fph
+pinavérium teva sante:::fph
+pinavérium viatris:::fph
+pinavérium:::fph
 pince
 pince capsulaire
 pince de Magill
@@ -51543,15 +51380,15 @@ pinta
 pintide
 pinéalome
 pioglitazone
-pipamperone:::fph
+pipampérone:::fph
 pipelle de Cornier
-piperacilline et inhibiteur d'enzyme:::fph
 pipette Pasteur
 pipobroman:::fph
 piportil l:::fph
 piportil:::fph
 pipotiazine:::fph
 pipéracilline
+pipéracilline et inhibiteur d'enzyme:::fph
 pipérazine
 piqûre d'hyménoptère
 piqûre d'insecte
@@ -51560,23 +51397,21 @@ piqûre de diptère
 piqûre de mouche
 piqûre de scorpion
 piqûre de tique
-piracetam arrow:::fph
-piracetam:::fph
+piracétam arrow:::fph
+piracétam:::fph
 pirbutérol
-piretanide:::fph
-pirfenidone arrow:::fph
-pirfenidone biogaran:::fph
-pirfenidone eg:::fph
-pirfenidone sandoz:::fph
-pirfenidone teva:::fph
-pirfenidone zentiva:::fph
-pirfenidone:::fph
-pirfénidone
-piribedil:::fph
-piribédil
+pirfénidone arrow:::fph
+pirfénidone biogaran:::fph
+pirfénidone eg:::fph
+pirfénidone sandoz:::fph
+pirfénidone teva:::fph
+pirfénidone zentiva:::fph
+pirfénidone:::fph
+piribédil:::fph
 pirilene:::fph
 piroplasmose
 piroxicam:::fph
+pirétanide:::fph
 piscine
 piscirickettsia salmonis:::fph
 pisiforme
@@ -51604,9 +51439,9 @@ pityriasis versicolor
 pityrosporose
 pivalone:::fph
 pivampicilline
-pivmecillinam:::fph
+pivmécillinam:::fph
 pixel
-pizotifene:::fph
+pizotifène:::fph
 pièce en Y
 pièce intercalaire de von Szily
 pièce intermédiaire
@@ -51827,7 +51662,7 @@ plasmide multicopie
 plasmide non conjugatif
 plasmide r
 plasmide recombinant
-plasmide recombiné l.m..
+plasmide recombiné
 plasmide résident
 plasmide tueur
 plasmide-prime
@@ -51890,7 +51725,6 @@ plavix:::fph
 pleckstrine
 plegridy:::fph
 plein-frère
-plerixafor:::fph
 plesiomonas shigelloides:::fph
 pleuralisation
 pleurectomie pariétale
@@ -52170,6 +52004,7 @@ pléomorphisme
 pléonostéose
 pléonostéose familiale
 pléoptique
+plérixafor:::fph
 plésiocuriethérapie
 plésiomorphe
 plésioradiographie
@@ -52198,8 +52033,8 @@ pneumocholédoque
 pneumocisternographie
 pneumococcie
 pneumococcique
-pneumococcus, antigene polysaccharidique purifie conjugue:::fph
-pneumococcus, antigene polysaccharidique purifie:::fph
+pneumococcus, antigène polysaccharidique purifie conjugué:::fph
+pneumococcus, antigène polysaccharidique purifie:::fph
 pneumococcémie
 pneumocolon
 pneumoconiose
@@ -52704,6 +52539,7 @@ ponction du cul-de-sac de Douglas
 ponction du péricarde
 ponction du sein
 ponction du sinus longitudinal supérieur
+ponction et trituration d'une calcification
 ponction ganglionnaire
 ponction lavage du péritoine
 ponction lombaire
@@ -52715,13 +52551,13 @@ ponction échoguidée
 ponction-aspiration d'une calcification
 ponction-aspiration de l'encéphale
 ponction-biopsie du rein
+ponction-biopsie osseuse
 ponction-biopsie prostatique
 ponction-biopsie transthoracique
 ponctuations basophiles des hématies
 ponctuations de Ziemann
 pondération
 pondéré
-ponesimod:::fph
 ponstyl:::fph
 pont
 pont chromosomique
@@ -52735,6 +52571,7 @@ pontage de Favaloro
 ponte ovulaire
 ponticulus promontorii
 ponvory:::fph
+ponésimod:::fph
 poplité
 population
 population gamétique
@@ -53032,7 +52869,7 @@ pouvoir oxyphorique du sang
 pouvoir pathogène d'un agent infectieux
 pouvoir réflecteur
 pouvoir séparateur
-povidone iodee:::fph
+povidone iodée:::fph
 poxviroses
 poïkilo-dermatomyosite de Petges et Cléjat
 poïkilocarynose
@@ -53055,7 +52892,7 @@ pppApApA
 pppApApA-synthétase
 pradaxa:::fph
 pragmatique
-pralsetinib:::fph
+pralsétinib:::fph
 praluent:::fph
 pramipexole:::fph
 prasugrel:::fph
@@ -53068,31 +52905,15 @@ pratique médicale thermale complémentaire
 prauserella rugosa:::fph
 pravastatine:::fph
 praxis
-prazepam arrow:::fph
-prazepam biogaran:::fph
-prazepam eg:::fph
-prazepam:::fph
 praziquantel:::fph
 prazosine:::fph
+prazépam arrow:::fph
+prazépam biogaran:::fph
+prazépam eg:::fph
+prazépam:::fph
 preamygdalar claustrum de Mai
 prednisolone:::fph
 prednisone:::fph
-pregabaline accord:::fph
-pregabaline alter:::fph
-pregabaline arrow:::fph
-pregabaline bgr:::fph
-pregabaline biogaran:::fph
-pregabaline cristers pharma:::fph
-pregabaline eg labo:::fph
-pregabaline evolugen pharma:::fph
-pregabaline hcs:::fph
-pregabaline sandoz:::fph
-pregabaline teva sante:::fph
-pregabaline upsa:::fph
-pregabaline viatris:::fph
-pregabaline zentiva:::fph
-pregabaline zydus:::fph
-pregabaline:::fph
 pregnane
 pregnane X receptor
 premier - cunéiforme
@@ -53329,10 +53150,9 @@ probabilité
 probabilités bayésiennes
 probabilités conditionnelles
 probation
-probenecide:::fph
 probiotique
 proboscis
-probénécide
+probénécide:::fph
 procalcitonine
 procarbazine:::fph
 procarboxypeptidase
@@ -53523,16 +53343,15 @@ progeria de l'enfant
 progeria et cataracte
 progestan:::fph
 progestatif
-progesterone biogaran:::fph
-progesterone et estrogene:::fph
-progesterone viatris:::fph
-progesterone:::fph
 progestine
 progestinogène
 progestogel:::fph
 progestogène
 progestoïde
-progestérone
+progestérone biogaran:::fph
+progestérone et estrogene:::fph
+progestérone viatris:::fph
+progestérone:::fph
 proglicem:::fph
 proglottis
 proglucagon
@@ -53610,8 +53429,7 @@ prolyl-aminopeptidase
 prolyl-carboxypeptidase
 prolyl-hydroxylase
 promastigote
-promestriene:::fph
-promestriène
+promestriène:::fph
 promontofixation
 promontoire
 promontoire de la cavité tympanique
@@ -53634,8 +53452,8 @@ pronucleus mâle
 pronucléus
 pronéphrique
 pronéphros
-propafenone accord:::fph
-propafenone:::fph
+propafénone accord:::fph
+propafénone:::fph
 proparathormone
 propepsine
 properdine
@@ -53663,6 +53481,7 @@ proprioception des muscles oculomoteurs
 propriétés caractéristiques d'un biofilm
 proprotéine
 proprotéine convertase
+proprotéine convertase subtilisine kexine de type 9
 proptose oculaire
 propylex:::fph
 propylthiouracile:::fph
@@ -53740,7 +53559,6 @@ protection médullaire
 protection sociale
 protection solaire
 protein O-mannosyl-transferases
-proteine c:::fph
 proteus alimentorum:::fph
 proteus appendicitidis:::fph
 proteus cibi:::fph
@@ -53841,7 +53659,6 @@ protéine 1 multifonctionnelle interagissant avec le complexe amino-acyl-tRNA sy
 protéine 4.1R
 protéine A
 protéine BPI
-protéine C
 protéine C réactive
 protéine C-réactive
 protéine CDC
@@ -53873,6 +53690,7 @@ protéine apparentée à la parathormone
 protéine argonaute
 protéine associée aux microtubules
 protéine bêta-amyloïde
+protéine c:::fph
 protéine cellulaire de liaison au rétinal
 protéine cellulaire de transport du rétinol I
 protéine chaperonne
@@ -53887,6 +53705,7 @@ protéine d'assemblage des nucléosomes-1
 protéine dactyle
 protéine de Tamm et Horsfall
 protéine de fusion
+protéine de fusion PML RAR alpha
 protéine de l'inflammation
 protéine de liaison avec l'ADN simple brin
 protéine de liaison avec la boîte TATA
@@ -54096,6 +53915,22 @@ prédiastole
 prédiastolique
 prédisposition
 préexcitation cardiaque
+prégabaline accord:::fph
+prégabaline alter:::fph
+prégabaline arrow:::fph
+prégabaline bgr:::fph
+prégabaline biogaran:::fph
+prégabaline cristers pharma:::fph
+prégabaline eg labo:::fph
+prégabaline evolugen pharma:::fph
+prégabaline hcs:::fph
+prégabaline sandoz:::fph
+prégabaline teva sante:::fph
+prégabaline upsa:::fph
+prégabaline viatris:::fph
+prégabaline zentiva:::fph
+prégabaline zydus:::fph
+prégabaline:::fph
 prégnance
 prégnandiol
 prégnandiolurie
@@ -55426,11 +55261,10 @@ pyridoxal-phosphate
 pyridoxamine
 pyridoxamine-phosphate
 pyridoxine
-pyrimethamine:::fph
 pyrimidinazine
 pyrimidine
 pyrimidique
-pyriméthamine
+pyriméthamine:::fph
 pyrine
 pyrogène
 pyrolagnie
@@ -55543,8 +55377,10 @@ pélycogène
 pélycomètre
 pélycotomie
 pélyscopie
+pémigatinib:::fph
 pénalisation alternante
 pénalisation optique
+pénicillamine:::fph
 pénicilles de la rate
 pénicillinases
 pénicillines
@@ -55558,6 +55394,7 @@ pénétrance
 pénétration transcutanée
 péplomère
 péracéphale
+pérampanel:::fph
 péremption
 péremption d'un médicament
 péri-uréthrite
@@ -55647,7 +55484,10 @@ périmétrium
 périnatal, ale
 périnatalité
 périnatologie
-périndopril
+périndopril et amlodipine:::fph
+périndopril et bisoprolol:::fph
+périndopril et diuretiques:::fph
+périndopril:::fph
 périnèvre
 périnéal, ale
 périnée
@@ -55707,7 +55547,7 @@ périphlébite
 périphérie du champ récepteur
 périphérie rétinienne
 périphérine-RDS
-périphérique adj.
+périphérique
 périsalpingite
 périssoploïdie
 péristaltique
@@ -55827,20 +55667,6 @@ questionnaire
 questionnaire DN4
 questionnaire de la douleur de Saint-Antoine
 questran:::fph
-quetiapine accord healthcare lp:::fph
-quetiapine accord lp:::fph
-quetiapine arrow lab lp:::fph
-quetiapine arrow lp:::fph
-quetiapine biogaran lp:::fph
-quetiapine cristers lp:::fph
-quetiapine eg lp:::fph
-quetiapine evolugen lp:::fph
-quetiapine krka lp:::fph
-quetiapine sandoz lp:::fph
-quetiapine teva lp:::fph
-quetiapine viatris lp:::fph
-quetiapine zentiva lp:::fph
-quetiapine:::fph
 queue d'aronde
 queue de cheval
 queue de comète
@@ -55872,6 +55698,7 @@ quinonique
 quinoprotéine
 quinte
 quintus varus
+quinupristine dalfopristine
 quitaxon:::fph
 quizartinib:::fph
 quiétapine
@@ -55891,39 +55718,46 @@ quotient phonatoire
 quotient respiratoire
 quviviq:::fph
 quérulence
-quétiapine
+quétiapine accord healthcare lp:::fph
+quétiapine accord lp:::fph
+quétiapine arrow lab lp:::fph
+quétiapine arrow lp:::fph
+quétiapine biogaran lp:::fph
+quétiapine cristers lp:::fph
+quétiapine eg lp:::fph
+quétiapine evolugen lp:::fph
+quétiapine krka lp:::fph
+quétiapine sandoz lp:::fph
+quétiapine teva lp:::fph
+quétiapine viatris lp:::fph
+quétiapine zentiva lp:::fph
+quétiapine:::fph
 qvar autohaler:::fph
 qvarspray:::fph
 r loop
 rabattu
 rabdomyosarcome orbitaire
-rabeprazole alter:::fph
-rabeprazole arrow generiques:::fph
-rabeprazole bgr:::fph
-rabeprazole biogaran:::fph
-rabeprazole cristers pharma:::fph
-rabeprazole eg labo:::fph
-rabeprazole evolugen:::fph
-rabeprazole krka:::fph
-rabeprazole sandoz:::fph
-rabeprazole teva:::fph
-rabeprazole viatris:::fph
-rabeprazole zentiva:::fph
-rabeprazole zydus:::fph
-rabeprazole:::fph
 rabique
-rabéprazole
+rabéprazole alter:::fph
+rabéprazole arrow generiques:::fph
+rabéprazole bgr:::fph
+rabéprazole biogaran:::fph
+rabéprazole cristers pharma:::fph
+rabéprazole eg labo:::fph
+rabéprazole evolugen:::fph
+rabéprazole krka:::fph
+rabéprazole sandoz:::fph
+rabéprazole teva:::fph
+rabéprazole viatris:::fph
+rabéprazole zentiva:::fph
+rabéprazole zydus:::fph
+rabéprazole:::fph
 raccord DISS
 raccord NIST
 raccord de prise rapide
 raccourcissement scléral
 raccourcissement transductionnel
 race Bedlington terrier
-racecadotril arrow:::fph
-racecadotril bgr:::fph
-racecadotril viatris:::fph
-racecadotril zentiva:::fph
-racecadotril:::fph
 rachialgie
 rachianesthésie
 rachicentèse
@@ -56009,6 +55843,11 @@ racine sympathique du ganglion submandibulaire
 racines cloisonnantes
 racines du plexus brachial
 racines olfactives
+racécadotril arrow:::fph
+racécadotril bgr:::fph
+racécadotril viatris:::fph
+racécadotril zentiva:::fph
+racécadotril:::fph
 racémase
 racémeux
 racémique
@@ -56178,15 +56017,15 @@ ralentissement tardif du rythme cardiaque fœtal
 ralentissement transitoire du rythme cardiaque fœtal
 ralentissement variable du rythme cardiaque fœtal
 ralentisseur
-raloxifene arrow:::fph
-raloxifene biogaran:::fph
-raloxifene cristers:::fph
-raloxifene eg:::fph
-raloxifene sandoz:::fph
-raloxifene teva:::fph
-raloxifene viatris:::fph
-raloxifene zentiva:::fph
-raloxifene:::fph
+raloxifène arrow:::fph
+raloxifène biogaran:::fph
+raloxifène cristers:::fph
+raloxifène eg:::fph
+raloxifène sandoz:::fph
+raloxifène teva:::fph
+raloxifène viatris:::fph
+raloxifène zentiva:::fph
+raloxifène:::fph
 ralstonia chuxiongensis:::fph
 ralstonia condita:::fph
 ralstonia edaphi:::fph
@@ -56208,7 +56047,7 @@ ralstonia syzygii syzygii:::fph
 ralstonia syzygii:::fph
 ralstonia thomasii:::fph
 ralstonia wenshanensis:::fph
-raltegravir:::fph
+raltégravir:::fph
 rameau acromial de l'artère suprascapulaire
 rameau acromial de l'artère thoraco-acromiale
 rameau acétabulaire de l'artère circonflexe fémorale médiale
@@ -56798,6 +56637,11 @@ raphé prérectal
 raphé ptérygomandibulaire
 raphé temporal
 rapid adhering cell
+rapport AC sur A
+rapport CA sur C
+rapport I sur E
+rapport L sur S
+rapport P sur S
 rapport acide palmitique-acide oléique
 rapport cardiothoracique
 rapport corticodiaphysaire
@@ -56815,6 +56659,7 @@ rapport gyromagnétique
 rapport nucléocytoplasmique
 rapport nucléoplasmatique
 rapport sexuel
+rapport signal sur bruit
 rapport tissu air
 rapport tissu maximum
 rapport ventilation-perfusion
@@ -56885,13 +56730,12 @@ rayons ultraviolets
 rbs
 reamer
 reanutriflex e:::fph
-reanutriflex omega e:::fph
+reanutriflex oméga e:::fph
 rebetol:::fph
 rebif:::fph
 reblozyl:::fph
 rebord orbitaire hypoplasique
 rebreathing
-recA gene
 recapitulation
 recaptage neuronal
 recherche biomédicale
@@ -57004,7 +56848,6 @@ regard préférentiel
 reggie
 registre
 registre des stupéfiants
-regorafenib:::fph
 regorgement
 rehaussement myocardique en IRM
 rein
@@ -57071,7 +56914,6 @@ reliefs alvéolaires
 reliquat embryonnaire
 relistor:::fph
 relpax:::fph
-relugolix:::fph
 relvar ellipta:::fph
 relâchement douloureux de la symphyse pubienne
 relâchement douloureux des symphyses
@@ -57117,19 +56959,6 @@ rennine
 renninogène
 renouvellement
 renvela:::fph
-repaglinide accord:::fph
-repaglinide arrow lab:::fph
-repaglinide biogaran:::fph
-repaglinide cristers:::fph
-repaglinide eg:::fph
-repaglinide evolugen:::fph
-repaglinide krka:::fph
-repaglinide sandoz:::fph
-repaglinide teva:::fph
-repaglinide viatris:::fph
-repaglinide zentiva:::fph
-repaglinide zydus:::fph
-repaglinide:::fph
 repas de Boyden
 repas ou test de Lundh
 repatha:::fph
@@ -57179,7 +57008,6 @@ requip lp:::fph
 requip:::fph
 rescision
 reselip:::fph
-reserpine et diuretiques:::fph
 resikali:::fph
 resitune:::fph
 respirateur
@@ -57252,7 +57080,6 @@ retinacula cutis
 retinaculum de la patella
 retinoid x receptor
 retinol binding protein
-retinol:::fph
 retour de couches
 retour veineux
 retour veineux anormal
@@ -57695,17 +57522,17 @@ rigidité cadavérique
 rigidité de décérébration
 rigidité du col utérin
 rikenella microfusus:::fph
-rilmenidine arrow:::fph
-rilmenidine biogaran:::fph
-rilmenidine cristers:::fph
-rilmenidine eg:::fph
-rilmenidine evolugen:::fph
-rilmenidine sandoz:::fph
-rilmenidine teva:::fph
-rilmenidine viatris:::fph
-rilmenidine zentiva:::fph
-rilmenidine zydus:::fph
-rilmenidine:::fph
+rilménidine arrow:::fph
+rilménidine biogaran:::fph
+rilménidine cristers:::fph
+rilménidine eg:::fph
+rilménidine evolugen:::fph
+rilménidine sandoz:::fph
+rilménidine teva:::fph
+rilménidine viatris:::fph
+rilménidine zentiva:::fph
+rilménidine zydus:::fph
+rilménidine:::fph
 rilpivirine:::fph
 rilutek:::fph
 riluzole:::fph
@@ -57718,42 +57545,26 @@ rinvoq:::fph
 rinçage pyélocaliciel
 riociguat:::fph
 rippling muscle disease
-ripretinib:::fph
+riprétinib:::fph
 rire et pleurer spasmodique
 rire sardonique
 risankizumab:::fph
 risdiplam:::fph
-risedronate accord:::fph
-risedronate arrow:::fph
-risedronate bgr:::fph
-risedronate biogaran:::fph
-risedronate cristers pharma:::fph
-risedronate eg:::fph
-risedronate evolugen:::fph
-risedronate sandoz:::fph
-risedronate viatris:::fph
-risedronate zentiva lab:::fph
-risedronate zentiva:::fph
-risedronate zydus france:::fph
-risedronate:::fph
-risedronique acide, calcium et colecalciferol, en sequentiel:::fph
-risedronique acide:::fph
 risperdal:::fph
 risperdalconsta:::fph
-risperidone almus:::fph
-risperidone arrow lab:::fph
-risperidone biogaran:::fph
-risperidone cristers:::fph
-risperidone eg:::fph
-risperidone evolugen:::fph
-risperidone sandoz:::fph
-risperidone teva sante:::fph
-risperidone teva:::fph
-risperidone viatris:::fph
-risperidone zentiva:::fph
-risperidone zydus:::fph
-risperidone:::fph
-rispéridone
+rispéridone almus:::fph
+rispéridone arrow lab:::fph
+rispéridone biogaran:::fph
+rispéridone cristers:::fph
+rispéridone eg:::fph
+rispéridone evolugen:::fph
+rispéridone sandoz:::fph
+rispéridone teva sante:::fph
+rispéridone teva:::fph
+rispéridone viatris:::fph
+rispéridone zentiva:::fph
+rispéridone zydus:::fph
+rispéridone:::fph
 risque
 risque absolu
 risque alpha
@@ -57786,10 +57597,25 @@ risque zéro
 risques cérébrovasculaires des hormones œstroprogestatives
 risques des radiations
 ristocétine
+risédronate accord:::fph
+risédronate arrow:::fph
+risédronate bgr:::fph
+risédronate biogaran:::fph
+risédronate cristers pharma:::fph
+risédronate eg:::fph
+risédronate evolugen:::fph
+risédronate sandoz:::fph
+risédronate viatris:::fph
+risédronate zentiva lab:::fph
+risédronate zentiva:::fph
+risédronate zydus france:::fph
+risédronate:::fph
+risédronique acide, calcium et colécalciférol, en sequentiel:::fph
+risédronique acide:::fph
 ritaline:::fph
 rite conjuratoire
 rite de vérification
-ritlecitinib:::fph
+ritlécitinib:::fph
 ritodrine
 ritonavir:::fph
 rituximab
@@ -57839,7 +57665,7 @@ ronchus
 rond-point bullaire
 ronflement
 ropinirole:::fph
-ropivacaine:::fph
+ropivacaïne:::fph
 rosacée
 rosacée granulomateuse
 rosacée érythémato-télangiectatique
@@ -57892,8 +57718,8 @@ rotation intrapelvienne de la présentation
 rotation latérale
 rotation manuelle de la tête fœtale
 rotation médiale
-rotavirus pentavalent vivant attenue:::fph
-rotavirus vivant attenue:::fph
+rotavirus pentavalent vivant atténué:::fph
+rotavirus vivant atténué:::fph
 rothia aeria:::fph
 rothia aerolata:::fph
 rothia amarae:::fph
@@ -57914,7 +57740,7 @@ rotule
 roue d'Aimé
 rouge à lèvres
 rougeole
-rougeole en association avec oreillons et rubeole, virus vivants attenues:::fph
+rougeole en association avec oreillons et rubéole, virus vivants attenues:::fph
 rouget du porc
 rough
 rouleau
@@ -58409,6 +58235,7 @@ réflexe myotatique
 réflexe médio-plantaire
 réflexe nasolacrymal
 réflexe oculo-cardiaque
+réflexe oculo-céphalogyre vertical et horizontal
 réflexe oculo-respiratoire
 réflexe oculodigital
 réflexe opticopalpébral
@@ -58606,6 +58433,7 @@ régions hypervariables
 régions thoraciques antérieures et latérales
 réglage de la ventilation artificielle
 réglement communautaire
+régorafénib:::fph
 régression
 régression linéaire
 régression logistique
@@ -58643,6 +58471,7 @@ réinhalation
 réinsertion
 réinsertion en psychiatrie
 réintervention
+rélugolix:::fph
 rémanence d'un écran luminescent
 rémanent
 rémifentanil
@@ -58655,7 +58484,19 @@ rénogramme isotopique
 rénoprive
 rénotrope
 rénovasculaire
-répaglinide
+répaglinide accord:::fph
+répaglinide arrow lab:::fph
+répaglinide biogaran:::fph
+répaglinide cristers:::fph
+répaglinide eg:::fph
+répaglinide evolugen:::fph
+répaglinide krka:::fph
+répaglinide sandoz:::fph
+répaglinide teva:::fph
+répaglinide viatris:::fph
+répaglinide zentiva:::fph
+répaglinide zydus:::fph
+répaglinide:::fph
 réparation
 réparation de l'ADN
 réparation par recombinaison
@@ -58755,6 +58596,7 @@ résection transvésicale de l'uretère terminal
 résection tubaire
 résection vaginale
 résectoscope
+réserpine et diuretiques:::fph
 réserve alcaline
 réserve coronaire
 réserve cérébrale
@@ -58918,8 +58760,8 @@ rétinocytome
 rétinographe
 rétinographe stéréographique
 rétinographe à signature spectrale
-rétinol
 rétinol-déshydrogénase
+rétinol:::fph
 rétinome
 rétinopathie
 rétinopathie circinée
@@ -59246,8 +59088,6 @@ salle de réveil
 salle de surveillance postinterventionnelle
 salle de travail
 salles de consommation à moindre risque
-salmeterol et fluticasone:::fph
-salmeterol:::fph
 salmonella bongori:::fph
 salmonella enterica arizonae:::fph
 salmonella enterica diarizonae:::fph
@@ -59259,6 +59099,8 @@ salmonella enterica:::fph
 salmonella subterranea:::fph
 salmonelle
 salmonellose
+salmétérol et fluticasone:::fph
+salmétérol:::fph
 salpingectomie
 salpingectomie partielle
 salpingectomie partielle sous-séreuse
@@ -59325,7 +59167,7 @@ saposine
 saposine A
 sapronose
 saprophyte
-sapropterine:::fph
+saproptérine:::fph
 saquinavir
 sarcina maxima:::fph
 sarcina ventriculi:::fph
@@ -59374,6 +59216,7 @@ sarcome stromal de l'endomètre
 sarcome vasculaire
 sarcome à cellules claires
 sarcome épithélioïde
+sarcomes avec différenciation osseuse ou cartilagineuse
 sarcomes des tissus mous
 sarcomère
 sarcoplasme
@@ -59395,7 +59238,7 @@ sarcoïdose
 sarcoïdose sur cicatrice
 sardonique
 sarilumab:::fph
-sat. fat.
+sat. fat
 satellite
 satisfaction des patients
 satralizumab:::fph
@@ -59833,7 +59676,6 @@ sectorisation psychiatrique
 sectorisation sanitaire
 sectral lp:::fph
 sectral:::fph
-secukinumab:::fph
 secundilactobacillus collinoides:::fph
 secundilactobacillus kimchicus:::fph
 secundilactobacillus malefermentans:::fph
@@ -59966,16 +59808,13 @@ seinonella peptonophila:::fph
 seipine
 sel
 sel biliaire
-selegiline:::fph
 selenomonas felix:::fph
 selenomonas lipolytica:::fph
 selenomonas oralis:::fph
 selenomonas sputigena:::fph
 selexid:::fph
-selexipag:::fph
 self
 selincro:::fph
-selinexor:::fph
 sella equina
 sella sphenoidalis
 sellaire
@@ -59988,8 +59827,6 @@ selozok lp:::fph
 selpercatinib:::fph
 sels d'or et néphrotoxicité
 sels mineraux en association:::fph
-selumetinib:::fph
-semaglutide:::fph
 semelle orthopédique
 semelle veineuse de Lejars
 semen
@@ -60159,7 +59996,7 @@ service médicopsychologique régional
 service public hospitalier
 sessile
 sestamibi
-setmelanotide:::fph
+setmélanotide:::fph
 setofilm:::fph
 seuil achromatique
 seuil anaérobie
@@ -60172,7 +60009,6 @@ seuil de signification
 seuil ischémique
 seuil lumineux absolu
 seuil narinaire
-sevelamer:::fph
 sevoflurane
 sevrage
 sevredol:::fph
@@ -60434,6 +60270,7 @@ signal de polyadénylation
 signal de précession libre en IRM
 signal en IRM
 signal nerveux
+signal sur bruit
 signal-peptidase
 signal-peptide
 signalement
@@ -60673,9 +60510,9 @@ signifiant
 signifié
 signifor:::fph
 siklos:::fph
-sildenafil:::fph
+sildénafil:::fph
 silenceur
-silicate de magnesium:::fph
+silicate de magnésium:::fph
 silicatose
 silice
 silicium
@@ -60935,7 +60772,7 @@ simulateur solaire
 simulation
 simulie
 simultanagnosie
-simvastatine et ezetimibe:::fph
+simvastatine et ézétimibe:::fph
 simvastatine:::fph
 siméprévir
 sinapisme
@@ -61176,7 +61013,7 @@ sodium monofluorophosphate:::fph
 sodium oxybate:::fph
 sodoku
 sodomie
-sofosbuvir et ledipasvir:::fph
+sofosbuvir et lédipasvir:::fph
 sofosbuvir:::fph
 sogroya:::fph
 soi
@@ -61210,22 +61047,22 @@ solidesulfovibrio carbinoliphilus:::fph
 solidesulfovibrio fructosivorans:::fph
 solidesulfovibrio magneticus:::fph
 solidesulfovibrio marrakechensis:::fph
-solifenacine accord:::fph
-solifenacine arrow:::fph
-solifenacine bgr:::fph
-solifenacine cristers:::fph
-solifenacine eg:::fph
-solifenacine evolugen:::fph
-solifenacine hcs:::fph
-solifenacine sandoz:::fph
-solifenacine teva:::fph
-solifenacine viatris:::fph
-solifenacine zentiva:::fph
-solifenacine zydus:::fph
-solifenacine:::fph
+solifénacine accord:::fph
+solifénacine arrow:::fph
+solifénacine bgr:::fph
+solifénacine cristers:::fph
+solifénacine eg:::fph
+solifénacine evolugen:::fph
+solifénacine hcs:::fph
+solifénacine sandoz:::fph
+solifénacine teva:::fph
+solifénacine viatris:::fph
+solifénacine zentiva:::fph
+solifénacine zydus:::fph
+solifénacine:::fph
 solitalea canadensis:::fph
 solobacterium moorei:::fph
-solriamfetol:::fph
+solriamfétol:::fph
 solu-medrol:::fph
 solubilité
 solumedrol:::fph
@@ -61357,20 +61194,20 @@ sonde électronique
 sondelbay:::fph
 sone
 sonic hedgehog
-sonidegib:::fph
+sonidégib:::fph
 sonie
 sonogramme
 sonographe
 sonovue:::fph
 sophidone:::fph
 sophrologie
-sorafenib biogaran:::fph
-sorafenib eg:::fph
-sorafenib sandoz:::fph
-sorafenib teva:::fph
-sorafenib viatris:::fph
-sorafenib zentiva:::fph
-sorafenib:::fph
+sorafénib biogaran:::fph
+sorafénib eg:::fph
+sorafénib sandoz:::fph
+sorafénib teva:::fph
+sorafénib viatris:::fph
+sorafénib zentiva:::fph
+sorafénib:::fph
 sorbitol
 sorbitol-déshydrogénase
 sorbose
@@ -62487,7 +62324,6 @@ stomatocytose expérimentale
 stomatocytose héréditaire
 stomatocéphale
 stomatologie
-stomatologie et thermalisme
 stomatologiste
 stomatopage
 stomatoplastie
@@ -63942,11 +63778,11 @@ sulcus orbitalis d'Ecker
 sulfadiazine argentique:::fph
 sulfadiazine:::fph
 sulfadoxine
-sulfamethoxazole et trimethoprime:::fph
 sulfamide
 sulfamides hypoglycémiants
 sulfaméthizol
 sulfaméthoxazole
+sulfaméthoxazole et triméthoprime:::fph
 sulfarlem s:::fph
 sulfarlem:::fph
 sulfasalazine:::fph
@@ -63976,7 +63812,7 @@ sulfoconjugué
 sulfocystéine
 sulfocystéinurie
 sulfokinase
-sulfonate de polystyrene:::fph
+sulfonate de polystyrène:::fph
 sulfone
 sulfonique
 sulfonylurées
@@ -64255,12 +64091,12 @@ sycosis staphylococcique
 sycosis trichophytique
 sycéphalien
 syllogomanie
-symb. Z impédance acoustique
 symbicort rapihaler:::fph
 symbicort turbuhaler:::fph
 symbiose
 symblépharon
 symbole
+symbole Z de l'impédance acoustique
 symboles et unités électriques
 symboles physiologie respiratoire
 symbolique
@@ -64399,6 +64235,7 @@ syndrome BIDS
 syndrome BOR
 syndrome BSG
 syndrome C
+syndrome CACH VWM
 syndrome CAH
 syndrome CATCH 22
 syndrome CDG
@@ -64447,7 +64284,7 @@ syndrome MYHIIA
 syndrome Micro
 syndrome MonoMAC
 syndrome N
-syndrome NAME l.m. acr. angl. pour Naevus-
+syndrome NAME
 syndrome NAO
 syndrome NEM
 syndrome ODED
@@ -64667,6 +64504,7 @@ syndrome d'Omenn
 syndrome d'Ondine
 syndrome d'Opalski
 syndrome d'Opitz
+syndrome d'Opitz G BBB
 syndrome d'Opitz-Caltabiano
 syndrome d'Opitz-Frias
 syndrome d'Ormond
@@ -64831,6 +64669,7 @@ syndrome de Bálint
 syndrome de Bársony
 syndrome de Bárány
 syndrome de Börjeson-Forssman-Lehmann
+syndrome de Böök
 syndrome de Bürger-Grütz
 syndrome de Caffey-Silverman
 syndrome de Caffey-Smyth
@@ -64926,6 +64765,7 @@ syndrome de Dejerine-Sottas
 syndrome de Delleman
 syndrome de Demelin
 syndrome de Demons-Meigs
+syndrome de Denny-Brown
 syndrome de Denys-Drash
 syndrome de Der Kaloustian-Jarudi-Khoury
 syndrome de Desbuquois
@@ -65691,6 +65531,7 @@ syndrome de Wildervanck
 syndrome de Wilkes-Stevenson
 syndrome de Wilkins
 syndrome de Willi-Prader-Labarth
+syndrome de Williams
 syndrome de Williams-Beuren
 syndrome de Winter
 syndrome de Wiskott-Aldrich
@@ -66546,6 +66387,7 @@ sécrétion salivaire
 sécrétion tubulaire
 sécrétogranine
 sécrétoire
+sécukinumab:::fph
 sécurité
 sécurité anesthésique
 sécurité civile
@@ -66570,13 +66412,17 @@ sélection intrathymique
 sélection préconceptionnelle du sexe fœtal
 sélectivité fréquentielle
 sélectivité à l'orientation
-sélégiline
+sélexipag:::fph
+sélinexor:::fph
+sélumétinib:::fph
+sélégiline:::fph
 sélénium
 sélénocystéine
 sélénocystéine-synthase
 sélénoenzyme
 sélénométhionine
 sélénoprotéine
+sémaglutide:::fph
 sémantide
 sémantique
 sémantophore
@@ -66755,6 +66601,7 @@ sévice sexuel dans l'enfance
 sévice à personne âgée
 sévices physiques à enfant
 sévices psychologiques à enfant
+sévélamer:::fph
 sœur
 tabagisme
 tabagisme de l'adolescent
@@ -66883,15 +66730,14 @@ talzenna:::fph
 tambour de Bárány
 tamiflu:::fph
 tamis moléculaire
-tamoxifene arrow:::fph
-tamoxifene biogaran:::fph
-tamoxifene eg:::fph
-tamoxifene sandoz:::fph
-tamoxifene teva:::fph
-tamoxifene viatris:::fph
-tamoxifene zydus:::fph
-tamoxifene:::fph
-tamoxifène
+tamoxifène arrow:::fph
+tamoxifène biogaran:::fph
+tamoxifène eg:::fph
+tamoxifène sandoz:::fph
+tamoxifène teva:::fph
+tamoxifène viatris:::fph
+tamoxifène zydus:::fph
+tamoxifène:::fph
 tampon
 tampon de wagon
 tamponnade cardiaque
@@ -66900,7 +66746,7 @@ tamponnement nasal
 tamponnement nasal postérieur
 tamponnement nasal vestibulaire
 tamponnement vagino-utérin
-tamsulosine et dutasteride:::fph
+tamsulosine et dutastéride:::fph
 tamsulosine:::fph
 tanganil:::fph
 tanganilpro:::fph
@@ -67053,6 +66899,7 @@ technique de Easterday
 technique de El Mahgoub
 technique de Fernström
 technique de Frain
+technique de Gauthier
 technique de Gil-Vernet
 technique de Gluck
 technique de Goldberger
@@ -67106,6 +66953,7 @@ technique de Ruge-Schröder
 technique de Schwarz-Jackson-Faure
 technique de Seldinger
 technique de Shirodkar
+technique de Slavtchev
 technique de Sones
 technique de Southern
 technique de Stallworthy
@@ -67151,7 +66999,6 @@ technologies omiques
 technétium 99m
 tectum
 tedizolide:::fph
-teduglutide:::fph
 tegeline:::fph
 teglutik:::fph
 tegmen tympani
@@ -67171,7 +67018,7 @@ teichococcus ruber:::fph
 teichococcus suffuscus:::fph
 teichococcus vastitatis:::fph
 teichococcus wenyumeiae:::fph
-teicoplanine:::fph
+teicoplanine
 teigne
 teigne amiantacée d'Alibert
 teigne des duvets
@@ -67199,9 +67046,7 @@ temerit:::fph
 temeritduo:::fph
 temesta:::fph
 temgesic:::fph
-temocilline:::fph
 temodal:::fph
-temozolomide:::fph
 tempe
 temporale
 temps bras-rétine
@@ -67316,13 +67161,9 @@ tendon rotulien
 tenectomie
 teneur corpusculaire moyenne en hémoglobine
 tennis elbow
-tenofovir disoproxil et emtricitabine:::fph
-tenofovir disoproxil:::fph
-tenofovir:::fph
 tenon
 tenoretic:::fph
 tenormine:::fph
-tenoxicam:::fph
 tensine
 tensioactif
 tensiomètre
@@ -67341,9 +67182,6 @@ tenuibacillus halotolerans:::fph
 tenuibacillus multivorans:::fph
 teralithe lp:::fph
 teralithe:::fph
-terazosine biogaran:::fph
-terazosine teva:::fph
-terazosine:::fph
 terbinafine:::fph
 terbium
 terbutaline:::fph
@@ -67351,18 +67189,6 @@ tercian:::fph
 terebyo:::fph
 teretinema zuelzerae:::fph
 tergynan:::fph
-teriflunomide arrow:::fph
-teriflunomide biogaran:::fph
-teriflunomide eg:::fph
-teriflunomide mylan:::fph
-teriflunomide teva sante:::fph
-teriflunomide teva:::fph
-teriflunomide zentiva:::fph
-teriflunomide zydus:::fph
-teriflunomide:::fph
-teriparatide biogaran:::fph
-teriparatide teva:::fph
-teriparatide:::fph
 terlipressine
 terlomexin:::fph
 terme de la grossesse
@@ -67656,10 +67482,10 @@ testicule non descendu
 testing musculaire
 testis determining factor
 testodoxine
-testosterone besins:::fph
-testosterone desma:::fph
-testosterone:::fph
-testostérone
+testosterone oestradiol binding globulin
+testostérone besins:::fph
+testostérone desma:::fph
+testostérone:::fph
 tests allergiques
 tests cutanés en allergologie
 tests d'instabilité de l'hémoglobine
@@ -67673,9 +67499,6 @@ tests paramétriques
 tests projectifs de la personnalité
 tests tuberculiniques cutanés
 tetmodis:::fph
-tetrabenazine:::fph
-tetracosactide:::fph
-tetracycline:::fph
 tetragenococcus halophilus flandriensis:::fph
 tetragenococcus halophilus halophilus:::fph
 tetragenococcus halophilus:::fph
@@ -67686,7 +67509,6 @@ tetragenococcus solitarius:::fph
 tetralysal:::fph
 tetravac-acellulaire:::fph
 tevagrastim:::fph
-tezepelumab:::fph
 tezspire:::fph
 thais:::fph
 thaissept:::fph
@@ -67713,14 +67535,7 @@ thermalisme et ORL
 thermalisme et appareil digestif
 thermalisme et appareil respiratoire
 thermalisme et artériopathies
-thermalisme et cardiopathies
-thermalisme et dermatologie
-thermalisme et gynécologie
 thermalisme et maladies métaboliques
-thermalisme et neurologie
-thermalisme et phlébologie
-thermalisme et psychiatrie
-thermalisme et pédiatrie
 thermalisme et rhumatologie
 thermalisme et stomatologie
 thermalisme et urologie
@@ -67784,7 +67599,7 @@ thiamine
 thiamine-pyrophosphate
 thiamine-pyrophosphokinase
 thiamphénicol
-thiazolidinediones n.f
+thiazolidinediones
 thimérosal
 thioester
 thioestérase
@@ -67978,6 +67793,7 @@ thyroïdien
 thyroïdite
 thyroïdite d'Hashimoto
 thyroïdite de Hashimoto
+thyroïdite de Riedel
 thyroïdite subaigüe de Crile
 thyroïdite subaigüe de de Quervain
 thyréoglobuline
@@ -68088,7 +67904,7 @@ tiagabine:::fph
 tianeptine:::fph
 tiapridal:::fph
 tiapride:::fph
-tiaprofenique acide:::fph
+tiaprofénique acide:::fph
 tiberal:::fph
 tibia
 tibia en lame de sabre
@@ -68102,15 +67918,15 @@ tic douloureux de la face
 tic douloureux de la face, de Trousseau
 tic facial
 tic facial de Charles Bell Bell
-ticagrelor biogaran:::fph
-ticagrelor eg:::fph
-ticagrelor evolugen:::fph
-ticagrelor sandoz:::fph
-ticagrelor teva:::fph
-ticagrelor viatris:::fph
-ticagrelor zentiva:::fph
-ticagrelor zydus:::fph
-ticagrelor:::fph
+ticagrélor biogaran:::fph
+ticagrélor eg:::fph
+ticagrélor evolugen:::fph
+ticagrélor sandoz:::fph
+ticagrélor teva:::fph
+ticagrélor viatris:::fph
+ticagrélor zentiva:::fph
+ticagrélor zydus:::fph
+ticagrélor:::fph
 ticarcilline
 ticket modérateur
 ticlopidine:::fph
@@ -68298,6 +68114,7 @@ tonsille pharyngée
 tonsille tubaire
 tonsilliphilus suis:::fph
 tonsure
+tonus cardiaque accélérateur et modérateur
 tonus musculaire
 tonus néonatal
 tonus sphinctérien
@@ -68318,7 +68135,6 @@ topotecan:::fph
 toprec:::fph
 torcel
 torcular d'Hérophile
-toremifene:::fph
 torr
 torsade de pointes
 torsion
@@ -68350,6 +68166,7 @@ torus mandibulaire
 torus palatin
 torus tubaire
 torus uterinus
+torémifène:::fph
 total des lésions 1 à 4 Stades de l'endométriose degré de sévérité Score AFS
 totexte
 totipotence
@@ -68556,10 +68373,10 @@ traitements chirurgicaux de l'épilepsie
 traitements médicaux de l'épilepsie
 tralokinumab:::fph
 tramadol:::fph
-trametinib:::fph
+tramétinib:::fph
 tranchée utérine
 trandate:::fph
-trandolapril et verapamil:::fph
+trandolapril et vérapamil:::fph
 trandolapril:::fph
 tranexamique acide:::fph
 tranquillisant
@@ -68770,7 +68587,7 @@ transposition corrigée des gros vaisseaux
 transposition des gros vaisseaux
 transposition du langage
 transposition du médius vers le pouce Böhler
-transposition du médius vers le pouce, type Böhler
+transposition du médius vers le pouce de type Böhler
 transposition musculaire oculomotrice
 transposition non réplicative
 transposition ovarienne
@@ -68884,10 +68701,8 @@ treponema socranskii socranskii:::fph
 treponema socranskii:::fph
 treponema stenostreptum:::fph
 treponema succinifaciens:::fph
-treprostinil:::fph
 tresiba flextouch:::fph
 tresiba penfill:::fph
-tretinoine:::fph
 trevicta:::fph
 tri 4p trisomie du bras court du chromosome 4
 tri préalable des appels d'urgence
@@ -69044,7 +68859,7 @@ trichoépithéliome desmoplastique
 trichromate
 trichromate anormal
 trichromatisme
-trichromatisme anormal.
+trichromatisme anormal
 triclabendazole
 tricourbe
 tricrote
@@ -69059,7 +68874,7 @@ trieur de cellules
 triflucan:::fph
 trifluridine en association:::fph
 trifluridine:::fph
-trigger n.m.angl.
+trigger
 trigger zone
 triglycéride
 triglycéride-lipase
@@ -69104,25 +68919,24 @@ triiodothyronine
 trileptal:::fph
 trilogie de Fallot
 trimbow:::fph
-trimebutine almus:::fph
-trimebutine arrow generiques:::fph
-trimebutine arrow:::fph
-trimebutine biogaran:::fph
-trimebutine cristers:::fph
-trimebutine eg:::fph
-trimebutine evolugen:::fph
-trimebutine medisol:::fph
-trimebutine pfizer:::fph
-trimebutine sandoz:::fph
-trimebutine sun:::fph
-trimebutine teva sante:::fph
-trimebutine viatris:::fph
-trimebutine zentiva:::fph
-trimebutine zydus:::fph
-trimebutine:::fph
-trimethoprime:::fph
 trimipramine:::fph
-triméthoprime
+trimébutine almus:::fph
+trimébutine arrow generiques:::fph
+trimébutine arrow:::fph
+trimébutine biogaran:::fph
+trimébutine cristers:::fph
+trimébutine eg:::fph
+trimébutine evolugen:::fph
+trimébutine medisol:::fph
+trimébutine pfizer:::fph
+trimébutine sandoz:::fph
+trimébutine sun:::fph
+trimébutine teva sante:::fph
+trimébutine viatris:::fph
+trimébutine zentiva:::fph
+trimébutine zydus:::fph
+trimébutine:::fph
+triméthoprime:::fph
 triméthyl-brom-IDA
 trinickia caryophylli:::fph
 trinickia soli:::fph
@@ -69148,7 +68962,7 @@ triplet
 triplixam:::fph
 triploïdie
 triptans
-triptoreline:::fph
+triptoréline:::fph
 triquétrum
 triradialis sulcus de Turner
 triradié
@@ -69344,7 +69158,7 @@ troncs supraaortiques
 tronculaire
 tronçonneur de débit respiratoire
 trop belle image urographique
-tropatepine:::fph
+tropatépine:::fph
 trophectoderme
 trophicreme:::fph
 trophigil:::fph
@@ -69516,7 +69330,8 @@ trépidation épileptoïde
 trépied fémoral
 tréponème pâle
 tréponématose
-trétinoïne
+tréprostinil:::fph
+trétinoïne:::fph
 tsukamurella asaccharolytica:::fph
 tsukamurella conjunctivitidis:::fph
 tsukamurella hominis:::fph
@@ -69541,7 +69356,7 @@ tube auditif
 tube collecteur
 tube contourné distal
 tube de Coolidge
-tube de Crookes.
+tube de Crookes
 tube de Faucher
 tube de Hittorf
 tube de Southey
@@ -69827,6 +69642,7 @@ tumeur de Poncet-Spiegler
 tumeur de Riopelle
 tumeur de Riopelle et Thériault
 tumeur de Spiegler
+tumeur de Warthin
 tumeur de Wilms
 tumeur de blastème
 tumeur de l'infundibulum folliculaire
@@ -69845,6 +69661,7 @@ tumeur de la vulve
 tumeur de malignité atténuée
 tumeur de malignité frontière
 tumeur de malignité locale
+tumeur de, maladie de Küttner
 tumeur desmoïde
 tumeur desmoïde de la paroi thoracique
 tumeur différenciée
@@ -70162,9 +69979,10 @@ tyrosylurie
 tyrothricine
 tyverb:::fph
 tère mésentérique supérieure
-téduglutide
+téduglutide:::fph
 tégument
 tégument commun
+téicoplanine:::fph
 télangiectasie
 télangiectasie hémorragique héréditaire
 télangiectasie héréditaire hémorragique
@@ -70230,7 +70048,9 @@ télésystole
 télésystolique
 téléthonine
 téléthorax
+témocilline:::fph
 témoin
+témozolomide:::fph
 témébilité en criminologie
 téméphos
 ténascine
@@ -70242,13 +70062,16 @@ téniasi
 ténicide
 ténifuge
 ténodèse
-ténofovir
+ténofovir disoproxil et emtricitabine:::fph
+ténofovir disoproxil:::fph
+ténofovir:::fph
 ténographie
 ténomyoplastie
 ténoscanner
 ténosynovectomie
 ténosynovite
 ténotomie
+ténoxicam:::fph
 tératencéphalie
 tératocarcinome
 tératocarcinome testiculaire
@@ -70278,7 +70101,22 @@ tératome testiculaire
 tératopage
 tératospermie
 tératozoospermie
-térébenthine.
+térazosine biogaran:::fph
+térazosine teva:::fph
+térazosine:::fph
+tériflunomide arrow:::fph
+tériflunomide biogaran:::fph
+tériflunomide eg:::fph
+tériflunomide mylan:::fph
+tériflunomide teva sante:::fph
+tériflunomide teva:::fph
+tériflunomide zentiva:::fph
+tériflunomide zydus:::fph
+tériflunomide:::fph
+tériparatide biogaran:::fph
+tériparatide teva:::fph
+tériparatide:::fph
+térébenthine
 tétanie
 tétanique
 tétanisation de l'utérus
@@ -70291,9 +70129,12 @@ tétanospasmine
 tétartan
 tétartanopie
 tétrabromométhane
+tétrabénazine:::fph
 tétrachlorure d'acétylène
 tétrachloréthane en médecine du travail
 tétrachloéthylène
+tétracosactide:::fph
+tétracycline:::fph
 tétracyclines
 tétrade
 tétrade de Griffiths
@@ -70324,6 +70165,7 @@ tétrodotoxine
 tétrose
 tétroside
 tétrotoxine
+tézépelumab:::fph
 tête
 tête aspergillaire
 tête d'oiseau
@@ -70429,12 +70271,12 @@ ulérythème ophryogène
 ulérythème porcelainé en goutte
 umatrope:::fph
 umbribacter vaginalis:::fph
-umeclidinium bromure:::fph
 umezawaea tangerina:::fph
 umuline nph kwikpen:::fph
 umuline nph:::fph
 umuline profil:::fph
 umuline rapide:::fph
+uméclidinium bromure:::fph
 unacim injectable:::fph
 uncus de l'hippocampe
 uncus du corps de la première vertèbre thoracique
@@ -70628,7 +70470,7 @@ urothélium
 urothéobromine
 urotomographie
 uroérythrine
-ursodesoxycholique acide:::fph
+ursodésoxycholique acide:::fph
 ursofalk:::fph
 ursolvan:::fph
 urticaire
@@ -70735,7 +70577,7 @@ urétérostomie cutanée transintestinale
 urétérostomie in situ
 urétérotomie
 urétérotomie extramuqueuse
-ustekinumab:::fph
+ustékinumab:::fph
 uta
 utricule
 utricule prostatique
@@ -71045,8 +70887,8 @@ vallée de Sylvius
 vallée sylvienne
 vallées ciliaires
 valproate de sodium
-valproique acide:::fph
 valpromide:::fph
+valproïque acide:::fph
 valsartan et amlodipine:::fph
 valsartan et diuretiques:::fph
 valsartan:::fph
@@ -71146,7 +70988,7 @@ van Bogaert-Bertrand
 vancomycine:::fph
 vandalisme
 vandammella animalimorsus:::fph
-vandetanib:::fph
+vandétanib:::fph
 vanflyta:::fph
 vanillisme alimentaire
 vanillisme professionnel
@@ -71159,7 +71001,6 @@ vaporiseur
 vapothorax
 vaptans
 vaqta:::fph
-varenicline:::fph
 variabilité du rythme cardiaque fœtal
 variabilité génétique
 variable aléatoire
@@ -71198,7 +71039,7 @@ varibaculum vaginae:::fph
 varice
 varicelle
 varicelle congénitale
-varicelle, virus vivant attenue:::fph
+varicelle, virus vivant atténué:::fph
 varicelleux
 varices de l'hypertension portale
 varices de la grossesse
@@ -71266,6 +71107,7 @@ varon
 varron
 varus
 varus équin
+varénicline:::fph
 vas afferens
 vas efferens
 vasa hyaloidea propria
@@ -71364,7 +71206,6 @@ vecteur-suicide
 vectocardiogramme
 vectocardiographie
 vectoriel
-vedolizumab:::fph
 vedrop:::fph
 veille sanitaire
 veillonella absiana:::fph
@@ -71566,7 +71407,7 @@ veine gastro-omentale gauche
 veine gastro-épiploïque droite
 veine gastro-épiploïque gauche
 veine grande coronaire
-veine hypogastrique.
+veine hypogastrique
 veine hémiazygos
 veine hémorroïdale supérieure
 veine hépatique
@@ -72108,20 +71949,19 @@ veinule nasale supérieure de la rétine
 veinule post-capillaire
 veinule temporale inférieure de la rétine
 veinule temporale supérieure de la rétine
-velaglucerase alfa:::fph
 velcade
 veletri:::fph
 velmetia:::fph
 velphoro:::fph
 velsipity:::fph
 vemlidy:::fph
-vemurafenib:::fph
+vemurafenib
 vemurafenid
 vena contracta
 vena iracundiae
 vena thoracica longitudinalis sinistra
 venclyxto:::fph
-venetoclax:::fph
+venetoclax
 venimeux
 venin
 venlafaxine:::fph
@@ -72214,11 +72054,6 @@ ver de case
 ver de farine
 ver macaque
 ver solitaire
-verapamil sandoz:::fph
-verapamil teva:::fph
-verapamil viatris lp:::fph
-verapamil viatris:::fph
-verapamil:::fph
 veratran:::fph
 verbalisme
 verbigération
@@ -72628,8 +72463,8 @@ vigilambulisme
 vigilance
 vigile
 vignetage
-vilanterol et fluticasone furoate:::fph
-vilanterol, umeclidinium bromure:::fph
+vilantérol et fluticasone furoate:::fph
+vilantérol, uméclidinium bromure:::fph
 vildagliptine:::fph
 villeux
 villikinine
@@ -72878,7 +72713,6 @@ virus Snowshoe hare
 virus Soldado
 virus Sooching
 virus Spondweni
-virus St. Abbs's Head
 virus Sumakh
 virus Syr-Darya Valley
 virus Séoul
@@ -72948,7 +72782,7 @@ virus respiratoire syncytial
 virus revertant phénotypique
 virus satellite
 virus varicelle-zona
-virus varicelle-zona vivant, attenue:::fph
+virus varicelle-zona vivant, atténué:::fph
 virus à ADN
 virus à ARN
 virusoïde
@@ -72994,7 +72828,7 @@ visite médicale
 visiteur médical
 visken quinze:::fph
 visken:::fph
-vismodegib:::fph
+vismodégib:::fph
 visudyne:::fph
 visuomotricité
 visuscope
@@ -73162,7 +72996,7 @@ vol pathologique
 vol sous-clavier
 vol spatial
 volaire
-volanesorsen:::fph
+volanésorsen:::fph
 volatilome
 volatulomique
 volet costal
@@ -73234,14 +73068,14 @@ vopiscus
 voriconazole:::fph
 vortex des poils
 vortex du cœur
-vortioxetine:::fph
+vortioxétine:::fph
 vosevi:::fph
 vosoritide:::fph
 votrient:::fph
 votubia:::fph
 voxel
-voxelotor:::fph
 voxzogo:::fph
+voxélotor:::fph
 voyage en avion
 voyage pathologique en psychiatrie
 voyage psychédélique
@@ -73291,6 +73125,7 @@ vutrisiran:::fph
 vyndaqel:::fph
 vyvgart:::fph
 vécu océanique
+védolizumab:::fph
 végane
 véganisme
 végétalisme
@@ -73301,15 +73136,22 @@ végétation valvulaire
 végétation vénérienne
 végétations adénoïdes
 véhicule
+vélaglucérase alfa:::fph
 vélaire
 vélamenteux
 vélocimétrie par effet Doppler en obstétrique
 vélocité du PSA
 vélopharyngoplastie
+vémurafénib:::fph
 vénéneux
 vénérien
 vénéréologie
-vérapamil
+vénétoclax:::fph
+vérapamil sandoz:::fph
+vérapamil teva:::fph
+vérapamil viatris lp:::fph
+vérapamil viatris:::fph
+vérapamil:::fph
 vérité au malade
 vésanie
 vésical
@@ -73417,7 +73259,7 @@ winkia neuii anitrata:::fph
 winkia neuii neuii:::fph
 winkia neuii:::fph
 winslowiella arboricola:::fph
-wire loop l.angl.
+wire loop
 wiring
 wirsungographie
 wohlfahrtiimonas chitiniclastica:::fph
@@ -73621,6 +73463,7 @@ xéno-œstrogène
 xénoanticorps
 xénobiotique
 xénodiagnostic
+xénodiagnostic de Brumpt
 xénoestrogène
 xénogreffe
 xénogénique
@@ -73721,21 +73564,21 @@ ziextenzo:::fph
 zilbrysq:::fph
 zilucoplan:::fph
 zinc
-zinc acetate:::fph
+zinc acétate:::fph
 zincamnie
 zinnat:::fph
 zithromax:::fph
 zobellia uliginosa:::fph
 zocor:::fph
 zofenil:::fph
-zofenopril viatris:::fph
-zofenopril:::fph
+zofénopril viatris:::fph
+zofénopril:::fph
 zoladex:::fph
-zoledronique acide:::fph
 zolmitriptan:::fph
 zoloft:::fph
 zolpidem:::fph
 zoltum:::fph
+zolédronique acide:::fph
 zometa:::fph
 zomig:::fph
 zomigoro:::fph
@@ -73878,6 +73721,17 @@ zézaiement
 æquorine
 èseosséine
 ébarber
+ébastine arrow lab:::fph
+ébastine arrow:::fph
+ébastine biogaran:::fph
+ébastine cristers:::fph
+ébastine eg:::fph
+ébastine sandoz:::fph
+ébastine teva:::fph
+ébastine viatris:::fph
+ébastine zentiva:::fph
+ébastine zydus:::fph
+ébastine:::fph
 ébauche 2,5 D
 ébauche digitiforme
 ébauche primaire
@@ -74060,7 +73914,14 @@ zézaiement
 éclamptique
 éclisse
 écologie
-éconazole
+éconazole arrow:::fph
+éconazole biogaran:::fph
+éconazole eg:::fph
+éconazole sandoz:::fph
+éconazole teva sante:::fph
+éconazole viatris:::fph
+éconazole zentiva lp:::fph
+éconazole:::fph
 économie de jetons
 économie en psychanalyse
 écorce du cristallin
@@ -74094,6 +73955,12 @@ zézaiement
 éducation spéciale
 éducation surveillée
 éducation thérapeutique du patient
+édétate de fer sodique:::fph
+éfavirenz arrow:::fph
+éfavirenz sandoz:::fph
+éfavirenz teva:::fph
+éfavirenz viatris:::fph
+éfavirenz:::fph
 éflornithine
 égalisation
 égalisation sensorielle
@@ -74241,6 +74108,7 @@ zézaiement
 électrovisiogramme axonal
 électuaire
 éleuthéromélien
+éliglustat:::fph
 élimination
 élimination des médicaments
 élongation
@@ -74266,12 +74134,22 @@ zézaiement
 éléphantiasis facial
 éléphantiasis familial de Milroy
 éléphantiasis scrotopérinéal
+élétriptan arrow:::fph
+élétriptan bgr:::fph
+élétriptan eg:::fph
+élétriptan quiver lab:::fph
+élétriptan quiver:::fph
+élétriptan viatris:::fph
+élétriptan zentiva:::fph
+élétriptan zydus:::fph
+élétriptan:::fph
 élévateur de l'anus
 élévation en ophtalmologie
 élévation oculaire en abduction
 émaciation
 émail de la dent
 émasculation
+émicizumab:::fph
 éminence
 éminence collatérale de Meckel
 éminence collatérale du ventricule latéral
@@ -74317,7 +74195,17 @@ zézaiement
 émérine
 émétine
 émétisant
-énalapril
+énalapril accord:::fph
+énalapril arrow lab:::fph
+énalapril biogaran:::fph
+énalapril eg:::fph
+énalapril et diuretiques:::fph
+énalapril et lercanidipine:::fph
+énalapril sandoz:::fph
+énalapril teva sante:::fph
+énalapril viatris:::fph
+énalapril zentiva:::fph
+énalapril:::fph
 énanthème
 énantiomorphe
 énantiomère
@@ -74331,6 +74219,13 @@ zézaiement
 énophtalmie
 énostose
 énoxacine
+énoxaparine arrow:::fph
+énoxaparine becat:::fph
+énoxaparine biogaran:::fph
+énoxaparine crusia:::fph
+énoxaparine eg:::fph
+énoxaparine teva:::fph
+énoxaparine:::fph
 énoylhydratase
 énucléation d'un adénome prostatique
 énucléation oculaire
@@ -74530,6 +74425,7 @@ zézaiement
 épiménorrhée
 épimérase
 épimérisation
+épinastine:::fph
 épine calcanéenne
 épine de Civinini
 épine de Henle
@@ -74602,7 +74498,7 @@ zézaiement
 épisiotomie médio-latérale
 épisode de dépression majeure unipolaire
 épisome
-épisome F .
+épisome F
 épispade
 épispadias
 épisquelette
@@ -74676,10 +74572,23 @@ zézaiement
 épizootie
 épiétiocholanolone
 épiœstriol
+éplérénone accord:::fph
+éplérénone arrow:::fph
+éplérénone biogaran:::fph
+éplérénone cristers:::fph
+éplérénone eg:::fph
+éplérénone krka:::fph
+éplérénone sandoz:::fph
+éplérénone teva:::fph
+éplérénone viatris:::fph
+éplérénone zentiva:::fph
+éplérénone zydus:::fph
+éplérénone:::fph
 éponge de Lincoff
 éponychium
 époophore de Waldeyer
 époophoron
+époprosténol:::fph
 épovarium
 époxydase
 époxyde
@@ -74884,7 +74793,8 @@ zézaiement
 érythrokératodermie progressive et symétrique de Darier-Gottron
 érythrokératodermie progressive symétrique de Gottron
 érythroleucémie aigüe
-érythromycine
+érythromycine bailleul:::fph
+érythromycine:::fph
 érythromélalgie
 érythromélalgie de la face
 érythromélie
@@ -74957,6 +74867,25 @@ zézaiement
 érythéme noueux
 érythémogène
 éréthisme cardiaque
+ésoméprazole almus:::fph
+ésoméprazole alter:::fph
+ésoméprazole arrow lab:::fph
+ésoméprazole arrow:::fph
+ésoméprazole biogaran:::fph
+ésoméprazole cristers pharma:::fph
+ésoméprazole eg labo:::fph
+ésoméprazole eg:::fph
+ésoméprazole ethypharm:::fph
+ésoméprazole evolugen pharma:::fph
+ésoméprazole evolugen:::fph
+ésoméprazole gnr:::fph
+ésoméprazole hcs:::fph
+ésoméprazole sandoz:::fph
+ésoméprazole teva:::fph
+ésoméprazole viatris:::fph
+ésoméprazole zentiva:::fph
+ésoméprazole zydus:::fph
+ésoméprazole:::fph
 ésophorie
 ésotropie
 ésotropie accommodative l
@@ -74985,7 +74914,7 @@ zézaiement
 étain
 étalement des épitopes
 étalonnag d'un appareil de mesure
-étanercept
+étanercept:::fph
 étapes et formes mémoire
 état anxieux aigu
 état crépusculaire
@@ -75026,7 +74955,7 @@ zézaiement
 étatmixte
 étendue vocale
 éternuement
-éthambutol
+éthambutol:::fph
 éthanal
 éthanol
 éthanolamine
@@ -75047,7 +74976,8 @@ zézaiement
 éthmocéphale
 éthologie
 éthologie et psychiatrie
-éthosuximide
+éthosuximide:::fph
+éthyle loflazépate:::fph
 éthylique
 éthylisme
 éthylomètre
@@ -75069,12 +74999,23 @@ zézaiement
 étiquette de séquence transcrite
 étirement
 étirementcaliciel
+étodolac:::fph
 étoile de Roggie
 étoile de Rogie
 étoile vasculaire
 étoiles de Verheyen
-étoposide
+étonogestrel:::fph
+étoposide:::fph
+étoricoxib arrow:::fph
+étoricoxib biogaran:::fph
+étoricoxib krka:::fph
+étoricoxib sandoz:::fph
+étoricoxib viatris:::fph
+étoricoxib zydus france:::fph
+étoricoxib:::fph
 étranglement herniaire
+étrasimod:::fph
+étravirine:::fph
 étrier
 étrétinate
 étrétine
@@ -75131,12 +75072,35 @@ zézaiement
 éviscération
 éviscération oculaire
 éviscération pelvienne
+évolocumab:::fph
 évolution schizophrénie
 évènement indésirable
 évènement ou effet indésirable grave
 évènement vital
 évènement vital vécu et personnalité
-ézétimibe
+évérolimus arrow:::fph
+évérolimus biogaran:::fph
+évérolimus eg:::fph
+évérolimus sandoz:::fph
+évérolimus teva:::fph
+évérolimus viatris:::fph
+évérolimus zentiva:::fph
+évérolimus:::fph
+ézétimibe accord:::fph
+ézétimibe almus:::fph
+ézétimibe alter:::fph
+ézétimibe arrow:::fph
+ézétimibe biogaran:::fph
+ézétimibe cristers pharma:::fph
+ézétimibe eg:::fph
+ézétimibe evolugen:::fph
+ézétimibe krka:::fph
+ézétimibe sandoz:::fph
+ézétimibe teva:::fph
+ézétimibe viatris:::fph
+ézétimibe zentiva:::fph
+ézétimibe zydus:::fph
+ézétimibe:::fph
 îlot Walthard
 îlot de Walthard
 îlot osseux condensant bénin
