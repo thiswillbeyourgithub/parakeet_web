@@ -42,7 +42,10 @@ ap.add_argument("quant", help="the MatMulNBits encoder under test")
 ap.add_argument("ref", help="the fp32 encoder it was built from")
 ap.add_argument("pre", help="nemo128.onnx preprocessor")
 ap.add_argument("wavs", nargs="+", help="real speech for gate 4")
-ap.add_argument("--bits", type=int, default=4, choices=(4, 8), help="width the graph should carry (default 4)")
+ap.add_argument("--bits", type=int, default=4, choices=(2, 4, 8, 16),
+                help="width the graph should carry (default 4). 2/4/8 expect MatMulNBits from "
+                     "quantize-nbits.py; 16 expects an fp16 cast from convert-fp16.py, which is a "
+                     "different transformation but earns the same gates 1-4.")
 args = ap.parse_args()
 
 opts = ort.SessionOptions()
@@ -50,17 +53,40 @@ opts.log_severity_level = 3
 rng = np.random.default_rng(0)
 fail = 0
 
-graph = onnx.load(args.quant, load_external_data=False).graph
+model = onnx.load(args.quant, load_external_data=False)
+graph = model.graph
 ops = Counter(n.op_type for n in graph.node)
-nbits = [n for n in graph.node if n.op_type == "MatMulNBits"]
-attrs = [{a.name: a.i for a in n.attribute if a.name in ("accuracy_level", "bits", "block_size")}
-         for n in nbits]
-levels = {a.get("accuracy_level") for a in attrs}
-bits = {a.get("bits") for a in attrs}
-blocks = {a.get("block_size") for a in attrs}
-ok = bool(nbits) and levels == {4} and bits == {args.bits} and blocks == {32}
-print(f"[0] MatMulNBits={len(nbits)} MatMul_left={ops.get('MatMul', 0)} "
-      f"accuracy_level={levels} bits={bits} block_size={blocks}: {ok}", flush=True)
+if args.bits == 16:
+    # fp16 carries no MatMulNBits. Some fp32 initializers are EXPECTED to survive:
+    # the ops on the block list (LayerNormalization, the reductions) keep their fp32
+    # parameters on purpose. So gate on the share of float weight BYTES that moved,
+    # not on the absence of fp32, and check the fp32 entry points are still fp32
+    # since the app feeds fp32 mel features either way.
+    import math
+    share = {}
+    for i in graph.initializer:
+        nm = onnx.TensorProto.DataType.Name(i.data_type)
+        if nm in ("FLOAT", "FLOAT16"):
+            size = math.prod(i.dims) * (4 if nm == "FLOAT" else 2)
+            share[nm] = share.get(nm, 0) + size
+    tot = sum(share.values()) or 1
+    frac16 = share.get("FLOAT16", 0) / tot
+    io = {onnx.TensorProto.DataType.Name(v.type.tensor_type.elem_type)
+          for v in list(graph.input) + list(graph.output)}
+    ok = frac16 > 0.80 and not ops.get("MatMulNBits") and io <= {"FLOAT", "INT64"}
+    print(f"[0] fp16 share of float weight bytes {frac16:.1%} "
+          f"(fp32 left {share.get('FLOAT', 0) / 1e6:.1f}MB) io={sorted(io)} "
+          f"MatMulNBits={ops.get('MatMulNBits', 0)}: {ok}", flush=True)
+else:
+    nbits = [n for n in graph.node if n.op_type == "MatMulNBits"]
+    attrs = [{a.name: a.i for a in n.attribute if a.name in ("accuracy_level", "bits", "block_size")}
+             for n in nbits]
+    levels = {a.get("accuracy_level") for a in attrs}
+    bits = {a.get("bits") for a in attrs}
+    blocks = {a.get("block_size") for a in attrs}
+    ok = bool(nbits) and levels == {4} and bits == {args.bits} and blocks == {32}
+    print(f"[0] MatMulNBits={len(nbits)} MatMul_left={ops.get('MatMul', 0)} "
+          f"accuracy_level={levels} bits={bits} block_size={blocks}: {ok}", flush=True)
 fail += not ok
 
 load = lambda p: ort.InferenceSession(p, opts, providers=["CPUExecutionProvider"])
@@ -95,5 +121,6 @@ for w in args.wavs:
     print(f"[4] {w.split('/')[-1]} T={x.shape[2]} relMaxDiff {rel:.3f} corr {corr:.5f}: {ok}", flush=True)
     fail += not ok
 
-print(f"W{args.bits}A8 CHECKS", "FAILED" if fail else "ALL PASS", flush=True)
+label = "FP16" if args.bits == 16 else f"W{args.bits}A8"
+print(f"{label} CHECKS", "FAILED" if fail else "ALL PASS", flush=True)
 sys.exit(1 if fail else 0)
