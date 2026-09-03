@@ -323,10 +323,19 @@ it with the ONNX files, bind-mount it into the container, and set
 `LOCAL_MODEL_PATH` to the matching in-container path:
 
 ```bash
-# 1. Populate any host folder with the ONNX files (flat layout):
+# 1. Populate any host folder with the ONNX files:
 hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx \
     --local-dir /host/path/to/onnx-files
 ```
+
+Keep the repo's own layout: each weight in the folder its precision names
+(`fp32/`, `int8/`, `int8-lite/`, `w4a8/`, `fp16/`), with `vocab.txt`,
+`config.json` and `nemo128.onnx` at the root. A folder that is entirely
+flat still works, and so does a flat one with the fp32 shards under
+`sharded/`, which is how the repo used to be published: the loader looks in
+the precision folder first, then the root, then `sharded/`. Never rename a
+file, only its folder is allowed to move. (Layout support added with
+[Claude Code](https://claude.com/claude-code).)
 
 ```yaml
 # 2. In docker/docker-compose.yml, add a volume:

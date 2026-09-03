@@ -42,8 +42,9 @@
 // loaded and then emitted an EMPTY transcript here.) fp32 needs no shader-f16
 // and exercises real WebGPU compute (encoder on the GPU + the decode-worker
 // pipeline) end to end. It loads via the <2 GB shards (single-file fp32 is
-// unloadable on WebGPU; see hub.js), so the local /models mirror must serve
-// sharded/encoder-model.onnx.data.NNN. `--fp32` is still accepted as a no-op so
+// unloadable on WebGPU; see hub.js), so the local /models mirror must serve the
+// encoder-model.onnx.data.NNN set (in fp32/, or sharded/ on an older mirror;
+// app/src/modelLayout.js accepts both). `--fp32` is still accepted as a no-op so
 // existing invocations and the npm aliases keep working.
 //
 // Backend coverage: this harness only exercises `webgpu-hybrid`, the sole
