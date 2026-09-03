@@ -433,7 +433,7 @@ Report collection is off by default. To enable it on your own instance:
 
 The entrypoint probes the folder at startup and derives the client-side switch from it, so a folder it cannot write leaves the section copy-only with a warning in the container logs, instead of showing visitors a button that always fails.
 
-Reports arrive at `POST /api/signal/benchmark-report` on the signaling sidecar: rate-limited to 3 per minute per IP, capped at 32 KB each and at 20000 files total, format-checked, and stored one report per file under a name the server picks itself (nothing from the request reaches a path). Nothing about the sender is written next to the payload, because a report that is anonymous in the browser should not stop being anonymous on arrival.
+Reports arrive at `POST /api/signal/benchmark-report` on the signaling sidecar: rate-limited to 3 per minute per IP and to 30 per minute for the whole instance (`BENCHMARK_REPORTS_MAX_PER_MINUTE`, so an address-rotating flood cannot fill the folder in minutes), capped at 32 KB each and at 20000 files total, checked for shape (known fields only, no prototype-polluting keys, bounded depth and string length, no control characters, so the stored file is safe to merge or print), and stored one report per file under a name the server picks itself (nothing from the request reaches a path). Nothing about the sender is written next to the payload, because a report that is anonymous in the browser should not stop being anonymous on arrival.
 
 ## Resetting the app
 
