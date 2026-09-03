@@ -429,6 +429,12 @@ body {
   font-weight: 600;
 }
 
+/* Cold/warm annotation beside a load time. Subdued: it qualifies the number
+   next to it rather than competing with it. */
+.benchmark-load-note {
+  color: var(--text-subtle);
+}
+
 .settings-content {
   margin-top: 1rem;
 }

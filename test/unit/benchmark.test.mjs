@@ -249,13 +249,21 @@ describe('runBenchmarkPlan', () => {
     const plan = [planBenchmark({})[0]];
     const results = await runBenchmarkPlan(plan, { ...deps, profiles: ['short', 'long'] });
     assert.equal(calls.loaded.length, 1, 'the model must be loaded once per combination');
-    assert.deepEqual(calls.transcribed, [`${plan[0].id}/short`, `${plan[0].id}/long`]);
+    // Each profile gets its own untimed warm-up run before its timed one: the
+    // long profile's chunked shapes are compiled separately from the short
+    // profile's, so warming one does not warm the other.
+    assert.deepEqual(calls.transcribed, [
+      `${plan[0].id}/short`, `${plan[0].id}/short`,
+      `${plan[0].id}/long`, `${plan[0].id}/long`,
+    ]);
     assert.equal(results[0].similarity, 1);
     assert.equal(results[1].similarity, null);
   });
 
   test('repeats are medianed and every run is kept', async () => {
-    const walls = [300, 100, 200];
+    // First wall is the warm-up's and must not reach the report: a cold run is
+    // exactly what the warm-up exists to keep out of the median.
+    const walls = [9000, 300, 100, 200];
     let i = 0;
     let clock = 0;
     const deps = {
@@ -268,6 +276,48 @@ describe('runBenchmarkPlan', () => {
     assert.deepEqual(results[0].wallMsRuns, [300, 100, 200]);
     assert.equal(results[0].wallMs, 200);
     assert.equal(results[0].repeats, 3);
+    assert.equal(results[0].warmup, true);
+  });
+
+  test('a warm-up failure is swallowed and the timed runs still decide the row', async () => {
+    let n = 0;
+    const { deps } = fakeDeps({
+      transcribe: async () => {
+        n += 1;
+        if (n === 1) throw new Error('cold-start hiccup');
+        return { text: BENCHMARK_CLIP.expectedText, metrics: null, audioSec: 11 };
+      },
+    });
+    const results = await runBenchmarkPlan([planBenchmark({})[0]], deps);
+    assert.equal(results[0].status, 'ok', 'a warm-up throw must not fail the row');
+    assert.equal(results[0].repeats, 1);
+  });
+
+  test('warmup:false runs only the timed runs, and says so in the row', async () => {
+    const { deps, calls } = fakeDeps();
+    const plan = [planBenchmark({})[0]];
+    const results = await runBenchmarkPlan(plan, { ...deps, warmup: false });
+    assert.deepEqual(calls.transcribed, [`${plan[0].id}/short`]);
+    assert.equal(results[0].warmup, false);
+  });
+
+  test('load transfer is reported as MB and a warm/cold flag', async () => {
+    const { deps } = fakeDeps({ loadModel: async () => ({ downloadedBytes: 2_350_000_000 }) });
+    const cold = await runBenchmarkPlan([planBenchmark({})[0]], deps);
+    assert.equal(cold[0].loadDownloadMB, 2350);
+    assert.equal(cold[0].loadCached, false);
+
+    const { deps: warmDeps } = fakeDeps({ loadModel: async () => ({ downloadedBytes: 0 }) });
+    const warm = await runBenchmarkPlan([planBenchmark({})[0]], warmDeps);
+    assert.equal(warm[0].loadDownloadMB, 0);
+    assert.equal(warm[0].loadCached, true, 'a load that pulled no bytes came from the cache');
+  });
+
+  test('a driver that reports no transfer says unknown, never a confident "cached"', async () => {
+    const { deps } = fakeDeps();
+    const results = await runBenchmarkPlan([planBenchmark({})[0]], deps);
+    assert.equal(results[0].loadDownloadMB, null);
+    assert.equal(results[0].loadCached, null);
   });
 
   test('a load failure becomes a failed row and does not stop the run', async () => {

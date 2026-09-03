@@ -802,6 +802,14 @@ export default function App() {
   // Sliding-window state (trailing 10 s mean) for the download speed / ETA
   // estimate, reset per model load.
   const downloadRateRef = useRef(null);
+  // Bytes actually pulled over the network by the current model load, keyed by
+  // file (the highest `loaded` each one reported). A file served from the
+  // IndexedDB cache emits no byte progress at all, so a load that ends with an
+  // empty map was fully warm. The benchmark reports this per row: a load time
+  // with no cold/warm attached cannot be compared against another machine's,
+  // and it is the only way to see that the GPU path re-downloads its uncacheable
+  // fp32 shards on every single load while the int8 path pays once.
+  const loadTransferRef = useRef(new Map());
   // Open/closed state of each collapsible settings group, keyed by section id.
   // A section is open only when its id maps to true, so every group starts
   // collapsed; the whole object is persisted so the choice survives reloads.
@@ -3050,6 +3058,9 @@ export default function App() {
     setProgressText('');
     setProgressPct(0);
     downloadRateRef.current = null;
+    // Not reset on the corrupt-cache retry: that re-enters loadModel and its
+    // re-downloaded bytes belong to the same load the caller is timing.
+    if (!corruptionRetried) loadTransferRef.current = new Map();
     setModelLoadError(null);
     // Clear the GPU-fallback notice only on a FRESH attempt. Both retry paths
     // re-enter loadModel, and the GPU fallback sets this banner immediately
@@ -3076,6 +3087,9 @@ export default function App() {
           }
           return;
         }
+        // Byte events only ever fire for a file being streamed, so this map
+        // counts network bytes and nothing else.
+        loadTransferRef.current.set(file, Math.max(loadTransferRef.current.get(file) || 0, loaded || 0));
         const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
         const prefix = resumed ? `${t('resuming')} ` : '';
         const sizes = total > 0 ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
@@ -5356,7 +5370,9 @@ export default function App() {
         shouldCancel: () => benchmarkCancelRef.current,
         onProgress: ({ phase, combo, profile, step, totalSteps }) => {
           if (phase === 'done') return setBenchmarkProgress('');
-          const what = phase === 'load' ? t('benchmarkLoading') : t('benchmarkTranscribing');
+          const what = phase === 'load' ? t('benchmarkLoading')
+            : phase === 'warmup' ? t('benchmarkWarmingUp')
+            : t('benchmarkTranscribing');
           setBenchmarkProgress(`${what} ${combo.backend} / ${combo.quant}`
             + (profile ? ` (${profile})` : '') + ` — ${Math.min(step + 1, totalSteps)}/${totalSteps}`);
         },
@@ -5365,6 +5381,14 @@ export default function App() {
           await loadModelRef.current();
           if (!modelRef.current) throw new Error('model failed to load');
           benchmarkLoadedComboRef.current = combo.id;
+          // Bytes this load actually pulled (loadTransferRef is reset at the top
+          // of loadModel and filled by its progress callback). Zero means every
+          // file came from the IndexedDB cache, which is what makes loadMs
+          // readable: a cold load times a download on the visitor's connection,
+          // a warm one times a cache read plus session build.
+          let downloadedBytes = 0;
+          for (const n of loadTransferRef.current.values()) downloadedBytes += n;
+          return { downloadedBytes };
         },
         transcribe: async ({ profile }) => {
           const audio = profile === 'long' ? longPcm : pcm;
@@ -7495,7 +7519,17 @@ export default function App() {
                           <span style={{ color: 'var(--danger)' }}> ⚠</span>
                         )}
                       </td>
-                      <td>{r.loadMs != null ? formatDuration(r.loadMs / 1000) : '-'}</td>
+                      {/* A load time means little on its own: a cold load times a
+                          download on this connection, a warm one a cache read plus
+                          session build. The GPU rows are always cold, because the
+                          fp32 shards cannot be cached. */}
+                      <td>
+                        {r.loadMs != null ? formatDuration(r.loadMs / 1000) : '-'}
+                        {r.loadCached === true && <span className="benchmark-load-note"> ({t('benchmarkLoadCached')})</span>}
+                        {r.loadCached === false && r.loadDownloadMB > 0 && (
+                          <span className="benchmark-load-note"> ({Math.round(r.loadDownloadMB)} MB)</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

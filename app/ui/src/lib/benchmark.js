@@ -210,7 +210,24 @@ function numericFields(obj) {
   return out;
 }
 
-function summarizeRuns({ combo, profile, loadMs, runs, audioSec, expectedText }) {
+// Turn what loadModel() reported about its network traffic into the two report
+// fields. `null` everywhere when the caller gave nothing back, so an older or
+// simpler driver reports "unknown" rather than a confident wrong "cached".
+function loadTransferFields(transfer) {
+  const bytes = transfer && Number.isFinite(transfer.downloadedBytes)
+    ? transfer.downloadedBytes
+    : null;
+  return {
+    loadDownloadMB: bytes == null ? null : +(bytes / 1e6).toFixed(1),
+    // A load that pulled nothing came entirely from the IndexedDB cache. This
+    // is what makes loadMs comparable: a cold load times a download on the
+    // visitor's connection, a warm one times a cache read plus session build,
+    // and the two differ by more than most of the numbers in this report.
+    loadCached: bytes == null ? null : bytes === 0,
+  };
+}
+
+function summarizeRuns({ combo, profile, loadMs, loadTransfer, runs, audioSec, expectedText, warmup = false }) {
   const ok = runs.filter((r) => !r.error);
   const base = {
     id: combo.id,
@@ -218,7 +235,13 @@ function summarizeRuns({ combo, profile, loadMs, runs, audioSec, expectedText })
     quant: combo.quant,
     profile,
     loadMs: loadMs == null ? null : Math.round(loadMs),
+    ...loadTransferFields(loadTransfer),
     repeats: runs.length,
+    // Whether an untimed run preceded the timed ones. Recorded because it
+    // changes what wallMsRuns[0] means: with warmup, every timed run is
+    // steady state; without it, the first one carries kernel and pipeline
+    // compilation and is not comparable to the rest.
+    warmup,
   };
   if (!ok.length) {
     const first = runs.find((r) => r.error);
@@ -270,6 +293,15 @@ export async function runBenchmarkPlan(combos, {
   transcribe,
   profiles = ['short'],
   repeats = 1,
+  // One untimed run per profile before the timed ones. The first run after a
+  // load is reliably the slowest: ORT builds its kernels on first use, and on
+  // WebGPU the driver compiles a pipeline per distinct shape as it meets it. A
+  // report from an Intel iGPU measured the short profile at 6.66 s on run 1
+  // against 2.65 s steady, so with three repeats the cold run was dragging the
+  // median of a number meant to describe the machine, not its first second.
+  // Per profile rather than per model because the long profile's chunked,
+  // batched shapes are compiled separately from the short one's.
+  warmup = true,
   expectedText = BENCHMARK_CLIP.expectedText,
   now = () => Date.now(),
   onProgress = () => {},
@@ -287,10 +319,13 @@ export async function runBenchmarkPlan(combos, {
     onProgress({ phase: 'load', combo, step, totalSteps });
 
     let loadMs = null;
+    // Whatever loadModel() chose to report about its own network traffic; the
+    // app hands back { downloadedBytes }, the unit tests hand back nothing.
+    let loadTransfer = null;
     try {
       await applyCombo(combo);
       const t0 = now();
-      await loadModel(combo);
+      loadTransfer = await loadModel(combo);
       loadMs = now() - t0;
     } catch (err) {
       // QuantUnavailableError (hub.js) means the served repo ships no such
@@ -317,6 +352,13 @@ export async function runBenchmarkPlan(combos, {
       }
       const runs = [];
       let audioSec = 0;
+      if (warmup && !shouldCancel()) {
+        onProgress({ phase: 'warmup', combo, profile, step, totalSteps });
+        // Discarded outright, failures included: a genuine failure repeats in
+        // the timed runs below and is reported there with its error, so
+        // swallowing it here cannot hide anything.
+        try { await transcribe({ combo, profile, rep: -1, warmup: true }); } catch { /* discarded */ }
+      }
       for (let rep = 0; rep < Math.max(1, repeats); rep++) {
         if (shouldCancel()) break;
         onProgress({ phase: 'transcribe', combo, profile, rep, step, totalSteps });
@@ -338,7 +380,9 @@ export async function runBenchmarkPlan(combos, {
         results.push({ id: combo.id, backend: combo.backend, quant: combo.quant, profile, status: 'cancelled' });
         continue;
       }
-      results.push(summarizeRuns({ combo, profile, loadMs, runs, audioSec, expectedText }));
+      results.push(summarizeRuns({
+        combo, profile, loadMs, loadTransfer, runs, audioSec, expectedText, warmup: warmup === true,
+      }));
     }
   }
   onProgress({ phase: 'done', step: totalSteps, totalSteps });

@@ -147,9 +147,15 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
 
   const report = JSON.parse(await textarea.inputValue());
   expect(report.format).toBe('parakeetweb-benchmark-report/1');
-  expect(report.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  // Coarsened to the top of the UTC hour: the report is uploaded and kept, and
+  // the minute a visitor happened to press Run is detail it has no use for.
+  expect(report.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:00:00\.000Z$/);
   expect(report.reportId).toBeTruthy();
   expect(report.app.version).toMatch(/^\d+\.\d+/);
+  // Several pushes share one version number, so the commit is what actually
+  // identifies the bytes that produced these numbers.
+  expect(typeof report.app.commit).toBe('string');
+  expect(report.app.commit.length).toBeGreaterThan(0);
   expect(report.settings.beamWidth).toBe(1);
 
   // The run really happened: one row, loaded and transcribed, and the shipped
@@ -160,6 +166,13 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   expect(row.status, `benchmark row failed: ${JSON.stringify(row.error || {})}`).toBe('ok');
   expect(row.profile).toBe('short');
   expect(row.loadMs).toBeGreaterThan(0);
+  // loadMs is only comparable with a cold/warm flag beside it. This context
+  // starts with an empty IndexedDB, so this load is necessarily cold.
+  expect(row.loadCached).toBe(false);
+  expect(row.loadDownloadMB).toBeGreaterThan(0);
+  // An untimed run preceded the timed ones, so wallMs describes the machine
+  // rather than its first-run kernel and pipeline compilation.
+  expect(row.warmup).toBe(true);
   expect(row.wallMs).toBeGreaterThan(0);
   expect(row.rtf).toBeGreaterThan(0);
   expect(row.similarity, 'the shipped clip must transcribe to its known sentence').toBeGreaterThanOrEqual(0.7);
