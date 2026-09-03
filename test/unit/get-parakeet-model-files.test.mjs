@@ -489,29 +489,31 @@ describe('getParakeetModel: cacheInfo for corrupt-cache eviction', () => {
     assert.ok(!r.cacheInfo.filenames.includes('vocab.txt'), 'vocab is not a deserialized weight');
   });
 
-  test('sharded fp32 on WebGPU: graph is evictable, noCache shards are not', async () => {
+  test('sharded fp32 on WebGPU: graph and shards are both evictable', async () => {
     mockHf(REPO_HF_SHARDED);
     // WebGPU fp32 loads via the shards (single-file is unloadable). The small
-    // rewritten graph is cached as bytes and stays evictable; the noCache shards
-    // never touch IndexedDB, so like the WASM case they must NOT be listed.
+    // rewritten graph is cached as bytes; the shards stream, but a small one is
+    // written to IndexedDB afterwards, so it is a cached weight that can go
+    // corrupt like any other and has to be evictable. Listing a shard that was
+    // too big to cache costs nothing: eviction simply finds no such key.
     const r = await getParakeetModel('test/webgpu-fp32-shards', {
       backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8',
     });
     // REPO_HF_SHARDED ships the shards under sharded/, so the graph is fetched
     // (and cached) as sharded/encoder-model.onnx.
     assert.ok(r.cacheInfo.filenames.includes('sharded/encoder-model.onnx'));
-    assert.ok(!r.cacheInfo.filenames.some((f) => f.includes('encoder-model.onnx.data')),
-      'noCache shards are never in IndexedDB, so must not be in cacheInfo');
+    assert.ok(r.cacheInfo.filenames.includes('sharded/encoder-model.onnx.data.000'),
+      'a cacheable shard must be evictable under the path it was fetched from');
   });
 
-  test('sharded fp32 (noCache): shards are NOT listed (never cached)', async () => {
+  test('sharded fp32 on WASM: shards are listed under their fetch path', async () => {
     mockHf(REPO_FP32_SHARDS);
     const r = await getParakeetModel('test/wasm-fp32-shards', {
       backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
     });
     assert.ok(r.cacheInfo.filenames.includes('encoder-model.onnx'));
-    assert.ok(!r.cacheInfo.filenames.some((f) => f.startsWith('encoder-model.onnx.data')),
-      'noCache shards are never in IndexedDB, so must not be in cacheInfo');
+    assert.ok(r.cacheInfo.filenames.some((f) => f.startsWith('encoder-model.onnx.data')),
+      'flat-layout shards are listed by their flat names');
   });
 });
 
