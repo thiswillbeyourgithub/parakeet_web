@@ -72,10 +72,14 @@ single pass at --max-pass-sec (default 390 s, safely under the 400 s wall) and
 measure the per-section trend within that feasible window. The production web
 app never hits this because it chunks far below 400 s.
 
-Quantisation -> files in the model dir:
-  int8 -> encoder-model.int8.onnx + decoder_joint-model.int8.onnx
-  fp16 -> encoder-model.fp16.onnx + decoder_joint-model.fp16.onnx
-  fp32 -> encoder-model.onnx (+ .data)  + decoder_joint-model.onnx
+Quantisation -> files in the model dir. Each precision lives in its own folder,
+which is how the model repos ship; a flat model dir (upstream, an older mirror)
+and a flat one with the fp32 shards in sharded/ are both still accepted, and
+vocab.txt is always at the root:
+  int8 -> int8/encoder-model.int8.onnx + int8/decoder_joint-model.int8.onnx
+  w4a8 -> w4a8/encoder-model.w4a8.onnx
+  fp16 -> fp16/encoder-model.fp16.onnx + fp16/decoder_joint-model.fp16.onnx
+  fp32 -> fp32/encoder-model.onnx (+ .data)  + fp32/decoder_joint-model.onnx
 
 Encoder vs decoder quant: --quants sweeps the ENCODER quant (that is what this
 bench measures), while --decoder-quant (default int8) holds the fused
@@ -84,9 +88,10 @@ single `quantization` that selects BOTH files, so to mix them we override the
 model's file map for just that one load to resolve the encoder at the swept quant
 and the decoder_joint at --decoder-quant in a single pass (see load_mixed). Only
 the files actually used are required: e.g. an fp32 encoder with an int8 decoder
-needs encoder-model.onnx (+ .data) + decoder_joint-model.int8.onnx and does NOT
-require a decoder_joint-model.onnx to exist (the mixed load resolves each piece
-independently). No second encoder is ever loaded, so the RAM figure stays honest.
+needs fp32/encoder-model.onnx (+ .data) + int8/decoder_joint-model.int8.onnx and
+does NOT require a decoder_joint-model.onnx to exist (the mixed load resolves
+each piece independently). No second encoder is ever loaded, so the RAM figure
+stays honest.
 int8 matches fp32 quality on the fused decoder here, so the default int8 mirrors
 the web app's production pipeline (which ships the int8 decoder); pass
 --decoder-quant fp32 to ISOLATE the encoder instead (a full-precision joiner
@@ -155,6 +160,71 @@ ROOT = Path(__file__).resolve().parent.parent
 # MatMulNBits 4-bit encoder written by scripts/quantize-nbits.py. No decoder ships
 # at that width: mixed_model_files() below always pairs it with --decoder-quant.
 QUANT_ARG = {"int8": "int8", "w4a8": "w4a8", "fp16": "fp16", "fp32": None}
+
+# --- model-dir layout ------------------------------------------------------
+#
+# A file's directory is a pure function of its basename; the basenames never
+# change. This is the SAME rule the web app uses in app/src/modelLayout.js, and
+# this block is its only Python copy: everything on this side that needs to know
+# where a weight lives goes through layout_dir_for/candidate_paths, so if the
+# rule ever changes there are exactly two places to edit, not one per consumer.
+#
+# Two legacy layouts stay supported by the fallback order below, because they are
+# live in the wild: everything flat at the root (upstream istupakov, older
+# mirrors, an `hf download` of a pre-move revision), and flat plus a `sharded/`
+# folder holding the <2 GB fp32 shard set and its rewritten encoder graph.
+_QUANT_DIRS = (
+    # Longest suffix first: `.int8.lite.onnx` must not be read as `.int8.onnx`.
+    (".int8.lite.onnx", "int8-lite/"),
+    (".int8.onnx", "int8/"),
+    (".w4a8.onnx", "w4a8/"),
+    (".fp16.onnx", "fp16/"),
+)
+# The unsuffixed fp32 graphs, matched by exact name so that root-level ONNX files
+# which are not model weights (nemo128.onnx) stay at the root.
+_FP32_GRAPHS = {"encoder-model.onnx", "decoder_joint-model.onnx"}
+# External-data sidecars live with their graph: strip the sidecar suffix and
+# classify the graph, so encoder-model.onnx.data.007 lands in fp32/ too.
+_SIDECAR_RE = re.compile(r"\.data(\.\d+)?$")
+
+
+def layout_dir_for(basename):
+    """Directory a basename belongs in, as a prefix ('' for the repo root)."""
+    graph = _SIDECAR_RE.sub("", basename)
+    for suffix, directory in _QUANT_DIRS:
+        if graph.endswith(suffix):
+            return directory
+    return "fp32/" if graph in _FP32_GRAPHS else ""
+
+
+def candidate_paths(basename):
+    """Every relative path a basename may sit at, in resolution order: its layout
+    directory, the flat root, then sharded/. Deduplicated."""
+    ordered = [layout_dir_for(basename) + basename, basename, "sharded/" + basename]
+    return list(dict.fromkeys(ordered))
+
+
+def relocate_model_file(model_dir, pattern):
+    """Point one onnx-asr file entry at the directory it actually lives in.
+
+    onnx-asr resolves each entry with path.glob(pattern), so a literal relative
+    path works exactly as well as a glob. The patterns it hands out are
+    basename-shaped ('encoder-model?int8.onnx', where the '?' stands in for the
+    '.'), so read the concrete basename off one, ask the layout where it belongs,
+    and prepend the first directory that has the file. The pattern itself is kept
+    as the last segment, so onnx-asr's own glob semantics are untouched and only
+    the directory is added. A file we cannot place is returned unchanged, which
+    is the flat layout onnx-asr already resolves on its own (and leaves its
+    ModelFileNotFoundError intact when the file is genuinely absent).
+    """
+    if "/" in pattern:
+        return pattern
+    basename = pattern.replace("?", ".")
+    for rel in candidate_paths(basename):
+        if (Path(model_dir) / rel).is_file():
+            return rel[: len(rel) - len(basename)] + pattern
+    return pattern
+
 
 DEFAULT_AUDIO = ROOT / "test/e2e/.cache/jfk-moon/full.mp3"
 
@@ -338,6 +408,13 @@ def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=Fal
     file, and no second encoder is ever loaded (so the peak-RSS figure stays honest).
     The override is restored in a finally, so it cannot leak into a later load.
 
+    The SAME override also carries the model-dir layout: onnx-asr looks each file
+    up at the top level of --model-dir, but the model repos keep each precision in
+    its own folder, so every entry is routed through relocate_model_file first.
+    That is why the override runs even when the two quants match: on a nested
+    model dir the stock resolver would find nothing at all. vocab.txt is a root
+    file in every layout and simply resolves to itself.
+
     `use_cuda` selects the providers: CUDA (+CPU for op coverage) vs CPU-only.
     """
     import onnx_asr
@@ -346,16 +423,14 @@ def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=Fal
         preload_cuda_dlls()
     providers = CUDA_PROVIDERS if use_cuda else CPU_PROVIDERS
 
-    if decoder_quant == encoder_quant:
-        return onnx_asr.load_model(model_name, path=model_dir,
-                                   quantization=QUANT_ARG[encoder_quant], providers=providers)
-
     from onnx_asr.loader import create_asr_resolver
 
     model_type = create_asr_resolver(model_name, model_dir).model_type
     # _get_model_files(quant) maps {"encoder": ..., "decoder_joint": ..., "vocab": ...}.
-    # A model with no fused decoder_joint (e.g. a CTC model) cannot take this knob.
-    if "decoder_joint" not in model_type._get_model_files(QUANT_ARG[encoder_quant]):
+    # A model with no fused decoder_joint (e.g. a CTC model) cannot take this knob,
+    # but it can still need relocating, so only the MIXED request is refused.
+    mixed = decoder_quant != encoder_quant
+    if mixed and "decoder_joint" not in model_type._get_model_files(QUANT_ARG[encoder_quant]):
         raise RuntimeError(
             f"model {model_name!r} has no fused decoder_joint file to set independently; "
             "--decoder-quant only applies to TDT/RNN-T transducer models.",
@@ -365,8 +440,9 @@ def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=Fal
 
     def mixed_model_files(quantization=None):
         files = dict(original(QUANT_ARG[encoder_quant]))
-        files["decoder_joint"] = original(QUANT_ARG[decoder_quant])["decoder_joint"]
-        return files
+        if mixed:
+            files["decoder_joint"] = original(QUANT_ARG[decoder_quant])["decoder_joint"]
+        return {key: relocate_model_file(model_dir, pattern) for key, pattern in files.items()}
 
     model_type._get_model_files = staticmethod(mixed_model_files)
     try:

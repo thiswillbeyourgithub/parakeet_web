@@ -5,14 +5,16 @@
 #     "jiwer",
 # ]
 # ///
-"""Unit tests for the pure (model-free) helpers added to scripts/wer-quants.py for
-the FLEURS --manifest mode: normalize_for_wer, load_manifest, corpus_wer.
+"""Unit tests for the pure (model-free) helpers in scripts/wer-quants.py: the
+FLEURS --manifest mode (normalize_for_wer, load_manifest, corpus_wer) and the
+model-dir layout resolution (layout_dir_for, candidate_paths, relocate_model_file).
 
 These are the bug-prone bits of the per-language ground-truth WER feature
 (normalisation, manifest parsing + wav-path resolution, corpus-WER aggregation,
 per-language scoring, and the streaming dispatch that emits each language's result AS
-PRODUCED); the model-dependent transcription (child_manifest) is exercised by a real
-run, not here. main() runs every T-test sequentially (no pytest harness, matching the
+PRODUCED) plus the layout rules that decide WHICH file each quant loads; the
+model-dependent transcription (child_manifest) is exercised by a real run, not
+here. main() runs every T-test sequentially (no pytest harness, matching the
 model repo's test_quantize-int8-smoothquant.py convention).
 
   uv run scripts/test_wer-quants.py
@@ -222,6 +224,105 @@ def T13_w4a8_is_a_known_encoder_quant():
     assert f"encoder-model.{wq.QUANT_ARG['w4a8']}.onnx" == "encoder-model.w4a8.onnx"
     # fp32 stays the unsuffixed file, so adding a width did not shift the sentinel.
     assert wq.QUANT_ARG["fp32"] is None
+
+
+def _make_model_dir(root, files):
+    """Create empty placeholder weights at the given relative paths."""
+    for rel in files:
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"")
+
+
+def T14_layout_dir_for_maps_basename_to_directory():
+    # The rule mirrors app/src/modelLayout.js: the directory is a pure function of
+    # the basename, and the sidecars follow their graph.
+    assert wq.layout_dir_for("encoder-model.int8.onnx") == "int8/"
+    assert wq.layout_dir_for("decoder_joint-model.int8.onnx") == "int8/"
+    # The longer suffix wins, or the lite build would land in int8/.
+    assert wq.layout_dir_for("encoder-model.int8.lite.onnx") == "int8-lite/"
+    assert wq.layout_dir_for("encoder-model.w4a8.onnx") == "w4a8/"
+    assert wq.layout_dir_for("encoder-model.fp16.onnx") == "fp16/"
+    assert wq.layout_dir_for("encoder-model.onnx") == "fp32/"
+    assert wq.layout_dir_for("encoder-model.onnx.data") == "fp32/"
+    assert wq.layout_dir_for("encoder-model.onnx.data.001") == "fp32/"
+    assert wq.layout_dir_for("decoder_joint-model.onnx") == "fp32/"
+    # Root files, ONNX or not.
+    for name in ("vocab.txt", "config.json", "nemo128.onnx", "README.md"):
+        assert wq.layout_dir_for(name) == "", name
+
+
+def T15_candidate_paths_order_is_layout_root_sharded():
+    assert wq.candidate_paths("encoder-model.int8.onnx") == [
+        "int8/encoder-model.int8.onnx",
+        "encoder-model.int8.onnx",
+        "sharded/encoder-model.int8.onnx",
+    ]
+    # A root file yields two entries, not a duplicated one.
+    assert wq.candidate_paths("vocab.txt") == ["vocab.txt", "sharded/vocab.txt"]
+
+
+def T16_relocate_finds_the_nested_layout():
+    # The layout the model repos ship: one directory per precision.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _make_model_dir(root, [
+            "vocab.txt",
+            "int8/encoder-model.int8.onnx", "int8/decoder_joint-model.int8.onnx",
+            "fp32/encoder-model.onnx", "fp32/encoder-model.onnx.data",
+            "fp32/decoder_joint-model.onnx",
+            "w4a8/encoder-model.w4a8.onnx",
+        ])
+        # onnx-asr hands out basename-shaped globs, where '?' stands in for '.'.
+        assert wq.relocate_model_file(root, "encoder-model?int8.onnx") == "int8/encoder-model?int8.onnx"
+        assert wq.relocate_model_file(root, "decoder_joint-model?int8.onnx") == "int8/decoder_joint-model?int8.onnx"
+        assert wq.relocate_model_file(root, "encoder-model.onnx") == "fp32/encoder-model.onnx"
+        assert wq.relocate_model_file(root, "encoder-model?w4a8.onnx") == "w4a8/encoder-model?w4a8.onnx"
+        # vocab.txt is a root file in every layout.
+        assert wq.relocate_model_file(root, "vocab.txt") == "vocab.txt"
+        # The rewritten pattern must actually resolve the way onnx-asr resolves it.
+        hits = list(root.glob(wq.relocate_model_file(root, "encoder-model?int8.onnx")))
+        assert [p.name for p in hits] == ["encoder-model.int8.onnx"], hits
+
+
+def T17_relocate_leaves_the_flat_layout_alone():
+    # Upstream istupakov / an older mirror / an `hf download` of a pre-move
+    # revision: everything at the top level, which onnx-asr already resolves.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _make_model_dir(root, [
+            "vocab.txt", "encoder-model.int8.onnx", "decoder_joint-model.int8.onnx",
+            "encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx",
+        ])
+        for pattern in ("encoder-model?int8.onnx", "decoder_joint-model?int8.onnx",
+                        "encoder-model.onnx", "vocab.txt"):
+            assert wq.relocate_model_file(root, pattern) == pattern, pattern
+        # A file the dir does not have is returned unchanged, so onnx-asr raises
+        # its own ModelFileNotFoundError instead of us inventing a path.
+        assert wq.relocate_model_file(root, "encoder-model?fp16.onnx") == "encoder-model?fp16.onnx"
+
+
+def T18_relocate_finds_the_flat_plus_sharded_layout():
+    # What the optimized repo published before the move: the root single-sidecar
+    # fp32 encoder plus a sharded/ folder with the rewritten graph and its shards.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _make_model_dir(root, [
+            "vocab.txt", "encoder-model.int8.onnx", "decoder_joint-model.int8.onnx",
+            "sharded/encoder-model.onnx",
+            "sharded/encoder-model.onnx.data.000", "sharded/encoder-model.onnx.data.001",
+        ])
+        # No root copy of the fp32 graph here, so sharded/ is where it resolves.
+        assert wq.relocate_model_file(root, "encoder-model.onnx") == "sharded/encoder-model.onnx"
+        # int8 stays flat.
+        assert wq.relocate_model_file(root, "encoder-model?int8.onnx") == "encoder-model?int8.onnx"
+
+    # With BOTH copies present the root one wins, matching the documented order
+    # (layout dir, root, sharded/).
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        _make_model_dir(root, ["vocab.txt", "encoder-model.onnx", "sharded/encoder-model.onnx"])
+        assert wq.relocate_model_file(root, "encoder-model.onnx") == "encoder-model.onnx"
 
 
 def main():
