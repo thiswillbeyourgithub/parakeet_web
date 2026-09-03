@@ -10,6 +10,30 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### fp16 is back on WebGPU, on the GPUs that can run it
+
+The fp16 encoder was withdrawn in August on the belief that no reachable GPU exposes the `shader-f16` feature its kernels need. A benchmark report sent in from a visitor's laptop (an Intel UHD 630) lists that feature as present, so the belief was wrong: our own development GPU does not expose it, which made the absence look universal.
+
+fp16 is therefore offered again, as a choice rather than as the silent default it used to be. The app asks the GPU whether it supports the feature and only then enables the option; on a GPU that does not, the radio is greyed out with the reason, and a preference brought over from another machine loads fp32 instead of transcribing nothing. That last part is why the gating is strict: without the feature ONNX Runtime builds the fp16 model, runs it, and returns an empty transcript with no error anywhere.
+
+Why bother: on the laptop that produced the report, loading the model cost 74 seconds against 20.6 seconds of actual transcription, and fp16 halves the GPU download (about 1.2 GB instead of the 2.35 GB of sharded fp32) at essentially the same quality. The model source has to host the fp16 file for the option to do anything; a source that does not now says so instead of quietly serving a heavier precision.
+
+### GPU model weights are cached again, when they are small enough to survive it
+
+The sharded fp32 encoder streamed straight into memory and was never written to the browser's cache, so every page load re-downloaded it in full: the 74-second load above was paid on every visit. Caching those shards was tried once before and reverted, because Chromium spills a large stored file to disk and then fails to read it back. That failure depends on the size, so the cache is now size-gated: a streamed file small enough to survive a cache round trip is kept, a larger one behaves exactly as before. Until the model repo ships smaller shards this changes nothing in production, which is what makes it safe to land first.
+
+### The benchmark warms up before timing, and says whether the load was cached
+
+Two things made benchmark numbers harder to compare than they looked. The first timed run of any combination paid for one-off work (memory allocation, kernel setup) that no later run pays, so the first row of a machine's report was systematically pessimistic; there is now an untimed warm-up run per profile whose result is discarded. And a model load time meant nothing on its own, because a load served from cache and a 2.3 GB download are the same measurement with a hundredfold difference. Each row now records how many megabytes it actually pulled and whether the weights were already cached.
+
+### Reports say exactly which build produced them, and no longer carry the minute
+
+A report used to carry only the version number, which several different builds share, so a measurement could not be tied to the code that produced it: the report discussed above came from the last pushed build, not from what was deployed. Reports now carry the exact commit. In the other direction, the timestamp on a report is rounded down to the hour, both in the file and in its name, since the precise minute a visitor pressed Run identifies them a little and answers no question anyone asks of the data.
+
+### A GPU with no memory headroom no longer batches encoder chunks
+
+On the GPU path the app groups several audio chunks into one encoder call when the graphics card reports room for them. The calculation could report no room at all and still be overruled by a floor of two, which is exactly the machine that cannot afford it: an integrated GPU whose whole reported buffer limit is smaller than the encoder itself. A measured zero now means one chunk at a time. Machines where the measurement fails or is unavailable keep the conservative floor, since an unanswered question is not the same as a no.
+
 ### The benchmark keeps the machine awake for its whole run
 
 The sidebar benchmark takes minutes, and most of that time is spent loading models between rows rather than transcribing (a 2.3 GB fp32 download easily dominates). The screen wake lock the app already holds while recording or transcribing was only held during the transcriptions, so a laptop left alone to benchmark could dim, then sleep, halfway through a load and hand back a run that never finished. The wake lock is now held from the moment Run is pressed until the run ends, which on every desktop OS also blocks the idle suspend that follows a dark screen. A lid close or a manual sleep still wins, as it should. The end-to-end benchmark test now records the wake lock calls and fails if the lock is requested any later than the first model load or dropped before the report exists.
