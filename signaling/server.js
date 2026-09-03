@@ -50,6 +50,38 @@ const BENCHMARK_REPORT_MAX_BYTES = 32 * 1024;
 // Disk backstop behind the per-IP rate limit: at 32 KB each, 20k reports cap
 // the folder around 640 MB.
 const BENCHMARK_REPORTS_MAX_FILES = parseInt(process.env.BENCHMARK_REPORTS_MAX_FILES, 10) || 20000;
+// Shape of a report the client builds (lib/benchmark.js buildBenchmarkReport).
+// Anything else at the top level is refused: the files land on the operator's
+// machine and are read by tooling that trusts them, so a report is only stored
+// when it is at least the right shape. Sections stay free-form underneath
+// (the environment block mirrors whatever WebGPU reports) but every key and
+// string in them is checked by validateBenchmarkReport below.
+const BENCHMARK_REPORT_SHAPE = {
+    format: 'string',
+    reportId: 'string?',
+    generatedAt: 'string?',
+    app: 'object',
+    settings: 'object',
+    clip: 'object',
+    environment: 'object',
+    results: 'array',
+};
+// Keys that turn into prototype pollution the moment a consumer merges the
+// parsed report into another object (lodash.merge, a deep Object.assign).
+// JSON.parse keeps them as own properties, so they walk through untouched
+// unless refused here.
+const BENCHMARK_REPORT_FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+// Deepest nesting a real report reaches is 5 (results[].chunks[].metrics);
+// JSON.stringify overflows the stack around 10k, so this is a comfortable
+// margin that still refuses a nesting bomb with a 400 instead of a 500.
+const BENCHMARK_REPORT_MAX_DEPTH = 12;
+// Longest string a real report carries is an error message the client
+// already trims to 300 characters, or a GPU adapter description.
+const BENCHMARK_REPORT_MAX_STRING = 4096;
+// C0 control characters other than tab / newline, plus DEL. ESC is what makes
+// a string a terminal-escape injection when a consumer prints it (`jq -r`,
+// console.log); a report has no business carrying any of them.
+const BENCHMARK_REPORT_CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f]/;
 
 const STUN_SERVER = process.env.STUN_SERVER || '';
 const STUN_GOOGLE_FALLBACK = process.env.STUN_GOOGLE_FALLBACK !== 'false';
@@ -1247,8 +1279,61 @@ app.get('/api/stats', rateLimitMiddleware('general'), (req, res) => {
 //    logging the sender here would quietly undo that.
 //  - The body is re-serialised from the parsed JSON, so whatever is stored is
 //    valid JSON of a bounded size, never raw attacker bytes.
+//  - The shape is checked (validateBenchmarkReport): known top-level fields
+//    only, no prototype-polluting keys anywhere, bounded depth and string
+//    length, no control characters. The stored file is then safe to feed to
+//    a merge helper or print to a terminal, which the size cap alone did not
+//    guarantee.
 //  - A directory-wide file cap keeps an abusive client from filling the disk;
 //    the per-IP rate limit (3/min) is the first line, this is the backstop.
+function isPlainObject(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// Walk a parsed report and return the reason it is unacceptable, or null.
+// Type-only checks on purpose: the goal is a file the operator's tooling can
+// parse and print without surprises, not a schema that breaks every time the
+// client adds a metric.
+function validateBenchmarkReport(body) {
+    for (const key of Object.keys(body)) {
+        if (!(key in BENCHMARK_REPORT_SHAPE)) return `unexpected field "${key.slice(0, 64)}"`;
+    }
+    for (const [key, kind] of Object.entries(BENCHMARK_REPORT_SHAPE)) {
+        const v = body[key];
+        if (kind === 'string?' && (v === null || v === undefined)) continue;
+        if (kind === 'array' ? !Array.isArray(v)
+            : kind === 'object' ? !isPlainObject(v)
+                : typeof v !== 'string') return `field "${key}" has the wrong type`;
+    }
+    if (!body.results.every(isPlainObject)) return 'results must be an array of objects';
+
+    // Iterative walk (an explicit stack) so a nesting bomb costs O(size) and
+    // never touches the call stack before the depth cap refuses it.
+    const stack = [{ node: body, depth: 0 }];
+    while (stack.length) {
+        const { node, depth } = stack.pop();
+        if (typeof node === 'string') {
+            if (node.length > BENCHMARK_REPORT_MAX_STRING) return 'a string exceeds the length limit';
+            if (BENCHMARK_REPORT_CONTROL_CHARS.test(node)) return 'a string contains control characters';
+            continue;
+        }
+        if (node === null || typeof node !== 'object') continue;
+        if (depth >= BENCHMARK_REPORT_MAX_DEPTH) return 'report is nested too deeply';
+        if (Array.isArray(node)) {
+            for (const child of node) stack.push({ node: child, depth: depth + 1 });
+            continue;
+        }
+        for (const [key, child] of Object.entries(node)) {
+            if (BENCHMARK_REPORT_FORBIDDEN_KEYS.has(key)) return `forbidden key "${key}"`;
+            if (key.length > BENCHMARK_REPORT_MAX_STRING || BENCHMARK_REPORT_CONTROL_CHARS.test(key)) {
+                return 'a key is malformed';
+            }
+            stack.push({ node: child, depth: depth + 1 });
+        }
+    }
+    return null;
+}
+
 app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), async (req, res) => {
     if (!BENCHMARK_REPORTS_DIR) {
         return res.status(503).json({ error: 'Unavailable', message: 'Benchmark report collection is not enabled' });
@@ -1268,6 +1353,10 @@ app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), async 
     }
     if (payload.length > BENCHMARK_REPORT_MAX_BYTES) {
         return res.status(413).json({ error: 'Payload Too Large', message: 'Report exceeds the size limit' });
+    }
+    const reason = validateBenchmarkReport(body);
+    if (reason) {
+        return res.status(400).json({ error: 'Bad Request', message: `Malformed report: ${reason}` });
     }
 
     try {
