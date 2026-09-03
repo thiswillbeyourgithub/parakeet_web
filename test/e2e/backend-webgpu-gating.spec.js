@@ -147,6 +147,12 @@ test('the greyed-out WebGPU tooltip stays fully readable', async ({ page }) => {
   await expect(popup).toBeVisible();
   await expect(popup).toContainText('WebGPU');
 
+  // The popup fades in (`animation: fadeIn 0.15s`), so a reading taken the
+  // instant it becomes visible catches a mid-animation frame (0.62 rather than
+  // 1) and fails for the wrong reason. Settle the animation first: what is
+  // being pinned is the ancestor-opacity bug, not the fade.
+  await popup.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+
   // Effective opacity = product over the popup and every ancestor.
   const effectiveOpacity = await popup.evaluate((el) => {
     let o = 1;
