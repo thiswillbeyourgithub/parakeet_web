@@ -18,10 +18,10 @@ import { resolveModelQuant, quantSatisfiable, parseEncoderShards, isSafeRepoPath
 const NO_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.int8.onnx'];
 // A repo that ships the fp32 encoder as <2GB shards (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py).
 const WITH_FP32_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'decoder_joint-model.int8.onnx'];
-// The SAME shards as the model repo actually ships them: under a `sharded/`
-// subfolder (scripts/shard-fp32.py's default output), which is exactly how the HF
-// tree API lists them (`sharded/encoder-model.onnx.data.NNN`). The flat single-
-// file fp32 encoder (encoder-model.onnx[.data]) sits at the root for WebGPU.
+// The SAME shards in the layout the optimized repo published before the move:
+// under a `sharded/` subfolder (shard-fp32.py's old default output), which is
+// exactly how the HF tree API listed them (`sharded/encoder-model.onnx.data.NNN`).
+// The flat single-file fp32 encoder (encoder-model.onnx[.data]) sat at the root.
 const WITH_FP32_SHARDS_SUBFOLDER = [
   'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
   'encoder-model.onnx', 'encoder-model.onnx.data',
@@ -35,6 +35,54 @@ const WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY = [
   'sharded/encoder-model.optimized.onnx',
   'sharded/encoder-model.optimized.onnx.data.000', 'sharded/encoder-model.optimized.onnx.data.001',
 ];
+
+// The current layout: one directory per precision, basenames unchanged. Every
+// availability question below has to be answered from these paths, so a repo
+// that ships an opt-in encoder in its own folder must not read as "not shipped".
+const NESTED_LAYOUT = [
+  'README.md', 'config.json', 'vocab.txt', 'nemo128.onnx',
+  'fp32/encoder-model.onnx', 'fp32/encoder-model.onnx.data.000', 'fp32/encoder-model.onnx.data.001',
+  'fp32/decoder_joint-model.onnx',
+  'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx',
+  'int8-lite/encoder-model.int8.lite.onnx',
+  'w4a8/encoder-model.w4a8.onnx',
+];
+
+describe('resolveModelQuant: the nested repo layout', () => {
+  test('the fp32 shard set in fp32/ counts as a loadable fp32 layout', () => {
+    const { shards, subdir } = parseEncoderShards(NESTED_LAYOUT);
+    assert.deepEqual(shards, ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.equal(subdir, 'fp32/');
+    const wasm = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT, allowWasmFp32: true });
+    assert.equal(wasm.encoderQ, 'fp32');
+    assert.equal(wasm.pinnedToInt8, false);
+    const gpu = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
+    assert.equal(gpu.webgpuFp32NeedsShards, false);
+  });
+
+  test('the opt-in encoders are found in int8-lite/ and w4a8/', () => {
+    const lite = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
+    assert.equal(lite.encoderQ, 'int8lite');
+    assert.equal(lite.pinnedToInt8, false);
+    const w4a8 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
+    assert.equal(w4a8.encoderQ, 'w4a8');
+    const gpuW4a8 = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
+    assert.equal(gpuW4a8.encoderQ, 'w4a8');
+    assert.equal(gpuW4a8.w4a8NeedsFile, false);
+  });
+
+  test('a nested repo WITHOUT an opt-in build still reports it as unservable', () => {
+    // The directory rule must not be read as "the file is implied by its folder".
+    const noLite = NESTED_LAYOUT.filter((f) => !f.includes('int8-lite/'));
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: noLite });
+    assert.equal(r.encoderQ, 'int8');
+    assert.equal(r.pinnedToInt8, true);
+  });
+
+  test('every nested path is accepted by the fetch-safety filter', () => {
+    for (const p of NESTED_LAYOUT) assert.equal(isSafeRepoPath(p), true, p);
+  });
+});
 
 describe('resolveModelQuant: WASM is pinned to int8', () => {
   for (const backend of ['wasm']) {

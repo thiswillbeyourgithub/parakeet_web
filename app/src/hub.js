@@ -8,6 +8,7 @@
 
 import { MODELS, getModelConfig } from './models.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbGetAllKeys } from './idb.js';
+import { candidatePaths, findRepoFile } from './modelLayout.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
 
 /**
@@ -143,9 +144,10 @@ const SAFE_RFILENAME_RE = /^[A-Za-z0-9._-]+$/;
 
 /**
  * Whether a repo file PATH from the HF tree API is safe to fetch/cache. A path
- * may legitimately contain a subfolder (the model repo ships the fp32 encoder
- * shards under `sharded/`, listed by the recursive tree API as
- * `sharded/encoder-model.onnx.data.000`), so allow forward-slash-separated
+ * may legitimately contain a subfolder (the model repos keep each precision in
+ * its own directory, listed by the recursive tree API as
+ * `int8/encoder-model.int8.onnx`, `fp32/encoder-model.onnx.data.000` and so on;
+ * older mirrors used `sharded/`), so allow forward-slash-separated
  * segments, but require EVERY segment to be a plain SAFE_RFILENAME_RE token and
  * reject any empty ('//', leading/trailing '/') or traversal ('.'/'..') segment.
  * Pure; used by listRepoFiles's filterSafe.
@@ -166,6 +168,11 @@ async function listRepoFiles(repoId, revision = 'main') {
   // /api/models?revision= endpoint always lists the default branch's
   // file set even when a revision is passed, which breaks quant-file
   // detection on repos that ship int8 vs fp32 on different branches.
+  // `recursive=1` is load-bearing: without it the tree stops at the top level
+  // and every precision folder (fp32/, int8/, ...) would come back as a `directory`
+  // entry we drop, leaving the listing empty of weights. Both shapes below carry
+  // FULL repo-relative paths (`entry.path`, `rfilename`), which is what
+  // modelLayout.findRepoFile resolves against.
   const treeUrl = `https://huggingface.co/api/models/${repoId}/tree/${encodedRevision}?recursive=1`;
   const modelUrl = `https://huggingface.co/api/models/${repoId}?revision=${encodedRevision}`;
 
@@ -862,7 +869,9 @@ export async function getModelText(repoId, filename, options = {}) {
 /**
  * Download a file from a local server path (fallback when HuggingFace is unreachable).
  * Uses the same IndexedDB caching and progress streaming as getModelFile.
- * Files are expected at <baseUrl>/<filename> (flat layout).
+ * Files are expected at <baseUrl>/<path>, where <path> is the repo-relative path
+ * the listing gave (e.g. 'int8/encoder-model.int8.onnx', or a bare basename on a
+ * flat mirror). See app/src/modelLayout.js.
  * @param {string} baseUrl Local base URL (e.g., '/models')
  * @param {string} repoId Repo ID — only used for the IndexedDB cache key
  * @param {string} filename File to download
@@ -961,60 +970,98 @@ export async function checkLocalModelFiles(baseUrl, repoId) {
   }
 }
 
+// Basenames HEAD-probed against a local mirror, in probe order. Two groups:
+//
+//   - the weight GRAPHS the download plan may actually fetch. A local mirror
+//     has no listing API, so this IS its listing: without an entry the plan
+//     cannot know that (say) the int8 encoder lives in `int8/` rather than at
+//     the root, and every fetch against a nested mirror would 404.
+//   - the external-data sidecars and the optional encoder builds, which
+//     resolveModelQuant reads before any weight is fetched. It refuses an
+//     int8lite or w4a8 request the source cannot serve, so a mirror that HAS one
+//     must be able to say so; omitting them would make those precisions
+//     permanently unavailable on a local-weights deployment and would stop the
+//     /models auto-upgrade from ever rescuing an HF repo that ships neither.
+//
+// The fp32 shards are walked separately (contiguous, unbounded count). vocab.txt
+// is not here: it is the canary resolveLocalModelBase already probed, and it
+// only ever sits at the root, so the download plan's basename fallback is right
+// for it by construction.
+const LOCAL_PROBE_CANDIDATES = [
+  'encoder-model.onnx',
+  'encoder-model.onnx.data',
+  'decoder_joint-model.onnx',
+  'decoder_joint-model.onnx.data',
+  'encoder-model.int8.onnx',
+  'decoder_joint-model.int8.onnx',
+  'encoder-model.int8.lite.onnx',
+  'encoder-model.w4a8.onnx',
+];
+
 /**
  * List the quant-relevant files a locally-served model directory actually has.
- * The HuggingFace API lists a repo's files for us; a local mirror (served flat
- * under `baseUrl`, e.g. '/models') can't be listed, so we HEAD-probe the
- * specific candidates resolveModelQuant cares about: the single fp32 sidecar,
- * the lite int8 encoder, and the contiguous fp32 encoder shards
- * (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) up to the first gap. Returned in the same shape as
- * listRepoFiles so resolveModelQuant and the download loop treat both sources
- * identically.
+ * The HuggingFace API lists a repo's files for us; a local mirror (served under
+ * `baseUrl`, e.g. '/models') can't be listed, so we HEAD-probe each candidate
+ * basename through modelLayout.candidatePaths (its precision folder, then the
+ * flat root, then `sharded/`) and keep the path that answered, plus the
+ * contiguous fp32 encoder shards up to the first gap.
+ *
+ * Returns FULL repo-relative paths, exactly like the HF tree listing, so
+ * resolveModelQuant and the download plan treat both sources identically and
+ * neither has to re-discover which directory a file came from.
  *
  * @param {string} baseUrl Local base URL serving the model files (e.g. '/models').
- * @returns {Promise<string[]>} Filenames present under baseUrl (subset of the probed candidates).
+ * @returns {Promise<string[]>} Repo-relative paths present under baseUrl (subset of the probed candidates).
  */
 export async function listLocalRepoFiles(baseUrl) {
-  const probe = async (name) => {
+  const reachable = async (rel) => {
     try {
-      const res = await fetch(`${baseUrl}/${name}`, { method: 'HEAD' });
-      return res.ok ? name : null;
-    } catch { return null; }
+      const res = await fetch(`${baseUrl}/${rel}`, { method: 'HEAD' });
+      return !!res.ok;
+    } catch { return false; }
   };
-  // The optional encoder builds are probed for the same reason as the fp32
-  // pieces: resolveModelQuant refuses an int8lite or w4a8 request the source
-  // cannot serve, so a mirror that HAS one must be able to say so. Omitting them
-  // would make those precisions permanently unavailable on a local-weights
-  // deployment (repoFiles IS this list there) and would stop the /models
-  // auto-upgrade from ever rescuing an HF repo that ships neither.
-  const candidates = [
-    'encoder-model.onnx.data',
-    'decoder_joint-model.onnx.data',
-    'encoder-model.int8.lite.onnx',
-    'encoder-model.w4a8.onnx',
-  ];
-  const files = (await Promise.all(candidates.map(probe))).filter(Boolean);
-  // Probe the contiguous fp32 encoder shards (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) until the
-  // first gap so resolveModelQuant and the download loop can see them. The
-  // shards (plus the rewritten graph that points at them) sit either flat under
-  // baseUrl or in a `sharded/` subfolder: scripts/shard-fp32.py's DEFAULT output
-  // is `<model-dir>/sharded`, so an operator who runs it over an `hf download`
-  // mirror and bind-mounts the parent serves the shards at `/models/sharded/...`,
-  // not flat. Probe flat first, then under sharded/, and report basenames either
-  // way so resolveModelQuant stays oblivious to the layout; getParakeetModel
-  // re-probes the physical subfolder to fetch the encoder graph + shards from the
-  // right place (vocab + the int8 decoder, which scripts/shard-fp32.py does NOT
-  // copy into sharded/, still come from the flat root).
-  const shardName = (i) => `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
-  for (let i = 0; ; i++) {
-    if (!(await probe(shardName(i)))) break;
-    files.push(shardName(i));
-  }
-  if (!files.some((f) => f.startsWith('encoder-model.onnx.data.'))) {
-    for (let i = 0; ; i++) {
-      if (!(await probe(`sharded/${shardName(i)}`))) break;
-      files.push(shardName(i));
+  // First path that answers wins, so a mirror in the current layout costs ONE
+  // round trip per basename and a flat one costs two. Only a basename the mirror
+  // does not ship at all pays for the full candidate list.
+  const probe = async (basename) => {
+    for (const rel of candidatePaths(basename)) {
+      if (await reachable(rel)) return rel;
     }
+    return null;
+  };
+  const files = (await Promise.all(LOCAL_PROBE_CANDIDATES.map(probe))).filter(Boolean);
+  // Walk the contiguous fp32 encoder shards until the first gap so
+  // resolveModelQuant and the download loop can see them. The shards (plus the
+  // rewritten graph that points at them) sit in `fp32/` in the current layout,
+  // flat in an old mirror, or under `sharded/` in the layout the optimized repo
+  // published before the move: shard-fp32.py's DEFAULT output was
+  // `<model-dir>/sharded`, so an operator who ran it over an `hf download` mirror
+  // and bind-mounted the parent serves them at `/models/sharded/...`. The FULL
+  // path is reported either way, which is what lets the encoder graph be fetched
+  // from the same directory as its shards.
+  //
+  // Shard 000 decides the directory and the rest of the walk stays in it: a
+  // shard set split across two directories is not loadable anyway (the graph's
+  // external_data names one location), and locking on costs one round trip per
+  // shard instead of one per candidate path.
+  const shardName = (i) => `encoder-model.onnx.data.${String(i).padStart(3, '0')}`;
+  const first = await probe(shardName(0));
+  if (first) {
+    const shardDir = first.slice(0, first.length - shardName(0).length);
+    files.push(first);
+    for (let i = 1; ; i++) {
+      const rel = shardDir + shardName(i);
+      if (!(await reachable(rel))) break;
+      files.push(rel);
+    }
+    // One encoder GRAPH basename, two possible files: the single-sidecar graph
+    // (external_data -> one 2.4 GB .data, unloadable in a browser) and the
+    // rewritten one beside the shards. The candidate walk above stops at the
+    // first hit, so on a mirror carrying both it would report only the root copy
+    // and the download plan's preferDir would have nothing to select. Probe the
+    // shard directory explicitly so BOTH are listed and preferDir can do its job.
+    const shardedGraph = `${shardDir}encoder-model.onnx`;
+    if (!files.includes(shardedGraph) && await reachable(shardedGraph)) files.push(shardedGraph);
   }
   return files;
 }
@@ -1058,17 +1105,16 @@ const isInt8Encoder = (q) => INT8_ENCODER_QUANTS.includes(q);
 // upstream one (istupakov) with no name list to keep in sync.
 
 /**
- * Parse the fp32 encoder shard set out of a repo file listing. The shards
- * (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py, `<name>.data.NNN`)
- * can be reported in either of two layouts and this normalises both:
- *   - flat basenames (`encoder-model.onnx.data.000`), how a local mirror reports
- *     them via listLocalRepoFiles, and
- *   - full subfolder paths (`sharded/encoder-model.onnx.data.000`), how the HF
- *     tree API returns them AND how the model repo actually ships them (scripts/
- *     shard-fp32.py's default output is a `sharded/` subfolder).
+ * Parse the fp32 encoder shard set (`<name>.data.NNN`) out of a repo file
+ * listing, whichever directory it sits in: `fp32/` in the current layout, the
+ * flat root in an old mirror, `sharded/` in the layout the optimized repo
+ * published before the move. Both sources hand it full repo-relative paths (the
+ * HF tree API and listLocalRepoFiles alike), and a bare basename still parses as
+ * the flat case.
+ *
  * Returns the shard BASENAMES (the path each is mounted under, baked into the
  * encoder graph's external_data location) sorted ascending, plus the common
- * subfolder prefix they live under ('' when flat). Pure so both resolveModelQuant
+ * directory prefix they live under ('' when flat). Pure so both resolveModelQuant
  * (does a shard set exist?) and getParakeetModel (where do we fetch them?) share
  * one parser and can be unit-tested without any I/O.
  *
@@ -1096,11 +1142,10 @@ function hasFp32ShardSet(repoFiles) {
 // Whether the listing carries the encoder build for a quant. Only the model repo
 // builds the lite int8 and w4a8 encoders, so a mirror that predates them (or
 // upstream istupakov, which never had them) legitimately does not ship them.
-// Matches flat OR under a subfolder, the same way parseEncoderShards does, since
-// the HF tree API returns full paths.
+// findRepoFile matches the basename in its precision folder, at the flat root or
+// under `sharded/`, so all three layouts answer the same question the same way.
 function hasEncoderFor(repoFiles, quant) {
-  const name = `encoder-model${QUANT_SUFFIX[quant]}`;
-  return repoFiles.some((f) => typeof f === 'string' && (f === name || f.endsWith(`/${name}`)));
+  return findRepoFile(repoFiles, `encoder-model${QUANT_SUFFIX[quant]}`) !== null;
 }
 
 /**
@@ -1167,9 +1212,9 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     }
     // Opt-in sharded fp32 on WASM: needs the explicit flag, an fp32 request, and
     // the repo to actually ship the <2GB shards. Anything missing keeps int8.
-    // parseEncoderShards matches them flat OR under a `sharded/` subfolder (how
-    // the HF tree API lists them and how the model repo ships them), so a request
-    // is no longer wrongly pinned just because the shards live in `sharded/`.
+    // parseEncoderShards finds them in whichever directory the source keeps them
+    // (fp32/, the flat root, or sharded/), so a request is not wrongly pinned
+    // just because the shards are not at the root.
     const hasFp32Shards = hasFp32ShardSet(repoFiles);
     if (decoderHonoured && allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
       return {
@@ -1309,7 +1354,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // primary (HF) source cannot serve the requested quant and the local mirror
   // can. `let` because of that pre-download switch.
   // resolveLocalModelBase tolerates a nested HF-style mirror (files under
-  // <base>/<repoId>/) as well as the documented flat layout, so a mount of a
+  // <base>/<repoId>/) as well as a mount of the repo root itself, so a mount of a
   // parent folder doesn't 404 every fetch. Falls back to the raw base when the
   // canary is reachable under neither (preserves the prior missing-file flow).
   let effectiveLocalBase = localFallbackBaseUrl
@@ -1422,37 +1467,20 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   const encoderName = `encoder-model${QUANT_SUFFIX[encoderQ]}`;
   const decoderName = `decoder_joint-model${QUANT_SUFFIX[decoderQ]}`;
 
-  // External encoder weights come in one of two layouts. A sharded fp32 encoder
-  // (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) splits them into <name>.data.000/.001/... files, each
-  // < 2 GB so it clears the WASM ArrayBuffer / Chromium blob-fetch caps; a plain
-  // export keeps a single <name>.data sidecar. Detect the shards here (before the
-  // download list is built) so the encoder graph fetch can be routed to wherever
-  // the shards actually live. parseEncoderShards returns bare basenames (the path
-  // each is mounted under, baked into the graph's external_data) plus the common
-  // subfolder they sit in: '' when the listing is flat, 'sharded/' when the HF
-  // tree API reports `sharded/encoder-model.onnx.data.NNN` (how the model repo
-  // ships them). This is what lets sharded fp32 load straight from HuggingFace on
-  // WASM, not only from a local /models mirror.
-  const { shards: encoderShards, subdir: shardListingSubdir } = parseEncoderShards(repoFiles, encoderName);
+  // External encoder weights come in one of two shapes. A sharded fp32 encoder
+  // splits them into <name>.data.000/.001/... files, each < 2 GB so it clears the
+  // WASM ArrayBuffer / Chromium blob-fetch caps; a plain export keeps a single
+  // <name>.data sidecar. Detect the shards here (before the download list is
+  // built) so the encoder graph fetch can be routed to wherever the shards
+  // actually live. parseEncoderShards returns bare basenames (the path each is
+  // mounted under, baked into the graph's external_data) plus the directory they
+  // sit in: 'fp32/' in the current layout, '' in an old flat mirror, 'sharded/'
+  // in the layout the optimized repo published before the move. Both the HF tree
+  // listing and listLocalRepoFiles carry full paths, so this one parse settles
+  // the directory for every source, which is what lets sharded fp32 load straight
+  // from HuggingFace on WASM and not only from a local /models mirror.
+  const { shards: encoderShards, subdir: encoderSubdir } = parseEncoderShards(repoFiles, encoderName);
 
-  // Subfolder the rewritten encoder graph (its external_data points at .data.NNN,
-  // not a single .data sidecar) and the shards live under. The HF tree listing
-  // already carries it (parseEncoderShards read it off the path); a LOCAL mirror
-  // reports basenames only (listLocalRepoFiles), so when the listing gave no
-  // prefix HEAD-probe flat-then-sharded/ to discover it. vocab.txt and the int8
-  // decoder stay at the flat root (the sharded/ dir does NOT carry the int8
-  // decoder), so only the encoder pieces are rerouted. Mirrors the file-specific
-  // routing in test/e2e/serve.mjs.
-  let encoderSubdir = shardListingSubdir;
-  if (effectiveLocalBase && encoderShards.length && !encoderSubdir) {
-    const reachable = async (rel) => {
-      try { return (await fetch(`${effectiveLocalBase}/${rel}`, { method: 'HEAD' })).ok; }
-      catch { return false; }
-    };
-    if (!(await reachable(encoderShards[0])) && (await reachable(`sharded/${encoderShards[0]}`))) {
-      encoderSubdir = 'sharded/';
-    }
-  }
   // Use the sharded layout wherever it is available. WASM cannot load the single
   // >2 GB fp32 sidecar (32-bit ArrayBuffer cap), and WebGPU cannot either: the
   // 2.3 GB flat sidecar is loaded as bytes but still cached to IndexedDB, and its
@@ -1462,11 +1490,21 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // whenever the repo ships shards, mount them on EITHER backend: the shard loop
   // streams each <2 GB shard straight to memory (asBytes + noCache), never
   // touching IDB. Only fp32 ever ships a `.data` sidecar alongside shards, so the
-  // int8 path never sees this. The sharded encoder graph (external_data -> .data.NNN)
-  // is fetched from encoderSubdir; the flat single-file graph sits at the root.
-  const hasFlatSidecar = repoFiles.includes(`${encoderName}.data`);
+  // int8 path never sees this.
+  const hasFlatSidecar = findRepoFile(repoFiles, `${encoderName}.data`) !== null;
   const useShards = encoderShards.length > 0;
-  const encoderFetchName = useShards ? `${encoderSubdir}${encoderName}` : encoderName;
+  // Where each file is actually FETCHED from. The listing is the authority: it
+  // carries the directory for every source now, so nothing here HEAD-probes for a
+  // subfolder any more. preferDir pins the fp32 encoder graph to the directory
+  // holding its shards, because a listing can hold two graphs under one basename
+  // (a root single-sidecar one whose external_data names a 2.4 GB file, and the
+  // rewritten one beside the shards) and only the latter is loadable. A basename
+  // the listing does not carry falls back to itself: that is a bare flat mirror
+  // whose listing was never built, exactly the case the fallback exists for.
+  const fetchName = (basename, preferDir) => findRepoFile(repoFiles, basename, { preferDir }) || basename;
+  const encoderFetchName = fetchName(encoderName, useShards ? encoderSubdir : undefined);
+  const decoderFetchName = fetchName(decoderName);
+  const vocabFetchName = fetchName('vocab.txt');
 
   // The big encoder/decoder weights are handed to ORT as bytes (not a blob URL)
   // on WebGPU, where they are fp32 (>1 GB) and a blob-URL fetch OOMs (see
@@ -1477,15 +1515,15 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // targets exactly these on a corrupt-cache recovery (results.cacheInfo below).
   const filesToGet = [
     { key: 'encoderUrl', name: encoderFetchName, asBytes: loadAsBytes, weight: true },
-    { key: 'decoderUrl', name: decoderName, asBytes: loadAsBytes, weight: true },
-    { key: 'tokenizerUrl', name: 'vocab.txt' },
+    { key: 'decoderUrl', name: decoderFetchName, asBytes: loadAsBytes, weight: true },
+    { key: 'tokenizerUrl', name: vocabFetchName },
   ];
 
   // Only download preprocessor ONNX when not using JS backend.
   // The JS backend (mel.js) computes mel spectrograms locally without
   // needing a separate ONNX model, saving download bandwidth.
   if (preprocessorBackend !== 'js') {
-    filesToGet.push({ key: 'preprocessorUrl', name: `${preprocessor}.onnx` });
+    filesToGet.push({ key: 'preprocessorUrl', name: fetchName(`${preprocessor}.onnx`) });
     console.log(`[Hub] Preprocessor: ONNX — will download ${preprocessor}.onnx`);
   } else {
     console.log(`[Hub] Preprocessor: JS (mel.js) — skipping ${preprocessor}.onnx download`);
@@ -1499,11 +1537,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // a hypothetical small external-data export. The shards, when used, are handled
   // after the main loop.
   if (!useShards && hasFlatSidecar) {
-    filesToGet.push({ key: 'encoderDataUrl', name: `${encoderName}.data`, weight: true });
+    filesToGet.push({ key: 'encoderDataUrl', name: fetchName(`${encoderName}.data`), weight: true });
   }
 
-  if (repoFiles.includes(`${decoderName}.data`)) {
-    filesToGet.push({ key: 'decoderDataUrl', name: `${decoderName}.data`, weight: true });
+  if (findRepoFile(repoFiles, `${decoderName}.data`) !== null) {
+    filesToGet.push({ key: 'decoderDataUrl', name: fetchName(`${decoderName}.data`), weight: true });
   }
 
   const results = {
@@ -1523,7 +1561,10 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       // re-download them when a corrupt file fails to deserialize at session
       // create. Derived from the `weight` flag so it can't drift from the
       // download list. Sharded fp32 weights are noCache (never cached) so they
-      // are not listed. subfolder is always '' for the Parakeet repos.
+      // are not listed. The names are repo-relative PATHS ('int8/encoder-model.
+      // int8.onnx' on the current layout), matching the cache keys downloadFile
+      // wrote. `subfolder` is the separate HF-API subfolder knob, always '' for
+      // the Parakeet repos.
       cacheInfo: {
           repoId,
           revision: effectiveRevision,
@@ -1578,8 +1619,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
     for (const name of encoderShards) {
-      // Fetch from wherever the shards physically live (flat or sharded/), but
-      // mount under the bare basename the graph's external_data location names.
+      // Fetch from the directory the shards physically live in (fp32/, the flat
+      // root, or sharded/), but mount under the bare basename the graph's
+      // external_data location names.
       results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(`${encoderSubdir}${name}`, true, true) });
     }
   }

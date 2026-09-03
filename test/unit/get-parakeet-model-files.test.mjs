@@ -262,6 +262,117 @@ describe('getParakeetModel: sharded fp32 straight from HuggingFace (shards under
   });
 });
 
+describe('getParakeetModel: the nested repo layout', () => {
+  // The current layout: one directory per precision, basenames unchanged. Every
+  // fetch has to pick up the directory from the listing (app/src/modelLayout.js);
+  // falling back to the bare basename here would 404 on every weight.
+  const REPO_NESTED = [
+    'README.md', 'config.json', 'vocab.txt', 'nemo128.onnx',
+    'fp32/encoder-model.onnx', 'fp32/encoder-model.onnx.data.000', 'fp32/encoder-model.onnx.data.001',
+    'fp32/decoder_joint-model.onnx',
+    'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx',
+    'int8-lite/encoder-model.int8.lite.onnx',
+    'w4a8/encoder-model.w4a8.onnx',
+  ];
+  let originalFetch3;
+  beforeEach(() => { originalFetch3 = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = originalFetch3; });
+
+  test('HF listing, int8 on WASM: fetches from int8/, vocab from the root', async () => {
+    const downloaded = mockHfPaths(REPO_NESTED);
+    const r = await getParakeetModel('test/nested-int8', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    // The returned filenames stay bare basenames: they name the graph, not the path.
+    assert.deepEqual(r.filenames, { encoder: 'encoder-model.int8.onnx', decoder: 'decoder_joint-model.int8.onnx' });
+    assert.deepEqual(downloaded.sort(), [
+      'int8/decoder_joint-model.int8.onnx', 'int8/encoder-model.int8.onnx', 'vocab.txt',
+    ]);
+  });
+
+  test('HF listing, the opt-in encoders come from their own folders', async () => {
+    for (const [quant, path] of [
+      ['int8lite', 'int8-lite/encoder-model.int8.lite.onnx'],
+      ['w4a8', 'w4a8/encoder-model.w4a8.onnx'],
+    ]) {
+      const downloaded = mockHfPaths(REPO_NESTED);
+      await getParakeetModel(`test/nested-${quant}`, {
+        backend: 'wasm', encoderQuant: quant, decoderQuant: 'int8',
+      });
+      assert.ok(downloaded.includes(path), `${quant} must be fetched from ${path}`);
+    }
+  });
+
+  test('HF listing, fp32 on WASM: graph and shards both come from fp32/', async () => {
+    const downloaded = mockHfPaths(REPO_NESTED);
+    const r = await getParakeetModel('test/nested-fp32', {
+      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true,
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    // Shards mount under their BASENAMES, which is what the graph's external_data
+    // names; only the fetch is directory-aware.
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
+      ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.ok(downloaded.includes('fp32/encoder-model.onnx'));
+    assert.ok(downloaded.includes('fp32/encoder-model.onnx.data.000')
+      && downloaded.includes('fp32/encoder-model.onnx.data.001'));
+    assert.ok(downloaded.includes('vocab.txt'));
+  });
+
+  test('HF listing, the ONNX preprocessor stays at the root', async () => {
+    const downloaded = mockHfPaths(REPO_NESTED);
+    await getParakeetModel('test/nested-preproc', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8',
+      preprocessorBackend: 'onnx', preprocessor: 'nemo128',
+    });
+    assert.ok(downloaded.includes('nemo128.onnx'), 'the preprocessor is a root file, not a precision one');
+  });
+
+  test('a local mirror in the nested layout resolves every weight', async () => {
+    // The mirror has no listing API, so listLocalRepoFiles HEAD-probes it into the
+    // same shape. Without the directory in that listing every fetch would go to
+    // the root and 404.
+    const present = new Set(REPO_NESTED);
+    const downloaded = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const rel = String(url).slice('/models/'.length).split('?')[0];
+      if (opts.method === 'HEAD') return new Response(null, { status: present.has(rel) ? 200 : 404 });
+      if (!present.has(rel)) return new Response('not found', { status: 404 });
+      downloaded.push(rel);
+      return bodyResponse();
+    };
+    const r = await getParakeetModel('test/nested-local', {
+      backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8', localFallbackBaseUrl: '/models',
+    });
+    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' });
+    assert.deepEqual(downloaded.sort(), [
+      'int8/decoder_joint-model.int8.onnx', 'int8/encoder-model.int8.onnx', 'vocab.txt',
+    ]);
+  });
+
+  test('a local mirror in the nested layout serves sharded fp32 from fp32/', async () => {
+    const present = new Set(REPO_NESTED);
+    const downloaded = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const rel = String(url).slice('/models/'.length).split('?')[0];
+      if (opts.method === 'HEAD') return new Response(null, { status: present.has(rel) ? 200 : 404 });
+      if (!present.has(rel)) return new Response('not found', { status: 404 });
+      downloaded.push(rel);
+      return bodyResponse();
+    };
+    const r = await getParakeetModel('test/nested-local-fp32', {
+      backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8',
+      allowWasmFp32: true, localFallbackBaseUrl: '/models',
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.deepEqual(r.urls.encoderDataUrl.map((e) => e.path),
+      ['encoder-model.onnx.data.000', 'encoder-model.onnx.data.001']);
+    assert.ok(downloaded.includes('fp32/encoder-model.onnx'));
+    assert.ok(downloaded.includes('fp32/encoder-model.onnx.data.000')
+      && downloaded.includes('fp32/encoder-model.onnx.data.001'));
+  });
+});
+
 describe('getParakeetModel file selection: WebGPU', () => {
   test('int8 request, no shards -> throws QuantUnavailableError (single-file fp32 is unloadable on WebGPU)', async () => {
     mockHf(REPO_FLAT);
