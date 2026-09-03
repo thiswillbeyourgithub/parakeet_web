@@ -427,4 +427,38 @@ describe('end to end on a real tree', () => {
     assert.equal(c.failed, 0);
     assert.ok(existsSync(join(root, 'encoder-model.onnx.zst')));
   });
+
+  test('a weight under local/ gets no sidecar, the same weight beside it does', async () => {
+    // local/ is the model repos' gitignored working folder: stale builds, candidate
+    // symlink farms, export caches. Nothing in it is uploaded or served, but it holds
+    // many GB of files whose NAMES are servable-weight-shaped, so compressing them
+    // would burn hours writing sidecars no request can reach. Same basename on both
+    // sides, so only the directory can be what decides.
+    const root = join(dir, 'skips');
+    const repo = join(root, 'Owner', 'repo');
+    mkdirSync(join(repo, 'local', 'stale'), { recursive: true });
+    mkdirSync(join(repo, 'fp32'), { recursive: true });
+    mkdirSync(join(repo, '.git', 'lfs'), { recursive: true });
+    const body = 'q'.repeat(200_000);
+    writeFileSync(join(repo, 'fp32', 'encoder-model.onnx'), body);
+    writeFileSync(join(repo, 'local', 'stale', 'encoder-model.onnx'), body);
+    writeFileSync(join(repo, '.git', 'lfs', 'encoder-model.onnx'), body);
+
+    const c = await run({ mode: 'models', dir: root, level: 1 });
+    assert.equal(c.failed, 0);
+    assert.ok(existsSync(join(repo, 'fp32', 'encoder-model.onnx.zst')),
+      'the served weight must still be compressed');
+    assert.ok(!existsSync(join(repo, 'local', 'stale', 'encoder-model.onnx.zst')),
+      'a weight under local/ must get no sidecar');
+    assert.ok(!existsSync(join(repo, '.git', 'lfs', 'encoder-model.onnx.zst')),
+      'a weight-shaped blob inside .git must get no sidecar either');
+    assert.equal(c.made, 1, 'exactly one file was in scope');
+
+    // The skip also holds for the orphan sweep: a stray sidecar under local/ is
+    // left alone rather than pruned, since precompress never looks in there.
+    writeFileSync(join(repo, 'local', 'stale', 'orphan.onnx.zst'), 'x');
+    await run({ mode: 'models', dir: root, level: 1 });
+    assert.ok(existsSync(join(repo, 'local', 'stale', 'orphan.onnx.zst')),
+      'the orphan sweep must not reach inside local/ either');
+  });
 });
