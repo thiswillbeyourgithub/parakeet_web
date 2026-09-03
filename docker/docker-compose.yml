@@ -124,6 +124,10 @@ services:
       # Disk backstop: refuse new reports once the folder holds this many
       # files (~32 KB each, so the default caps it around 640 MB).
       - BENCHMARK_REPORTS_MAX_FILES=${BENCHMARK_REPORTS_MAX_FILES:-}
+      # Instance-wide cap on accepted reports per minute, on top of the
+      # per-IP 3/min, so an address-rotating flood cannot reach the file cap
+      # in minutes.
+      - BENCHMARK_REPORTS_MAX_PER_MINUTE=${BENCHMARK_REPORTS_MAX_PER_MINUTE:-}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}
