@@ -253,6 +253,16 @@ describe('augmentVariants / expandAugmentations', () => {
   test('n composes with f, so plurals are Title Cased too', () => {
     assert.ok(augmentVariants('adulte', 'fn').includes('Adultes'));
   });
+  test('n never takes a proclitic prefix (l\' is singular, the plural takes les)', () => {
+    const v = augmentVariants('adulte', 'pn', ["l'", "d'"]);
+    assert.ok(v.includes("l'adulte") && v.includes('adultes'));
+    assert.ok(!v.includes("l'adultes") && !v.includes("d'adultes"));
+  });
+  test('n leaves codes, formulae and acronyms alone', () => {
+    for (const t of ['133Xe', '3TC', "5'-nucléotidase", 'ADN']) {
+      assert.ok(eqArr(augmentVariants(t, 'n'), [t]), `${t} should take no plural`);
+    }
+  });
   test('n is off unless asked for', () => {
     assert.ok(eqArr(augmentVariants('adulte', 'fah'), ['adulte', 'Adulte', 'ADULTE']));
   });
