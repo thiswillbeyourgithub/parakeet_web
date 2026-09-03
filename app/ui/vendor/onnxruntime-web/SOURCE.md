@@ -14,6 +14,12 @@ guid-typescript, long, platform, protobufjs).
 
 Used (bundled) files only:
 - `dist/ort.bundle.min.mjs` (default browser ESM entry)
+- `dist/ort.jspi.bundle.min.mjs` (the JSPI entry, i.e. ORT's native C++ WebGPU
+  execution provider). Loaded only behind the experimental `?ortep=jspi` URL
+  flag, as a lazily imported chunk, so a normal visitor never fetches it. It is
+  aliased explicitly in `app/ui/vite.config.js` because the exact-match alias
+  for the bare package name does not cover subpaths, and an unaliased
+  `onnxruntime-web/jspi` would resolve outside this audited tree.
 
 Other files from the upstream tarball are kept as-is for traceability but are
 not referenced by any alias and therefore never reach the production bundle.

@@ -76,6 +76,67 @@ export const ORT_RUNTIME_ASSETS = {
 };
 
 /**
+ * The runtime pair of the EXPERIMENTAL jspi build (see ORT_VARIANTS below).
+ * A different bundle entry references different runtime files, so pinning has
+ * to move with it or the integrity check would verify bytes ORT never loads.
+ * @type {{mjs: string, wasm: string}}
+ */
+export const ORT_RUNTIME_ASSETS_JSPI = {
+  mjs: 'ort-wasm-simd-threaded.jspi.mjs',
+  wasm: 'ort-wasm-simd-threaded.jspi.wasm',
+};
+
+/**
+ * The ORT distributions this app knows how to load, keyed by variant name.
+ *
+ * 'jsep' is the shipped one: ORT's JS-implemented WebGPU/WebNN layer, where
+ * every GPU/CPU partition boundary crosses back into JS and yields to the
+ * event loop (~2000 times per fp32 encoder run on this model, which is the
+ * coupling the html.gpu-run animation pause exists to defuse).
+ *
+ * 'jspi' is ORT's newer C++ WebGPU execution provider, which suspends the
+ * WASM stack through JavaScript Promise Integration instead of unwinding to
+ * JS. It is EXPERIMENTAL here and never a default: it is selectable so the
+ * two can be measured against each other on a real GPU, since the remaining
+ * JSEP overhead after the animation fix has never been quantified. It also
+ * needs the browser to implement JSPI (Chromium 137+; no Firefox, no Safari),
+ * hence jspiSupported() below.
+ *
+ * Both entries live in the vendored package already, so selecting one costs
+ * no new supply chain: only the bytes the visitor's browser actually fetches
+ * change (the jspi runtime is ~15 MB against jsep's ~26 MB).
+ */
+export const ORT_VARIANTS = {
+  jsep: { assets: ORT_RUNTIME_ASSETS, importer: () => import('onnxruntime-web') },
+  jspi: { assets: ORT_RUNTIME_ASSETS_JSPI, importer: () => import('onnxruntime-web/jspi') },
+};
+
+/**
+ * Whether this browser implements JavaScript Promise Integration, which the
+ * jspi build needs to suspend the WASM stack. `WebAssembly.Suspending` is the
+ * constructor the shipped (phase 4) API exposes; the older `WebAssembly.Function`
+ * prototype belonged to a withdrawn draft, so it is deliberately not accepted.
+ * @returns {boolean}
+ */
+export function jspiSupported() {
+  return typeof WebAssembly !== 'undefined' && typeof WebAssembly.Suspending === 'function';
+}
+
+/**
+ * Resolve a requested ORT variant to one this environment can actually run.
+ * Pure, so the fallback rule is unit-testable without a browser.
+ *
+ * @param {string|undefined} requested Variant name ('jsep' | 'jspi'), or undefined.
+ * @param {boolean} hasJspi Whether the browser implements JSPI.
+ * @returns {{variant: string, downgraded: boolean}} The variant to load, and
+ *   whether a request had to be refused (so the caller can say so once).
+ */
+export function resolveOrtVariant(requested, hasJspi) {
+  if (requested !== 'jspi') return { variant: 'jsep', downgraded: false };
+  return hasJspi ? { variant: 'jspi', downgraded: false } : { variant: 'jsep', downgraded: true };
+}
+
+/**
  * Pick the manifest entries for the runtime pair that will actually be loaded.
  * Pure, so the "fetch only what we pin" contract is unit-testable without a
  * browser (test/unit/ort-asset-verify.test.mjs).
@@ -98,7 +159,7 @@ export function selectOrtRuntimeAssets(manifest, names = ORT_RUNTIME_ASSETS) {
 
 // Exported for the unit test only (nothing else imports it): the property that
 // matters is WHICH requests it makes, which a pure helper cannot express.
-export async function _verifiedOrtWasmPaths(basePath) {
+export async function _verifiedOrtWasmPaths(basePath, names = ORT_RUNTIME_ASSETS) {
   if (typeof fetch === 'undefined' || !crypto?.subtle) {
     _integrityFailure('WebCrypto unavailable');
     return basePath;
@@ -118,9 +179,9 @@ export async function _verifiedOrtWasmPaths(basePath) {
   }
   // Fall back when the manifest cannot pin our variant (a stripped build):
   // ORT then re-fetches by name over same-origin, unpinned.
-  const wanted = selectOrtRuntimeAssets(manifest);
+  const wanted = selectOrtRuntimeAssets(manifest, names);
   if (!wanted) {
-    console.warn('[Parakeet.js] jsep variant missing from ORT manifest; falling back to base-path wasmPaths (still same-origin, but the runtime bytes are NOT pinned)');
+    console.warn(`[Parakeet.js] ${names.mjs} variant missing from ORT manifest; falling back to base-path wasmPaths (still same-origin, but the runtime bytes are NOT pinned)`);
     return basePath;
   }
   const verified = {};
@@ -173,12 +234,19 @@ export function defaultWasmThreads(hardwareConcurrency) {
  * @param {string} [opts.wasmPaths] Optional path prefix for WASM binaries.
  * @returns {Promise<typeof import('onnxruntime-web').default>}
  */
-export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}) {
+export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads, ortVariant } = {}) {
+  // Which ORT distribution to load. Refusing an unsupported request here (a
+  // browser without JSPI) rather than at session-create time keeps the failure
+  // one warning instead of a broken load.
+  const { variant, downgraded } = resolveOrtVariant(ortVariant, jspiSupported());
+  if (downgraded) {
+    console.warn('[Parakeet.js] ORT jspi runtime requested but this browser does not implement JSPI; using jsep');
+  }
   // Dynamic import to handle Vite bundling issues
   let ort;
   
   try {
-    const ortModule = await import('onnxruntime-web');
+    const ortModule = await ORT_VARIANTS[variant].importer();
     ort = ortModule.default || ortModule;
 
     // Some bundler configurations expose the namespace as ortModule.ort.
@@ -202,8 +270,17 @@ export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads } = {}
   // before handing bytes to ORT; on success this becomes an object map of
   // blob URLs whose sha384 matched the pin.
   if (!ort.env.wasm.wasmPaths) {
-    ort.env.wasm.wasmPaths = await _verifiedOrtWasmPaths(wasmPaths || '/ort/');
+    ort.env.wasm.wasmPaths = await _verifiedOrtWasmPaths(wasmPaths || '/ort/', ORT_VARIANTS[variant].assets);
   }
+  // One line per context, and the marker the WebGPU A/B harness asserts on:
+  // ORT pins one runtime per JS context, so a run that thinks it measured jspi
+  // while a worker quietly loaded jsep would be worse than no measurement. The
+  // context is part of the line because a page has several: only the main
+  // thread holds the GPU session, while the decode/encode workers are WASM and
+  // deliberately stay on the shipped runtime, so an untagged line would let a
+  // worker's 'jsep' be read as the answer for the GPU.
+  const ctx = typeof document === 'undefined' ? 'worker' : 'main';
+  console.log(`[Parakeet.js] ORT runtime variant: ${variant} (${ctx})`);
 
   // Configure WASM for better performance
   if (backend === 'wasm' || backend === 'webgpu') {

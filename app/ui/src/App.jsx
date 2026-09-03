@@ -511,6 +511,17 @@ const BOOST_SOURCE_DISABLED = '__disabled__';
 const WEBGPU_DISABLED = typeof location !== 'undefined'
   && /[?&]webgpu=0(?:&|$)/.test(location.search || '');
 
+// `?ortep=jspi` selects ONNX Runtime's native C++ WebGPU execution provider
+// (the JSPI build) instead of the shipped JSEP one, for the run of that page
+// load only. Nothing persists it and no UI offers it: it exists so the two can
+// be A/B'd on a real GPU (scripts/webgpu-check.mjs --jspi), because the JS
+// boundary crossing JSEP pays on every GPU/CPU partition has never been
+// measured on this model since the animation-pause fix removed the
+// pathological part of it. A browser without JSPI falls back to jsep with a
+// warning (backend.js resolveOrtVariant), so the flag can never break a load.
+const ORT_VARIANT = (typeof location !== 'undefined'
+  && /[?&]ortep=jspi(?:&|$)/.test(location.search || '')) ? 'jspi' : undefined;
+
 // Map any WebGPU backend id to 'wasm' while WebGPU is disabled, so a persisted
 // or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
 const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') ? 'wasm' : b);
@@ -3219,6 +3230,7 @@ export default function App() {
           backend,
           verbose: verboseLog,
           cpuThreads,
+          ortVariant: ORT_VARIANT,
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });

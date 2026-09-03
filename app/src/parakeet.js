@@ -875,6 +875,11 @@ export class ParakeetModel {
       enableProfiling = false,
       enableGraphCapture,
       cpuThreads = undefined,
+      // Which ONNX Runtime distribution to load: undefined/'jsep' is the
+      // shipped one, 'jspi' the experimental native-WebGPU-EP build (see
+      // ORT_VARIANTS in backend.js). Only the top-level session picks it; the
+      // preprocessor session below inherits nothing, since it is WASM-only.
+      ortVariant = undefined,
       // 'js' uses the pure-JS mel.js preprocessor (no ONNX download needed);
       // 'onnx' uses the OnnxPreprocessor and requires preprocessorUrl.
       preprocessorBackend = 'js',
@@ -893,7 +898,7 @@ export class ParakeetModel {
     if (backend.startsWith('webgpu')) {
         ortBackend = 'webgpu';
     }
-    const ort = await initOrt({ backend: ortBackend, wasmPaths, numThreads: cpuThreads });
+    const ort = await initOrt({ backend: ortBackend, wasmPaths, numThreads: cpuThreads, ortVariant });
 
     // 2. Configure session options for better performance
     // Graph-capture is beneficial only when every node runs on the same EP and
