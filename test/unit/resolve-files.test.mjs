@@ -14,9 +14,9 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 
 import { resolveFiles } from '../../scripts/transcribe.mjs';
 
@@ -153,6 +153,100 @@ describe('resolveFiles: per-quant encoder/decoder/vocab resolution', () => {
   test('an unknown quant throws', () => {
     const dir = makeModelDir(['vocab.txt']);
     assert.throws(() => resolveFiles(dir, 'int4'), /Unknown quant "int4"/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// A --model-dir can be laid out three ways and resolveFiles has to cope with all
+// of them: one directory per precision (the current repo layout), entirely flat
+// (upstream, older mirrors, an `hf download` of a pre-move revision), and flat
+// with the fp32 shards under sharded/. The rules live in app/src/modelLayout.js;
+// these pin that resolveFiles actually goes through them.
+describe('resolveFiles: repo layouts', () => {
+  test('the nested layout: each quant resolves inside its own directory', () => {
+    const dir = makeModelDir([
+      'vocab.txt',
+      'fp32/encoder-model.onnx', 'fp32/decoder_joint-model.onnx',
+      'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx',
+      'fp16/encoder-model.fp16.onnx', 'fp16/decoder_joint-model.fp16.onnx',
+    ]);
+    const int8 = resolveFiles(dir, 'int8');
+    assert.equal(int8.encoderPath, join(dir, 'int8', 'encoder-model.int8.onnx'));
+    assert.equal(int8.decoderPath, join(dir, 'int8', 'decoder_joint-model.int8.onnx'));
+    assert.equal(int8.vocabPath, join(dir, 'vocab.txt'));
+    const f32 = resolveFiles(dir, 'fp32');
+    assert.equal(f32.encoderPath, join(dir, 'fp32', 'encoder-model.onnx'));
+    const f16 = resolveFiles(dir, 'fp16');
+    assert.equal(f16.encoderPath, join(dir, 'fp16', 'encoder-model.fp16.onnx'));
+    // Mixed quants each follow their own directory.
+    const mixed = resolveFiles(dir, 'int8', 'fp32');
+    assert.equal(mixed.encoderPath, join(dir, 'int8', 'encoder-model.int8.onnx'));
+    assert.equal(mixed.decoderPath, join(dir, 'fp32', 'decoder_joint-model.onnx'));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('the nested layout: the external-data sidecar is found beside the graph', () => {
+    // collectExternalData reads dirname(encoderPath), so the resolved path has to
+    // carry the directory or the fp32 sidecar would be looked for at the root.
+    const dir = makeModelDir([
+      'vocab.txt',
+      'fp32/encoder-model.onnx', 'fp32/encoder-model.onnx.data',
+      'fp32/decoder_joint-model.onnx',
+    ]);
+    const r = resolveFiles(dir, 'fp32');
+    assert.equal(dirname(r.encoderPath), join(dir, 'fp32'));
+    assert.ok(existsSync(join(dirname(r.encoderPath), 'encoder-model.onnx.data')));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('the flat layout still resolves at the root', () => {
+    const dir = makeModelDir([
+      'vocab.txt', 'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+      'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.onnx',
+    ]);
+    const int8 = resolveFiles(dir, 'int8');
+    assert.equal(int8.encoderPath, join(dir, 'encoder-model.int8.onnx'));
+    const f32 = resolveFiles(dir, 'fp32');
+    assert.equal(f32.encoderPath, join(dir, 'encoder-model.onnx'));
+    assert.equal(dirname(f32.encoderPath), dir);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('the flat + sharded/ layout resolves the fp32 encoder in sharded/', () => {
+    // The layout the optimized repo published before the move, minus the root
+    // single-sidecar graph: only sharded/ carries the fp32 encoder, and the shard
+    // set has to be found next to it.
+    const dir = makeModelDir([
+      'vocab.txt', 'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
+      'decoder_joint-model.onnx',
+      'sharded/encoder-model.onnx',
+      'sharded/encoder-model.onnx.data.000', 'sharded/encoder-model.onnx.data.001',
+    ]);
+    const r = resolveFiles(dir, 'fp32', 'int8');
+    assert.equal(r.encoderPath, join(dir, 'sharded', 'encoder-model.onnx'));
+    assert.equal(dirname(r.encoderPath), join(dir, 'sharded'));
+    // The int8 decoder is NOT in sharded/, and must still resolve at the root.
+    assert.equal(r.decoderPath, join(dir, 'decoder_joint-model.int8.onnx'));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a root copy wins over sharded/ when both exist', () => {
+    const dir = makeModelDir([
+      'vocab.txt', 'decoder_joint-model.onnx',
+      'encoder-model.onnx', 'sharded/encoder-model.onnx',
+    ]);
+    const r = resolveFiles(dir, 'fp32');
+    assert.equal(r.encoderPath, join(dir, 'encoder-model.onnx'));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a precision folder wins over a stale root copy', () => {
+    const dir = makeModelDir([
+      'vocab.txt', 'decoder_joint-model.int8.onnx',
+      'encoder-model.int8.onnx', 'int8/encoder-model.int8.onnx',
+    ]);
+    const r = resolveFiles(dir, 'int8');
+    assert.equal(r.encoderPath, join(dir, 'int8', 'encoder-model.int8.onnx'));
     rmSync(dir, { recursive: true, force: true });
   });
 });

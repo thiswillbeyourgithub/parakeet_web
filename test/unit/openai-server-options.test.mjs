@@ -17,13 +17,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 import {
   OPTIONS, resolveOptions, renderHelp, isLoopbackHost, coerceValue,
   REQUEST_OVERRIDES, DEFAULT_PORT,
 } from '../../scripts/openai-like-server/lib/options.mjs';
+import { normaliseModelDir } from '../../scripts/openai-like-server/lib/engine.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = resolve(HERE, '../../scripts/openai-like-server');
@@ -60,6 +62,46 @@ test('--flag=value and --flag value are equivalent', () => {
 
 test('model dir accepts the whisper-style -m alias', () => {
   assert.equal(resolveOptions(['-m', '/weights'], {}).options.modelDir, '/weights');
+});
+
+// normaliseModelDir (engine.mjs) turns whatever `-m` was given into the model
+// ROOT resolveFiles wants. A directory passes through; a FILE has to walk up to
+// the root, because in the current repo layout the weights sit one level down in
+// a precision folder and dirname() alone would land on a directory with no
+// vocab.txt in it.
+test('normaliseModelDir: a directory is returned unchanged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'normalise-dir-'));
+  assert.equal(normaliseModelDir(dir), dir);
+  assert.equal(normaliseModelDir(''), '');
+  assert.equal(normaliseModelDir('/definitely/not/here'), '/definitely/not/here');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('normaliseModelDir: an .onnx inside a precision folder resolves to the repo root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'normalise-nested-'));
+  mkdirSync(join(root, 'int8'), { recursive: true });
+  writeFileSync(join(root, 'vocab.txt'), '');
+  writeFileSync(join(root, 'int8', 'encoder-model.int8.onnx'), '');
+  assert.equal(normaliseModelDir(join(root, 'int8', 'encoder-model.int8.onnx')), root);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('normaliseModelDir: a flat .onnx still resolves to its own directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'normalise-flat-'));
+  writeFileSync(join(root, 'vocab.txt'), '');
+  writeFileSync(join(root, 'encoder-model.int8.onnx'), '');
+  assert.equal(normaliseModelDir(join(root, 'encoder-model.int8.onnx')), root);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('normaliseModelDir: with no vocab.txt anywhere above, it falls back to dirname', () => {
+  // An unusual tree is the caller's missing-file error to report, not something
+  // to guess at (and the walk must not run off to the filesystem root).
+  const root = mkdtempSync(join(tmpdir(), 'normalise-novocab-'));
+  mkdirSync(join(root, 'int8'), { recursive: true });
+  writeFileSync(join(root, 'int8', 'encoder-model.int8.onnx'), '');
+  assert.equal(normaliseModelDir(join(root, 'int8', 'encoder-model.int8.onnx')), join(root, 'int8'));
+  rmSync(root, { recursive: true, force: true });
 });
 
 test('booleans: bare flag, negation, explicit value', () => {

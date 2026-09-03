@@ -12,7 +12,7 @@
 // Built with Claude Code.
 
 import { existsSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { loadParakeetModel, decodePcm, findFfmpeg } from '../../transcribe.mjs';
 import { createWordlistRegistry } from './wordlists.mjs';
 import { createDiarizer, resolveDiarizationModels } from './diarize.mjs';
@@ -23,18 +23,34 @@ export { SAMPLE_RATE };
 
 /**
  * Accept either the model directory or a path to one of the .onnx files inside
- * it, so `-m /models/encoder-model.int8.onnx` works the way it does with
- * whisper.cpp. Returns the directory.
+ * it, so `-m /models/int8/encoder-model.int8.onnx` works the way
+ * `-m /models/encoder-model.int8.onnx` does with whisper.cpp. Returns the model
+ * ROOT, which is what resolveFiles() wants.
+ *
+ * The weights live one directory down from that root in the current repo layout
+ * (int8/, fp32/, ...), so taking dirname() of the file is not enough: it would
+ * hand back /models/int8, where vocab.txt is not. Walk up from the file's
+ * directory until vocab.txt is found, and fall back to the plain dirname when it
+ * never is (an unusual tree, reported by the caller's own missing-file check
+ * rather than guessed at here).
  */
 export function normaliseModelDir(input) {
   if (!input) return input;
+  let dir;
   try {
-    if (statSync(input).isFile()) return dirname(input);
+    if (!statSync(input).isFile()) return input;
+    dir = dirname(input);
   } catch {
     // Fall through: a nonexistent path is reported by the caller's own check,
     // with the hf-download hint attached.
+    return input;
   }
-  return input;
+  const start = dir;
+  // Bounded by the filesystem root: dirname('/') === '/', so the loop always ends.
+  for (let cur = dir; ; cur = dirname(cur)) {
+    if (existsSync(join(cur, 'vocab.txt'))) return cur;
+    if (dirname(cur) === cur) return start;
+  }
 }
 
 /**
@@ -69,7 +85,8 @@ export async function createEngine(options) {
     // resolveFiles() names the missing file precisely; add the how-to-get-it.
     throw new Error(
       `${err.message}\n`
-      + `  Expected ${options.quant} encoder + ${options.decoderQuant} decoder + vocab.txt in ${modelDir}.\n`
+      + `  Expected the ${options.quant} encoder + ${options.decoderQuant} decoder (in their precision\n`
+      + `  folders, or flat) plus vocab.txt under ${modelDir}.\n`
       + '  Fetch them with:  hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models',
     );
   }
