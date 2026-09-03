@@ -22,6 +22,9 @@ import { createHash } from 'node:crypto';
 
 import {
   ORT_RUNTIME_ASSETS,
+  ORT_RUNTIME_ASSETS_JSPI,
+  ORT_VARIANTS,
+  resolveOrtVariant,
   selectOrtRuntimeAssets,
   _verifiedOrtWasmPaths,
 } from '../../app/src/backend.js';
@@ -113,7 +116,61 @@ describe('selectOrtRuntimeAssets', () => {
   });
 });
 
+describe('ORT runtime variants', () => {
+  test('the jspi variant pins its OWN runtime pair, not the jsep one', () => {
+    // A different bundle entry references different runtime files. Pinning the
+    // jsep pair while loading the jspi bundle would verify bytes ORT never
+    // executes and leave the bytes it does execute unchecked, which is worse
+    // than not pinning at all because the log would claim it was verified.
+    const manifest = manifestFor(FILES);
+    const got = selectOrtRuntimeAssets(manifest, ORT_RUNTIME_ASSETS_JSPI);
+    assert.deepEqual(got, {
+      mjs: { name: 'ort-wasm-simd-threaded.jspi.mjs', expected: manifest['ort-wasm-simd-threaded.jspi.mjs'] },
+      wasm: { name: 'ort-wasm-simd-threaded.jspi.wasm', expected: manifest['ort-wasm-simd-threaded.jspi.wasm'] },
+    });
+    // And the two variants really are different files.
+    assert.notEqual(ORT_RUNTIME_ASSETS.mjs, ORT_RUNTIME_ASSETS_JSPI.mjs);
+    assert.notEqual(ORT_RUNTIME_ASSETS.wasm, ORT_RUNTIME_ASSETS_JSPI.wasm);
+  });
+
+  test('every declared variant carries an asset pair and an importer', () => {
+    for (const [name, v] of Object.entries(ORT_VARIANTS)) {
+      assert.equal(typeof v.importer, 'function', `${name} importer`);
+      assert.ok(v.assets?.mjs && v.assets?.wasm, `${name} assets`);
+      // Every pinned name must exist in a real build, which is what the
+      // vendored manifest set stands in for here.
+      assert.ok(v.assets.mjs in FILES, `${name} mjs is a vendored file`);
+      assert.ok(v.assets.wasm in FILES, `${name} wasm is a vendored file`);
+    }
+  });
+
+  test('resolveOrtVariant: jspi only when the browser implements JSPI', () => {
+    assert.deepEqual(resolveOrtVariant('jspi', true), { variant: 'jspi', downgraded: false });
+    // The point of the downgrade flag: a browser without JSPI must still load,
+    // and the caller has to be able to say once that the request was refused.
+    assert.deepEqual(resolveOrtVariant('jspi', false), { variant: 'jsep', downgraded: true });
+    // Anything else is the shipped runtime, and asking for it is never a
+    // "downgrade" even on a browser that could have run jspi.
+    for (const req of [undefined, null, 'jsep', 'webnn', '']) {
+      assert.deepEqual(resolveOrtVariant(req, true), { variant: 'jsep', downgraded: false }, String(req));
+      assert.deepEqual(resolveOrtVariant(req, false), { variant: 'jsep', downgraded: false }, String(req));
+    }
+  });
+});
+
 describe('_verifiedOrtWasmPaths: fetches only the runtime pair it pins', () => {
+  test('a jspi load fetches the jspi pair and nothing else', async () => {
+    env = stubEnv();
+    const paths = await _verifiedOrtWasmPaths(BASE, ORT_RUNTIME_ASSETS_JSPI);
+    assert.deepEqual(env.requested.sort(), [
+      BASE + 'manifest.json',
+      BASE + ORT_RUNTIME_ASSETS_JSPI.mjs,
+      BASE + ORT_RUNTIME_ASSETS_JSPI.wasm,
+    ].sort());
+    assert.deepEqual(Object.keys(paths).sort(), ['mjs', 'wasm']);
+    assert.equal(env.minted.length, 2);
+  });
+
   test('requests the manifest and the jsep pair, nothing else', async () => {
     env = stubEnv();
     const paths = await _verifiedOrtWasmPaths(BASE);

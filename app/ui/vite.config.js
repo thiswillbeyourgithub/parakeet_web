@@ -85,6 +85,12 @@ export default defineConfig({
       // app/ui/vendor/onnxruntime-web/ rather than node_modules. The bundled
       // ESM entry inlines all transitive deps.
       { find: /^onnxruntime-web$/, replacement: path.resolve(__dirname, 'vendor/onnxruntime-web') },
+      // The same vendored package's jspi entry (ORT's native C++ WebGPU EP,
+      // experimental here). Aliased to the built file rather than through the
+      // package's exports map, because the exact-match alias above does not
+      // cover subpaths and a bare 'onnxruntime-web/jspi' would resolve to
+      // node_modules, i.e. outside the audited vendor tree.
+      { find: /^onnxruntime-web\/jspi$/, replacement: path.resolve(__dirname, 'vendor/onnxruntime-web/dist/ort.jspi.bundle.min.mjs') },
       // Vendored dictation_support (Apache-2.0). UMD bundle in app/ui/vendor/dictation_support/.
       { find: /^dictation_support$/, replacement: path.resolve(__dirname, 'vendor/dictation_support/dist/index.js') },
       // Vendored ffmpeg.wasm wrapper (@ffmpeg/ffmpeg, MIT). The FFmpeg class
