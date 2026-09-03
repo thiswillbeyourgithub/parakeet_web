@@ -88,9 +88,13 @@ test('a source with no GPU encoder falls back to WASM instead of failing the loa
   ).toBe(1);
 
   // It must say what it did, rather than quietly running on a backend the
-  // visitor did not ask for.
+  // visitor did not ask for. Matched on a phrase from the middle of the
+  // `gpuQuantFallback` string rather than its opening words: this assertion
+  // silently went stale once already (c21cb0f reworded the banner and only the
+  // i18n side was updated), so it deliberately keys on the fact the banner has
+  // to convey, that the CPU version was loaded instead.
   await expect(
-    page.locator('.fallback-prompt', { hasText: 'GPU version of the model is not available' }),
+    page.locator('.fallback-prompt', { hasText: 'the CPU version was loaded instead' }),
   ).toBeVisible();
 
   // The load must RECOVER, not fail: the check mark is the whole point.
