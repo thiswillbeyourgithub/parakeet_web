@@ -430,6 +430,7 @@ Report collection is off by default. To enable it on your own instance:
 1. Uncomment the `../benchmark_reports:/benchmark-reports` volume in `docker/docker-compose.yml`.
 2. Set `BENCHMARK_REPORTS_DIR=/benchmark-reports` in `docker/.env`.
 3. Make sure the host folder is owned by UID 1000 (the container writes as that user).
+4. To bring the reports to your machine, run `./benchmark_reports/sync.sh` (same `VPS_USERNAME`/`VPS_IP`/`VPS_PORT` environment as a deploy; `--dry-run` shows what would move). It is a two-way, add-only merge: no delete in either direction, a name already present on the receiving side is never overwritten, only top-level `report-*.json` files move, it pulls before it pushes, and it verifies afterwards that no pre-existing report changed and neither side is missing one.
 
 The entrypoint probes the folder at startup and derives the client-side switch from it, so a folder it cannot write leaves the section copy-only with a warning in the container logs, instead of showing visitors a button that always fails.
 

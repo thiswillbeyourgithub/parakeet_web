@@ -35,6 +35,10 @@ wer-quants.log
 # Benchmark corpora sampled out of external datasets (hundreds of MB of audio).
 # Rebuild them from the source corpus with scripts/gen-medical-val-sets.mjs.
 benchmark_datasets
+# Visitor benchmark reports pulled from the VPS: data, never committed. The
+# sync script that manages the folder is tracked.
+benchmark_reports/*
+!benchmark_reports/sync.sh
 
 # E2E (tier 3) artifacts and local model weights (downloaded, never committed)
 fallback_models

@@ -1286,7 +1286,8 @@ app.get('/api/stats', rateLimitMiddleware('general'), (req, res) => {
 // Deliberate properties:
 //  - ONE FILE PER REPORT, named entirely by this server (UTC stamp + random
 //    suffix). Nothing from the request reaches a path, and immutable files are
-//    what makes the operator's two-way rsync in deploy.sh safe.
+//    what makes the operator's add-only two-way sync (benchmark_reports/sync.sh)
+//    safe.
 //  - No IP, no Origin, no user agent and no timestamp beyond the receive time
 //    is written next to the payload: the report is anonymous by design and
 //    logging the sender here would quietly undo that.

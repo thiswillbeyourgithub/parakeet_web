@@ -438,6 +438,7 @@ La collecte des rapports est désactivée par défaut. Pour l'activer sur votre 
 1. Décommentez le volume `../benchmark_reports:/benchmark-reports` dans `docker/docker-compose.yml`.
 2. Définissez `BENCHMARK_REPORTS_DIR=/benchmark-reports` dans `docker/.env`.
 3. Assurez-vous que le dossier hôte appartient à l'UID 1000 (le conteneur écrit sous cet utilisateur).
+4. Pour rapatrier les rapports sur votre machine, lancez `./benchmark_reports/sync.sh` (même environnement `VPS_USERNAME`/`VPS_IP`/`VPS_PORT` qu'un déploiement ; `--dry-run` montre ce qui bougerait). C'est une fusion bidirectionnelle par ajout seulement : aucune suppression dans un sens ni dans l'autre, un nom déjà présent du côté receveur n'est jamais écrasé, seuls les fichiers `report-*.json` de premier niveau bougent, il tire avant de pousser, et il vérifie ensuite qu'aucun rapport préexistant n'a changé et qu'aucun côté n'en manque un.
 
 Le point d'entrée teste l'accès en écriture au démarrage et en déduit l'interrupteur côté client : un dossier dans lequel il ne peut pas écrire laisse donc la section en mode copie seule, avec un avertissement dans les journaux du conteneur, plutôt que de montrer aux visiteurs un bouton qui échoue toujours.
 
