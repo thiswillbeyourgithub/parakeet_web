@@ -456,6 +456,17 @@ async function blobToBytes(blob) {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+// Largest a `noCache` stream may be and still be written to IndexedDB after the
+// fact (see the shard-cache note in downloadModelFiles). Blobs this size are
+// already proven to survive a cache round-trip: the ~840 MB int8 encoder is
+// cached and read back on the shipping path every day. What does NOT survive is
+// the ~1.4 GB shard that commit 88a39df tried to cache and 7f19a4e reverted:
+// Chromium disk-spills a blob that size and `blob.arrayBuffer()` throws
+// NotReadableError on the way back. That failure was size-dependent, so the
+// answer is a size gate rather than a blanket refusal, and 700 MB sits below
+// the proven-good mark with room to spare.
+export const MAX_CACHEABLE_STREAM_BYTES = 700e6;
+
 /**
  * Download a URL into a Blob with resume + retry, reporting progress,
  * then persist it to IndexedDB and return a blob URL. Shared between the
@@ -479,7 +490,15 @@ async function blobToBytes(blob) {
  *   a blob URL. Used for the big WebGPU encoder/decoder to dodge the blob OOM.
  * @returns {Promise<string|Uint8Array>} Blob URL, or bytes when asBytes is set
  */
-async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRetries = MAX_RETRIES, asBytes = false, noCache = false) {
+async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
+  maxRetries = MAX_RETRIES,
+  asBytes = false,
+  noCache = false,
+  // Under noCache, write the finished bytes to IndexedDB anyway when they came
+  // to no more than this many bytes. Zero (the default) keeps the strict
+  // never-touch-IDB behaviour. See MAX_CACHEABLE_STREAM_BYTES.
+  cacheIfUnder = 0,
+} = {}) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
 
@@ -741,11 +760,36 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
   // exactly `received` bytes when the length was known; otherwise concatenate
   // the collected chunks.
   if (noCache) {
-    if (memBuf) return received === memBuf.length ? memBuf : memBuf.subarray(0, received);
-    const out = new Uint8Array(received);
-    let off = 0;
-    for (const c of tailChunks) { out.set(c, off); off += c.length; }
-    return out;
+    const bytes = memBuf
+      ? (received === memBuf.length ? memBuf : memBuf.subarray(0, received))
+      : (() => {
+        const out = new Uint8Array(received);
+        let off = 0;
+        for (const c of tailChunks) { out.set(c, off); off += c.length; }
+        return out;
+      })();
+    // Small enough to cache after the fact. The bytes are already in memory, so
+    // this is one extra IDB write and no change to how they were streamed: the
+    // segment-offloading path that assembles a multi-GB Blob is still never
+    // taken. Entirely best-effort, since a failed write must only cost the next
+    // load a re-download, never this load its model.
+    if (cacheIfUnder > 0 && received > 0 && received <= cacheIfUnder && typeof indexedDB !== 'undefined') {
+      try {
+        const blobToCache = new Blob([bytes], { type: contentType });
+        await saveFileToDb(cacheKey, blobToCache);
+        try {
+          await saveFileToDb(META_PREFIX + cacheKey, { etag, size: blobToCache.size, savedAt: Date.now() });
+        } catch (e) {
+          console.warn(`${logTag} Failed to write cache metadata for ${filename}:`, e);
+        }
+        console.log(`${logTag} Cached ${filename} in IndexedDB (${received} bytes, streamed)`);
+      } catch (e) {
+        console.warn(`${logTag} Failed to cache ${filename} in IndexedDB:`, e);
+      }
+    } else if (cacheIfUnder > 0 && received > cacheIfUnder) {
+      console.log(`${logTag} Not caching ${filename}: ${received} bytes is over the ${cacheIfUnder}-byte cache limit`);
+    }
+    return bytes;
   }
 
   // Final assembly: segments on disk plus the trailing in-memory chunks.
@@ -791,7 +835,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, maxRet
 }
 
 export async function getModelFile(repoId, filename, options = {}) {
-  const { revision = 'main', subfolder = '', progress, asBytes = false, noCache = false } = options;
+  const { revision = 'main', subfolder = '', progress, asBytes = false, noCache = false, cacheIfUnder = 0 } = options;
 
   // Encode the path components so slash-containing branch names (e.g.
   // 'refs/pr/1') and any URL-reserved characters in subfolder/filename
@@ -816,7 +860,10 @@ export async function getModelFile(repoId, filename, options = {}) {
   // Check IndexedDB first
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
 
-  if (!noCache && typeof indexedDB !== 'undefined') {
+  // `cacheIfUnder` means "streamed, but cached anyway when small": such a file
+  // can be in the cache, so it must be looked for there. Plain noCache still
+  // skips the lookup entirely.
+  if ((!noCache || cacheIfUnder > 0) && typeof indexedDB !== 'undefined') {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
@@ -843,7 +890,8 @@ export async function getModelFile(repoId, filename, options = {}) {
   // the default retry count.
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
-    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]', 1, asBytes, noCache);
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]',
+      { maxRetries: 1, asBytes, noCache, cacheIfUnder });
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
@@ -880,11 +928,12 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress, revision = 'main', subfolder = '', asBytes = false, noCache = false } = options;
+  const { progress, revision = 'main', subfolder = '', asBytes = false, noCache = false, cacheIfUnder = 0 } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
-  if (!noCache && typeof indexedDB !== 'undefined') {
+  // See getModelFile: a `cacheIfUnder` file may well be cached, so look for it.
+  if ((!noCache || cacheIfUnder > 0) && typeof indexedDB !== 'undefined') {
     try {
       const cachedBlob = await getFileFromDb(cacheKey);
       if (cachedBlob) {
@@ -898,7 +947,8 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]', MAX_RETRIES, asBytes, noCache);
+  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]',
+      { asBytes, noCache, cacheIfUnder });
 }
 
 /**
@@ -1562,8 +1612,10 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       // Everything evictModelFiles needs to drop these exact cached blobs and
       // re-download them when a corrupt file fails to deserialize at session
       // create. Derived from the `weight` flag so it can't drift from the
-      // download list. Sharded fp32 weights are noCache (never cached) so they
-      // are not listed. The names are repo-relative PATHS ('int8/encoder-model.
+      // download list, plus the fp32 shards: a shard small enough to be cached
+      // (see the shard note below) is a weight that can go corrupt like any
+      // other, and one that was too big to cache is simply a key eviction will
+      // not find. The names are repo-relative PATHS ('int8/encoder-model.
       // int8.onnx' on the current layout), matching the cache keys downloadFile
       // wrote. `subfolder` is the separate HF-API subfolder knob, always '' for
       // the Parakeet repos.
@@ -1571,16 +1623,17 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           repoId,
           revision: effectiveRevision,
           subfolder: '',
-          filenames: filesToGet.filter((f) => f.weight).map((f) => f.name),
+          filenames: filesToGet.filter((f) => f.weight).map((f) => f.name)
+            .concat(useShards ? encoderShards.map((n) => `${encoderSubdir}${n}`) : []),
       },
   };
 
   // One place that knows how to fetch a single file (HF or local fallback),
   // reused by both the main file loop and the shard loop below so the two can
   // never diverge in revision/progress handling.
-  const downloadFile = (name, asBytes = false, noCache = false) => {
+  const downloadFile = (name, asBytes = false, noCache = false, cacheIfUnder = 0) => {
     const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
-    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes, noCache };
+    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes, noCache, cacheIfUnder };
     return effectiveLocalBase
       ? getLocalModelFile(effectiveLocalBase, repoId, name, perFileOpts)
       : getModelFile(repoId, name, perFileOpts);
@@ -1613,10 +1666,24 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   //   - noCache: the normal path offloads streamed bytes to IndexedDB segment
   //     Blobs and reassembles a Blob at the end; a multi-GB Blob is disk-spilled
   //     and reading it back can throw NotReadableError (observed here). Streaming
-  //     straight to a Uint8Array skips IDB entirely. Not caching the shards is
-  //     fine: they are huge and re-downloaded rarely, and the sharded encoder is
-  //     an explicit opt-in. Each shard is < 2 GB by construction (scripts/shard-fp32.py),
-  //     so the single Uint8Array clears the ArrayBuffer cap.
+  //     straight to a Uint8Array skips IDB entirely. Each shard is < 2 GB by
+  //     construction (scripts/shard-fp32.py), so the single Uint8Array clears
+  //     the ArrayBuffer cap.
+  //
+  // What noCache does NOT justify any more is refusing to cache the RESULT. The
+  // original note said the shards "are re-downloaded rarely, and the sharded
+  // encoder is an explicit opt-in"; that stopped being true on 2026-08-21, when
+  // WebGPU was re-enabled and the autoconfigure probe started putting ordinary
+  // visitors on fp32-via-shards by default. A real report from an Intel iGPU
+  // laptop measured a 74 s model load against the int8 path's warm seconds, and
+  // that 74 s is paid on every single page load, for a backend the visitor did
+  // not choose. So a shard small enough to survive a cache round-trip is now
+  // written to IndexedDB after streaming (cacheIfUnder), while one over the
+  // limit keeps exactly the old behaviour. The current 1.4 GB shards are over
+  // it, so nothing changes until the model repo re-shards smaller:
+  //   uv run .../scripts/shard-fp32.py --max-shard-bytes 500000000
+  // The streaming itself is untouched either way: the multi-GB Blob assembly
+  // that commit 88a39df died on is still never performed.
   if (useShards) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
@@ -1624,7 +1691,10 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       // Fetch from the directory the shards physically live in (fp32/, the flat
       // root, or sharded/), but mount under the bare basename the graph's
       // external_data location names.
-      results.urls.encoderDataUrl.push({ path: name, data: await downloadFile(`${encoderSubdir}${name}`, true, true) });
+      results.urls.encoderDataUrl.push({
+        path: name,
+        data: await downloadFile(`${encoderSubdir}${name}`, true, true, MAX_CACHEABLE_STREAM_BYTES),
+      });
     }
   }
 
@@ -1632,11 +1702,17 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // effectiveRevision) keys, so prune any other model's records left behind by
   // a previous repo/revision/quant. cachedFilenames must list everything that
   // actually persisted to IDB, or the sweep would delete a file we just stored:
-  // that is every entry in the main download loop (sharded fp32 weights are
-  // loaded noCache, so they are NOT cached and are intentionally excluded here).
+  // that is every entry in the main download loop, PLUS the fp32 shards: they
+  // stream rather than going through the cache-first path, but a small one is
+  // written to IDB afterwards (see the shard note above), and a shard the sweep
+  // deleted the moment it was stored would make the caching pointless. Listing
+  // a shard that was too big to cache is harmless: the sweep only deletes keys
+  // outside the live set, so naming a key that does not exist protects nothing
+  // and breaks nothing.
   // Keyed by repoId for both HF and local-mirror loads, matching downloadFile's
   // cacheKey scheme. sweepOrphanedFiles never throws.
-  const cachedFilenames = filesToGet.map((f) => f.name);
+  const cachedFilenames = filesToGet.map((f) => f.name)
+    .concat(useShards ? encoderShards.map((n) => `${encoderSubdir}${n}`) : []);
   await sweepOrphanedFiles({ repoId, revision: effectiveRevision, subfolder: '', filenames: cachedFilenames, protectKeys: protectCacheKeys });
 
   return results;
