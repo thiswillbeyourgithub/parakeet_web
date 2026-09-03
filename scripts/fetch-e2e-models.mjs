@@ -1,13 +1,17 @@
 // Download the model files the tier-3 E2E needs from HuggingFace into the E2E
-// model dir (flat layout, matching hub.js getLocalModelFile and serve.mjs).
-// Local dev already has the ASR weights in ./fallback_models; this exists so CI
-// can populate a cached dir without the full 3 GB weight set. Two model sets:
-//   - the SmoothQuant int8 ASR weights (both encoders + decoder + vocab),
+// model dir, at the SAME repo-relative path they have in the repo (int8/... for
+// the int8 build, vocab.txt at the root), which is what hub.js resolves via
+// app/src/modelLayout.js and what serve.mjs serves. Local dev already has the
+// ASR weights in ./fallback_models; this exists so CI can populate a cached dir
+// without the full 3 GB weight set. Two model sets:
+//   - the int8 ASR weights (both encoders + decoder + vocab), under int8/ and
+//     int8-lite/,
 //   - the two speaker-diarization models (pyannote segmentation + CAM++
 //     embedding) that transcription-diarization.spec.js needs; that spec
 //     self-skips when they are absent, so this download is what gives it CI
-//     coverage. They sit flat alongside the ASR files (distinct filenames, so
-//     no collision) because diarizationModels.js requests /models/<filename>.
+//     coverage. Those come from repos with a flat layout of their own and land
+//     at the root (distinct filenames, so no collision), because
+//     diarizationModels.js requests /models/<filename>.
 //
 // Usage:  PARAKEET_E2E_MODEL_DIR=/path node scripts/fetch-e2e-models.mjs
 // Skips any file already present (so an actions/cache restore is a no-op).
@@ -18,26 +22,29 @@ import { mkdir, stat, rename, rm } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Each entry is a { repo, file } HuggingFace descriptor, all served flat under
-// /models. The int8 set matches App.jsx's pinned default repo (the SmoothQuant
-// int8 the app actually ships, not the upstream istupakov plain int8), so the
-// tier-3 e2e exercises the same weights users get. The diarization set matches
-// diarizationModels.js's un-gated csukuangfj defaults.
+// Each entry is a { repo, file } HuggingFace descriptor, where `file` is the
+// IN-REPO path: it is both what gets requested from HF and where the file lands
+// under MODEL_DIR, so the e2e mirror is a faithful copy of the repo layout
+// rather than a flattened one. The int8 set matches App.jsx's pinned default
+// repo (the int8 build the app actually ships, not the upstream istupakov plain
+// int8), so the tier-3 e2e exercises the same weights users get. The diarization
+// set matches diarizationModels.js's un-gated csukuangfj defaults, whose repos
+// keep their single model at the root.
 const REVISION = 'main';
 const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
 export const MODELS = [
-  { repo: ASR_REPO, file: 'encoder-model.int8.onnx' },
-  // The lite int8 encoder (same SmoothQuant calibration, --exclude-worst 0.05,
-  // so 11 MatMuls stay fp32 instead of 18). It is the ONE precision alternative
-  // headless Chromium can actually run, so fetching it is what gives
+  { repo: ASR_REPO, file: 'int8/encoder-model.int8.onnx' },
+  // The lite int8 encoder (same calibration, --exclude-worst 0.05, so 11 MatMuls
+  // stay fp32 instead of 18). It is the ONE precision alternative headless
+  // Chromium can actually run, so fetching it is what gives
   // transcription-int8-lite-wasm.spec.js CI coverage instead of a permanent
   // strict-weights skip. Costs ~793 MB on a cache miss; the cache is keyed on
   // this file, so adding it here re-keys and re-bakes automatically.
-  { repo: ASR_REPO, file: 'encoder-model.int8.lite.onnx' },
-  { repo: ASR_REPO, file: 'decoder_joint-model.int8.onnx' },
+  { repo: ASR_REPO, file: 'int8-lite/encoder-model.int8.lite.onnx' },
+  { repo: ASR_REPO, file: 'int8/decoder_joint-model.int8.onnx' },
   { repo: ASR_REPO, file: 'vocab.txt' },
   // No variant filenames: the model repo's graph work (folded encoder, decoder
   // with the in-graph log-partition + top-K outputs) ships INSIDE the two files
@@ -65,6 +72,9 @@ export async function download({ repo, file, optional = false }, modelDir = MODE
     console.log(`[e2e:models] ${file} already present, skipping`);
     return true;
   }
+  // `file` carries the repo-relative directory, so make it before streaming into
+  // it. Cheap and idempotent; a flat entry just re-makes MODEL_DIR.
+  await mkdir(dirname(dest), { recursive: true });
   const url = `https://huggingface.co/${repo}/resolve/${REVISION}/${file}?download=true`;
   console.log(`[e2e:models] downloading ${file} from ${url}`);
   const res = await fetch(url);

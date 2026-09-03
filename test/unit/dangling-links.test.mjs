@@ -1,12 +1,12 @@
 // Tier-1 unit test for the tier-3 model dir's dangling-symlink check
 // (test/e2e/dangling-links.mjs), which serve.mjs runs before it listens.
 //
-// Why this exists: `fallback_models/` is served flat, but a maintainer's copy of
-// the ASR weights lives in a nested folder that is its own git repo, bridged by
-// symlinks at the root. Renaming that folder (which happened when the model repo
-// was renamed) dangles every one of them, and the harness reports it as "weights
-// missing", which is the wrong problem. This pins the detector down so the
-// next rename cannot go quiet again.
+// Why this exists: `fallback_models/` is what serve.mjs serves, but a
+// maintainer's copy of the ASR weights lives in a nested folder that is its own
+// git repo, bridged by symlinks. Renaming that folder (which happened when the
+// model repo was renamed) dangles every one of them, and the harness reports it
+// as "weights missing", which is the wrong problem. This pins the detector down
+// so the next rename cannot go quiet again.
 //
 // Real symlinks in a real temp dir rather than a stubbed fs: the whole point is
 // the lstat-vs-stat distinction, and a stub would just re-encode my assumption
@@ -84,16 +84,36 @@ describe('findDanglingLinks', () => {
 });
 
 describe('partitionDangling', () => {
-  test('root links and sharded/ links are the ones that break serving', () => {
-    // serve.mjs looks in exactly MODEL_DIR and MODEL_DIR/sharded.
+  test('root links and layout-directory links are the ones that break serving', () => {
+    // A request can reach the repo root, a precision folder, or the legacy
+    // sharded/ dir: those are exactly modelLayout's candidate paths.
     const { served, other } = partitionDangling([
       { path: 'vocab.txt', target: 'x' },
       { path: join('sharded', 'encoder-model.onnx'), target: 'x' },
+      { path: join('int8', 'encoder-model.int8.onnx'), target: 'x' },
+      { path: join('fp32', 'encoder-model.onnx.data.000'), target: 'x' },
+      { path: join('int8-lite', 'encoder-model.int8.lite.onnx'), target: 'x' },
       { path: join('candidates', 'encoder-model.onnx'), target: 'x' },
       { path: join('Repo', 'sharded', 'deep.bin'), target: 'x' },
     ]);
-    assert.deepEqual(served.map((d) => d.path), ['vocab.txt', join('sharded', 'encoder-model.onnx')]);
+    assert.deepEqual(served.map((d) => d.path), [
+      'vocab.txt',
+      join('sharded', 'encoder-model.onnx'),
+      join('int8', 'encoder-model.int8.onnx'),
+      join('fp32', 'encoder-model.onnx.data.000'),
+      join('int8-lite', 'encoder-model.int8.lite.onnx'),
+    ]);
     assert.deepEqual(other.map((d) => d.path), [join('candidates', 'encoder-model.onnx'), join('Repo', 'sharded', 'deep.bin')]);
+  });
+
+  test('a weight in the WRONG precision folder is not treated as servable', () => {
+    // The directory rule is a function of the basename, so int8/ holding an fp32
+    // graph is not a path any loader asks for: warn, do not fail the run.
+    const { served, other } = partitionDangling([
+      { path: join('int8', 'encoder-model.onnx'), target: 'x' },
+    ]);
+    assert.deepEqual(served, []);
+    assert.equal(other.length, 1);
   });
 });
 
