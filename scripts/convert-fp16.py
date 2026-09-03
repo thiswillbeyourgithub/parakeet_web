@@ -108,8 +108,12 @@ out = om.model
 # --keep-io is about.
 del out.graph.value_info[:]
 
-onnx.save(out, str(args.dst), save_as_external_data=True)
+# Name the sidecar ourselves: without `location` onnx picks a uuid1 name, which the
+# cleanup below never matched (each run leaked one weight-sized blob). onnx also
+# appends to an existing sidecar instead of replacing it, so start from a clean file.
 data = args.dst.parent / (args.dst.name + ".data")
+data.unlink(missing_ok=True)
+onnx.save(out, str(args.dst), save_as_external_data=True, location=data.name)
 if args.dst.stat().st_size + (data.stat().st_size if data.exists() else 0) < INLINE_MAX_BYTES:
     onnx.save(onnx.load(str(args.dst)), str(args.dst), save_as_external_data=False)
     data.unlink(missing_ok=True)
