@@ -193,6 +193,33 @@ describe('benchmark report shape validation', () => {
   });
 });
 
+describe('benchmark report instance-wide quota', () => {
+  let srv;
+  let dir;
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'parakeet-bench-quota-'));
+    // The per-IP limiter stays off (helpers set TEST_DISABLE_RATE_LIMIT), so
+    // only the process-wide bucket can refuse here.
+    srv = await startServer({ BENCHMARK_REPORTS_DIR: dir, BENCHMARK_REPORTS_MAX_PER_MINUTE: '2' });
+  });
+  after(async () => {
+    await stopServer(srv);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test('reports past the per-minute cap get 429 with Retry-After and are not stored', async () => {
+    for (let i = 0; i < 2; i++) {
+      const res = await apiPost(srv, '/api/benchmark-report', sampleReport());
+      assert.equal(res.status, 204, `report ${i + 1} within the cap`);
+    }
+    const res = await apiPost(srv, '/api/benchmark-report', sampleReport());
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get('retry-after'), '60');
+    const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
+    assert.equal(files.length, 2);
+  });
+});
+
 describe('benchmark report store full', () => {
   let srv;
   let dir;

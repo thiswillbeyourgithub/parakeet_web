@@ -50,6 +50,13 @@ const BENCHMARK_REPORT_MAX_BYTES = 32 * 1024;
 // Disk backstop behind the per-IP rate limit: at 32 KB each, 20k reports cap
 // the folder around 640 MB.
 const BENCHMARK_REPORTS_MAX_FILES = parseInt(process.env.BENCHMARK_REPORTS_MAX_FILES, 10) || 20000;
+// Process-wide cap behind the per-IP one (3/min). A caller rotating source
+// addresses (an IPv6 /64) is bounded only by this: at the default 30/min the
+// 20k file cap takes eleven hours to reach instead of minutes, and the warning
+// logged on every refusal makes the flood visible long before that. Real
+// visitors post about one report per several minutes each, so a single
+// instance never comes near it.
+const BENCHMARK_REPORTS_MAX_PER_MINUTE = parseInt(process.env.BENCHMARK_REPORTS_MAX_PER_MINUTE, 10) || 30;
 // Shape of a report the client builds (lib/benchmark.js buildBenchmarkReport).
 // Anything else at the top level is refused: the files land on the operator's
 // machine and are read by tooling that trusts them, so a report is only stored
@@ -399,6 +406,24 @@ function checkRateLimit(ip, limitType) {
 
     limiter.timestamps.push(now);
     return { allowed: true, retryAfter: 0 };
+}
+
+// Process-wide sliding-window quota, independent of the caller's IP. A
+// per-IP limit alone is only as strong as the number of addresses the caller
+// can source from (an IPv6 /64 is 2^64 of them), so a bucket that counts
+// EVERY caller is what actually bounds the blast radius of an endpoint that
+// spends a shared resource (TURN credentials, benchmark-report disk).
+// Returns a function that consumes one unit when the quota allows it.
+function makeGlobalWindowQuota(maxPerWindow, windowMs) {
+    const timestamps = [];
+    return function tryConsume() {
+        const now = Date.now();
+        const windowStart = now - windowMs;
+        while (timestamps.length && timestamps[0] < windowStart) timestamps.shift();
+        if (timestamps.length >= maxPerWindow) return false;
+        timestamps.push(now);
+        return true;
+    };
 }
 
 function rateLimitMiddleware(limitType) {
@@ -820,19 +845,7 @@ function generateTurnCredentials() {
 // surgical fix.
 const TURN_GLOBAL_WINDOW_MS = 60 * 1000;
 const TURN_GLOBAL_MAX_PER_WINDOW = 200;
-const _turnIssueTimestamps = [];
-function tryConsumeTurnGlobalQuota() {
-    const now = Date.now();
-    const windowStart = now - TURN_GLOBAL_WINDOW_MS;
-    while (_turnIssueTimestamps.length && _turnIssueTimestamps[0] < windowStart) {
-        _turnIssueTimestamps.shift();
-    }
-    if (_turnIssueTimestamps.length >= TURN_GLOBAL_MAX_PER_WINDOW) {
-        return false;
-    }
-    _turnIssueTimestamps.push(now);
-    return true;
-}
+const tryConsumeTurnGlobalQuota = makeGlobalWindowQuota(TURN_GLOBAL_MAX_PER_WINDOW, TURN_GLOBAL_WINDOW_MS);
 
 // ============ API Endpoints ============
 
@@ -1285,7 +1298,8 @@ app.get('/api/stats', rateLimitMiddleware('general'), (req, res) => {
 //    a merge helper or print to a terminal, which the size cap alone did not
 //    guarantee.
 //  - A directory-wide file cap keeps an abusive client from filling the disk;
-//    the per-IP rate limit (3/min) is the first line, this is the backstop.
+//    the per-IP rate limit (3/min) is the first line, the instance-wide
+//    quota (BENCHMARK_REPORTS_MAX_PER_MINUTE) the second, this is the backstop.
 function isPlainObject(v) {
     return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -1334,9 +1348,20 @@ function validateBenchmarkReport(body) {
     return null;
 }
 
+const tryConsumeBenchmarkGlobalQuota = makeGlobalWindowQuota(BENCHMARK_REPORTS_MAX_PER_MINUTE, 60 * 1000);
+
 app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), async (req, res) => {
     if (!BENCHMARK_REPORTS_DIR) {
         return res.status(503).json({ error: 'Unavailable', message: 'Benchmark report collection is not enabled' });
+    }
+    // Checked before the body is looked at, so a flood pays nothing past the
+    // JSON parse. Deliberately NOT bypassed by TEST_DISABLE_RATE_LIMIT (that
+    // flag exists so tier-2 tests can hammer one IP), the tests size it down
+    // through the env var instead.
+    if (!tryConsumeBenchmarkGlobalQuota()) {
+        console.warn(`[benchmark] refusing report: instance-wide cap of ${BENCHMARK_REPORTS_MAX_PER_MINUTE}/min reached`);
+        res.set('Retry-After', '60');
+        return res.status(429).json({ error: 'Too Many Requests', message: 'Report collection is busy, try again in a minute' });
     }
     const body = req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -1407,6 +1432,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS.join(', ')}`);
     console.log(`  RELAY_ENABLE: ${RELAY_ENABLE}`);
     console.log(`  BENCHMARK_REPORTS_DIR: ${BENCHMARK_REPORTS_DIR || '(not set, report collection disabled)'}`);
+    if (BENCHMARK_REPORTS_DIR) {
+        console.log(`  BENCHMARK_REPORTS_MAX_FILES: ${BENCHMARK_REPORTS_MAX_FILES}`);
+        console.log(`  BENCHMARK_REPORTS_MAX_PER_MINUTE: ${BENCHMARK_REPORTS_MAX_PER_MINUTE}`);
+    }
     if (RELAY_ENABLE) {
         console.log(`  RELAY_MAX_TOTAL_SESSION_BYTES: ${RELAY_MAX_TOTAL_SESSION_BYTES}`);
         console.log(`  RELAY_MAX_CONTROL_MSG_BYTES: ${RELAY_MAX_CONTROL_MSG_BYTES}`);
