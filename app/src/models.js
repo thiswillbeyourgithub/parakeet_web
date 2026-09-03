@@ -127,9 +127,12 @@ export function listModels() {
 // Default chunk window (seconds) for long-audio chunking. A single window for
 // every backend and precision. This used to be backend-aware: the WASM/int8 path
 // got a shorter window because the stock int8 encoder dropped long-range content
-// past ~20 s within a chunk. The SmoothQuant int8 encoder this app ships no longer
-// has that problem (it tracks fp16 over long single passes, see the model repo's
-// WER tables), and fp16/fp32 never did, so the special case is gone.
+// past ~20 s within a chunk. The int8 encoder this app ships no longer has that
+// problem (it tracks fp16 over long single passes, see the model repo's WER
+// tables), and fp16/fp32 never did, so the special case is gone. Since
+// 2026-09-03 both model repos ship that int8 encoder as a MatMulNBits 8-bit
+// build (weight-only int8, dynamic int8 activations), not the SmoothQuant one
+// the note used to name.
 //
 // The old 20 s default / 25 s cap assumed parakeet-tdt v3 degrades past ~25 s
 // per chunk. A 2026-08-07 grid over 200 long French-medical clips (2.7 h of

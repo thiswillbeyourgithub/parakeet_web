@@ -1079,11 +1079,13 @@ export const QUANT_SUFFIX = {
 
 // The encoder quants that are int8 under the hood. Both are CPU/WASM-only (the
 // WebGPU EP has no int8 encoder kernel), and both pair with the int8 decoder.
-// `int8lite` is the model repo's lighter SmoothQuant build: same calibration and
-// alpha search as the default, but `--exclude-worst 0.05`, so 11 MatMuls stay
-// fp32 instead of 18. That is ~84 MB less to download and ~164 MiB less peak
-// RSS, for slightly higher WER/CER. It is a straight file swap: the decoder,
-// tokenizer and preprocessor are the same files.
+// `int8lite` is the model repo's lighter SmoothQuant build: `--exclude-worst
+// 0.05`, so 11 MatMuls stay fp32 instead of 18. That is ~84 MB less to download
+// and ~164 MiB less peak RSS, for slightly higher WER/CER. It is a straight file
+// swap: the decoder, tokenizer and preprocessor are the same files. (The DEFAULT
+// int8 is no longer a SmoothQuant build: since 2026-09-03 both repos ship it as
+// a MatMulNBits 8-bit one, so `int8lite` is not a lighter cut of the same
+// calibration any more, it is a different build entirely.)
 const INT8_ENCODER_QUANTS = ['int8', 'int8lite'];
 const isInt8Encoder = (q) => INT8_ENCODER_QUANTS.includes(q);
 
