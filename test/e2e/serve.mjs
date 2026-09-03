@@ -1,7 +1,9 @@
 // Static server for the tier-3 full-transcription E2E. Serves the built UI
-// (app/ui/dist) plus the model weights at /models/<file> (flat layout, matching
-// hub.js getLocalModelFile), with the COOP/COEP/CORP headers ORT needs for
-// cross-origin-isolated WASM threading. Boots from playwright.config.js.
+// (app/ui/dist) plus the model weights at /models/<path>, mapped straight onto
+// PARAKEET_E2E_MODEL_DIR (matching hub.js getLocalModelFile, which now asks for
+// the repo-relative path it resolved via app/src/modelLayout.js), with the
+// COOP/COEP/CORP headers ORT needs for cross-origin-isolated WASM threading.
+// Boots from playwright.config.js.
 //
 // The weights are read from PARAKEET_E2E_MODEL_DIR (default ./fallback_models).
 // CI populates that dir with the three int8 files via `npm run e2e:models`.
@@ -17,6 +19,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findDanglingLinks, danglingLinksMessage, danglingLinksWarning } from './dangling-links.mjs';
+import { candidatePaths } from '../../app/src/modelLayout.js';
 
 const here = resolve(fileURLToPath(import.meta.url), '..');
 const ROOT = resolve(here, '../..');
@@ -78,24 +81,25 @@ const server = http.createServer((req, res) => {
   try { pathname = decodeURIComponent(new URL(req.url, `http://localhost:${PORT}`).pathname); }
   catch { res.statusCode = 400; return res.end('bad request'); }
 
-  // Model weights: flat layout under /models, served from MODEL_DIR.
+  // Model weights: served from MODEL_DIR at the path the client asked for.
   //
-  // The sharded fp32 encoder (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py) lives in MODEL_DIR/sharded/:
-  // a rewritten encoder-model.onnx graph whose tensors point at the
-  // encoder-model.onnx.data.NNN shards (each < 2 GB so the fp32 encoder can
-  // ingest on WASM, exercised by transcription-fp32-wasm.spec.js). For exactly
-  // those files we look in sharded/ FIRST, because the root also holds a
-  // single-sidecar encoder-model.onnx (external_data -> one 2.4 GB file WASM
-  // cannot load); the sharded graph must win. Every other request (int8 weights,
-  // vocab) is served straight from the root. When MODEL_DIR/sharded/ is absent
-  // (CI, or a checkout where scripts/shard-fp32.py was never run) the lookup falls
-  // through to the root and the fp32 spec finds no shards and skips itself.
+  // hub.js now resolves the DIRECTORY itself (app/src/modelLayout.js: each
+  // precision in its own folder, with the flat and flat+sharded/ layouts still
+  // accepted) and requests a full repo-relative path, so this is a plain static
+  // mapping and no filename gets special-cased here any more.
+  //
+  // One fallback remains, for the old fixture dirs: a request for a BARE
+  // basename that misses at the root is retried through the same candidate paths
+  // (its precision folder, then sharded/). That is what lets a nested weights
+  // dir answer a client that had no listing to consult, and it is also how the
+  // fp32 shards keep resolving wherever a maintainer's checkout keeps them. When
+  // none of those exist (CI, which fetches only the int8 set) the 404 stands and
+  // the fp32 spec skips itself.
   if (pathname.startsWith('/models/')) {
-    const rel = pathname.slice('/models'.length);
-    const preferSharded = /^\/(encoder-model\.onnx|encoder-model\.onnx\.data\.\d+)$/.test(rel);
-    const dirs = preferSharded ? [join(MODEL_DIR, 'sharded'), MODEL_DIR] : [MODEL_DIR];
-    for (const dir of dirs) {
-      const filePath = safeJoin(dir, rel);
+    const rel = pathname.slice('/models/'.length);
+    const tries = rel.includes('/') ? [rel] : candidatePaths(rel);
+    for (const candidate of tries) {
+      const filePath = safeJoin(MODEL_DIR, candidate);
       if (filePath && existsSync(filePath) && statSync(filePath).isFile()) return sendFile(req, res, filePath);
     }
     res.statusCode = 404;

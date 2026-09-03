@@ -1,6 +1,6 @@
 // Shared gate for the tier-3 specs that need OPTIONAL model weights which
-// upstream does not ship: the sharded fp32 encoder and
-// the speaker-diarization models. Historically each such spec self-SKIPPED when
+// upstream does not ship: the sharded fp32 encoder (the model repo keeps it in
+// fp32/; older mirrors kept it in sharded/) and the speaker-diarization models. Historically each such spec self-SKIPPED when
 // its weights were not served, so a weightless run stayed green. The problem:
 // on a box that is SUPPOSED to have the full model set (a maintainer's local
 // checkout), a silent skip hides "I thought I tested fp32 but actually tested
@@ -44,8 +44,8 @@ export function requireWeightsOrSkip(test, missing, message, env = process.env) 
     throw new Error(
       `${message}\n[strict-weights] Treated as a FAILURE, not a skip, because ` +
       `strict-weights is on (default: on locally, off in CI). Serve the missing ` +
-      `weights (\`npm run e2e:models\`, and for fp32 run ` +
-      `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), or set ` +
+      `weights (\`npm run e2e:models\`, and for fp32 the shard set the model repo ` +
+      `ships in fp32/, or shard-fp32.py over your own copy), or set ` +
       `PARAKEET_E2E_STRICT_WEIGHTS=0 to skip instead.`,
     );
   }

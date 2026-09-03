@@ -1,12 +1,12 @@
 // Dangling-symlink detector for the tier-3 model directory.
 //
-// Why this exists. `fallback_models/` is served FLAT (see serve.mjs): the ONNX
-// files and vocab.txt sit at its root, which is both the documented
-// LOCAL_MODEL_PATH contract and the shape `scripts/fetch-e2e-models.mjs` builds
-// in CI, where files from THREE different repos land side by side. A
-// maintainer's checkout cannot be flat, though: the ASR weights live in a
-// nested folder that is its own git repo (LFS, its own remote). Symlinks at the
-// root bridge the two without a second multi-GB copy.
+// Why this exists. `fallback_models/` is served as a plain static tree (see
+// serve.mjs): vocab.txt at its root and each precision in its own folder, which
+// is both the LOCAL_MODEL_PATH contract and the shape
+// `scripts/fetch-e2e-models.mjs` builds in CI, where files from THREE different
+// repos land side by side. A maintainer's checkout cannot be a single tree,
+// though: the ASR weights live in a nested folder that is its own git repo
+// (LFS, its own remote). Symlinks bridge the two without a second multi-GB copy.
 //
 // Those symlinks break silently. Rename or move the nested model repo and every
 // link dangles, which the harness reads as "weights absent": strict-weights.mjs
@@ -22,6 +22,7 @@
 
 import { lstatSync, existsSync, readdirSync, readlinkSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { candidatePaths } from '../../app/src/modelLayout.js';
 
 // Directories that are never part of the served model set and can be large.
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
@@ -73,12 +74,17 @@ export function findDanglingLinks(dir) {
 /**
  * Split findings by whether they break SERVING.
  *
- * serve.mjs resolves `/models/<file>` in exactly two places: MODEL_DIR itself,
- * and MODEL_DIR/sharded for the two fp32 filenames. A dangling link there means
- * a request 404s, so it must stop the run. Anything deeper is not reachable
- * over HTTP: the model repo also holds local scratch (the `candidates/` A/B
- * symlink farm, run logs), and a stale link in there is worth saying out loud
- * but is no reason to refuse to serve a perfectly good model set.
+ * serve.mjs resolves `/models/<path>` under MODEL_DIR, and the loader asks for
+ * whichever path app/src/modelLayout.js resolved: the repo root, a precision
+ * folder (fp32/, int8/, ...), or the legacy `sharded/`. A dangling link at one
+ * of those means a request 404s, so it must stop the run. Anything else is not
+ * reachable over HTTP: the model repo also holds local scratch (the
+ * `candidates/` A/B symlink farm, run logs), and a stale link in there is worth
+ * saying out loud but is no reason to refuse to serve a perfectly good model set.
+ *
+ * The served test is candidatePaths itself rather than a second copy of the
+ * directory list, so a new precision folder is covered the moment modelLayout
+ * knows about it.
  *
  * @param {Array<{path: string, target: string}>} dangling
  * @returns {{served: Array, other: Array}}
@@ -87,8 +93,11 @@ export function partitionDangling(dangling) {
   const served = [];
   const other = [];
   for (const d of dangling) {
-    const parts = d.path.split(/[\\/]/);
-    if (parts.length === 1 || (parts.length === 2 && parts[0] === 'sharded')) served.push(d);
+    const rel = d.path.split(/[\\/]/).join('/');
+    const parts = rel.split('/');
+    const reachable = parts.length === 1
+      || (parts.length === 2 && candidatePaths(parts[1]).includes(rel));
+    if (reachable) served.push(d);
     else other.push(d);
   }
   return { served, other };
