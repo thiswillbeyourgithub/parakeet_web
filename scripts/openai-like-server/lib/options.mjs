@@ -119,9 +119,11 @@ export const OPTIONS = [
   {
     key: 'modelDir', cli: ['--model-dir', '-m', '--model-path'], env: 'PARAKEET_MODEL_DIR', type: 'string', def: '',
     section: 'Model',
-    help: 'REQUIRED. Directory holding the ONNX weights + vocab.txt (encoder-model.*.onnx, '
-        + 'decoder_joint-model.*.onnx). Also accepts a path to one of those .onnx files, '
-        + 'whose directory is then used (so `-m /models/encoder-model.int8.onnx` works like whisper.cpp).',
+    help: 'REQUIRED. Root of the model repo: vocab.txt at the top, the ONNX weights in a '
+        + 'folder per precision (int8/encoder-model.int8.onnx, fp32/encoder-model.onnx, ...). '
+        + 'A flat folder holding all of them still works. Also accepts a path to one of those '
+        + '.onnx files, and walks up to the root (so `-m /models/int8/encoder-model.int8.onnx` '
+        + 'works like whisper.cpp).',
   },
   {
     key: 'model', cli: ['--model-key'], env: 'PARAKEET_MODEL', type: 'enum', def: DEFAULT_MODEL,
@@ -584,8 +586,8 @@ export function resolveOptions(argv = [], env = process.env) {
   // fail deep inside ORT, or silently expose the API.
   if (!options.modelDir) {
     throw new Error(
-      'no model directory: pass --model-dir (or -m) / set PARAKEET_MODEL_DIR to the folder holding '
-      + 'encoder-model.*.onnx + decoder_joint-model.*.onnx + vocab.txt.\n'
+      'no model directory: pass --model-dir (or -m) / set PARAKEET_MODEL_DIR to the model repo root '
+      + '(vocab.txt at the top, encoder-model.*.onnx + decoder_joint-model.*.onnx in their precision folders).\n'
       + '  Populate one with:  hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models',
     );
   }

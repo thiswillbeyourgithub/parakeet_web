@@ -31,6 +31,7 @@ import { homedir } from 'node:os';
 import * as ortmod from '../app/ui/vendor/onnxruntime-web/dist/ort.node.min.mjs';
 import { ParakeetModel, DEFAULT_SNAP_TO_SILENCE_SEC } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
+import { candidatePaths } from '../app/src/modelLayout.js';
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
 import { BoostingTrie, parseBoostDirectives, resolveBoostLines, expandAugmentations, DEFAULT_BOOST_MIN_P } from '../app/src/phraseBoost.js';
@@ -498,6 +499,10 @@ export function resolveModelDir(cliDir, repoId) {
 // fp16 is kept here even though the model repo withdrew its fp16 files on
 // 2026-08-23: scripts/quantize-fp16.py can regenerate them, and this CLI (via
 // wer-bench.mjs --ort node) is how such a build would be measured.
+//
+// These are BASENAMES only. Which directory each sits in is app/src/modelLayout
+// .js's business, so the same list covers a --model-dir with one folder per
+// precision, a flat one, and a flat one with sharded/ fp32.
 const QUANT_FILES = {
   int8: {
     encoder: ['encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
@@ -516,24 +521,36 @@ const QUANT_FILES = {
 // `decoderQuant` defaults to the encoder `quant` (matched, the historical
 // behaviour) so existing 2-arg callers are unchanged; pass it explicitly to mix
 // (e.g. an int8 encoder with an fp32 decoder_joint).
+//
+// Each candidate basename is looked up through app/src/modelLayout.js, so a
+// --model-dir may be laid out with one directory per precision (the current
+// repo layout), entirely flat (upstream, older mirrors, an `hf download` of a
+// pre-move revision), or flat with the fp32 shards under sharded/. The path that
+// exists is returned whole, so the caller's dirname is the graph's real
+// directory: that is what makes the external-data lookup find the sidecar or
+// shards sitting BESIDE the graph rather than at the model-dir root.
 export function resolveFiles(dir, quant, decoderQuant = quant) {
   const encSpec = QUANT_FILES[quant];
   if (!encSpec) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
   const decSpec = QUANT_FILES[decoderQuant];
   if (!decSpec) throw new Error(`Unknown decoder quant "${decoderQuant}" (expected int8, fp16 or fp32)`);
-  // First existing candidate wins; if none exist, name every alternative we tried.
+  // First existing candidate wins, each tried in its own candidate paths; if
+  // none exist, name every alternative we tried.
+  const locate = (name) => candidatePaths(name).find((rel) => existsSync(join(dir, rel))) || null;
   const pick = (candidates, label) => {
-    const found = candidates.find((f) => existsSync(join(dir, f)));
-    if (!found) {
-      const tried = candidates.length > 1 ? `${candidates.join(' or ')}` : candidates[0];
-      throw new Error(`Missing ${label} (${tried}) in model dir ${dir}`);
+    for (const name of candidates) {
+      const found = locate(name);
+      if (found) return found;
     }
-    return found;
+    const tried = candidates.length > 1 ? `${candidates.join(' or ')}` : candidates[0];
+    throw new Error(`Missing ${label} (${tried}) in model dir ${dir}`);
   };
   const enc = pick(encSpec.encoder, 'encoder');
   const dec = pick(decSpec.decoder, 'decoder');
-  const vocab = 'vocab.txt';
-  if (!existsSync(join(dir, vocab))) throw new Error(`Missing ${vocab} in model dir ${dir}`);
+  // vocab.txt is a root file in every layout, but resolve it the same way so an
+  // unusual mirror is not a special case here either.
+  const vocab = locate('vocab.txt');
+  if (!vocab) throw new Error(`Missing vocab.txt in model dir ${dir}`);
   return {
     encoderPath: join(dir, enc),
     decoderPath: join(dir, dec),

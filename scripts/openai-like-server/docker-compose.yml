@@ -93,8 +93,9 @@ services:
     volumes:
       # ── REQUIRED: the ONNX weights ─────────────────────────────────────────
       # MODEL_DIR is a HOST path (the in-container one is PARAKEET_MODEL_DIR=/models
-      # below); it must hold encoder-model.*.onnx, decoder_joint-model.*.onnx and
-      # vocab.txt. Populate one with:
+      # below); it is the model repo ROOT, with vocab.txt at the top and the
+      # weights in a folder per precision (int8/encoder-model.int8.onnx,
+      # fp32/encoder-model.onnx, ...). A flat directory works too. Populate one with:
       #   hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models
       # Read-only: the server only ever reads weights, and a compromised process
       # must not be able to swap the model under you.
