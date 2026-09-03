@@ -88,10 +88,10 @@ export const DEFAULT_BOOST_MIN_P = 0.1;
  * The full augmentation set, applied to a phrase that has no explicit `:AUG`
  * field when the global "Augment" toggle is on. `f` = Title Case, `a` = ALL
  * CAPS, `p` = proclitic prefixes (see {@link DEFAULT_PREFIXES}), `h` = strip
- * symbols/separators (see {@link stripSymbols}). The legacy `:i` flag is an
- * alias for this set.
+ * symbols/separators (see {@link stripSymbols}), `n` = French plurals (see
+ * {@link pluralVariants}). The legacy `:i` flag is an alias for this set.
  */
-export const FULL_AUGMENT = 'faph';
+export const FULL_AUGMENT = 'faphn';
 
 /**
  * Default proclitic prefixes for the `p` augmentation. A phrase is also boosted
@@ -126,20 +126,83 @@ function stripSymbols(s) {
 }
 
 /**
+ * French function words that carry no plural mark inside a phrase, so `hernie de
+ * la paroi` pluralises to `hernies de la paroi` and not `hernies des las parois`.
+ */
+const PLURAL_INVARIANT = new Set([
+  "de", "du", "des", "d'", "le", "la", "les", "l'", "à", "au", "aux", "en", "et",
+  "ou", "sur", "pour", "par", "avec", "sans", "dans", "sous", "chez", "un", "une",
+]);
+
+/**
+ * French plural of a single word.
+ *
+ * @param {string} word A single whitespace-free token of a phrase.
+ * @param {boolean} regular When true, force the regular `+s` even where an
+ *   irregular rule applies. {@link pluralVariants} emits both readings rather
+ *   than encoding the exception lists (`bal`/`carnaval`/`festival` take `+s`,
+ *   `landau`/`pneu`/`bleu` take `+s`, and only seven `-ail` words take `-aux`),
+ *   because a plural that does not exist is an unvisited trie path and costs
+ *   nothing, while a missing one reintroduces the collapse this flag fixes.
+ * @returns {string} The plural, or the word unchanged when it does not take one.
+ */
+function pluralizeWord(word, regular) {
+  if (!word || PLURAL_INVARIANT.has(word.toLowerCase())) return word;
+  if (/[sxz]$/i.test(word)) return word; // already invariant in the plural
+  if (regular) return `${word}s`;
+  if (/ail$/i.test(word)) return `${word.slice(0, -3)}aux`;
+  if (/al$/i.test(word)) return `${word.slice(0, -2)}aux`;
+  if (/(?:eau|au|eu)$/i.test(word)) return `${word}x`;
+  return `${word}s`;
+}
+
+/**
+ * Plural surface forms of a phrase, for the `n` augmentation.
+ *
+ * Why this exists: a boost list holds singular head-words, and singular and
+ * plural share almost their whole BPE path before diverging on the LAST token
+ * (`▁la|c|r|ym|og|è|ne` against `▁la|c|r|ym|og|è|nes`). Depth scaling makes the
+ * bonus largest exactly there, so boosting only the singular actively pushes the
+ * decoder off a correct plural. Measured on fleurs_fr 30s, that accounted for
+ * most of the list's cost on general French. Boosting both forms puts them at
+ * equal depth and equal length, so the reward cancels and the model's own logits
+ * decide again.
+ *
+ * Every word is pluralised, not just the last, because a partial trie match
+ * still earns a scaled reward: `hypertension artérielle` would otherwise bias
+ * the first word singular and break the path on the second.
+ *
+ * @param {string} phrase The phrase as typed.
+ * @returns {string[]} Distinct plural forms (empty when the phrase already reads
+ *   as a plural). At most two: the irregular reading and the regular `+s` one.
+ */
+export function pluralVariants(phrase) {
+  if (!phrase) return [];
+  const out = [];
+  for (const regular of [false, true]) {
+    const v = phrase.split(' ').map((w) => pluralizeWord(w, regular)).join(' ');
+    if (v !== phrase && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
  * Normalize a trailing augmentation field (the `:AUG` suffix) to a canonical
  * flag string, or `undefined` when the field is not an augmentation token (so
  * the caller leaves it as part of the phrase). Accepts any combination of:
  *   - `f` Title Case, `a` ALL CAPS, `p` proclitic prefixes, `h` strip symbols,
+ *     `n` French plurals,
  *   - `s` (legacy) = force none / opt out -> `''`,
  *   - `i` (legacy) = all of them -> {@link FULL_AUGMENT}.
  * `s` anywhere wins as the explicit opt-out; `i` expands to the full set. The
- * result is always a subset of `'faph'` in canonical `f`,`a`,`p`,`h` order (or `''`).
+ * result is always a subset of `'faphn'` in canonical `f`,`a`,`p`,`h`,`n` order
+ * (or `''`).
  * @param {string} tag The raw field text (already split off after the last `:`).
  * @returns {string|undefined}
  */
 function normalizeAugment(tag) {
   const t = tag.trim().toLowerCase();
-  if (!t || !/^[sifaph]+$/.test(t)) return undefined;
+  if (!t || !/^[sifaphn]+$/.test(t)) return undefined;
   if (t.includes('s')) return ''; // explicit opt-out wins
   const full = t.includes('i');
   let flags = '';
@@ -147,6 +210,7 @@ function normalizeAugment(tag) {
   if (full || t.includes('a')) flags += 'a';
   if (full || t.includes('p')) flags += 'p';
   if (full || t.includes('h')) flags += 'h';
+  if (full || t.includes('n')) flags += 'n';
   return flags;
 }
 
@@ -521,16 +585,19 @@ function prefixApplies(prefix, form) {
 
 /**
  * Surface-form variants of a phrase under an augmentation flag set. The as-typed
- * form is always included; then `f` adds Title Case (each space-separated word's
- * first letter capitalised), `a` adds ALL CAPS, `h` adds a symbol-stripped form
- * of every variant so far (see {@link stripSymbols}, so `alpha-methyl` also
- * yields `alpha methyl`), and `p` glues each applicable proclitic prefix (see
- * {@link prefixApplies}) to the front of every form so far. `h` runs before `p`
- * so prefixes also attach to the symbol-stripped forms. Surrogate-safe;
- * deduplicated with the as-typed form first. The BPE encoder is case-sensitive,
- * so each distinct surface form must be its own trie branch.
+ * form is always included; `n` adds French plurals (see {@link pluralVariants}),
+ * then `f` adds Title Case (each space-separated word's first letter
+ * capitalised) and `a` adds ALL CAPS of each of those base forms, `h` adds a
+ * symbol-stripped form of every variant so far (see {@link stripSymbols}, so
+ * `alpha-methyl` also yields `alpha methyl`), and `p` glues each applicable
+ * proclitic prefix (see {@link prefixApplies}) to the front of every form so
+ * far. `n` runs first so a plural is cased and prefixed like any other base
+ * form, and `h` runs before `p` so prefixes also attach to the symbol-stripped
+ * forms. Surrogate-safe; deduplicated with the as-typed form first. The BPE
+ * encoder is case-sensitive, so each distinct surface form must be its own trie
+ * branch.
  * @param {string} phrase
- * @param {string} [flags=''] Any subset of `'faph'` (see {@link normalizeAugment}).
+ * @param {string} [flags=''] Any subset of `'faphn'` (see {@link normalizeAugment}).
  * @param {string[]} [prefixes=DEFAULT_PREFIXES] Proclitic prefixes for the `p` flag.
  * @returns {string[]}
  */
@@ -546,9 +613,14 @@ export function augmentVariants(phrase, flags = '', prefixes = DEFAULT_PREFIXES)
   const seen = new Set();
   const out = [];
   const push = (v) => { if (v && !seen.has(v)) { seen.add(v); out.push(v); } };
-  push(phrase);                                          // as typed
-  if (set.has('f')) push(phrase.split(' ').map(capFirst).join(' ')); // Title Case
-  if (set.has('a')) push(phrase.toUpperCase());          // ALL CAPS
+  // Base forms the casing flags below expand: the phrase as typed, plus its
+  // plurals when `n` is on. Without `n` this is exactly [phrase], so the flag
+  // sets that predate it expand exactly as they always did.
+  const bases = [phrase];
+  if (set.has('n')) bases.push(...pluralVariants(phrase));
+  for (const base of bases) push(base);                  // as typed (+ plurals)
+  if (set.has('f')) for (const b of bases) push(b.split(' ').map(capFirst).join(' ')); // Title Case
+  if (set.has('a')) for (const b of bases) push(b.toUpperCase());  // ALL CAPS
   if (set.has('h')) {
     for (const form of out.slice()) push(stripSymbols(form)); // symbol-stripped of every casing form
   }

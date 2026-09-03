@@ -14,7 +14,7 @@ import {
   BoostingTrie, parseBoostPhrases, parseBoostDirectives, encodePhrases,
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
   isDefaultsLine, resolveBoostLines, findBoostConflicts, formatBoostConflict,
-  countPhraseLines, compileBoostList,
+  countPhraseLines, compileBoostList, FULL_AUGMENT,
   packEncoded, isPackedEncoding, encodedCount, packedTransferables,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
@@ -81,11 +81,13 @@ describe('parseBoostPhrases', () => {
 
   const fl = parseBoostPhrases('a::0.2\nb:5:0.3:i\nc:s\nd:2:i\ne:5:0.3\nf:abc:i\ng:5::fap\nh:5::p\ni:5::fa\nj:5::h\nk:5::hpf');
   test('empty weight keeps default, explicit minp', () => assert.ok(fl[0].phrase === 'a' && fl[0].weight === 1 && fl[0].minp === 0.2));
-  test(':i alias parsed after weight:minp -> faph', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].minp === 0.3 && fl[1].augment === 'faph'));
+  // Assert against FULL_AUGMENT rather than its literal value: the contract is
+  // that `:i` aliases the full set, whatever flags that set happens to contain.
+  test(':i alias parsed after weight:minp -> the full set', () => assert.ok(fl[1].phrase === 'b' && fl[1].weight === 5 && fl[1].minp === 0.3 && fl[1].augment === FULL_AUGMENT));
   test(':s alias alone -> none (defaults otherwise)', () => assert.ok(fl[2].phrase === 'c' && fl[2].weight === 1 && fl[2].augment === ''));
-  test(':i alias right after weight (no minp)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].minp === DEFAULT_BOOST_MIN_P && fl[3].augment === 'faph'));
+  test(':i alias right after weight (no minp)', () => assert.ok(fl[3].phrase === 'd' && fl[3].weight === 2 && fl[3].minp === DEFAULT_BOOST_MIN_P && fl[3].augment === FULL_AUGMENT));
   test('no flag leaves augment undefined', () => assert.equal(fl[4].augment, undefined));
-  test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].augment === 'faph'));
+  test('non-numeric middle field is not a weight', () => assert.ok(fl[5].phrase === 'f:abc' && fl[5].weight === 1 && fl[5].augment === FULL_AUGMENT));
   test(':fap sets the three casing/prefix flags', () => assert.ok(fl[6].phrase === 'g' && fl[6].weight === 5 && fl[6].augment === 'fap'));
   test(':p sets prefix flag only', () => assert.ok(fl[7].phrase === 'h' && fl[7].augment === 'p'));
   test(':fa is canonicalised', () => assert.ok(fl[8].phrase === 'i' && fl[8].augment === 'fa'));
@@ -221,6 +223,38 @@ describe('augmentVariants / expandAugmentations', () => {
   test('p applies to each casing form so far (with f)', () => {
     const v = augmentVariants('amoxicilline', 'fp', ["l'"]);
     assert.ok(v.includes("l'amoxicilline") && v.includes("l'Amoxicilline"));
+  });
+
+  // The `n` flag fixes a measured regression: a list of singular head-words
+  // pushed the decoder off correct plurals, because singular and plural share
+  // almost their whole BPE path and diverge on the last token, which is exactly
+  // where depth scaling makes the bonus largest ('lacrymogènes' came back as
+  // 'lacrymogène', 'adultes' as 'adulte'). Boosting both puts them at equal
+  // depth so the model's own logits decide.
+  test('n => as-typed + regular plural', () => {
+    assert.ok(eqArr(augmentVariants('lacrymogène', 'n'), ['lacrymogène', 'lacrymogènes']));
+  });
+  test('n on an -al word offers both the irregular and the regular reading', () => {
+    const v = augmentVariants('journal', 'n');
+    assert.ok(v.includes('journaux') && v.includes('journals'));
+  });
+  test('n on an -eau word offers both readings', () => {
+    const v = augmentVariants('bandeau', 'n');
+    assert.ok(v.includes('bandeaux') && v.includes('bandeaus'));
+  });
+  test('n leaves an already-plural phrase alone', () => {
+    assert.ok(eqArr(augmentVariants('bras', 'n'), ['bras']));
+  });
+  test('n pluralises every word but skips French function words', () => {
+    const v = augmentVariants('hernie de la paroi', 'n');
+    assert.ok(v.includes('hernies de la parois'));
+    assert.ok(!v.some((s) => s.includes('des las')));
+  });
+  test('n composes with f, so plurals are Title Cased too', () => {
+    assert.ok(augmentVariants('adulte', 'fn').includes('Adultes'));
+  });
+  test('n is off unless asked for', () => {
+    assert.ok(eqArr(augmentVariants('adulte', 'fah'), ['adulte', 'Adulte', 'ADULTE']));
   });
 
   test('h => as-typed + symbol-stripped (hyphen -> space)', () => {
