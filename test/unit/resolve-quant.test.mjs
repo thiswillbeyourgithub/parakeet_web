@@ -415,12 +415,11 @@ describe('parseEncoderShards: normalises flat and sharded/ layouts', () => {
   });
 });
 
-describe('resolveModelQuant: WebGPU always resolves the encoder to fp32', () => {
-  // The GPU EP has no int8 encoder kernel, and the fp16 build the model repo
-  // shipped until 2026-08-23 was withdrawn (its WGSL kernels need the adapter's
-  // `shader-f16` feature, unavailable on the GPU box, so it could never be
-  // exercised end to end). fp32 is therefore the only encoder precision left on
-  // WebGPU, which makes the shard requirement below the whole decision.
+describe('resolveModelQuant: WebGPU resolves int8 requests to fp32', () => {
+  // The GPU EP has no int8 encoder kernel, so an int8 request becomes fp32
+  // silently and without a flag: that radio is greyed out on this backend, so
+  // the rewrite surprises nobody. The opt-in precisions (w4a8, fp16) are the
+  // opposite case and are always flagged, see their own describes.
   test('int8 request -> fp32 encoder, int8 decoder', () => {
     const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS });
     assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
@@ -450,6 +449,76 @@ describe('resolveModelQuant: WebGPU always resolves the encoder to fp32', () => 
     const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NO_SHARDS });
     assert.equal(r.pinnedToInt8, false);
     assert.equal(r.webgpuFp32NeedsShards, true);
+  });
+});
+
+describe('resolveModelQuant: fp16 opt-in on WebGPU', () => {
+  // fp16 was withdrawn on 2026-08-23 because the development GPU (RTX 3090 Ti)
+  // does not expose `shader-f16`, and ORT answers that by building the session
+  // and returning an EMPTY transcript. A 2026-09-03 benchmark report from an
+  // Intel UHD 630 shows the feature IS exposed on mainstream laptop iGPUs, so
+  // the path is back, refusing loudly on both of the conditions that were
+  // implicit the first time round.
+  const WITH_FP16 = [
+    'encoder-model.fp16.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000',
+    'decoder_joint-model.int8.onnx',
+  ];
+
+  test('fp16 request + shader-f16 + the file shipped -> fp16 encoder, int8 decoder', () => {
+    const args = { backend: 'webgpu-hybrid', encoderQuant: 'fp16', decoderQuant: 'int8', repoFiles: WITH_FP16, shaderF16: true };
+    const r = resolveModelQuant(args);
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp16', 'int8']);
+    assert.equal(r.fp16NeedsFile, false);
+    assert.equal(r.fp16NeedsF16Adapter, false);
+    assert.equal(quantSatisfiable(args), true);
+    // fp16 is a single self-contained file, so the shard requirement that fp32
+    // carries must not follow it.
+    assert.equal(r.webgpuFp32NeedsShards, false);
+  });
+
+  test('no shader-f16 -> falls back to fp32 but FLAGS it, never a silent 2.35 GB swap', () => {
+    const args = { backend: 'webgpu-hybrid', encoderQuant: 'fp16', decoderQuant: 'int8', repoFiles: WITH_FP16, shaderF16: false };
+    const r = resolveModelQuant(args);
+    assert.equal(r.encoderQ, 'fp32', 'the fallback must be loadable so the caller has a graph');
+    assert.equal(r.fp16NeedsF16Adapter, true);
+    assert.equal(r.fp16NeedsFile, false, 'the file is there; only the adapter is not');
+    assert.equal(quantSatisfiable(args), false, 'no source can serve fp16 to a GPU without the feature');
+  });
+
+  test('shader-f16 but no fp16 file -> flagged as a missing FILE, which a mirror can fix', () => {
+    const args = {
+      backend: 'webgpu-hybrid', encoderQuant: 'fp16', decoderQuant: 'int8',
+      repoFiles: ['encoder-model.onnx', 'encoder-model.onnx.data.000', 'decoder_joint-model.int8.onnx'],
+      shaderF16: true,
+    };
+    const r = resolveModelQuant(args);
+    assert.equal(r.encoderQ, 'fp32');
+    assert.equal(r.fp16NeedsFile, true);
+    assert.equal(r.fp16NeedsF16Adapter, false);
+    assert.equal(quantSatisfiable(args), false);
+  });
+
+  test('shaderF16 defaults to false, so fp16 is never selected by omission', () => {
+    // The whole failure mode of the withdrawn version: fp16 in front of a
+    // visitor whose GPU could not run it. A caller that forgets to pass the
+    // probe result must get fp32, not fp16.
+    const r = resolveModelQuant({ backend: 'webgpu-hybrid', encoderQuant: 'fp16', decoderQuant: 'int8', repoFiles: WITH_FP16 });
+    assert.equal(r.encoderQ, 'fp32');
+    assert.equal(r.fp16NeedsF16Adapter, true);
+  });
+
+  test('the flags stay clear for every other quant, and on WASM', () => {
+    for (const q of ['int8', 'fp32', 'w4a8']) {
+      const r = resolveModelQuant({ backend: 'webgpu-hybrid', encoderQuant: q, decoderQuant: 'int8', repoFiles: WITH_FP16, shaderF16: true });
+      assert.equal(r.fp16NeedsFile, false, q);
+      assert.equal(r.fp16NeedsF16Adapter, false, q);
+    }
+    // fp16 has no CPU kernels in ORT-web (it upcasts at session build, doubling
+    // memory), so WASM keeps pinning it to int8 through the existing path
+    // rather than gaining an fp16 branch.
+    const wasm = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp16', decoderQuant: 'int8', repoFiles: WITH_FP16, shaderF16: true });
+    assert.equal(wasm.encoderQ, 'int8');
+    assert.equal(wasm.pinnedToInt8, true);
   });
 });
 

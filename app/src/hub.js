@@ -1046,6 +1046,11 @@ const LOCAL_PROBE_CANDIDATES = [
   'decoder_joint-model.int8.onnx',
   'encoder-model.int8.lite.onnx',
   'encoder-model.w4a8.onnx',
+  // Probed so the /models upgrade path can serve fp16 to a shader-f16 machine
+  // when the configured HF repo has no such file. Costs one HEAD per candidate
+  // path on a mirror that does not ship it, which is the same price every other
+  // opt-in precision here pays.
+  'encoder-model.fp16.onnx',
 ];
 
 /**
@@ -1116,14 +1121,24 @@ export async function listLocalRepoFiles(baseUrl) {
   return files;
 }
 
-// Map a resolved quant to its ONNX filename suffix. The model repo shipped an
-// fp16 encoder and decoder until 2026-08-23, but that build was withdrawn (fp16
-// compute needs a GPU exposing `shader-f16`, which no GPU available here does,
-// so it could never be exercised end to end).
+// Map a resolved quant to its ONNX filename suffix. fp16 was withdrawn on
+// 2026-08-23 on the grounds that "no GPU available here exposes `shader-f16`".
+// That was true of the RTX 3090 Ti this project develops against (Dawn does not
+// expose the feature there) and false of the install base: a 2026-09-03
+// benchmark report from an Intel UHD 630 laptop lists `shader-f16` among its
+// adapter features, and Intel iGPUs have had native double-rate fp16 ALUs since
+// Skylake, which is most of the laptops that reach this app. So the selection
+// code is back, with the two conditions that were missing the first time made
+// explicit: the adapter must expose the feature AND the source must ship the
+// file. What is NOT back is fp16 as the silent WebGPU default, which is what
+// made an untested precision dangerous; it is an opt-in choice, exactly like
+// w4a8. The model repo's fp16 files were deleted with the withdrawal and have to
+// be regenerated (scripts/quantize-fp16.py) before anything can select this.
 export const QUANT_SUFFIX = {
   int8: '.int8.onnx',
   int8lite: '.int8.lite.onnx',
   w4a8: '.w4a8.onnx',
+  fp16: '.fp16.onnx',
   fp32: '.onnx',
 };
 
@@ -1221,14 +1236,18 @@ function hasEncoderFor(repoFiles, quant) {
  *
  * @param {Object} args
  * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').
- * @param {('int8'|'int8lite'|'w4a8'|'fp32')} args.encoderQuant Requested encoder quant.
+ * @param {('int8'|'int8lite'|'w4a8'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
  * @param {('int8'|'fp32')} args.decoderQuant Requested decoder quant.
  * @param {string[]} args.repoFiles Filenames available in the repo.
+ * @param {boolean} [args.shaderF16=false] Whether the WebGPU adapter exposes the
+ *   `shader-f16` feature. Required for fp16: without it ORT builds the session
+ *   and returns an empty transcript, so an fp16 request falls back to fp32 and
+ *   is flagged rather than failing silently at transcription time.
  * @param {boolean} [args.allowWasmFp32=false] Opt-in: allow sharded fp32 on WASM
  *   when the repo ships encoder-model.onnx.data.NNN shards and fp32 is requested.
  * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, webgpuFp32NeedsShards: boolean, w4a8NeedsFile: boolean}}
  */
-export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 = false }) {
+export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16 = false, allowWasmFp32 = false }) {
   if (!backend.startsWith('webgpu')) {
     // The decoder is int8 on WASM, always: no fp32 decoder is shipped and the
     // int8 one is as accurate on this model. A request for anything else cannot
@@ -1281,12 +1300,8 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
       pinnedToInt8: encoderQuant !== 'int8' || decoderQuant !== 'int8',
     };
   }
-  // fp32 is the GPU path's default encoder precision, and until w4a8 arrived it
-  // was the only one. The model repo shipped
-  // an fp16 encoder until 2026-08-23 and this resolved to it when the adapter
-  // exposed `shader-f16`; that build was withdrawn because fp16 compute exists
-  // only on a GPU and no available GPU here exposes the feature, so it could
-  // never be exercised end to end. An int8 request on WebGPU therefore becomes
+  // fp32 is the GPU path's DEFAULT encoder precision. fp16 and w4a8 are opt-in
+  // alternatives to it, each with its own condition. An int8 request on WebGPU becomes
   // fp32 (there is no GPU int8 encoder kernel either, for the lite build as much
   // as the default), and the decoder is always int8: it is as accurate as fp32 on
   // this model while being smaller and faster.
@@ -1306,7 +1321,25 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   // The flag routes it through the /models upgrade probe and then
   // QuantUnavailableError, the same path the WASM pin takes.
   const w4a8Servable = encoderQuant === 'w4a8' && hasEncoderFor(repoFiles, 'w4a8');
-  const encoderQ = isInt8Encoder(encoderQuant) || (encoderQuant === 'w4a8' && !w4a8Servable)
+  // fp16 needs BOTH conditions, and they fail for different reasons that the
+  // caller has to be able to tell apart:
+  //   - the adapter must expose `shader-f16`. Without it ORT still BUILDS the
+  //     session and then returns an empty transcript, because its fp16 kernels
+  //     emit WGSL `f16` types that fail to compile. That silent-empty failure is
+  //     precisely what got fp16 withdrawn in the first place, so it is refused
+  //     here rather than discovered at transcription time. It is a property of
+  //     the machine, so no mirror can fix it.
+  //   - the source must ship encoder-model.fp16.onnx. That is a property of the
+  //     deployment, so the /models upgrade probe CAN fix it, exactly as for w4a8.
+  // Either way the request is FLAGGED rather than quietly served as fp32:
+  // handing a visitor who picked a 1.2 GB encoder a 2.35 GB one is the silent
+  // quant swap the rest of this module refuses to do.
+  const fp16NeedsF16Adapter = encoderQuant === 'fp16' && !shaderF16;
+  const fp16NeedsFile = encoderQuant === 'fp16' && !hasEncoderFor(repoFiles, 'fp16');
+  const fp16Servable = encoderQuant === 'fp16' && !fp16NeedsF16Adapter && !fp16NeedsFile;
+  const encoderQ = isInt8Encoder(encoderQuant)
+    || (encoderQuant === 'w4a8' && !w4a8Servable)
+    || (encoderQuant === 'fp16' && !fp16Servable)
     ? 'fp32'
     : encoderQuant;
   const decoderQ = 'int8';
@@ -1325,6 +1358,8 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     pinnedToInt8: false,
     webgpuFp32NeedsShards,
     w4a8NeedsFile: encoderQuant === 'w4a8' && !w4a8Servable,
+    fp16NeedsFile,
+    fp16NeedsF16Adapter,
   };
 }
 
@@ -1340,7 +1375,14 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
  */
 export function quantSatisfiable(args) {
   const r = resolveModelQuant(args);
-  return !r.pinnedToInt8 && !r.webgpuFp32NeedsShards && !r.w4a8NeedsFile;
+  // fp16NeedsF16Adapter is deliberately included even though no mirror can fix
+  // it: quantSatisfiable answers "can this source deliver what was asked", and
+  // on a GPU without shader-f16 the honest answer is no, from any source. The
+  // upgrade probe then finds the local mirror equally unable and the caller
+  // throws, which is what keeps a 1.2 GB choice from silently becoming a
+  // 2.35 GB download.
+  return !r.pinnedToInt8 && !r.webgpuFp32NeedsShards && !r.w4a8NeedsFile
+    && !r.fp16NeedsFile && !r.fp16NeedsF16Adapter;
 }
 
 /**
@@ -1379,6 +1421,9 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  *   'js' uses the pure-JS mel.js (no ONNX download needed, supports streaming).
  *   'onnx' downloads the preprocessor ONNX model from the repo.
  * @param {('webgpu'|'webgpu-hybrid'|'webgpu-strict'|'wasm')} [options.backend='webgpu'] Backend mode
+ * @param {boolean} [options.shaderF16=false] Whether the WebGPU adapter exposes
+ *   `shader-f16`. Required before an fp16 encoder request can resolve; without
+ *   it the request is refused rather than silently served as fp32.
  * @param {boolean} [options.allowWasmFp32=false] Opt-in: on WASM, select the
  *   sharded fp32 encoder (instead of the int8 pin) when fp32 is requested and the
  *   repo ships encoder-model.onnx.data.NNN shards. Off by default (2.4 GB download).
@@ -1400,7 +1445,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, allowWasmFp32 = false, protectCacheKeys = [] } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, shaderF16 = false, allowWasmFp32 = false, protectCacheKeys = [] } = options;
   // The base URL all files are actually fetched from. Starts as the explicit
   // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
   // primary (HF) source cannot serve the requested quant and the local mirror
@@ -1427,8 +1472,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     : await listRepoFiles(repoId, effectiveRevision);
 
   // Resolve the effective quantisation per backend and per availability.
-  let { encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile } =
-    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 });
+  let { encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile,
+        fp16NeedsFile, fp16NeedsF16Adapter } =
+    resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16, allowWasmFp32 });
 
   // Pre-download upgrade: the primary (HF) source could not serve the requested
   // quant (fp32 with no shards on either backend, w4a8 with no encoder file),
@@ -1438,18 +1484,19 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // path (no explicit localFallbackBaseUrl) and only when a probe target was
   // provided by the caller (localUpgradeBaseUrl).
   if (localUpgradeBaseUrl && !localFallbackBaseUrl
-      && (pinnedToInt8 || webgpuFp32NeedsShards || w4a8NeedsFile)) {
+      && (pinnedToInt8 || webgpuFp32NeedsShards || w4a8NeedsFile || fp16NeedsFile)) {
     // Resolve flat-vs-nested once so the listing and the later weight fetches
     // both target the layout the operator actually mounted.
     const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId)) || localUpgradeBaseUrl;
     const localFiles = await listLocalRepoFiles(resolvedUpgrade).catch(() => []);
-    if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, allowWasmFp32 })) {
+    if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, shaderF16, allowWasmFp32 })) {
       console.log(`[Hub] HuggingFace cannot serve the requested quant (encoder=${encoderQuant}); `
         + `the local mirror at ${resolvedUpgrade} can, switching the load to it`);
       effectiveLocalBase = resolvedUpgrade;
       repoFiles = localFiles;
-      ({ encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile } =
-        resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, allowWasmFp32 }));
+      ({ encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile,
+         fp16NeedsFile, fp16NeedsF16Adapter } =
+        resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16, allowWasmFp32 }));
     }
   }
 
@@ -1494,6 +1541,28 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         + `available source: neither HuggingFace nor the local /models mirror ships `
         + `encoder-model${QUANT_SUFFIX.w4a8} (built by scripts/quantize-nbits.py). `
         + `Host it, or pick fp32.`,
+    });
+  }
+  if (fp16NeedsF16Adapter || fp16NeedsFile) {
+    // fp16 was picked on WebGPU and either this GPU cannot run it or no source
+    // ships it. Resolution above already fell back to fp32 so the rest of this
+    // function has a loadable graph, but serving that silently would hand a
+    // visitor who chose a 1.2 GB encoder a 2.35 GB one, and in the adapter case
+    // it would also hide the exact failure that got fp16 withdrawn in 2026-08:
+    // ORT builds the session happily and then returns an empty transcript,
+    // because its fp16 kernels emit WGSL `f16` types that will not compile
+    // without the feature. Refuse for the same reason the w4a8 branch refuses.
+    throw new QuantUnavailableError({
+      backend,
+      requested: { encoder: encoderQuant, decoder: decoderQuant },
+      message: fp16NeedsF16Adapter
+        ? `The fp16 encoder needs a WebGPU adapter exposing the \`shader-f16\` feature, `
+          + `which this one does not: ONNX Runtime would build the session and then return an `
+          + `empty transcript. Pick fp32 or w4a8.`
+        : `Requested encoder=fp16 cannot run on the ${backend} backend from any available `
+          + `source: neither HuggingFace nor the local /models mirror ships `
+          + `encoder-model${QUANT_SUFFIX.fp16} (built by scripts/quantize-fp16.py). `
+          + `Host it, or pick fp32.`,
     });
   }
   if (webgpuFp32NeedsShards) {
