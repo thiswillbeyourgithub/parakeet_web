@@ -10,6 +10,30 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### fp16 revient sur WebGPU, sur les GPU capables de l'exécuter
+
+L'encodeur fp16 avait été retiré en août, dans la conviction qu'aucun GPU accessible n'expose la fonctionnalité `shader-f16` dont ses noyaux ont besoin. Un rapport de mesure envoyé depuis le portable d'un visiteur (un Intel UHD 630) indique cette fonctionnalité comme présente : la conviction était donc fausse, notre propre GPU de développement ne l'expose pas, ce qui faisait passer cette absence pour une règle générale.
+
+fp16 est donc de nouveau proposé, comme un choix et non plus comme la valeur par défaut silencieuse qu'il était. L'application demande au GPU s'il prend en charge la fonctionnalité et n'active l'option qu'ensuite ; sur un GPU qui ne l'a pas, le bouton est grisé avec la raison, et une préférence rapportée d'une autre machine charge fp32 au lieu de ne rien transcrire. C'est bien pour cela que le verrouillage est strict : sans la fonctionnalité, ONNX Runtime construit le modèle fp16, l'exécute et renvoie une transcription vide, sans la moindre erreur.
+
+L'intérêt : sur le portable à l'origine du rapport, charger le modèle a coûté 74 secondes contre 20,6 secondes de transcription réelle, et fp16 divise par deux le téléchargement GPU (environ 1,2 Go au lieu des 2,35 Go du fp32 fragmenté) pour une qualité pratiquement identique. Encore faut-il que la source du modèle héberge le fichier fp16 ; une source qui ne l'héberge pas le dit désormais au lieu de servir discrètement une précision plus lourde.
+
+### Les poids GPU sont de nouveau mis en cache, quand leur taille le permet
+
+L'encodeur fp32 fragmenté était chargé directement en mémoire sans jamais être écrit dans le cache du navigateur : chaque chargement de page le retéléchargeait intégralement, et les 74 secondes ci-dessus étaient donc payées à chaque visite. La mise en cache de ces fragments avait déjà été tentée puis annulée, parce que Chromium bascule un gros fichier stocké sur le disque et échoue ensuite à le relire. Cet échec dépend de la taille : le cache est donc désormais conditionné à un seuil, un fichier assez petit pour survivre à l'aller-retour est conservé, un plus gros se comporte exactement comme avant. Tant que le dépôt du modèle ne fournit pas de fragments plus petits, cela ne change rien en production, ce qui rend le changement sûr à intégrer dès maintenant.
+
+### Le banc d'essai se préchauffe avant de chronométrer, et dit si le chargement venait du cache
+
+Deux détails rendaient les chiffres moins comparables qu'ils n'en avaient l'air. La première mesure de chaque combinaison payait un travail ponctuel (allocation mémoire, préparation des noyaux) qu'aucune mesure suivante ne paie, si bien que la première ligne d'un rapport était systématiquement pessimiste ; un passage de préchauffage non chronométré a lieu maintenant pour chaque profil, et son résultat est jeté. Par ailleurs, un temps de chargement ne voulait rien dire en soi, un chargement servi par le cache et un téléchargement de 2,3 Go étant la même mesure à un facteur cent près. Chaque ligne indique désormais le nombre de mégaoctets réellement téléchargés et si les poids étaient déjà en cache.
+
+### Les rapports indiquent exactement quelle version les a produits, et n'emportent plus la minute
+
+Un rapport ne portait que le numéro de version, partagé par plusieurs versions compilées différentes : impossible donc de rattacher une mesure au code qui l'a produite, et le rapport évoqué plus haut venait de la dernière version poussée, pas de celle qui était déployée. Les rapports portent désormais le commit exact. Dans l'autre sens, l'horodatage d'un rapport est arrondi à l'heure inférieure, dans le fichier comme dans son nom : la minute précise à laquelle un visiteur a lancé la mesure l'identifie un peu et ne répond à aucune question que l'on pose à ces données.
+
+### Un GPU sans marge mémoire ne regroupe plus les segments de l'encodeur
+
+Sur la voie GPU, l'application regroupe plusieurs segments audio en un seul appel à l'encodeur lorsque la carte graphique annonce de la place pour cela. Le calcul pouvait conclure à une absence totale de marge et se faire quand même imposer un plancher de deux, précisément sur la machine qui ne peut pas se le permettre : un GPU intégré dont la limite de tampon annoncée est plus petite que l'encodeur lui-même. Un zéro mesuré signifie désormais un segment à la fois. Les machines où la mesure échoue ou n'est pas disponible conservent le plancher prudent, une question sans réponse n'étant pas un non.
+
 ### Le banc d'essai garde la machine éveillée pendant toute sa durée
 
 Le banc d'essai de la barre latérale prend plusieurs minutes, et l'essentiel de ce temps passe à charger des modèles entre les lignes plutôt qu'à transcrire (un téléchargement fp32 de 2,3 Go domine facilement). Le verrou d'écran que l'application tient déjà pendant un enregistrement ou une transcription n'était tenu que pendant les transcriptions, si bien qu'un portable laissé seul à mesurer pouvait s'assombrir, puis s'endormir, au milieu d'un chargement et rendre une mesure jamais terminée. Le verrou est désormais tenu depuis l'appui sur Lancer jusqu'à la fin de la mesure, ce qui sur tous les systèmes de bureau bloque aussi la mise en veille sur inactivité qui suit un écran éteint. Un capot refermé ou une mise en veille manuelle l'emportent toujours, comme il se doit. Le test de bout en bout du banc d'essai enregistre maintenant les appels au verrou et échoue si celui-ci est demandé après le premier chargement de modèle ou relâché avant que le rapport n'existe.
