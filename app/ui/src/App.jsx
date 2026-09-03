@@ -410,6 +410,11 @@ function stripSettingsResetFromUrl() {
 
 // Injected by Vite from app/package.json — no need to manually sync
 const VERSION = __APP_VERSION__;
+// Injected by Vite from git at build time (short sha, `-dirty` when the tree was
+// not clean, 'unknown' when git was unavailable). Reports carry it alongside the
+// version because several pushes share one version number, so a report stamped
+// only with a version cannot be attributed to the code that produced it.
+const COMMIT = __APP_COMMIT__;
 
 // Default for the global min-p gate override (the "Min-p gate override" knob).
 // The value IS the min-p, monotonic in [0, 1]: 0 = boost every candidate (no
@@ -732,9 +737,11 @@ export default function App() {
   const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~900 MB, fast,
-  // good quality on long audio with the SmoothQuant encoder), 'int8lite' (the
-  // same recipe with 11 MatMuls left in fp32 instead of 18: ~88 MB smaller and
-  // ~164 MiB lighter on RAM, slightly less accurate) or 'fp32' (sharded ~2.4 GB,
+  // good quality on long audio: since 2026-09-03 both repos ship it as a
+  // MatMulNBits 8-bit build, weight-only int8 with dynamic int8 activations),
+  // 'int8lite' (the lighter SmoothQuant build, 11 MatMuls left in fp32 instead
+  // of 18: ~88 MB smaller and ~164 MiB lighter on RAM, slightly less accurate)
+  // or 'fp32' (sharded ~2.4 GB,
   // full quality, ~35 % slower). Both non-default values are opt-in: only
   // honoured when the repo actually ships the matching files, else hub.js throws
   // QuantUnavailableError (no silent downgrade; resolveModelQuant). Ignored on
@@ -5131,6 +5138,7 @@ export default function App() {
       app: {
         name: 'parakeet_web',
         version: VERSION,
+        commit: COMMIT,
         mode: (typeof import.meta !== 'undefined' && import.meta.env?.MODE) || null,
         url: typeof location !== 'undefined' ? `${location.origin}${location.pathname}` : null,
         uiLanguage: lang,
@@ -5377,6 +5385,7 @@ export default function App() {
         generatedAt: new Date().toISOString(),
         app: {
           version: VERSION,
+          commit: COMMIT,
           modelRepo: repoId,
           modelSource,
         },

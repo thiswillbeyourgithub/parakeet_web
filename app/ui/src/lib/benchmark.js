@@ -433,6 +433,22 @@ export function engineHintFromUserAgent(ua) {
   return 'unknown';
 }
 
+// Coarsen a timestamp to the top of its UTC hour. A report is uploaded and kept
+// on the operator's disk, so the minute and second a visitor happened to run a
+// benchmark are detail the report has no use for: nothing in it is ordered
+// finer than "which build, roughly when". Rounding here rather than at the call
+// site makes the guarantee structural, since this is the only place a report is
+// assembled. Anything unparseable becomes null rather than a guess.
+// The receiver rounds its own filename stamp the same way (signaling/server.js),
+// otherwise the arrival time would hand back the precision removed here.
+export function coarseTimestamp(value) {
+  if (value == null) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCMinutes(0, 0, 0);
+  return d.toISOString();
+}
+
 // Assemble the report. Key order is fixed so two reports diff cleanly, and
 // every section is data the visitor can read in the textarea before deciding
 // to send it.
@@ -448,7 +464,7 @@ export function buildBenchmarkReport({
   return {
     format: 'parakeetweb-benchmark-report/1',
     reportId,
-    generatedAt,
+    generatedAt: coarseTimestamp(generatedAt),
     app,
     settings,
     clip,

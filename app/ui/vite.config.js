@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,6 +27,26 @@ try {
 
 // Read version from parent package.json so App.jsx stays in sync automatically
 const parentPkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
+
+// Exact commit the bundle was built from. The version alone cannot identify a
+// build: several pushes share one version number, so a benchmark or support
+// report stamped only "10.0.4" cannot be attributed to the code that produced
+// it. `-dirty` is appended when the tree had uncommitted changes at build time,
+// which is the difference between a report about the deployed app and one about
+// somebody's working copy. Falls back to 'unknown' rather than failing the
+// build: git is absent when building from a tarball or from the `git archive`
+// export the A/B harness uses.
+function gitCommit() {
+  try {
+    const run = (args) => execFileSync('git', args, { cwd: __dirname, encoding: 'utf-8' }).trim();
+    const sha = run(['rev-parse', '--short=10', 'HEAD']);
+    const dirty = run(['status', '--porcelain']) !== '';
+    return dirty ? `${sha}-dirty` : sha;
+  } catch {
+    return 'unknown';
+  }
+}
+const APP_COMMIT = gitCommit();
 
 // Vendored Preact replaces React. The aliases below redirect every flavour of
 // `react` / `react-dom` import to `preact/compat`, and the JSX automatic runtime
@@ -126,5 +147,6 @@ export default defineConfig({
   define: {
     global: 'globalThis',
     __APP_VERSION__: JSON.stringify(parentPkg.version),
+    __APP_COMMIT__: JSON.stringify(APP_COMMIT),
   },
 }); 

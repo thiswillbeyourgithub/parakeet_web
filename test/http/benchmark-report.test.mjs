@@ -62,7 +62,10 @@ describe('benchmark report collection enabled', () => {
 
     const files = (await readdir(dir)).filter(f => f.endsWith('.json'));
     assert.equal(files.length, 1);
-    assert.match(files[0], /^report-\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-f]{8}\.json$/);
+    // Stamp is rounded to the top of the UTC hour, matching the client's own
+    // `generatedAt`: the arrival time must not hand back the minute/second the
+    // client dropped for privacy. Uniqueness comes from the random suffix.
+    assert.match(files[0], /^report-\d{4}-\d{2}-\d{2}T\d{2}-00-00-000Z-[0-9a-f]{8}\.json$/);
 
     const stored = JSON.parse(await readFile(join(dir, files[0]), 'utf-8'));
     assert.equal(stored.format, FORMAT);
@@ -109,6 +112,7 @@ describe('benchmark report collection enabled', () => {
   test('stored content is re-serialised JSON, not the raw request bytes', async () => {
     // A body with duplicate keys and odd whitespace still lands as canonical
     // JSON of the parsed object.
+    const before = (await readdir(dir)).filter(f => f.endsWith('.json'));
     const raw = JSON.stringify(sampleReport({ reportId: 'first' }))
       .replace('"reportId":"first"', '"reportId":"first",   "reportId":"second"');
     const res = await fetch(`${srv.baseUrl}/api/benchmark-report`, {
@@ -117,8 +121,13 @@ describe('benchmark report collection enabled', () => {
       body: raw,
     });
     assert.equal(res.status, 204);
-    const files = (await readdir(dir)).filter(f => f.endsWith('.json')).sort();
-    const stored = await readFile(join(dir, files[files.length - 1]), 'utf-8');
+    // Filenames stopped sorting chronologically when the stamp was rounded to
+    // the hour (that ordering IS the precision the rounding removes), so the new
+    // file is identified by diffing the directory rather than by taking the last
+    // name.
+    const added = (await readdir(dir)).filter(f => f.endsWith('.json') && !before.includes(f));
+    assert.equal(added.length, 1);
+    const stored = await readFile(join(dir, added[0]), 'utf-8');
     assert.ok(!stored.includes('   '), 'raw request whitespace must not be stored verbatim');
     assert.equal(JSON.parse(stored).reportId, 'second');
   });

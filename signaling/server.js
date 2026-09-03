@@ -1395,7 +1395,14 @@ app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), async 
         // Server-generated name only: no request-controlled component can ever
         // reach the filesystem. `wx` refuses to overwrite, so a name collision
         // fails loudly instead of destroying an earlier report.
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        // Rounded to the top of the UTC hour, matching the client's own
+        // `generatedAt` (app/ui/src/lib/benchmark.js coarseTimestamp): a report
+        // arrives within a minute of being generated, so a second-precision
+        // filename would hand back exactly the precision the client removed for
+        // privacy. The random suffix, not the stamp, is what keeps names unique.
+        const stampAt = new Date();
+        stampAt.setUTCMinutes(0, 0, 0);
+        const stamp = stampAt.toISOString().replace(/[:.]/g, '-');
         const name = `report-${stamp}-${crypto.randomBytes(4).toString('hex')}.json`;
         await fsp.writeFile(path.join(BENCHMARK_REPORTS_DIR, name), payload, { flag: 'wx' });
         console.log(`[benchmark] stored ${name} (${payload.length} bytes)`);

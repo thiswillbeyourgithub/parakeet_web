@@ -14,6 +14,7 @@ import {
   QUANT_DOWNLOAD_MB,
   anonymizeEnvironment,
   buildBenchmarkReport,
+  coarseTimestamp,
   engineHintFromUserAgent,
   estimatedDownloadMB,
   formatBenchmarkReport,
@@ -446,6 +447,7 @@ describe('buildBenchmarkReport', () => {
     });
     assert.equal(report.format, 'parakeetweb-benchmark-report/1');
     assert.equal(report.reportId, 'abc');
+    assert.equal(report.app.version, '9.9.9');
     const text = formatBenchmarkReport(report);
     assert.ok(!text.includes('Mozilla/5.0'));
     assert.ok(!text.includes('Europe/Paris'));
@@ -454,5 +456,39 @@ describe('buildBenchmarkReport', () => {
     assert.deepEqual(Object.keys(report), [
       'format', 'reportId', 'generatedAt', 'app', 'settings', 'clip', 'environment', 'results',
     ]);
+  });
+
+  test('coarsens generatedAt to the hour, so the report cannot time the visitor', () => {
+    const report = buildBenchmarkReport({
+      generatedAt: '2026-09-03T14:54:54.621Z',
+      env: {},
+    });
+    assert.equal(report.generatedAt, '2026-09-03T14:00:00.000Z');
+    // The precise time must not survive anywhere else in the serialised report.
+    assert.ok(!formatBenchmarkReport(report).includes('54:54'));
+  });
+
+  test('carries the build commit, since a version alone cannot identify a build', () => {
+    const report = buildBenchmarkReport({ app: { version: '10.0.4', commit: 'abc1234567' }, env: {} });
+    assert.equal(report.app.commit, 'abc1234567');
+  });
+});
+
+describe('coarseTimestamp', () => {
+  test('rounds down to the top of the UTC hour', () => {
+    assert.equal(coarseTimestamp('2026-09-03T14:54:54.621Z'), '2026-09-03T14:00:00.000Z');
+    assert.equal(coarseTimestamp('2026-09-03T00:00:00.000Z'), '2026-09-03T00:00:00.000Z');
+    assert.equal(coarseTimestamp('2026-09-03T23:59:59.999Z'), '2026-09-03T23:00:00.000Z');
+  });
+
+  test('rounds in UTC, not in the local zone, so the offset leaks nothing', () => {
+    // A local-time string with an offset still lands on a UTC hour boundary.
+    assert.equal(coarseTimestamp('2026-09-03T16:54:54.621+02:00'), '2026-09-03T14:00:00.000Z');
+  });
+
+  test('null and unparseable values become null rather than a guessed time', () => {
+    assert.equal(coarseTimestamp(null), null);
+    assert.equal(coarseTimestamp(undefined), null);
+    assert.equal(coarseTimestamp('not a date'), null);
   });
 });
