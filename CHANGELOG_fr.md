@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### L'encodage parallèle exige désormais deux fois plus de cœurs pour se lancer
+
+La voie optionnelle d'encodage parallèle fait tourner deux copies supplémentaires de l'encodeur dans des workers d'arrière-plan : une bonne affaire sur une machine aux cœurs inoccupés, une mauvaise sur une machine qui n'en a pas. Mesuré sur la machine de référence, c'est environ 4 % plus rapide quand la machine est au repos et environ 15 % plus lent quand elle est chargée, pour environ 1,7 Go de mémoire supplémentaire dans les deux cas. Le verrou qui décidait de prendre ce pari lisait le nombre de cœurs annoncé par le navigateur, qui compte l'hyperthreading : un chiffre de 8 correspond soit à un portable à quatre cœurs (aucune marge, précisément le cas du ralentissement), soit à un vrai ordinateur de bureau à huit cœurs, et rien ne les distingue. La barre est maintenant à 12, le premier chiffre qui exclut une machine à quatre cœurs et celui qu'annonce la machine de référence elle-même ; une machine qui n'annonce aucun nombre de cœurs est écartée plutôt que supposée capable. Les machines qui ne passent plus le verrou utilisent simplement la voie ordinaire, qui a toujours été le repli de toute façon.
+
 ### fp16 revient sur WebGPU, sur les GPU capables de l'exécuter
 
 L'encodeur fp16 avait été retiré en août, dans la conviction qu'aucun GPU accessible n'expose la fonctionnalité `shader-f16` dont ses noyaux ont besoin. Un rapport de mesure envoyé depuis le portable d'un visiteur (un Intel UHD 630) indique cette fonctionnalité comme présente : la conviction était donc fausse, notre propre GPU de développement ne l'expose pas, ce qui faisait passer cette absence pour une règle générale.

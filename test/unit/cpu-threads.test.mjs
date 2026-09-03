@@ -98,21 +98,37 @@ describe('restoreCpuThreads: persisted-slider restore + legacy-default migration
 });
 
 describe('encodePoolPlan: chunk-parallel encode pool gate + thread split', () => {
-  test('typical laptops get 2 workers, each with half the user thread budget', () => {
-    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: 8 }),
-      { workers: 2, threadsPerWorker: 2, reason: null });
+  test('machines with real headroom get 2 workers, each with half the user thread budget', () => {
+    // The reference box the pool was measured on, and anything larger.
     assert.deepEqual(encodePoolPlan({ cpuThreads: 6, maxCores: 12, deviceMemory: 8 }),
       { workers: 2, threadsPerWorker: 3, reason: null });
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 8, maxCores: 16, deviceMemory: 8 }),
+      { workers: 2, threadsPerWorker: 4, reason: null });
     // Odd budgets round down so the pool never exceeds the user's budget.
-    assert.deepEqual(encodePoolPlan({ cpuThreads: 5, maxCores: 8, deviceMemory: 8 }),
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 5, maxCores: 12, deviceMemory: 8 }),
       { workers: 2, threadsPerWorker: 2, reason: null });
-    // 8-core floor machine with a small thread budget: 2 single-thread workers.
-    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 8, deviceMemory: 8 }),
+    // Floor machine with a small thread budget: 2 single-thread workers.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 2, maxCores: 12, deviceMemory: 8 }),
       { workers: 2, threadsPerWorker: 1, reason: null });
   });
 
   test('undefined deviceMemory (Firefox/Node never expose it) passes the memory gate', () => {
-    assert.equal(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: undefined }).workers, 2);
+    assert.equal(encodePoolPlan({ cpuThreads: 4, maxCores: 12, deviceMemory: undefined }).workers, 2);
+  });
+
+  test('8 logical cores are refused: that number cannot rule out a 4-core laptop', () => {
+    // hardwareConcurrency counts HYPERTHREADS. A report of 8 is either a
+    // 4C/8T laptop (four real cores, so the pool's two extra ORT instances
+    // plus the main thread oversubscribe it, which is the ~-15% contended
+    // case) or a genuine 8C/8T desktop, and nothing distinguishes them. The
+    // gate resolves that ambiguity against gambling: the cost of being wrong
+    // is a slower transcription plus ~1.7 GB of RAM, the gain is ~+4%.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: 8 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'cores' });
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 11, deviceMemory: 8 }),
+      { workers: 0, threadsPerWorker: 0, reason: 'cores' });
+    // 12 is the first count that cannot be a four-core machine.
+    assert.equal(encodePoolPlan({ cpuThreads: 4, maxCores: 12, deviceMemory: 8 }).workers, 2);
   });
 
   test('gates: small core counts, low memory, unsplittable thread budget', () => {
@@ -125,15 +141,26 @@ describe('encodePoolPlan: chunk-parallel encode pool gate + thread split', () =>
       { workers: 0, threadsPerWorker: 0, reason: 'cores' });
     assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 7, deviceMemory: 8 }),
       { workers: 0, threadsPerWorker: 0, reason: 'cores' });
-    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 8, deviceMemory: 4 }),
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores: 12, deviceMemory: 4 }),
       { workers: 0, threadsPerWorker: 0, reason: 'memory' });
-    assert.deepEqual(encodePoolPlan({ cpuThreads: 1, maxCores: 8, deviceMemory: 8 }),
+    assert.deepEqual(encodePoolPlan({ cpuThreads: 1, maxCores: 12, deviceMemory: 8 }),
       { workers: 0, threadsPerWorker: 0, reason: 'threads' });
   });
 
+  test('an unknown core count is refused, not assumed adequate', () => {
+    // Unlike deviceMemory (Chrome-only, so undefined is common and uninformative),
+    // hardwareConcurrency is universal: not getting a number means a privacy
+    // mode or an exotic runtime, which is the ambiguous case the gate exists to
+    // decline. The thread-budget fallback still assumes 8 for sizing purposes.
+    for (const maxCores of [undefined, null, NaN, 0, -4, 'eight']) {
+      assert.deepEqual(encodePoolPlan({ cpuThreads: 4, maxCores, deviceMemory: 8 }),
+        { workers: 0, threadsPerWorker: 0, reason: 'cores' }, `maxCores=${String(maxCores)}`);
+    }
+  });
+
   test('garbage cpuThreads falls back to the default thread budget', () => {
-    // hc=8 -> defaultWasmThreads 4 -> 2 workers x 2 threads.
-    assert.deepEqual(encodePoolPlan({ cpuThreads: NaN, maxCores: 8, deviceMemory: 8 }),
+    // hc=12 -> defaultWasmThreads 4 -> 2 workers x 2 threads.
+    assert.deepEqual(encodePoolPlan({ cpuThreads: NaN, maxCores: 12, deviceMemory: 8 }),
       { workers: 2, threadsPerWorker: 2, reason: null });
   });
 });

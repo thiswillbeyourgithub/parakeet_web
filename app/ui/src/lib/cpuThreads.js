@@ -39,6 +39,11 @@ export function restoreCpuThreads({ stored, migrated, maxCores }) {
   return { threads, migrationApplied: false };
 }
 
+// Logical cores the encode pool demands before it will run. See the gate note
+// below: this counts hyperthreads, so 12 is the smallest value that rules out
+// a four-physical-core machine.
+const MIN_POOL_CORES = 12;
+
 /**
  * Pure policy for the chunk-parallel encode-worker pool (WASM only). The
  * encoder's thread scaling saturates near the physical core count, but chunks
@@ -51,10 +56,16 @@ export function restoreCpuThreads({ stored, migrated, maxCores }) {
  * converts genuinely idle cores, so it needs plenty of them to be a safe bet.
  *
  * Gates (any failure returns workers: 0 with the reason):
- * - 'cores': under 8 logical cores there is no reliable headroom to convert
+ * - 'cores': under 12 logical cores there is no reliable headroom to convert
  *   (on smaller machines the split thread budget loses to the plain path as
- *   soon as anything else runs; unknown hardwareConcurrency falls back to 8
- *   and passes, matching the deviceMemory-undefined policy below).
+ *   soon as anything else runs). The number is logical cores, which is why the
+ *   bar is 12 rather than 8: hardwareConcurrency counts HYPERTHREADS, so a
+ *   report of 8 is either a 4C/8T laptop (four real cores, no headroom, and
+ *   exactly the machine the -15% contended case describes) or a real 8C/8T
+ *   desktop, and nothing in the platform tells the two apart. 12 is the first
+ *   value that cannot be a four-core machine, and it is what the reference
+ *   6C/12T box the pool was measured on reports. An unknown core count is
+ *   refused for the same reason: it is the ambiguous case, not a yes.
  * - 'memory': each worker holds its own copy of the encoder weights
  *   (~850 MB for int8), so low-RAM devices must not pay 2 extra copies.
  *   navigator.deviceMemory is Chrome-only and caps its report at 8; undefined
@@ -72,10 +83,11 @@ export function restoreCpuThreads({ stored, migrated, maxCores }) {
  * @returns {{ workers: number, threadsPerWorker: number, reason: (string|null) }}
  */
 export function encodePoolPlan({ cpuThreads, maxCores, deviceMemory }) {
-  const cores = Number.isFinite(maxCores) && maxCores > 0 ? Math.floor(maxCores) : 8;
+  const knownCores = Number.isFinite(maxCores) && maxCores > 0;
+  const cores = knownCores ? Math.floor(maxCores) : 8;
   const threads = Number.isFinite(cpuThreads) && cpuThreads >= 1
     ? Math.floor(cpuThreads) : defaultWasmThreads(cores);
-  if (cores < 8) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
+  if (!knownCores || cores < MIN_POOL_CORES) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
   if (Number.isFinite(deviceMemory) && deviceMemory < 8) {
     return { workers: 0, threadsPerWorker: 0, reason: 'memory' };
   }
