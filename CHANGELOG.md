@@ -10,6 +10,14 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The benchmark keeps the machine awake for its whole run
+
+The sidebar benchmark takes minutes, and most of that time is spent loading models between rows rather than transcribing (a 2.3 GB fp32 download easily dominates). The screen wake lock the app already holds while recording or transcribing was only held during the transcriptions, so a laptop left alone to benchmark could dim, then sleep, halfway through a load and hand back a run that never finished. The wake lock is now held from the moment Run is pressed until the run ends, which on every desktop OS also blocks the idle suspend that follows a dark screen. A lid close or a manual sleep still wins, as it should. The end-to-end benchmark test now records the wake lock calls and fails if the lock is requested any later than the first model load or dropped before the report exists.
+
+### The report receiver checks what it stores, and how fast
+
+The endpoint that collects benchmark reports only checked the format string, so any JSON object of the right size was stored and later pulled onto the operator's machine, where tooling reads it and trusts it. It now refuses unknown top-level fields, wrong section types, `__proto__`/`constructor`/`prototype` keys at any depth (prototype pollution the moment a report is merged into another object), nesting deeper than 12, strings over 4 KB and control characters other than tab and newline (an escape sequence in a report becomes a terminal injection once it is printed). A report captured from the real app passes unchanged. On the rate side, the per-IP limit of 3 a minute was the only one, and a caller rotating source addresses could reach the 20000 file cap in minutes and silence the feature for everyone. An instance-wide quota of 30 accepted reports a minute (`BENCHMARK_REPORTS_MAX_PER_MINUTE`) now sits behind it, so the same flood takes eleven hours and is logged on every refusal. Real visitors post one report per several minutes each and never come near either limit. Built and tested with Claude Code.
+
 ### A 4-bit encoder, for when the download is the problem
 
 There is a new entry in the encoder precision list: **w4a8**, an encoder whose weights are stored on 4 bits instead of 32. 217 of the encoder's 289 matrix multiplications carry it; the remaining 72 multiply two activations together and have no stored weight to shrink, and the convolutions and normalisations stay in full precision. Activations are quantised to 8 bits inside the kernel at run time, which is where the name comes from.
