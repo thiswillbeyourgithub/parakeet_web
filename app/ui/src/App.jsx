@@ -2087,13 +2087,24 @@ export default function App() {
     };
   }, [showAdvancedInfo]);
 
-  // Keepalive while recording or transcribing: prevents background-tab JS
-  // throttling (silent audio trick) and keeps the screen on (wake lock).
+  // Keepalive while recording, transcribing, or benchmarking: prevents
+  // background-tab JS throttling (silent audio trick) and keeps the screen on
+  // (wake lock, which on every desktop OS also blocks the idle suspend that
+  // follows a dark screen; a lid close or a manual sleep still wins). The
+  // benchmark is held for its WHOLE run, not just its transcriptions: the
+  // model loads between rows are the long part (a 2.3 GB fp32 download
+  // easily), and used to run with nothing held, so a machine left alone to
+  // benchmark could sleep halfway and hand back a run that never finished.
+  // Keyed on the ONE combined boolean, not the four inputs: with the inputs
+  // as deps every transition between them (transcribing ends while the
+  // benchmark is still running, recording turns into transcribing) re-ran the
+  // effect, releasing the wake lock and re-requesting it a millisecond later.
+  const keepAwake = isRecording || isTranscribing || isRemoteMic || benchmarkRunning;
   useEffect(() => {
-    if (!isRecording && !isTranscribing && !isRemoteMic) return;
+    if (!keepAwake) return;
     acquireKeepalive();
     return () => releaseKeepalive();
-  }, [isRecording, isTranscribing, isRemoteMic]);
+  }, [keepAwake]);
 
   // Probe WebGPU availability once on mount. `navigator.gpu` existing isn't
   // enough (the adapter request can still fail on blocklisted GPUs or headless
