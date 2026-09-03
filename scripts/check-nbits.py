@@ -9,8 +9,10 @@ at either width (--bits 4 for the w4a8 build, --bits 8 for the int8 one):
     block_size=32 and accuracy_level=4 (a silently dropped accuracy_level means
     fp32 activations)
  1. batch-1 with length = T-1: finite (the hop-multiple case onnx-asr produces)
- 2. batch-2 mixed lengths: all NaN, i.e. the mask-free build's pad tripwire
-    survived the rewrite
+ 2. batch-2 mixed lengths: the same verdict as the fp32 reference graph. The
+    mask-free web export answers a padded batch with all NaN (its pad tripwire),
+    a masked export such as istupakov's answers it with finite output; either
+    way the rewrite must not change it
  3. batch-2 equal lengths: finite
  4. agreement with the fp32 encoder on real speech
 
@@ -98,16 +100,28 @@ finite = bool(np.isfinite(run(sq, x, [728])[0]).all())
 print(f"[1] batch-1 len=T-1: finite={finite}", flush=True)
 fail += not finite
 
+# A padded batch has two legitimate answers and the rewrite must keep whichever
+# the source graph gives: all NaN from the mask-free web export's tripwire,
+# finite from a masked export. Demanding NaN unconditionally failed every
+# quantization of the masked istupakov graph while gates 0, 1, 3 and 4 passed.
 x2 = rng.standard_normal((2, 128, 201)).astype(np.float32)
-allnan = bool(np.isnan(run(sq, x2, [201, 100])[0]).all())
-print(f"[2] batch-2 mixed lens: all-NaN={allnan}", flush=True)
-fail += not allnan
+sr = load(args.ref)
+
+
+def pad_state(s):
+    y = run(s, x2, [201, 100])[0]
+    return "all-NaN" if np.isnan(y).all() else "finite" if np.isfinite(y).all() else "mixed"
+
+
+ref_state, q_state = pad_state(sr), pad_state(sq)
+print(f"[2] batch-2 mixed lens: {q_state} (reference: {ref_state})", flush=True)
+fail += q_state != ref_state
 
 finite = bool(np.isfinite(run(sq, x2, [201, 201])[0]).all())
 print(f"[3] batch-2 equal lens: finite={finite}", flush=True)
 fail += not finite
 
-sp, sr = load(args.pre), load(args.ref)
+sp = load(args.pre)
 pin = [i.name for i in sp.get_inputs()]
 for w in args.wavs:
     audio = librosa.load(w, sr=16000)[0].astype(np.float32)[None, :]
