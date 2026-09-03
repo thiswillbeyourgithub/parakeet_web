@@ -36,6 +36,7 @@ describe('listLocalRepoFiles: the current nested layout', () => {
       'fp32/decoder_joint-model.onnx',
       'int8/encoder-model.int8.onnx',
       'int8/decoder_joint-model.int8.onnx',
+      'fp16/encoder-model.fp16.onnx',
       'int8-lite/encoder-model.int8.lite.onnx',
       'w4a8/encoder-model.w4a8.onnx',
     ]);
@@ -47,6 +48,7 @@ describe('listLocalRepoFiles: the current nested layout', () => {
       'int8/decoder_joint-model.int8.onnx',
       'int8-lite/encoder-model.int8.lite.onnx',
       'w4a8/encoder-model.w4a8.onnx',
+      'fp16/encoder-model.fp16.onnx',
       'fp32/encoder-model.onnx.data.000',
       'fp32/encoder-model.onnx.data.001',
     ]);
@@ -155,7 +157,7 @@ describe('listLocalRepoFiles: the probe budget', () => {
     // on a local-weights deployment: without them the download plan cannot know
     // which directory to fetch from. The optional encoder builds earn theirs
     // because resolveModelQuant must decide whether the source can serve an
-    // int8lite or w4a8 request BEFORE any weight is fetched. Variant filenames
+    // int8lite, w4a8 or fp16 request BEFORE any weight is fetched. Variant filenames
     // (the withdrawn optimized/LSE/TopK builds) are NOT probed: those graphs ship
     // under the canonical names and the decoder fast paths are detected from the
     // loaded session's outputNames.
@@ -167,12 +169,14 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'decoder_joint-model.int8.onnx',
       'decoder_joint-model.onnx',
       'decoder_joint-model.onnx.data',
+      'encoder-model.fp16.onnx',
       'encoder-model.int8.lite.onnx',
       'encoder-model.int8.onnx',
       'encoder-model.onnx',
       'encoder-model.onnx.data',
       'encoder-model.onnx.data.000',
       'encoder-model.w4a8.onnx',
+      'fp16/encoder-model.fp16.onnx',
       'fp32/decoder_joint-model.onnx',
       'fp32/decoder_joint-model.onnx.data',
       'fp32/encoder-model.onnx',
@@ -184,6 +188,7 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'sharded/decoder_joint-model.int8.onnx',
       'sharded/decoder_joint-model.onnx',
       'sharded/decoder_joint-model.onnx.data',
+      'sharded/encoder-model.fp16.onnx',
       'sharded/encoder-model.int8.lite.onnx',
       'sharded/encoder-model.int8.onnx',
       'sharded/encoder-model.onnx',

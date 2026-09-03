@@ -40,6 +40,7 @@ export const QUANT_DOWNLOAD_MB = {
   int8lite: 810,
   int8: 900,
   w4a8: 610,
+  fp16: 1220,
   fp32: 2350,
 };
 
@@ -55,7 +56,11 @@ export const HEAVY_DOWNLOAD_MB = 1500;
 // second full model load plus 810 MB, which is exactly the reflex spend the
 // heavy rule exists to prevent. `isCurrent` still wins below, so a visitor who
 // already runs lite gets their own row checked at no cost.
-export const OPT_IN_QUANTS = new Set(['int8lite', 'w4a8']);
+// fp16 joins them for the same reason plus one of its own: at 1220 MB it is
+// under the heavy line, but it only exists on WebGPU, so pre-checking it would
+// silently add a 1.2 GB download to the default run of every visitor whose GPU
+// happens to report shader-f16.
+export const OPT_IN_QUANTS = new Set(['int8lite', 'w4a8', 'fp16']);
 
 function comboId(backend, quant) {
   return `${backend}:${quant}`;
@@ -77,6 +82,7 @@ export function planBenchmark({
   currentBackend = 'wasm',
   currentWasmQuant = 'int8',
   currentWebgpuQuant = 'fp32',
+  shaderF16 = false,
 } = {}) {
   const combos = [
     // int8lite is the same SmoothQuant recipe with 11 fp32 MatMuls kept instead
@@ -97,6 +103,11 @@ export function planBenchmark({
     // the shader (so the GPU win is download and VRAM, not arithmetic).
     combos.push({ backend: 'webgpu-hybrid', quant: 'fp32' });
     combos.push({ backend: 'webgpu-hybrid', quant: 'w4a8' });
+    // fp16 is the third, and only on an adapter that reports shader-f16:
+    // without that feature ORT builds the session and then returns an empty
+    // transcript, so benchmarking it there would measure nothing and report a
+    // failure the visitor cannot act on.
+    if (shaderF16) combos.push({ backend: 'webgpu-hybrid', quant: 'fp16' });
   }
 
   const currentQuant = currentBackend.startsWith('webgpu') ? currentWebgpuQuant : currentWasmQuant;

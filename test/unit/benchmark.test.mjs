@@ -36,18 +36,22 @@ describe('planBenchmark', () => {
   });
 
   test('every opt-in encoder is offered on WASM but never pre-selected', () => {
-    const plan = planBenchmark({ webgpuAvailable: true });
+    const plan = planBenchmark({ webgpuAvailable: true, shaderF16: true });
     // One rule pinned for the whole set rather than one test per precision: each
     // is an ALTERNATIVE to a precision the visitor already has, so each sits
     // under the heavy threshold and each stays unchecked. Pre-checking any of
     // them would silently turn a free default run into a several-hundred-MB one.
+    // fp16 is opt-in for the same reason but has no WASM row at all (no CPU
+    // fp16 kernels), so it is checked on its own backend below.
     for (const quant of OPT_IN_QUANTS) {
-      const row = plan.find(r => r.id === `wasm:${quant}`);
-      assert.ok(row, `${quant} must be offered on WASM`);
+      const gpuOnly = quant === 'fp16';
+      const row = plan.find(r => r.id === `${gpuOnly ? 'webgpu-hybrid' : 'wasm'}:${quant}`);
+      assert.ok(row, `${quant} must be offered`);
       assert.equal(row.heavy, false);
       assert.equal(row.defaultSelected, false);
-      // Lighter than the default int8, which is the whole reason each exists.
-      assert.ok(QUANT_DOWNLOAD_MB[quant] < QUANT_DOWNLOAD_MB.int8);
+      // Lighter than the precision it stands in for: int8 for the WASM
+      // alternatives, fp32 for fp16 (half the GPU download is its whole point).
+      assert.ok(QUANT_DOWNLOAD_MB[quant] < QUANT_DOWNLOAD_MB[gpuOnly ? 'fp32' : 'int8']);
     }
     // No GPU row for int8lite: the GPU EP has no int8 encoder kernel, lite or
     // not. w4a8 is the opt-in that DOES reach the GPU, pinned below.
@@ -111,13 +115,45 @@ describe('planBenchmark', () => {
     const off = planBenchmark({ webgpuAvailable: true, webgpuDisabled: true });
     assert.ok(off.every(r => r.backend === 'wasm'));
     const on = planBenchmark({ webgpuAvailable: true });
-    // fp32 and w4a8 are the precisions the GPU EP has an encoder kernel for, so
-    // they are the WebGPU rows (the model repo's fp16 build was withdrawn
-    // 2026-08-23, and plain int8 has no GPU kernel at all).
+    // fp32 and w4a8 are the precisions any WebGPU adapter can run (plain int8
+    // has no GPU kernel at all). fp16 needs one more thing, pinned below.
     assert.deepEqual(
       on.filter(r => r.backend === 'webgpu-hybrid').map(r => r.quant),
       ['fp32', 'w4a8'],
     );
+  });
+
+  test('fp16 is offered only on an adapter that reports shader-f16', () => {
+    // Without the feature, ORT builds an fp16 session and then returns an empty
+    // transcript: benchmarking it would measure nothing and report a failure
+    // the visitor could do nothing about, so the row must not exist at all.
+    const noF16 = planBenchmark({ webgpuAvailable: true, shaderF16: false });
+    assert.equal(noF16.some(r => r.quant === 'fp16'), false);
+    // Unset is treated as absent, never as "probably fine".
+    assert.equal(planBenchmark({ webgpuAvailable: true }).some(r => r.quant === 'fp16'), false);
+
+    const withF16 = planBenchmark({ webgpuAvailable: true, shaderF16: true });
+    const fp16 = withF16.find(r => r.id === 'webgpu-hybrid:fp16');
+    assert.ok(fp16, 'fp16 must be offered when the adapter supports it');
+    // Half the fp32 download, so under the heavy line, but still opt-in: a GPU
+    // visitor's default run must not silently grow by 1.2 GB.
+    assert.equal(fp16.heavy, false);
+    assert.equal(fp16.defaultSelected, false);
+    assert.equal(QUANT_DOWNLOAD_MB.fp16, 1220);
+    assert.ok(QUANT_DOWNLOAD_MB.fp16 < QUANT_DOWNLOAD_MB.fp32);
+    // And it never leaks onto the CPU backend, which has no fp16 kernels.
+    assert.equal(withF16.some(r => r.backend === 'wasm' && r.quant === 'fp16'), false);
+  });
+
+  test('a visitor already on WebGPU fp16 gets that row checked and sorted last', () => {
+    const plan = planBenchmark({
+      webgpuAvailable: true, shaderF16: true,
+      currentBackend: 'webgpu-hybrid', currentWebgpuQuant: 'fp16',
+    });
+    const own = plan[plan.length - 1];
+    assert.equal(own.id, 'webgpu-hybrid:fp16');
+    assert.equal(own.defaultSelected, true, 'their own model is cached, so it costs nothing');
+    assert.equal(plan.filter(r => r.isCurrent).length, 1);
   });
 
   test('heavy (fp32) rows are unchecked by default unless already selected', () => {

@@ -30,9 +30,10 @@ const ADAPTER = () => {
     configurable: true,
     value: {
       requestAdapter: async () => ({
-        // shader-f16 is reported but no longer influences anything: fp32 is the
-        // only GPU precision left, and it has to come back unavailable for the
-        // fallback to be reached.
+        // shader-f16 is reported so the adapter looks fully capable (it is what
+        // gates the fp16 precision). The precision under test here is the GPU
+        // default, fp32, and it has to come back unavailable for the fallback
+        // to be reached.
         features: new Set(['shader-f16']),
         limits: {},
         info: { vendor: 'test', architecture: 'stub', device: '' },
