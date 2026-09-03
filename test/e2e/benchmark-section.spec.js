@@ -41,6 +41,32 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   // capture every POST instead of letting one reach a server.
   await page.addInitScript(() => {
     window.__CONFIG__ = { ...(window.__CONFIG__ || {}), VITE_BENCHMARK_UPLOAD: 'true' };
+    // Record the screen wake lock the keepalive helper takes, with in-page
+    // timestamps, so the spec can prove it is held for the whole run and not
+    // only while a row transcribes (the model loads in between are the long
+    // part, and a machine left alone to benchmark must not sleep through
+    // them). A stub rather than the real API because headless Chromium may
+    // refuse the request (no visible display), which would leave nothing to
+    // observe.
+    const log = [];
+    window.__wakeLockLog = log;
+    Object.defineProperty(navigator, 'wakeLock', {
+      configurable: true,
+      value: {
+        request: async (type) => {
+          log.push({ type: 'request', lockType: type, t: Date.now() });
+          const listeners = [];
+          return {
+            released: false,
+            addEventListener: (_ev, fn) => listeners.push(fn),
+            release: async () => {
+              log.push({ type: 'release', t: Date.now() });
+              for (const fn of listeners) fn();
+            },
+          };
+        },
+      },
+    });
   });
   const posted = [];
   await page.route('**/api/signal/benchmark-report', async (route) => {
@@ -89,6 +115,7 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   // they would be absent anyway.
   await expect(page.locator('[data-umami-event="benchmark_run"]')).toBeDisabled();
   await expect(page.locator('.benchmark-progress')).toContainText('Loading', { timeout: 60_000 });
+  const tLoading = await page.evaluate(() => Date.now());
   await expect(page.locator('[data-umami-event="upload_file_button"]')).toHaveCount(0);
   await expect(page.locator('[data-umami-event="record_button"]')).toHaveCount(0);
 
@@ -183,6 +210,21 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
 
   // The result table mirrors the report.
   await expect(page.locator('.benchmark-results tbody tr')).toHaveCount(1);
+
+  // Suspend prevention: the wake lock was taken when Run was pressed, BEFORE
+  // the model load began (only a transcription used to take it, leaving every
+  // load between rows unprotected), and it was never released and re-taken
+  // mid-run. A single request across the whole run is what "held throughout"
+  // looks like from the API's side; the release itself lands after the report
+  // is on screen and is not timed here.
+  const wakeLog = await page.evaluate(() => window.__wakeLockLog);
+  const requests = wakeLog.filter((e) => e.type === 'request');
+  expect(requests.length, `wake lock log: ${JSON.stringify(wakeLog)}`).toBe(1);
+  expect(requests[0].lockType).toBe('screen');
+  expect(requests[0].t, 'the wake lock must be requested before the first model load, not by the first transcription')
+    .toBeLessThanOrEqual(tLoading);
+  const releasesBeforeReport = wakeLog.filter((e) => e.type === 'release' && e.t < Date.parse(report.generatedAt));
+  expect(releasesBeforeReport, 'the wake lock was released while the run was still going').toEqual([]);
 
   // Consent: auto-send defaults to OFF, so a finished run must not have sent
   // anything, even though the upload feature is enabled on this instance.
