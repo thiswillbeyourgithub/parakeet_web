@@ -120,8 +120,8 @@ export function worthKeeping(srcSize, outSize) {
  * Decide which of several paths to the SAME bytes gets the real sidecar.
  *
  * A maintainer tree keeps the weights in a nested folder and symlinks them into
- * the root, because the root is the flat layout Caddy serves; a symlinked
- * directory (`sharded`) makes its files show up twice as well. Compressing
+ * the tree Caddy serves; a symlinked DIRECTORY (a precision folder, or the old
+ * `sharded`) makes its files show up twice as well. Compressing
  * every view would spend hundreds of MB and several seconds per duplicate, and
  * compressing only the real file would leave the SERVED path without a sidecar,
  * because Caddy looks for `<requested path>.zst`, not the target's.
@@ -334,7 +334,7 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
       real = realpathSync(f.path);
     } catch { /* keep the literal path */ }
     // The resolved directory CONTAINING this path, which is not the same thing
-    // as the directory of the resolved file: a symlinked FILE in the flat root
+    // as the directory of the resolved file: a symlinked FILE in the served tree
     // resolves into the nested repo but still needs its own sidecar there,
     // while a file reached through a symlinked DIRECTORY lands in the very same
     // directory as the canonical one and needs nothing.
@@ -367,8 +367,8 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
       const why = w.hadSidecar ? 'STALE' : 'missing';
       console.error(`[precompress] ${why} sidecar: ${basename(w.sidecar)}`);
     }
-    // A missing alias LINK matters as much as a missing sidecar: the flat path
-    // it sits on is the one Caddy resolves, so without it the compressed bytes
+    // A missing alias LINK matters as much as a missing sidecar: the path it
+    // sits on is the one Caddy resolves, so without it the compressed bytes
     // exist on disk and are served to nobody.
     let brokenLinks = 0;
     for (const alias of aliases) {
@@ -440,7 +440,7 @@ export async function run({ mode, dir, level = 9, quality = 11, check = false, c
   });
 
   // Every other path to the same bytes gets a symlink to the sidecar generated
-  // (or kept) above, so the flat layout is served compressed without a second
+  // (or kept) above, so every served path gets compressed bytes without a second
   // copy on disk. A sidecar that does not exist is never linked to: a dangling
   // `.zst` would make Caddy fall back to the plain file (harmless) but would
   // also trip the tier-3 dangling-symlink check (test/e2e/dangling-links.mjs),

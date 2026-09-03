@@ -11,9 +11,11 @@
 //
 // The shards are produced locally by parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py and are NOT shipped
 // by the upstream istupakov repo, so they cannot be fetched in CI. When the
-// static server has no sharded/ encoder available the spec SKIPS itself rather
-// than fail: run `uv run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py` (writes ./fallback_models/sharded)
-// to get coverage locally. serve.mjs serves those shards from MODEL_DIR/sharded/.
+// static server has no sharded encoder available the spec SKIPS itself rather
+// than fail: run `uv run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py`
+// to get coverage locally. serve.mjs resolves the bare shard name below through
+// app/src/modelLayout.js, so the shards may sit in MODEL_DIR/fp32/ (current
+// layout), flat at MODEL_DIR/, or in MODEL_DIR/sharded/ (older mirrors).
 //
 // There is nothing to pick between here any more: the model repo ships ONE fp32
 // build, graph-optimized, under the canonical encoder-model.onnx name and its

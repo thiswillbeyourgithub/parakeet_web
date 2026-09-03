@@ -273,11 +273,13 @@ echo "[entrypoint] =============================="
 if [ -z "${LOCAL_MODEL_PATH}" ]; then
   echo "[entrypoint] LOCAL_MODEL_PATH not set — skipping fallback model setup."
 else
-  # Accept either layout: a flat folder (vocab.txt + .onnx directly inside) or a
-  # HuggingFace-style nested tree (files under <repoId>/, e.g. what `hf download`
-  # leaves when the operator mounts a parent of one or more repos). When only the
-  # nested layout is present, descend into it so Caddy (/models/*), the boost
-  # prebuild, and the app's flat probe all see the files directly.
+  # This looks for ONE marker, vocab.txt, because that is the one file the model
+  # repo keeps at its root in every layout the app supports (see
+  # app/src/modelLayout.js: weights may sit in fp32/, int8/, int8-lite/, w4a8/,
+  # fp16/, or flat, but vocab.txt never moves). The mount may also be a parent of
+  # one or more HuggingFace-style repo folders (files under <repoId>/, e.g. what
+  # `hf download` leaves); when only that is present, descend into it so Caddy
+  # (/models/*), the boost prebuild, and the app's probes all see the repo root.
   _LOCAL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}"
   if [ ! -f "${LOCAL_MODEL_PATH}/vocab.txt" ] && [ -f "${LOCAL_MODEL_PATH}/${_LOCAL_REPO}/vocab.txt" ]; then
     echo "[entrypoint] Fallback model found nested under ${_LOCAL_REPO}/; using ${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
@@ -289,8 +291,9 @@ else
   else
     echo "[entrypoint] ERROR: fallback model missing at ${LOCAL_MODEL_PATH}."
     echo "[entrypoint] Bind-mount a folder of ONNX files into the container at"
-    echo "[entrypoint] ${LOCAL_MODEL_PATH} (flat layout, vocab.txt and the .onnx"
-    echo "[entrypoint] files directly inside, or nested under ${_LOCAL_REPO}/)."
+    echo "[entrypoint] ${LOCAL_MODEL_PATH} (the repo root: vocab.txt directly"
+    echo "[entrypoint] inside, weights either in their precision folders or flat"
+    echo "[entrypoint] beside it), or nested under ${_LOCAL_REPO}/."
     echo "[entrypoint] Pre-populate the host folder with e.g.:"
     echo "[entrypoint]   hf download ${_LOCAL_REPO} \\"
     echo "[entrypoint]     --local-dir /some/host/path"

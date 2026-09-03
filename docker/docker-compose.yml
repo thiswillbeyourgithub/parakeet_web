@@ -44,8 +44,9 @@ services:
       # phrase_boosting/ folder. See BOOST_PHRASES_SOURCE / VITE_PHRASE_BOOST_DEFAULT below.
       - ../phrase_boosting:/boost-defaults:ro
 
-      # Local model fallback: bind-mount a host folder of ONNX files (flat
-      # layout: vocab.txt + .onnx files directly inside, OR a nested
+      # Local model fallback: bind-mount a host folder of ONNX files (the repo
+      # root: vocab.txt directly inside, weights either in their precision
+      # folders as the repo ships them or flat beside it, OR a nested
       # <repoId>/ subfolder which the entrypoint descends into) into the
       # container, then set LOCAL_MODEL_PATH below to the in-container target.
       # Caddy serves it under /models/. Pre-populate the host folder with e.g.:

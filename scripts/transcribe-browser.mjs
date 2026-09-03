@@ -22,7 +22,8 @@
 //
 // Requires a BUILT app (app/ui/dist): run `npm run build --prefix app/ui` first.
 // The fp32 WebGPU encoder needs the sharded weights served locally
-// (fallback_models/sharded/encoder-model.onnx.data.NNN); diarization needs the
+// (fallback_models/fp32/encoder-model.onnx.data.NNN, or sharded/ on an older
+// mirror; app/src/modelLayout.js accepts both); diarization needs the
 // two models served at /models (fallback_models, fetched by `npm run e2e:models`
 // or already present). On this repo's box both are present.
 //

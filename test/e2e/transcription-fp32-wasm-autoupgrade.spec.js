@@ -10,8 +10,10 @@
 // this spec leaves the source at the default 'hf' and ROUTES the HF file-listing
 // API to the real istupakov file set (no shards). That makes the downgrade
 // happen for real, then proves the local auto-upgrade kicks in, all without
-// touching the network. The shards still come from serve.mjs (MODEL_DIR/sharded),
-// so the spec self-skips when they are absent (run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py first).
+// touching the network. The shards still come from serve.mjs, which resolves a
+// bare shard name through app/src/modelLayout.js (MODEL_DIR/fp32/, the flat root,
+// then MODEL_DIR/sharded/ on an older mirror), so the spec self-skips when they
+// are absent (run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py first).
 //
 // Built with Claude Code.
 
