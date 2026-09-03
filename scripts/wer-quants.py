@@ -150,7 +150,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # quant label -> onnx-asr `quantization` argument (None == fp32, the plain files)
-QUANT_ARG = {"int8": "int8", "fp16": "fp16", "fp32": None}
+# Encoder quant name -> onnx-asr `quantization=` suffix (None = the unsuffixed fp32
+# file). onnx-asr resolves `encoder-model.<suffix>.onnx`, so `w4a8` picks up the
+# MatMulNBits 4-bit encoder written by scripts/quantize-nbits.py. No decoder ships
+# at that width: mixed_model_files() below always pairs it with --decoder-quant.
+QUANT_ARG = {"int8": "int8", "w4a8": "w4a8", "fp16": "fp16", "fp32": None}
 
 DEFAULT_AUDIO = ROOT / "test/e2e/.cache/jfk-moon/full.mp3"
 
@@ -713,7 +717,7 @@ def corpus_cer(refs, hyps, normalize=True):
 
 
 def parse_args(argv):
-    p = argparse.ArgumentParser(description="WER + timing + RAM + per-section WER across int8/fp16/fp32.")
+    p = argparse.ArgumentParser(description="WER + timing + RAM + per-section WER across int8/w4a8/fp16/fp32.")
     p.add_argument("--audio", default=str(DEFAULT_AUDIO))
     p.add_argument(
         "--reference", default=None,

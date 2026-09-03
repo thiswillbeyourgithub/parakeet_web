@@ -213,6 +213,17 @@ def T12_consume_stream_is_incremental_not_buffered():
     assert order == ["scored-fr", "produced-result-line"], order
 
 
+def T13_w4a8_is_a_known_encoder_quant():
+    # The MatMulNBits 4-bit encoder (scripts/quantize-nbits.py) is selected by onnx-asr's
+    # filename-suffix scheme, so the table value IS the suffix: `encoder-model.w4a8.onnx`.
+    # A missing key here makes --quants w4a8 exit as "unknown quant" and the FLEURS
+    # harness in the model repo silently cannot score the 4-bit build.
+    assert wq.QUANT_ARG["w4a8"] == "w4a8", wq.QUANT_ARG
+    assert f"encoder-model.{wq.QUANT_ARG['w4a8']}.onnx" == "encoder-model.w4a8.onnx"
+    # fp32 stays the unsuffixed file, so adding a width did not shift the sentinel.
+    assert wq.QUANT_ARG["fp32"] is None
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("T") and callable(v)]
     for t in tests:
