@@ -235,8 +235,24 @@ async function compressBrotli(src, tmp, quality) {
 // Filesystem walk
 // ---------------------------------------------------------------------------
 
+/** Directory names the walk never descends into, whichever mode is running.
+ *
+ *  `local` is the model repos' gitignored working folder: superseded builds,
+ *  candidate symlink farms, export caches and calibration audio. It is never
+ *  uploaded and never served, but it holds many GB of files whose NAMES look
+ *  exactly like servable weights (`encoder-model.onnx.data.001` and friends), so
+ *  without this the walk would spend hours writing `.zst` sidecars next to
+ *  orphan weights that no request can ever reach.
+ *
+ *  `.git` is skipped for the same reason one level down: a checkout's object
+ *  store and its LFS cache hold weight-shaped blobs that are not servable files.
+ */
+const SKIP_DIRS = new Set(['local', '.git']);
+
 /** Recursive walk that follows symlinked directories (a maintainer tree links
- *  whole folders in), guarding against a link loop by resolved path.
+ *  whole folders in), guarding against a link loop by resolved path. Directories
+ *  named in SKIP_DIRS are not descended into, in either mode and in the orphan
+ *  sweep too, so precompress simply never looks inside them.
  *
  *  `dangling` opts broken symlinks in. Sources must never include them (there
  *  are no bytes to compress), but the orphan sweep must, because a sidecar link
@@ -266,7 +282,10 @@ function walk(dir, keep, { dangling = false } = {}, out = [], seen = new Set()) 
       if (!dangling) continue;
       try { st = lstatSync(full); broken = true; } catch { continue; }
     }
-    if (!broken && st.isDirectory()) walk(full, keep, { dangling }, out, seen);
+    if (!broken && st.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      walk(full, keep, { dangling }, out, seen);
+    }
     else if ((broken || st.isFile()) && keep(entry.name, st.size)) {
       out.push({ path: full, size: st.size, mtimeMs: st.mtimeMs, broken });
     }
