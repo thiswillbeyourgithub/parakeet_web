@@ -129,6 +129,9 @@ function stripSymbols(s) {
  * French function words that carry no plural mark inside a phrase, so `hernie de
  * la paroi` pluralises to `hernies de la paroi` and not `hernies des las parois`.
  */
+/** A plain word: starts with a letter, then letters, apostrophes or hyphens only. */
+const PLURALISABLE_RE = /^\p{L}[\p{L}'’-]*$/u;
+
 const PLURAL_INVARIANT = new Set([
   "de", "du", "des", "d'", "le", "la", "les", "l'", "à", "au", "aux", "en", "et",
   "ou", "sur", "pour", "par", "avec", "sans", "dans", "sous", "chez", "un", "une",
@@ -147,7 +150,13 @@ const PLURAL_INVARIANT = new Set([
  * @returns {string} The plural, or the word unchanged when it does not take one.
  */
 function pluralizeWord(word, regular) {
-  if (!word || PLURAL_INVARIANT.has(word.toLowerCase())) return word;
+  if (!word || word.length < 2 || PLURAL_INVARIANT.has(word.toLowerCase())) return word;
+  // Only ordinary words take a plural mark here. A medical list is full of
+  // formulae, isotopes and codes (`133Xe`, `3TC`, `5'-nucléotidase`, `del,`)
+  // where appending an `s` invents a token nobody says, and French acronyms are
+  // invariant (`des ADN`, not `des ADNs`).
+  if (!PLURALISABLE_RE.test(word)) return word;
+  if (word === word.toUpperCase()) return word;
   if (/[sxz]$/i.test(word)) return word; // already invariant in the plural
   if (regular) return `${word}s`;
   if (/ail$/i.test(word)) return `${word.slice(0, -3)}aux`;
@@ -613,24 +622,30 @@ export function augmentVariants(phrase, flags = '', prefixes = DEFAULT_PREFIXES)
   const seen = new Set();
   const out = [];
   const push = (v) => { if (v && !seen.has(v)) { seen.add(v); out.push(v); } };
-  // Base forms the casing flags below expand: the phrase as typed, plus its
-  // plurals when `n` is on. Without `n` this is exactly [phrase], so the flag
-  // sets that predate it expand exactly as they always did.
-  const bases = [phrase];
-  if (set.has('n')) bases.push(...pluralVariants(phrase));
-  for (const base of bases) push(base);                  // as typed (+ plurals)
-  if (set.has('f')) for (const b of bases) push(b.split(' ').map(capFirst).join(' ')); // Title Case
-  if (set.has('a')) for (const b of bases) push(b.toUpperCase());  // ALL CAPS
-  if (set.has('h')) {
-    for (const form of out.slice()) push(stripSymbols(form)); // symbol-stripped of every casing form
-  }
-  if (set.has('p') && prefixes && prefixes.length) {
-    for (const form of out.slice()) {                    // every form so far (incl. symbol-stripped)
-      for (const pre of prefixes) {
-        if (prefixApplies(pre, form)) push(pre + form);
+  // Expand one base form through the casing/symbol/prefix flags. `usePrefixes`
+  // is false for plurals: the elision prefixes are singular, so `l'adulte` is
+  // French but `l'adultes` is not (the plural takes `les`). Emitting those cost
+  // a quarter of the artifact and boosted a form the model should never produce.
+  const expand = (base, usePrefixes) => {
+    const start = out.length;
+    push(base);
+    if (set.has('f')) push(base.split(' ').map(capFirst).join(' ')); // Title Case
+    if (set.has('a')) push(base.toUpperCase());                     // ALL CAPS
+    if (set.has('h')) {
+      for (const form of out.slice(start)) push(stripSymbols(form)); // of every casing form
+    }
+    if (usePrefixes && set.has('p') && prefixes && prefixes.length) {
+      for (const form of out.slice(start)) {              // every form so far (incl. symbol-stripped)
+        for (const pre of prefixes) {
+          if (prefixApplies(pre, form)) push(pre + form);
+        }
       }
     }
-  }
+  };
+  expand(phrase, true);
+  // Plurals expand the same way minus the prefixes. With `n` off this loop does
+  // not run, so every flag set that predates it expands exactly as it always did.
+  if (set.has('n')) for (const plural of pluralVariants(phrase)) expand(plural, false);
   return out;
 }
 
