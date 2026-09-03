@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### Parallel encoding now asks for twice the cores before it runs
+
+The optional parallel-encoding path runs two extra copies of the encoder in background workers, which is a good deal on a machine with idle cores and a bad one on a machine without them: measured on the reference box it is about 4 % faster when the machine is quiet and about 15 % slower when it is busy, and it costs roughly 1.7 GB of extra memory either way. The gate that decides whether to take that bet was reading the number the browser reports for processor cores, which counts hyperthreads: a report of 8 is either a four-core laptop (no headroom at all, and exactly the case the slowdown describes) or a genuine eight-core desktop, and nothing distinguishes them. The bar is now 12, the first count that cannot be a four-core machine and what the reference box itself reports, and a machine that reports no core count at all is declined rather than assumed adequate. Machines that no longer qualify simply use the ordinary path, which was always the fallback anyway.
+
 ### fp16 is back on WebGPU, on the GPUs that can run it
 
 The fp16 encoder was withdrawn in August on the belief that no reachable GPU exposes the `shader-f16` feature its kernels need. A benchmark report sent in from a visitor's laptop (an Intel UHD 630) lists that feature as present, so the belief was wrong: our own development GPU does not expose it, which made the absence look universal.
