@@ -48,9 +48,32 @@ describe('resolveMaxEncoderBatch', () => {
     assert.equal(await resolveMaxEncoderBatch({ backend: 'webgpu-strict', encoderFilename: 'encoder-model.int8.onnx' }), 2);
   });
 
-  test('small GPU (256 MB max buffer) stays at the floor of 2', async () => {
-    stubGpu(256 * 1024 * 1024); // < int8 weights, headroom negative -> floor
-    assert.equal(await resolveMaxEncoderBatch({ backend: 'webgpu-hybrid', encoderFilename: 'encoder-model.int8.onnx' }), 2);
+  test('a GPU with no headroom for even one slab drops to 1, under the floor', async () => {
+    // 256 MB max buffer against ~0.6 GB of int8 weights: the device has just
+    // said it cannot spare a weight-sized slab. That is a MEASUREMENT, unlike
+    // the guarded fallbacks above, so it is allowed to go below the floor of 2
+    // rather than being clamped back up to it.
+    stubGpu(256 * 1024 * 1024);
+    assert.equal(await resolveMaxEncoderBatch({ backend: 'webgpu-hybrid', encoderFilename: 'encoder-model.int8.onnx' }), 1);
+  });
+
+  test('an Intel iGPU running fp32 does not batch (the real reported case)', async () => {
+    // Intel UHD 630, gen-9: maxBufferSize is exactly 2 GB, against a 2.4 GB
+    // fp32 encoder. This machine was batching 2 chunks because the floor
+    // overrode the negative headroom the probe had just computed.
+    stubGpu(2147483648);
+    assert.equal(await resolveMaxEncoderBatch({ backend: 'webgpu-hybrid', encoderFilename: 'encoder-model.onnx' }), 1);
+    // The same adapter has room to spare once the encoder is the 0.6 GB w4a8
+    // build, so this is about the pairing, not about blacklisting the device.
+    assert.ok(await resolveMaxEncoderBatch({ backend: 'webgpu-hybrid', encoderFilename: 'encoder-model.w4a8.onnx' }) >= 2);
+  });
+
+  test('an unknown adapter still gets the conservative floor, not 1', async () => {
+    // The distinction the change rests on: a probe that returned nothing is
+    // ignorance and keeps the old behaviour; a probe that returned "no room"
+    // is knowledge and is acted on.
+    setNavigator({ gpu: { requestAdapter: async () => ({ limits: {} }) } });
+    assert.equal(await resolveMaxEncoderBatch({ backend: 'webgpu-hybrid', encoderFilename: 'encoder-model.onnx' }), 2);
   });
 
   test('big GPU + int8 weights scales up toward the ceiling', async () => {
