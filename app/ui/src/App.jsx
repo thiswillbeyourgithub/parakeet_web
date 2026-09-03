@@ -918,7 +918,7 @@ export default function App() {
   const [boostMinp, setBoostMinp] = useState(BOOST_MINP_DEFAULT);
   const [boostDepthScaling, setBoostDepthScaling] = useState(DEFAULT_DEPTH_SCALING);
   // Surface-form augmentation (Title Case, ALL CAPS, proclitic prefixes,
-  // symbol-stripped forms) is opt-in per phrase via the `:AUG` field, or list-wide
+  // symbol-stripped forms, French plurals) is opt-in per phrase via the `:AUG` field, or list-wide
   // via a `*:::AUG` defaults line; there is no global UI toggle. The BPE encoder is
   // case-sensitive, so each form is a distinct token sequence / trie branch. See
   // expandAugmentations.

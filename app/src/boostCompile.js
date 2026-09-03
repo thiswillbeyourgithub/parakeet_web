@@ -78,8 +78,10 @@ export const AUGMENT_DEFAULT = '';
  * v5: the per-phrase gate switched from an integer top-k rank to a min-p ratio,
  * so `encoded[].topk` (an integer >= 1) became `encoded[].minp` (a number in
  * (0, 1]); an old v4 artifact's topk would be misread as an out-of-range minp.
+ * v6: added the `n` (French plurals) flag and folded it into the full set, so
+ * `:i` now also yields plural variants (`faph` -> `faphn`).
  */
-export const BOOST_ARTIFACT_VERSION = 5;
+export const BOOST_ARTIFACT_VERSION = 6;
 
 /**
  * Build the BPE encoder and its vocab signature from a model's vocab.txt plus
