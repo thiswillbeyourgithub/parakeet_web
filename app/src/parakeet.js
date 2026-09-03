@@ -121,7 +121,9 @@ export function encoderWeightBytesFromName(name) {
  * thread and the per-chunk encode() path must stay byte-identical). On WebGPU
  * we probe the adapter's memory limits and subtract the encoder weight
  * footprint so a big GPU batches more (up to MAX_ENCODER_BATCH_CEIL) and a small
- * one stays at the safe floor of 2.
+ * one stays at the safe floor of 2. A device whose largest buffer does not even
+ * cover the weights drops to 1: that is a measurement, not a missing probe, and
+ * batching a GPU with no room is a cost with no return.
  *
  * WebGPU exposes no total-VRAM figure, so we use `maxBufferSize` /
  * `maxStorageBufferBindingSize` as the strongest available proxy (Dawn/Chromium
@@ -151,12 +153,27 @@ export async function resolveMaxEncoderBatch({ backend, encoderFilename, verbose
     // Each extra batched item roughly costs one weight-scale of transient
     // activation on a conformer, so use weightBytes as the per-item unit.
     const headroom = maxBuffer - weightBytes;
-    let batch = FLOOR;
+    let batch;
     if (headroom > 0) {
       // +1 batch item per weight-sized slab of headroom, on top of the floor.
-      batch = FLOOR + Math.floor(headroom / Math.max(1, weightBytes));
+      batch = Math.max(FLOOR, Math.min(MAX_ENCODER_BATCH_CEIL,
+        FLOOR + Math.floor(headroom / Math.max(1, weightBytes))));
+    } else {
+      // No headroom at all: the device says its largest buffer is smaller than
+      // the weights alone. Clamping to the floor of 2 here overrode the only
+      // measurement the probe has, and that is not a corner case: an Intel
+      // UHD 630 reports maxBufferSize 2.0 GB against a 2.4 GB fp32 encoder, so
+      // every integrated GPU running fp32 was batching two chunks on a device
+      // that had just said it could not spare one slab. Batching buys occupancy
+      // on a GPU with idle shaders; an iGPU sharing DDR4 with the CPU has none
+      // to fill, so the doubled activation working set is cost without a
+      // return. Unlike the guarded fallbacks below, this is a MEASURED answer,
+      // so it is allowed to go under the floor.
+      // Bonus: batch 1 also means transcribeChunked passes lengthAlignSlack 0,
+      // so seams go back to the quality-optimal snap point instead of trading
+      // slack for equal-length groups that would never be batched anyway.
+      batch = 1;
     }
-    batch = Math.max(FLOOR, Math.min(MAX_ENCODER_BATCH_CEIL, batch));
     if (verbose) {
       console.log(`[Perf] encoder batch=${batch} (maxBufferSize ${(maxBuffer / 1e9).toFixed(2)} GB, ` +
         `enc weights ~${(weightBytes / 1e9).toFixed(1)} GB)`);
