@@ -2,7 +2,8 @@
 // that lets a locally-served /models mirror be either flat (vocab.txt directly
 // under the base) or HF-style nested (vocab.txt under <base>/<repoId>/), so an
 // operator who bind-mounts a parent folder of one or more repos doesn't 404
-// every model fetch. Built with Claude Code.
+// every model fetch. Nested is probed FIRST: see the both-layouts test for why
+// the opposite order silently serves the wrong model. Built with Claude Code.
 
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,14 +28,26 @@ describe('resolveLocalModelBase', () => {
     assert.equal(await resolveLocalModelBase('/models', REPO), '/models');
   });
 
-  test('falls back to the nested <base>/<repoId> base when only that serves vocab.txt', async () => {
+  test('uses the nested <base>/<repoId> base when only that serves vocab.txt', async () => {
     mockUrls([`/models/${REPO}/vocab.txt`]);
     assert.equal(await resolveLocalModelBase('/models', REPO), `/models/${REPO}`);
   });
 
-  test('prefers the flat layout when BOTH layouts serve vocab.txt', async () => {
+  // The picker (VITE_MODEL_REPO as a comma-separated list) makes this the
+  // decisive case: a mirror that serves ONE repo flat and others nested must
+  // not answer the flat probe for a repo the caller named. Flat-first did, so
+  // selecting the second repo loaded the first one's weights under the second
+  // one's name -- a plausible transcript, no error, nothing to notice.
+  test('prefers the nested layout when BOTH layouts serve vocab.txt', async () => {
     mockUrls(['/models/vocab.txt', `/models/${REPO}/vocab.txt`]);
-    assert.equal(await resolveLocalModelBase('/models', REPO), '/models');
+    assert.equal(await resolveLocalModelBase('/models', REPO), `/models/${REPO}`);
+  });
+
+  test('a repo with no subfolder still falls back to the flat mirror', async () => {
+    // The documented single-repo contract: one repo, served flat, no subfolder
+    // anywhere. Nested is probed first, misses, and flat answers as before.
+    mockUrls(['/models/vocab.txt']);
+    assert.equal(await resolveLocalModelBase('/models', 'Olicorne/some-other-repo'), '/models');
   });
 
   test('returns null when neither layout serves vocab.txt', async () => {
