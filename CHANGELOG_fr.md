@@ -10,6 +10,17 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Un ONNX Runtime plus léger, environ 11 Mo de moins à chaque chargement
+
+L'application charge désormais la version plus récente d'ONNX Runtime, celle dont la prise en charge de WebGPU est écrite en C++ et suspend la pile WebAssembly via l'intégration des promesses JavaScript, à la place de l'ancienne qui implémente WebGPU en JavaScript et y repasse à chaque étape de l'exécution d'un modèle.
+
+La raison est la taille, pas la vitesse. Le nouveau moteur pèse 16 Mo contre 27 Mo pour l'ancien, et son chargeur 112 Ko contre 404 Ko : environ 11 Mo de moins téléchargés à chaque visite, pour une application dont le reproche principal a toujours été son temps de démarrage. Côté vitesse, les deux sont à égalité : mesuré sur la machine de référence avec trois exécutions alternées de chaque côté et le moteur vérifié à chaque exécution, la voie GPU donne 13,0 secondes contre 13,8, et un extrait de trois minutes sur la voie processeur 125 secondes contre 114. Ces écarts tiennent dans la dispersion d'une exécution à l'autre : ni l'un ni l'autre n'est un gain à annoncer.
+
+Les navigateurs qui n'implémentent pas l'intégration des promesses, c'est-à-dire aujourd'hui tout ce qui n'est pas fondé sur Chromium, conservent automatiquement l'ancien moteur et ne voient aucun changement. `?ortep=jsep` dans la barre d'adresse le force partout, le temps d'un chargement de page, pour le support et pour la mesure.
+
+Rien ne change du côté des modèles, des précisions ou des transcriptions : toute la suite de tests navigateur passe sur le nouveau moteur, et les deux moteurs produisent la même transcription sur le même extrait.
+
+
 ### L'encodage parallèle exige désormais deux fois plus de cœurs pour se lancer
 
 La voie optionnelle d'encodage parallèle fait tourner deux copies supplémentaires de l'encodeur dans des workers d'arrière-plan : une bonne affaire sur une machine aux cœurs inoccupés, une mauvaise sur une machine qui n'en a pas. Mesuré sur la machine de référence, c'est environ 4 % plus rapide quand la machine est au repos et environ 15 % plus lent quand elle est chargée, pour environ 1,7 Go de mémoire supplémentaire dans les deux cas. Le verrou qui décidait de prendre ce pari lisait le nombre de cœurs annoncé par le navigateur, qui compte l'hyperthreading : un chiffre de 8 correspond soit à un portable à quatre cœurs (aucune marge, précisément le cas du ralentissement), soit à un vrai ordinateur de bureau à huit cœurs, et rien ne les distingue. La barre est maintenant à 12, le premier chiffre qui exclut une machine à quatre cœurs et celui qu'annonce la machine de référence elle-même ; une machine qui n'annonce aucun nombre de cœurs est écartée plutôt que supposée capable. Les machines qui ne passent plus le verrou utilisent simplement la voie ordinaire, qui a toujours été le repli de toute façon.
