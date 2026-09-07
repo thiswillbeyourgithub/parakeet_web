@@ -10,6 +10,21 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Un choix de modèles, et un lien qui en sélectionne un
+
+Une instance peut désormais proposer plus d'un modèle. Là où la configuration ne nommait qu'un seul dépôt HuggingFace, elle accepte une liste séparée par des virgules, et la section *Modèle et performances* de la barre latérale affiche un sélecteur qui les liste ; le premier est celui que reçoit un visiteur n'ayant jamais choisi. Une instance qui ne nomme qu'un dépôt, c'est-à-dire toute instance jusqu'à ce que son opérateur en décide autrement, se comporte exactement comme avant : un sélecteur à une seule option ne serait que du bruit, donc aucun n'est affiché.
+
+Changer de modèle est traité comme changer de moteur ou de précision : le modèle chargé est libéré et le nouveau chargé à sa place, et le contrôle est verrouillé pendant une transcription. Comme le navigateur ne conserve qu'un modèle sur le disque à la fois, changer télécharge les nouveaux poids et retire les anciens : revenir en arrière retéléchargera.
+
+Un lien peut aussi imposer un modèle, avec `?model=` et une correspondance souple sur la liste proposée : `?model=ultimed` suffit à sélectionner `Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Celui-ci remplace délibérément le choix enregistré du visiteur, contrairement au paramètre de lien du renforcement de phrases, car un lien qui atterrirait sur ce que le destinataire a utilisé en dernier ne vaudrait pas la peine d'être envoyé. Il n'est, tout aussi délibérément, pas enregistré par-dessus ce choix : leur propre sélection revient dès leur visite ordinaire suivante. Une valeur qui ne correspond à rien, ou qui correspond aussi bien à deux modèles, est ignorée plutôt que devinée : une mauvaise supposition produirait ici une transcription parfaitement fluide issue du mauvais modèle, sans que rien ne le laisse voir.
+
+Pour ceux qui hébergent eux-mêmes les poids sur leur instance, on sert plusieurs modèles en montant le dossier parent avec un sous-dossier par dépôt. Un modèle listé sans copie locale ne produit qu'un avertissement au démarrage ; il est récupéré depuis HuggingFace exactement comme s'il n'existait aucun miroir local.
+
+### Corrigé : un miroir local pouvait servir les poids d'un modèle sous le nom d'un autre
+
+Le chargeur cherchait dans un miroir servi localement un ensemble de fichiers de modèle à plat avant de chercher le dépôt demandé par son nom. Avec un seul modèle configuré, c'est sans conséquence et c'est la disposition documentée. Avec un choix de modèles, ça ne l'était pas : sur un miroir contenant un modèle à plat et les autres dans des sous-dossiers, tous les modèles se résolvaient vers celui à plat, si bien que sélectionner le deuxième modèle chargeait les poids du premier sous le nom du deuxième. Rien de cette défaillance n'était visible, puisque le mauvais modèle transcrit tout aussi couramment. Le miroir est désormais interrogé d'abord par nom de dépôt, et la disposition à plat ne répond que pour un dépôt dont il n'a aucun sous-dossier.
+
+
 ### Un ONNX Runtime plus léger, environ 11 Mo de moins à chaque chargement
 
 L'application charge désormais la version plus récente d'ONNX Runtime, celle dont la prise en charge de WebGPU est écrite en C++ et suspend la pile WebAssembly via l'intégration des promesses JavaScript, à la place de l'ancienne qui implémente WebGPU en JavaScript et y repasse à chaque étape de l'exécution d'un modèle.

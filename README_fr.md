@@ -21,6 +21,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Performances sur du matériel ordinaire](#performances-sur-du-matériel-ordinaire)
 - [Choisir entre CPU et GPU](#choisir-entre-cpu-et-gpu)
 - [Configuration automatique : mesurer plutôt que supposer](#configuration-automatique--mesurer-plutôt-que-supposer)
+- [Proposer plusieurs modèles](#proposer-plusieurs-modèles)
 - [Mode dictée](#mode-dictée)
 - [Identification des locuteurs](#identification-des-locuteurs)
 - [Appareils de dictée (SpeechMike)](#appareils-de-dictée-speechmike)
@@ -117,6 +118,37 @@ Quelques détails qui comptent plus qu'il n'y paraît :
 - **Vous pouvez la relancer à tout moment** avec le bouton « Configurer automatiquement les performances » dans les paramètres.
 
 La mesure met les animations de la page en pause pendant son exécution, pour la même raison que les vraies exécutions GPU (voir ci-dessus). Sur une machine sans GPU, et sous `?webgpu=0`, rien de tout cela ne s'exécute ni ne télécharge quoi que ce soit. (Réalisé avec l'aide de [Claude Code](https://claude.com/claude-code).)
+
+## Proposer plusieurs modèles
+
+`VITE_MODEL_REPO` accepte une liste de dépôts HuggingFace séparés par des
+virgules, et pas seulement un seul. Avec une liste, la section *Modèle et
+performances* de la barre latérale affiche un sélecteur de modèle, et la
+première entrée est celle que reçoit un visiteur n'ayant jamais choisi :
+
+```bash
+# Dans docker/.env :
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
+```
+
+Pas d'espace autour des virgules : l'espace n'est pas un caractère valide
+dans un identifiant de dépôt HuggingFace, et le conteneur refuse de démarrer
+plutôt que de servir un identifiant qu'il ne sait pas résoudre. Le choix du
+visiteur est mémorisé, et changer de modèle télécharge les nouveaux poids et
+retire les anciens du cache du navigateur : revenir en arrière retéléchargera.
+
+Un lien peut en imposer un avec `?model=<requête>`, comparé de façon souple à
+la liste : `https://votre-hote/?model=ultimed` sélectionne donc
+`Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Contrairement à
+`?phrase_boost=`, ce paramètre **remplace bel et bien** le choix enregistré
+d'un visiteur de retour, car un lien qui atterrirait sur ce que le
+destinataire a utilisé en dernier n'aurait aucun intérêt à être partagé. Il
+n'est délibérément pas enregistré par-dessus ce choix : leur propre sélection
+revient dès leur visite ordinaire suivante. Une valeur `?model=` qui ne
+correspond à rien, ou qui correspond aussi bien à deux dépôts, est ignorée
+plutôt que devinée.
+
+Réalisé avec [Claude Code](https://claude.com/claude-code).
 
 ## Mode dictée
 
@@ -353,6 +385,24 @@ node scripts/precompress.mjs --models /host/path/to/onnx-files
 Caddy sert ce qui se trouve à `LOCAL_MODEL_PATH` sous `/models/`. Le
 conteneur plante au démarrage si `vocab.txt` est manquant, de sorte que
 les mauvaises configurations sont détectées tôt.
+
+**Servir plusieurs modèles.** Lorsque `VITE_MODEL_REPO` liste plusieurs
+dépôts, montez le dossier *parent* et donnez à chaque dépôt son propre
+sous-dossier `<propriétaire>/<nom>/` :
+
+```
+/chemin/hote/
+  Olicorne/
+    parakeet-tdt-0.6b-v3-optimized-onnx/{vocab.txt,int8/,fp32/,...}
+    parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
+```
+
+Le chargeur demande un dépôt par son nom avant de retomber sur la
+disposition à plat : un miroir peut donc aussi servir un dépôt à plat à la
+racine et les autres dans des sous-dossiers. Un dépôt listé sans poids
+locaux ne produit qu'un avertissement au démarrage : il est téléchargé
+depuis HuggingFace, exactement comme s'il n'y avait aucun miroir. Le
+démarrage n'échoue que si aucun d'entre eux ne peut être servi localement.
 
 L'étape 4 écrit un fichier `<fichier>.zst` à côté de chaque fichier ONNX,
 que Caddy sert ensuite avec `Content-Encoding: zstd`. L'encodeur int8 passe

@@ -10,6 +10,21 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### A choice of models, and a link that picks one
+
+An instance can now offer more than one model. Where the configuration used to name a single HuggingFace repo it accepts a comma-separated list, and the sidebar's *Model and performance* section grows a picker listing them; the first one is what a visitor who has never chosen gets. An instance that names a single repo, which is every instance until its operator changes that, looks and behaves exactly as before: a one-option picker would be noise, so none is drawn.
+
+Switching model is treated like switching backend or precision: the loaded model is disposed and the new one loaded in its place, and the control is locked while a transcription is running. Because the browser keeps one model on disk at a time, switching downloads the new weights and drops the old ones, so switching back downloads again.
+
+A link can also pin a model, with `?model=` and a loose match against the offered list: `?model=ultimed` is enough to select `Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. This one deliberately overrides the visitor's saved choice, unlike the phrase-boost link parameter, because a link that landed on whatever the recipient last used would not be worth sending. It is just as deliberately not saved over that choice: their own pick is back on their next ordinary visit. A value matching nothing, or matching two models equally well, is ignored rather than guessed, since a wrong guess here still produces a perfectly fluent transcript from the wrong model and nothing would reveal it.
+
+For self-hosters serving weights from their own instance, several models are served by mounting the parent folder with one subfolder per repo. A listed model with no local copy is only a warning at startup; it is fetched from HuggingFace exactly as it would be with no local mirror at all.
+
+### Fixed: a local mirror could serve one model's weights under another's name
+
+The loader checked a locally-served mirror for a flat set of model files before checking for the requested repo by name. With one model configured that is harmless and is the documented layout. With a choice of models it was not: on a mirror holding one model flat and others in subfolders, every model resolved to the flat one, so selecting the second model loaded the first model's weights under the second model's name. Nothing about that failure was visible, since the wrong model still transcribes fluently. The mirror is now asked for the repo by name first, and the flat layout only answers for a repo it has no subfolder for.
+
+
 ### A smaller ONNX Runtime, about 11 MB off every load
 
 The app now loads ONNX Runtime's newer runtime build, the one whose WebGPU support is written in C++ and suspends the WebAssembly stack through JavaScript Promise Integration, instead of the older build that implements WebGPU in JavaScript and crosses back into it at every step of a model run.
