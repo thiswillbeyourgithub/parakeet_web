@@ -22,7 +22,7 @@
     "webgpu:memcheck": "node scripts/webgpu-check.mjs --full",
     "webgpu:check:fp32": "node scripts/webgpu-check.mjs --fp32",
     "webgpu:memcheck:fp32": "node scripts/webgpu-check.mjs --full --fp32",
-    "webgpu:check:jspi": "node scripts/webgpu-check.mjs --jspi"
+    "webgpu:check:jsep": "node scripts/webgpu-check.mjs --jsep"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",

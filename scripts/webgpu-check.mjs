@@ -77,7 +77,7 @@ const LEAK_MIN_CHUNKS = 6; // need this many chunks to bucket early/late heap
 function parseArgs(argv) {
   // Default to the bundled Playwright Chromium ('chromium'): it is always present,
   // whereas system Google Chrome ('chrome') may not be installed on a given box.
-  const a = { full: false, headless: false, fp32: false, jspi: false, maxGrowth: 1.5, port: 4179, pollMs: 2000, channel: 'chromium' };
+  const a = { full: false, headless: false, fp32: false, jspi: false, jsep: false, maxGrowth: 1.5, port: 4179, pollMs: 2000, channel: 'chromium' };
   // Flags that take a value, accepted as either --flag=value or --flag value.
   const takesValue = new Set(['--max-growth', '--port', '--poll-ms', '--channel']);
   for (let i = 0; i < argv.length; i++) {
@@ -95,6 +95,7 @@ function parseArgs(argv) {
       case '--headless': a.headless = true; break;
       case '--fp32': a.fp32 = true; break;
       case '--jspi': a.jspi = true; break;
+      case '--jsep': a.jsep = true; break;
       case '--max-growth': a.maxGrowth = Number(v); break;
       case '--port': a.port = Number(v); break;
       case '--poll-ms': a.pollMs = Number(v); break;
@@ -104,7 +105,8 @@ function parseArgs(argv) {
   --full             Run the full ~17 min speech (memory-leak mode) instead of the 3 min crop
   --headless         Run headless (WebGPU is more reliable headed on a GPU box)
   --fp32             Accepted and ignored: fp32 is the only WebGPU encoder precision
-  --jspi             Load ORT's native C++ WebGPU EP (JSPI build) instead of JSEP, and
+  --jsep             Force ORT's older JS-implemented WebGPU layer (the ?ortep=jsep
+                     escape hatch) instead of the default native C++ EP, and
                      assert it really engaged. For A/B'ing the two on a real GPU:
                      run once without and once with, and compare the wall times
   --max-growth F     Max late/early JS-heap median ratio before it is a leak (default: 1.5)
@@ -253,10 +255,11 @@ async function main() {
     // pinned everyone to WASM it coerced any persisted webgpu backend, and this
     // run would then have failed the "expected a WebGPU session" assertion
     // further down for a reason that had nothing to do with the GPU.
-    // `?ortep=jspi` swaps ORT's JS-implemented WebGPU layer for its native C++
-    // one. Kept a URL flag rather than a setting: it is a measurement, and a
-    // persisted value could silently colour later runs.
-    await page.goto(`${baseURL}/?webgpu=1${args.jspi ? '&ortep=jspi' : ''}`);
+    // `?ortep=jsep` puts the page back on ORT's older JS-implemented WebGPU
+    // layer; the default is now the native C++ EP. Kept a URL flag rather than
+    // a setting: it is a measurement, and a persisted value could silently
+    // colour later runs.
+    await page.goto(`${baseURL}/?webgpu=1${args.jsep ? '&ortep=jsep' : ''}`);
 
     // Hard gate: a REAL WebGPU adapter, else SKIP. Chromium with
     // --enable-unsafe-webgpu hands out a software (SwiftShader/lavapipe) adapter
@@ -379,8 +382,8 @@ async function main() {
       // run against another jsep run (a browser without JSPI downgrades with
       // only a warning) and read the noise as a verdict.
       contentChecks.push({
-        name: `ORT runtime variant (${args.jspi ? 'jspi requested' : 'jsep expected'})`,
-        ok: ortVariant === (args.jspi ? 'jspi' : 'jsep'),
+        name: `ORT runtime variant (${args.jsep ? 'jsep forced' : 'jspi expected by default'})`,
+        ok: ortVariant === (args.jsep ? 'jsep' : 'jspi'),
         detail: ortVariant || 'MARKER MISSING',
       });
     } else {
