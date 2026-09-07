@@ -21,6 +21,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Performance on commodity hardware](#performance-on-commodity-hardware)
 - [Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)
 - [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
+- [Offering several models](#offering-several-models)
 - [Dictation Mode](#dictation-mode)
 - [Speaker Diarization](#speaker-diarization)
 - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
@@ -117,6 +118,35 @@ Some details that matter more than they look:
 - **You can re-run it at any time** with the "Autoconfigure optimal performance" button in Settings.
 
 The measurement pauses page animations while it runs, for the same reason the real GPU runs do (see above). On a machine with no GPU, and under `?webgpu=0`, none of this runs or downloads anything at all. (Built with the help of [Claude Code](https://claude.com/claude-code).)
+
+## Offering several models
+
+`VITE_MODEL_REPO` accepts a comma-separated list of HuggingFace repos, not
+just one. With a list, the sidebar's *Model and performance* section grows a
+model picker, and the first entry is what a visitor who has never chosen
+gets:
+
+```bash
+# In docker/.env:
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
+```
+
+No spaces around the commas: a space is not a legal HuggingFace repo-id
+character, and the container refuses to start rather than serve an id it
+cannot resolve. A visitor's choice is remembered, and switching model
+downloads the new weights and drops the old ones from the browser cache, so
+switching back downloads again.
+
+A link can pin one of them with `?model=<query>`, matched loosely against
+the list, so `https://your-host/?model=ultimed` selects
+`Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Unlike `?phrase_boost=`, this
+one **does** override a returning visitor's saved choice, since a link that
+landed on whatever the recipient last used would not be worth sharing. It
+is deliberately not saved over their choice: their own pick is back on their
+next ordinary visit. A `?model=` value that matches nothing, or that matches
+two repos equally well, is ignored rather than guessed.
+
+Built with [Claude Code](https://claude.com/claude-code).
 
 ## Dictation Mode
 
@@ -356,6 +386,23 @@ node scripts/precompress.mjs --models /host/path/to/onnx-files
 Caddy serves whatever is at `LOCAL_MODEL_PATH` under `/models/`. The
 container crashes at startup if `vocab.txt` is missing, so
 misconfigurations are caught early.
+
+**Serving several models.** When `VITE_MODEL_REPO` lists more than one repo,
+mount the *parent* folder and give each repo its own `<owner>/<name>/`
+subfolder underneath:
+
+```
+/host/path/
+  Olicorne/
+    parakeet-tdt-0.6b-v3-optimized-onnx/{vocab.txt,int8/,fp32/,...}
+    parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
+```
+
+The loader asks for a repo by name before falling back to the flat layout,
+so a mirror can also serve one repo flat at the root and the others in
+subfolders. A listed repo with no local weights is only a warning at
+startup: it downloads from HuggingFace like it would with no mirror at all.
+The boot only fails when none of them can be served locally.
 
 Step 4 writes a `<file>.zst` next to each ONNX file, which Caddy then
 serves with `Content-Encoding: zstd`. It takes the int8 encoder from 841 MB
