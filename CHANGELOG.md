@@ -10,6 +10,17 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### A smaller ONNX Runtime, about 11 MB off every load
+
+The app now loads ONNX Runtime's newer runtime build, the one whose WebGPU support is written in C++ and suspends the WebAssembly stack through JavaScript Promise Integration, instead of the older build that implements WebGPU in JavaScript and crosses back into it at every step of a model run.
+
+The reason is size, not speed. The new runtime is 16 MB against the old one's 27 MB, and its loader 112 KB against 404 KB, so roughly 11 MB less is fetched on every visit of an app whose main complaint has always been how long it takes to start. On speed the two are a tie: measured on the reference machine with three interleaved runs per side and the runtime verified on every run, the GPU path came out at 13.0 seconds against 13.8, and a three-minute clip on the processor path at 125 seconds against 114. Both differences sit inside the run-to-run spread, so neither is a win to quote.
+
+Browsers that do not implement Promise Integration, which today means everything that is not Chromium-based, keep the old runtime automatically and see no change at all. `?ortep=jsep` in the address bar forces it everywhere for one page load, for support and for measurement.
+
+Nothing about the models, the precisions or the transcripts changes: the full browser test suite passes on the new runtime, and the two runtimes produce the same transcript on the same clip.
+
+
 ### Parallel encoding now asks for twice the cores before it runs
 
 The optional parallel-encoding path runs two extra copies of the encoder in background workers, which is a good deal on a machine with idle cores and a bad one on a machine without them: measured on the reference box it is about 4 % faster when the machine is quiet and about 15 % slower when it is busy, and it costs roughly 1.7 GB of extra memory either way. The gate that decides whether to take that bet was reading the number the browser reports for processor cores, which counts hyperthreads: a report of 8 is either a four-core laptop (no headroom at all, and exactly the case the slowdown describes) or a genuine eight-core desktop, and nothing distinguishes them. The bar is now 12, the first count that cannot be a four-core machine and what the reference box itself reports, and a machine that reports no core count at all is declined rather than assumed adequate. Machines that no longer qualify simply use the ordinary path, which was always the fallback anyway.
