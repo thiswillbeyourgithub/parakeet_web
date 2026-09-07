@@ -44,6 +44,13 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 
 Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté client grâce au modèle [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) de NVIDIA (converti au format ONNX par [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), puis re-quantizé et optimisé au niveau du graphe pour cette application sous [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)) sur le backend WASM (CPU).
 
+**Deux modèles sont servis par défaut**, et l'on passe de l'un à l'autre depuis le sélecteur de modèle de la barre latérale (voir [Proposer plusieurs modèles](#proposer-plusieurs-modèles)) :
+
+- [**Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) (celui par défaut) : le modèle multilingue de base décrit ci-dessus.
+- [**Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) : le même modèle affiné sur [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3 105 h de parole médicale française synthétisée) afin de mieux transcrire les sujets médicaux. Tout s'exécutant dans votre navigateur, la dictée médicale ne quitte jamais votre machine. Un lien peut le sélectionner directement avec `?model=ultimed`.
+
+Les deux figurent, avec le reste de la chaîne, dans [Dépôts liés](#dépôts-liés).
+
 ![](./image.png)
 
 ## Fonctionnalités
@@ -131,6 +138,10 @@ première entrée est celle que reçoit un visiteur n'ayant jamais choisi :
 # Dans docker/.env :
 VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
 ```
+
+C'est ce couple que sert la configuration livrée : le modèle multilingue de
+base d'abord, puis l'affinage médical français (voir le haut de ce README
+pour savoir ce qu'est chacun).
 
 Pas d'espace autour des virgules : l'espace n'est pas un caractère valide
 dans un identifiant de dépôt HuggingFace, et le conteneur refuse de démarrer

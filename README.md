@@ -44,6 +44,13 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), then re-quantized and graph-optimized for this app as [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)) on the WASM (CPU) backend.
 
+**Two models are served by default**, and you switch between them from the model picker in the sidebar (see [Offering several models](#offering-several-models)):
+
+- [**Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) (the default): the multilingual baseline described above.
+- [**Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx): the same model fine-tuned on [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3,105 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultimed`.
+
+Both are listed with the rest of the stack under [Related repositories](#related-repositories).
+
 ![](./image.png)
 
 ## Features
@@ -131,6 +138,10 @@ gets:
 # In docker/.env:
 VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
 ```
+
+That pair is what the shipped configuration serves: the multilingual
+baseline first, then the French medical fine-tune (see the top of this
+README for what each one is).
 
 No spaces around the commas: a space is not a legal HuggingFace repo-id
 character, and the container refuses to start rather than serve an id it
