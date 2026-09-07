@@ -64,10 +64,10 @@ function _integrityFailure(reason) {
 }
 
 /**
- * The one runtime variant ORT is pinned to. ORT 1.26+ expects
- * `wasmPaths.mjs` / `wasmPaths.wasm` (not a filename-keyed map), and the
- * vendored ort.bundle.min.mjs only references the jsep variant, so this pair
- * is the whole of what ever gets loaded.
+ * The runtime pair of the jsep build. ORT 1.26+ expects `wasmPaths.mjs` /
+ * `wasmPaths.wasm` (not a filename-keyed map), so a variant is pinned as a
+ * pair. This is no longer the default (see ORT_VARIANTS): it is what a browser
+ * without JSPI falls back to, and what `?ortep=jsep` forces.
  * @type {{mjs: string, wasm: string}}
  */
 export const ORT_RUNTIME_ASSETS = {
@@ -76,7 +76,7 @@ export const ORT_RUNTIME_ASSETS = {
 };
 
 /**
- * The runtime pair of the EXPERIMENTAL jspi build (see ORT_VARIANTS below).
+ * The runtime pair of the jspi build, the DEFAULT (see ORT_VARIANTS below).
  * A different bundle entry references different runtime files, so pinning has
  * to move with it or the integrity check would verify bytes ORT never loads.
  * @type {{mjs: string, wasm: string}}
@@ -89,22 +89,28 @@ export const ORT_RUNTIME_ASSETS_JSPI = {
 /**
  * The ORT distributions this app knows how to load, keyed by variant name.
  *
- * 'jsep' is the shipped one: ORT's JS-implemented WebGPU/WebNN layer, where
- * every GPU/CPU partition boundary crosses back into JS and yields to the
- * event loop (~2000 times per fp32 encoder run on this model, which is the
- * coupling the html.gpu-run animation pause exists to defuse).
+ * 'jspi' is the DEFAULT: ORT's native C++ WebGPU execution provider, which
+ * suspends the WASM stack through JavaScript Promise Integration instead of
+ * unwinding into JS at every GPU/CPU partition boundary. It needs the browser
+ * to implement JSPI (Chromium 137+; no Firefox, no Safari), so resolveOrtVariant
+ * falls back to jsep on its own where it is missing.
  *
- * 'jspi' is ORT's newer C++ WebGPU execution provider, which suspends the
- * WASM stack through JavaScript Promise Integration instead of unwinding to
- * JS. It is EXPERIMENTAL here and never a default: it is selectable so the
- * two can be measured against each other on a real GPU, since the remaining
- * JSEP overhead after the animation fix has never been quantified. It also
- * needs the browser to implement JSPI (Chromium 137+; no Firefox, no Safari),
- * hence jspiSupported() below.
+ * 'jsep' is the older JS-implemented WebGPU/WebNN layer, where every partition
+ * boundary crosses back into JS and yields to the event loop (~2000 times per
+ * fp32 encoder run on this model, the coupling the html.gpu-run animation pause
+ * exists to defuse). It stays as the no-JSPI fallback and as the escape hatch
+ * `?ortep=jsep`.
  *
- * Both entries live in the vendored package already, so selecting one costs
- * no new supply chain: only the bytes the visitor's browser actually fetches
- * change (the jspi runtime is ~15 MB against jsep's ~26 MB).
+ * WHY jspi is the default, since it is NOT a speed win: two A/Bs on the
+ * reference box, each 3 interleaved reps with the runtime verified per run in
+ * every JS context, put the two within noise of each other (GPU fp32 wall
+ * medians 13.0 s jsep / 13.8 s jspi; WASM int8 on a 3-minute clip 125 s jsep /
+ * 114 s jspi, with one contaminated jspi run). The argument is SIZE and
+ * direction of travel: the jspi runtime is 16 MB against jsep's 27 MB and its
+ * bundle 112 KB against 404 KB, so it takes ~11 MB off every single load of an
+ * app whose main complaint is load time, and the native EP is where ORT's
+ * WebGPU work is going. Both entries were already in the vendored package, so
+ * this costs no new supply chain: only which bytes the browser fetches changes.
  */
 export const ORT_VARIANTS = {
   jsep: { assets: ORT_RUNTIME_ASSETS, importer: () => import('onnxruntime-web') },
@@ -126,14 +132,22 @@ export function jspiSupported() {
  * Resolve a requested ORT variant to one this environment can actually run.
  * Pure, so the fallback rule is unit-testable without a browser.
  *
- * @param {string|undefined} requested Variant name ('jsep' | 'jspi'), or undefined.
+ * @param {string|undefined} requested Variant name ('jsep' | 'jspi'), or
+ *   undefined for the default (jspi where the browser supports it).
  * @param {boolean} hasJspi Whether the browser implements JSPI.
  * @returns {{variant: string, downgraded: boolean}} The variant to load, and
- *   whether a request had to be refused (so the caller can say so once).
+ *   whether an explicit request had to be refused (so the caller can say so
+ *   once). A default that lands on jsep is not a downgrade.
  */
 export function resolveOrtVariant(requested, hasJspi) {
-  if (requested !== 'jspi') return { variant: 'jsep', downgraded: false };
-  return hasJspi ? { variant: 'jspi', downgraded: false } : { variant: 'jsep', downgraded: true };
+  // An explicit 'jsep' is the escape hatch and always wins.
+  if (requested === 'jsep') return { variant: 'jsep', downgraded: false };
+  if (hasJspi) return { variant: 'jspi', downgraded: false };
+  // No JSPI in this browser. `downgraded` reports a REFUSED REQUEST, so it is
+  // only true when the caller asked for jspi by name: the default arriving on
+  // jsep is the designed path (every non-Chromium browser), not something to
+  // warn every visitor about.
+  return { variant: 'jsep', downgraded: requested === 'jspi' };
 }
 
 /**

@@ -42,15 +42,19 @@ let feeds = null;
 let arm = null;
 
 async function init(msg) {
-  const { modelBytes, numThreads, wasmPaths, seq, dim, inputName } = msg;
+  const { modelBytes, numThreads, wasmPaths, seq, dim, inputName, ortVariant } = msg;
   arm = msg.arm;
 
   // The WASM arm must mirror the main thread's runtime choice or it would time
-  // a runtime the app is not going to use.
+  // a runtime the app is not going to use. That is why ortVariant is carried
+  // here as well as wasmPaths: ORT pins one runtime per JS context, so a probe
+  // worker left to resolve its own would time the default even on a page the
+  // visitor pinned to the other one with ?ortep=.
   const ort = await initOrt({
     backend: arm === 'webgpu' ? 'webgpu' : 'wasm',
     wasmPaths,
     numThreads,
+    ortVariant,
   });
 
   // STRICT webgpu on purpose (no 'wasm' fallback in the list, unlike the app's

@@ -49,14 +49,17 @@ function initModel(msg) {
   const {
     encoderUrl, encoderDataUrl, filenames, numThreads,
     nMels, preprocessorBackend, preprocessorUrl, subsampling, windowStride,
-    wasmPaths,
+    wasmPaths, ortVariant,
   } = msg;
-  // wasmPaths mirrors the MAIN thread's: pooled chunks must run the exact same
-  // binaries as in-thread chunks, or one clip could mix numerics.
+  // wasmPaths and ortVariant mirror the MAIN thread's: pooled chunks must run
+  // the exact same binaries as in-thread chunks, or one clip could mix
+  // numerics. ORT pins one runtime per JS context, so a worker that resolved
+  // its own variant could silently encode on a different engine than the
+  // chunks the main thread encodes.
   return ParakeetModel.encoderOnlyFromUrls({
     encoderUrl, encoderDataUrl, filenames, cpuThreads: numThreads,
     nMels, preprocessorBackend, preprocessorUrl, subsampling, windowStride,
-    wasmPaths,
+    wasmPaths, ortVariant,
   });
 }
 
