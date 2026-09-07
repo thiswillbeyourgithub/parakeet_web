@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
+import { parseModelRepos, shortRepoLabel, resolveModelRepo } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -591,6 +592,19 @@ const URL_PHRASE_BOOST = typeof window !== 'undefined'
   ? normalizeBoostName(new URLSearchParams(window.location.search).get('phrase_boost'))
   : null;
 
+// A ?model=<query> query param lets a shareable link pin which model repo the
+// page loads, e.g. ?model=ultimed for Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx.
+// Read once at module load (the query string doesn't change within a session).
+//
+// UNLIKE ?phrase_boost above, this one DOES override a returning visitor's
+// saved choice: the point is to hand someone a link that lands on a specific
+// model regardless of what they last used. It is deliberately not persisted,
+// so their own pick is still there on their next ordinary visit; the
+// `modelRepoFromUrlRef` guard below is what enforces that.
+const URL_MODEL = typeof window !== 'undefined'
+  ? new URLSearchParams(window.location.search).get('model')
+  : null;
+
 // Debounce (ms) before rebuilding the boosting trie after the phrase text
 // changes. Pasting or fast-typing a large list (10k-100k phrases) would
 // otherwise trigger an encode per keystroke; we wait for the input to settle.
@@ -738,7 +752,15 @@ function truncateFilename(filename, maxLength = 40) {
 
 export default function App() {
   const { t, lang } = useI18n();
-  const repoId = CONFIG.VITE_MODEL_REPO || 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
+  // The model repos this instance offers. VITE_MODEL_REPO is a comma-separated
+  // list; a single id (the historical value) simply yields a one-entry list and
+  // the picker hides itself. Order matters: the first entry is the default for
+  // a visitor who has never chosen.
+  const modelRepos = useMemo(() => parseModelRepos(CONFIG.VITE_MODEL_REPO), []);
+  // The repo actually loaded. Starts on the operator default; the settings
+  // restore below applies the saved pick and then the ?model= override, which
+  // beats both (see MODEL_REPO_FROM_URL).
+  const [repoId, setRepoId] = useState(modelRepos[0]);
   // Where model weights are served from:
   //   'hf'    : HuggingFace only (default)
   //   'local' : instance-served /models/ only (skip HF entirely)
@@ -1097,6 +1119,11 @@ export default function App() {
   // once it has been committed to state. Programmatic changes and the initial
   // load leave it unarmed, so they never trigger a reload.
   const reloadModelOnParamChangeRef = useRef(false);
+  // True while the loaded repo came from ?model= rather than from this
+  // visitor. It suppresses persistence (a link must not overwrite their own
+  // pick) and is cleared the moment they choose in the sidebar, which makes
+  // that choice theirs and saveable again.
+  const modelRepoFromUrlRef = useRef(false);
   const armModelReloadIfLoaded = () => {
     if (modelRef.current) reloadModelOnParamChangeRef.current = true;
   };
@@ -1635,6 +1662,7 @@ export default function App() {
           savedBoostCustomText,
           savedSectionsOpen,
           savedBenchmarkAutoSend,
+          savedModelRepo,
         ] = await Promise.all([
           loadSetting('backend', null),
           loadSetting('backendUserPicked', false),
@@ -1693,8 +1721,29 @@ export default function App() {
           // Benchmark reports are never sent without a decision: this is the
           // "stop asking, always send" opt-in, and it defaults to OFF.
           loadSetting('benchmarkAutoSend', false),
+          // Which model repo the visitor last picked. Validated against the
+          // repos this instance currently offers before it is applied, so an
+          // entry the operator removed from VITE_MODEL_REPO stops being loaded
+          // instead of 404ing at download time.
+          loadSetting('modelRepo', null),
         ]);
         if (booted) return; // watchdog won while we awaited; skip the stale restore
+
+        // Model repo: ?model= beats the saved pick beats the operator default.
+        // `fromUrl` is remembered so the persistence effect below does NOT
+        // write a link-driven choice over what this visitor actually chose.
+        const resolvedRepo = resolveModelRepo({
+          repos: modelRepos,
+          urlParam: URL_MODEL,
+          saved: savedModelRepo,
+        });
+        modelRepoFromUrlRef.current = resolvedRepo.fromUrl;
+        if (resolvedRepo.fromUrl) {
+          console.log(`[App] ?model=${URL_MODEL} -> ${resolvedRepo.repoId} (this visit only, not saved)`);
+        } else if (URL_MODEL) {
+          console.warn(`[App] ?model=${URL_MODEL} matched none of the offered repos; keeping ${resolvedRepo.repoId}`);
+        }
+        setRepoId(resolvedRepo.repoId);
 
         // A saved value means the user previously picked a backend explicitly;
         // honour it (subject to the WebGPU-availability override below). When
@@ -2220,6 +2269,13 @@ export default function App() {
   usePersistedSetting('backendUserPicked', backendUserPicked, settingsLoaded);
   usePersistedSetting('perfProbeVerdict', probeVerdict, settingsLoaded);
   // Persist the WASM encoder-precision choice (int8 / fp32).
+  // Not usePersistedSetting: a repo that came from ?model= must NOT be written
+  // back, or following a link once would silently redefine the visitor's
+  // default for every later visit.
+  useEffect(() => {
+    if (!settingsLoaded || modelRepoFromUrlRef.current) return;
+    saveSetting('modelRepo', repoId);
+  }, [repoId, settingsLoaded]);
   usePersistedSetting('wasmEncoderQuant', wasmEncoderQuant, settingsLoaded);
   // Persist the WebGPU encoder-precision choice.
   usePersistedSetting('webgpuEncoderQuant', webgpuEncoderQuant, settingsLoaded);
@@ -3417,7 +3473,7 @@ export default function App() {
   // control's onChange; this effect runs after the new value lands in state,
   // so loadModel() reads the fresh backend/precision. Only a change that armed
   // the flag reloads: the initial load and any programmatic change do not.
-  const modelParamSig = `${backend}|${wasmEncoderQuant}|${webgpuEncoderQuant}`;
+  const modelParamSig = `${repoId}|${backend}|${wasmEncoderQuant}|${webgpuEncoderQuant}`;
   const modelParamSigRef = useRef(modelParamSig);
   useEffect(() => {
     if (modelParamSigRef.current === modelParamSig) return;
@@ -7100,6 +7156,36 @@ export default function App() {
           </CollapsibleSection>
 
           <CollapsibleSection id="engine" title={t('settingsGroupEngine')} open={!!sectionsOpen.engine} onToggle={toggleSection}>
+            {/* Model picker. Only rendered when the operator configured more
+                than one repo in VITE_MODEL_REPO: with a single one there is
+                nothing to choose and a one-option control would just be noise.
+                Locked during a transcription like the other model-defining
+                controls, since switching disposes the live session. Choosing
+                here makes the choice the visitor's own, so it clears the
+                ?model= flag and becomes persistable again. */}
+            {modelRepos.length > 1 && (
+              <div className="setting-row">
+                <span className="setting-label">
+                  {t('model')}:
+                  <InfoTooltip text={t('tooltipModel')} />
+                </span>
+                <select
+                  value={repoId}
+                  onChange={e => {
+                    armModelReloadIfLoaded();
+                    modelRepoFromUrlRef.current = false;
+                    setRepoId(e.target.value);
+                  }}
+                  disabled={modelSwapBlocked}
+                  style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                  data-umami-event="model_repo_select"
+                >
+                  {modelRepos.map(id => (
+                    <option key={id} value={id} title={id}>{shortRepoLabel(id)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <p style={{ marginTop: 0 }}>
               <strong>{t('model')}:</strong>{' '}
               {/* Link to the HuggingFace model page whenever weights come from HF
