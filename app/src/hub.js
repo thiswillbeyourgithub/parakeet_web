@@ -959,9 +959,18 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
  *   - nested: a HuggingFace-style tree where the files live under the repo id
  *             (`/models/istupakov/parakeet-tdt-0.6b-v3-onnx/vocab.txt`), e.g.
  *             when the operator mounted a parent folder of one or more repos.
- * Probes vocab.txt (small, always present) flat first, then nested under repoId,
+ * Probes vocab.txt (small, always present) NESTED under repoId first, then flat,
  * and returns whichever base resolves so every downstream fetch (listing,
  * weights, canary) targets the same place. Returns null when neither resolves.
+ *
+ * Nested wins on purpose, even though flat is the documented single-repo
+ * contract. When the app offers a CHOICE of repos (VITE_MODEL_REPO is a
+ * comma-separated list), a mount that carries both a flat tree and per-repo
+ * subfolders would otherwise answer the flat probe for EVERY repo and serve one
+ * repo's weights under another's name: a silently wrong model, with a correct
+ * transcript-shaped output and no error anywhere. Asking for the repo by name
+ * first makes that impossible; the flat fallback then only catches mounts that
+ * have no subfolder for this repo, which is the single-repo contract unchanged.
  *
  * @param {string} baseUrl Local base URL serving the model files (e.g. '/models').
  * @param {string} [repoId] Repo id to try as a nested subfolder (e.g. 'istupakov/parakeet-tdt-0.6b-v3-onnx').
@@ -975,11 +984,11 @@ export async function resolveLocalModelBase(baseUrl, repoId) {
       return res.ok;
     } catch { return false; }
   };
-  if (await reachable(baseUrl)) return baseUrl;
   if (repoId) {
     const nested = `${baseUrl}/${repoId}`;
     if (await reachable(nested)) return nested;
   }
+  if (await reachable(baseUrl)) return baseUrl;
   return null;
 }
 
