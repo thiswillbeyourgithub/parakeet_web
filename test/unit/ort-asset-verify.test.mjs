@@ -323,3 +323,62 @@ describe('ORT is imported in exactly one place', () => {
       'loadOrtModule is what the other modules are pointed at; it must exist');
   });
 });
+
+// The one-runtime-per-page invariant, guarded at the source level.
+//
+// ORT chooses its runtime once per JS CONTEXT, and this app has several: the
+// main thread, the two encode-pool workers, the decode worker and the two
+// throwaway probe workers. So a runtime choice is only real if it reaches all
+// of them. Wiring only the main thread produced a page running THREE jsep
+// contexts and TWO jspi ones at once, which is not a switch and not an escape
+// hatch, and it reads as fine if you look at a single log line.
+//
+// Nothing behavioural catches this. The variant only diverges between contexts
+// when someone forgets a worker, and the symptom (the probe timing a runtime
+// the app will not use; ?ortep=jsep leaving the encode pool, which does the
+// encoding, on the other engine) produces correct transcripts either way. The
+// e2e tier cannot help either: it is minutes per spec and, on a busy machine,
+// its failures are model-download stalls rather than anything about ORT.
+//
+// So this is a tripwire, not a proof: a new worker that builds an ORT session
+// without carrying ortVariant fails here, in tier-1, in milliseconds.
+describe('the ORT runtime variant reaches every JS context', () => {
+  const WORKER_DIR = 'app/ui/src/lib';
+  // A worker builds an ORT session if it calls initOrt or one of the
+  // ParakeetModel *FromUrls constructors (which call it for you).
+  const BUILDS_SESSION = /\binitOrt\s*\(|FromUrls\s*\(/;
+
+  function workerFiles() {
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+    const dir = join(root, WORKER_DIR);
+    return readdirSync(dir)
+      .filter((n) => n.endsWith('.worker.js'))
+      .map((n) => ({ name: `${WORKER_DIR}/${n}`, code: readFileSync(join(dir, n), 'utf8') }));
+  }
+
+  test('every worker that builds an ORT session forwards ortVariant', () => {
+    const offenders = workerFiles()
+      .filter((f) => BUILDS_SESSION.test(f.code) && !/\bortVariant\b/.test(f.code))
+      .map((f) => f.name);
+    assert.deepEqual(offenders, [],
+      'these workers build an ORT session without carrying the runtime variant, so they will '
+      + 'silently resolve their own and the page ends up running two different ORT runtimes: '
+      + offenders.join(', '));
+  });
+
+  test('the guard is not vacuous: some worker really does build a session', () => {
+    const builders = workerFiles().filter((f) => BUILDS_SESSION.test(f.code));
+    assert.ok(builders.length >= 2,
+      `expected several ORT-session workers, found ${builders.length}: the detector above has `
+      + 'probably stopped matching and the test is passing on an empty set');
+  });
+
+  test('App.jsx hands the variant to the workers it starts', () => {
+    // The other half of the same wiring: a worker can only forward a variant
+    // it was sent. Existence rather than a count, so refactoring the payloads
+    // into a helper does not fail this spuriously.
+    const app = readFileSync(fileURLToPath(new URL('../../app/ui/src/App.jsx', import.meta.url)), 'utf8');
+    assert.ok(/ortVariant:\s*ORT_VARIANT/.test(app),
+      'App.jsx no longer passes ORT_VARIANT into any worker init payload');
+  });
+});
