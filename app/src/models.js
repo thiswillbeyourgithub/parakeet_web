@@ -59,6 +59,26 @@ export const MODELS = {
     predLayers: 2,
     revision: 'main',
   },
+  // Same v3 architecture, fine-tuned on French medical speech: identical
+  // vocabulary (8193 lines), 128 mel bins and TDT prediction network, so it
+  // rides every code path the base model does. Listed here rather than left to
+  // getModelConfig's null fallback so it gets a display name and the same
+  // revision pin; the app offers it through the VITE_MODEL_REPO list.
+  // It ships no `int8-lite/` build, so that precision correctly raises
+  // QuantUnavailableError instead of silently loading something else.
+  'parakeet-tdt-0.6b-v3-ultimed': {
+    repoId: 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx',
+    displayName: 'Parakeet TDT 0.6B v3 UltiMed (French medical)',
+    languages: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'ru', 'uk', 'ja', 'ko', 'zh'],
+    defaultLanguage: 'fr',
+    vocabSize: 4097,
+    featuresSize: 128,
+    preprocessor: 'nemo128',
+    subsampling: 8,
+    predHidden: 640,
+    predLayers: 2,
+    revision: 'main',
+  },
 };
 
 /**
