@@ -138,6 +138,10 @@ services:
       - STUN_GOOGLE_FALLBACK=${STUN_GOOGLE_FALLBACK:-true}
       - TURNS_PORT=${TURNS_PORT:-}
       - SIGNALING_PORT=${SIGNALING_PORT:-3001}
+      # Public hostname of this instance. The signaling sidecar only
+      # echoes it in its startup banner, so an unset value costs
+      # nothing but a log line that reads "localhost".
+      - DOMAIN=${DOMAIN:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       # HTTPS relay fallback (WebSocket + long-poll) for networks that
       # block direct WebRTC and TURN/TURNS. RELAY_ENABLE gates the
