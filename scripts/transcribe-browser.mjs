@@ -85,6 +85,7 @@ export function parseArgs(argv) {
       case '-h': case '--help': a.help = true; break;
       case '-o': case '--out': a.out = val(flag); break;
       case '--backend': a.backend = val(flag); break;
+      case '--ortep': a.ortep = val(flag); break;
       case '--quant': a.quant = val(flag); break;
       case '-w': case '--beam-width': a.beamWidth = parseInt(val(flag), 10); break;
       case '-n': case '--num-speakers': a.numSpeakers = parseInt(val(flag), 10); break;
@@ -180,6 +181,9 @@ Options:
                           Default 2. Ignored with --no-diarize.
       --no-diarize        Skip speaker diarization; write the plain transcript.
       --backend B         webgpu-hybrid (default, real GPU) or wasm (CPU).
+      --ortep V           Pin the ORT distribution for this run: jsep (the escape
+                          hatch to the older JS-implemented runtime) or jspi (the
+                          default native C++ one). Applies to the workers too.
       --quant Q           WebGPU encoder quant: fp32 (default) or int8. int8 has
                           no GPU encoder kernel, so it resolves to fp32 anyway;
                           it is accepted so a WASM run can be seeded the same way.
@@ -264,7 +268,7 @@ async function main() {
       lang: args.lang,
     };
     const wantWebgpu = args.backend.startsWith('webgpu');
-    await bootApp(page, { baseURL, settings });
+    await bootApp(page, { baseURL, settings, ortep: args.ortep });
 
     // Let the app's OWN on-mount WebGPU probe (navigator.gpu.requestAdapter)
     // resolve BEFORE we touch WebGPU. This ordering matters: if our gate probe

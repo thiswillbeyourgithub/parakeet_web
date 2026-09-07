@@ -84,7 +84,7 @@ export function launchWebGpuBrowser({ headless = false, channel = 'chromium' } =
 // shards and the diarization models), navigate, seed the settings DB, and
 // reload so the app picks the settings up. `settings` are the unprefixed keys
 // seedSettings understands (e.g. { backend, webgpuEncoderQuant, beamWidth }).
-export async function bootApp(page, { baseURL, settings = {}, modelSource = 'local' } = {}) {
+export async function bootApp(page, { baseURL, settings = {}, ortep, modelSource = 'local' } = {}) {
   // modelSource is a CONFIG value the docker entrypoint writes into
   // window.__CONFIG__ (NOT a settings-DB key), so inject it the same way before
   // any app script runs. With 'local', hub.js HEAD-probes /models.
@@ -96,8 +96,15 @@ export async function bootApp(page, { baseURL, settings = {}, modelSource = 'loc
   // retry loop used to misread as an adapter-probe flake), this keeps these
   // harnesses working. page.reload() preserves the query string, so re-seed +
   // reload retries keep it too.
+  //
+  // `ortep` pins the ORT distribution for the load ('jsep' is the escape hatch
+  // back to the older JS-implemented runtime; the default is the native C++
+  // one). It belongs here rather than in a caller's goto because page.reload()
+  // below has to preserve it: ORT is chosen once per JS context, so a query
+  // that vanished on the reload would silently measure the default instead.
   const wantWebgpu = String(settings.backend || '').startsWith('webgpu');
-  await page.goto(wantWebgpu ? `${baseURL}/?webgpu=1` : baseURL);
+  const query = [wantWebgpu ? 'webgpu=1' : '', ortep ? `ortep=${ortep}` : ''].filter(Boolean).join('&');
+  await page.goto(query ? `${baseURL}/?${query}` : baseURL);
   await seedSettings(page, settings);
   await page.reload();
 }
