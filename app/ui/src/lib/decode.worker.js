@@ -46,11 +46,14 @@ let decodeChain = Promise.resolve();
 function initModel(msg) {
   const {
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
-    wasmPaths, numThreads, subsampling, windowStride,
+    wasmPaths, numThreads, subsampling, windowStride, ortVariant,
   } = msg;
+  // ortVariant mirrors the main thread's for the same reason wasmPaths does:
+  // ORT pins one runtime per JS context, so without it ?ortep=jsep would leave
+  // this worker on the default runtime.
   return ParakeetModel.decoderOnlyFromUrls({
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
-    wasmPaths, cpuThreads: numThreads, subsampling, windowStride,
+    wasmPaths, cpuThreads: numThreads, subsampling, windowStride, ortVariant,
   });
 }
 

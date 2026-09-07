@@ -511,16 +511,24 @@ const BOOST_SOURCE_DISABLED = '__disabled__';
 const WEBGPU_DISABLED = typeof location !== 'undefined'
   && /[?&]webgpu=0(?:&|$)/.test(location.search || '');
 
-// `?ortep=jspi` selects ONNX Runtime's native C++ WebGPU execution provider
-// (the JSPI build) instead of the shipped JSEP one, for the run of that page
-// load only. Nothing persists it and no UI offers it: it exists so the two can
-// be A/B'd on a real GPU (scripts/webgpu-check.mjs --jspi), because the JS
-// boundary crossing JSEP pays on every GPU/CPU partition has never been
-// measured on this model since the animation-pause fix removed the
-// pathological part of it. A browser without JSPI falls back to jsep with a
-// warning (backend.js resolveOrtVariant), so the flag can never break a load.
+// `?ortep=` pins which ONNX Runtime distribution this page load uses, for that
+// load only: nothing persists it and no UI offers it.
+//
+// The default is the JSPI build (ORT's native C++ WebGPU execution provider),
+// so the meaningful value is `?ortep=jsep`, the escape hatch back to the older
+// JS-implemented one. `?ortep=jspi` is still accepted, and is a no-op that
+// keeps existing harnesses (scripts/webgpu-check.mjs, the specs) working.
+//
+// It is passed to the workers as well as the main thread. ORT pins one runtime
+// per JS context, and the encode pool does real encoder work in workers, so a
+// main-thread-only switch would leave most of the WASM path on the other
+// runtime and would not be an escape hatch at all.
+//
+// A browser without JSPI resolves to jsep on its own (backend.js
+// resolveOrtVariant), so neither the default nor the flag can break a load.
 const ORT_VARIANT = (typeof location !== 'undefined'
-  && /[?&]ortep=jspi(?:&|$)/.test(location.search || '')) ? 'jspi' : undefined;
+  ? (/[?&]ortep=(jsep|jspi)(?:&|$)/.exec(location.search || '') || [])[1]
+  : undefined) || undefined;
 
 // Map any WebGPU backend id to 'wasm' while WebGPU is disabled, so a persisted
 // or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
@@ -3249,6 +3257,10 @@ export default function App() {
           nMels,
           preprocessorBackend: modelUrls.preprocessorBackend,
           preprocessorUrl: modelUrls.urls.preprocessorUrl,
+          // Each worker is its own JS context with its own ORT runtime, so the
+          // variant has to travel with the init or ?ortep=jsep would leave the
+          // pool (which does the encoding) on the default runtime.
+          ortVariant: ORT_VARIANT,
         } : null;
         // NOTE (2026-08-11): running the WebGPU encoder session in a dedicated
         // worker was tried as the fix for the rendering coupling (JSEP yields
@@ -3294,6 +3306,7 @@ export default function App() {
           tokenizerUrl: modelUrls.urls.tokenizerUrl,
           filenames: modelUrls.filenames,
           numThreads: backend === 'wasm' ? 2 : cpuThreads,
+          ortVariant: ORT_VARIANT,
         } : null;
         // The WASM worker follows the parallelEncode toggle (it is useless
         // without the pool, and the user turning the feature off should get
@@ -6346,6 +6359,7 @@ export default function App() {
     const ready = workerReady(worker, {
       type: 'init', arm, modelBytes: bytes.slice(0), numThreads,
       seq: PROBE_SEQ, dim: PROBE_DIM, inputName: PROBE_INPUT_NAME,
+      ortVariant: ORT_VARIANT,
     }, { timeoutMs: PROBE_INIT_TIMEOUT_MS, label: `Probe ${arm}` });
     return { worker, ready, run, dispose: () => { try { worker.postMessage({ type: 'dispose' }); } catch { /* gone */ } worker.terminate(); } };
   }

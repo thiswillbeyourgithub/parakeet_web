@@ -1029,12 +1029,12 @@ export class ParakeetModel {
   static async decoderOnlyFromUrls({
     decoderUrl, decoderDataUrl, tokenizerUrl, filenames,
     wasmPaths, cpuThreads, subsampling = 8, windowStride = 0.01, verbose = false,
-    useTopkOutputs = true,
+    useTopkOutputs = true, ortVariant = undefined,
   }) {
     if (!decoderUrl || !tokenizerUrl) {
       throw new Error('decoderOnlyFromUrls requires decoderUrl and tokenizerUrl');
     }
-    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads });
+    const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads, ortVariant });
     const sessionOptions = {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
@@ -1079,7 +1079,7 @@ export class ParakeetModel {
   static async encoderOnlyFromUrls({
     encoderUrl, encoderDataUrl, filenames, backend = 'wasm',
     wasmPaths, cpuThreads, preprocessorBackend = 'js', preprocessorUrl, nMels = 128,
-    subsampling = 8, windowStride = 0.01, verbose = false,
+    subsampling = 8, windowStride = 0.01, verbose = false, ortVariant = undefined,
   }) {
     if (!encoderUrl) {
       throw new Error('encoderOnlyFromUrls requires encoderUrl');
@@ -1093,7 +1093,7 @@ export class ParakeetModel {
     }
     const ort = await initOrt({
       backend: backend.startsWith('webgpu') ? 'webgpu' : 'wasm',
-      wasmPaths, numThreads: cpuThreads,
+      wasmPaths, numThreads: cpuThreads, ortVariant,
     });
     const sessionOptions = {
       executionProviders,

@@ -147,15 +147,33 @@ describe('ORT runtime variants', () => {
     }
   });
 
-  test('resolveOrtVariant: jspi only when the browser implements JSPI', () => {
+  test('resolveOrtVariant: jspi is the default, wherever the browser can run it', () => {
+    // The default (no request) takes jspi on a browser that implements JSPI.
+    assert.deepEqual(resolveOrtVariant(undefined, true), { variant: 'jspi', downgraded: false });
     assert.deepEqual(resolveOrtVariant('jspi', true), { variant: 'jspi', downgraded: false });
-    // The point of the downgrade flag: a browser without JSPI must still load,
-    // and the caller has to be able to say once that the request was refused.
+  });
+
+  test('resolveOrtVariant: no JSPI in the browser falls back, silently by default', () => {
+    // Firefox and Safari implement no JSPI at all, so this is the majority
+    // path for them, not an error: the default must not warn every visitor.
+    assert.deepEqual(resolveOrtVariant(undefined, false), { variant: 'jsep', downgraded: false });
+    // An EXPLICIT request that cannot be honoured is different: the caller has
+    // to be able to say once that it was refused.
     assert.deepEqual(resolveOrtVariant('jspi', false), { variant: 'jsep', downgraded: true });
-    // Anything else is the shipped runtime, and asking for it is never a
-    // "downgrade" even on a browser that could have run jspi.
-    for (const req of [undefined, null, 'jsep', 'webnn', '']) {
-      assert.deepEqual(resolveOrtVariant(req, true), { variant: 'jsep', downgraded: false }, String(req));
+  });
+
+  test('resolveOrtVariant: ?ortep=jsep is the escape hatch and always wins', () => {
+    // Including on a browser that could perfectly well run jspi: that is the
+    // entire point of an escape hatch.
+    assert.deepEqual(resolveOrtVariant('jsep', true), { variant: 'jsep', downgraded: false });
+    assert.deepEqual(resolveOrtVariant('jsep', false), { variant: 'jsep', downgraded: false });
+  });
+
+  test('resolveOrtVariant: an unrecognised value takes the default, not jsep', () => {
+    // A typo or a stale link must not silently pin the old runtime forever;
+    // only the exact string 'jsep' opts out.
+    for (const req of [null, 'webnn', '', 'JSEP', 'jsepp']) {
+      assert.deepEqual(resolveOrtVariant(req, true), { variant: 'jspi', downgraded: false }, String(req));
       assert.deepEqual(resolveOrtVariant(req, false), { variant: 'jsep', downgraded: false }, String(req));
     }
   });
