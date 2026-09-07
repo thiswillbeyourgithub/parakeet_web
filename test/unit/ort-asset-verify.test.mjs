@@ -19,6 +19,9 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   ORT_RUNTIME_ASSETS,
@@ -239,5 +242,66 @@ describe('_verifiedOrtWasmPaths: fetches only the runtime pair it pins', () => {
     };
     assert.equal(await _verifiedOrtWasmPaths(BASE), BASE);
     assert.deepEqual(env.requested, [BASE + 'manifest.json']);
+  });
+});
+
+// The single-ORT-instance invariant.
+//
+// ORT pins one WASM runtime per JS context, and only the instance backend.js
+// loads gets the integrity-verified blob wasmPaths. A module that imports
+// 'onnxruntime-web' on its own therefore gets a SECOND, unconfigured instance
+// the moment the two specifiers resolve to different variant entry points: it
+// tries to fetch its runtime from wherever the bundle sits, receives the SPA
+// fallback HTML, and fails with "no available backend found".
+//
+// This is not hypothetical. speakerEmbedding.js did exactly that, and it went
+// unnoticed because on the shipped jsep default both imports resolve to the
+// same instance. Forcing the main thread onto the jspi runtime (2026-09-07)
+// broke speaker embedding while diarization kept producing turns, so voice
+// matching failed SILENTLY, with a green transcript.
+//
+// A behavioural test cannot catch this: under the shipped default the bug is
+// invisible, and reproducing it needs a whole rebuild on another variant. So
+// the invariant is asserted where it actually lives, in the import graph.
+describe('ORT is imported in exactly one place', () => {
+  const SRC_ROOTS = ['app/src', 'app/ui/src'];
+  const OWNER = 'app/src/backend.js';
+  // Matches a static or dynamic import of onnxruntime-web or any subpath of it.
+  const ORT_IMPORT = /(?:^|[^\w])(?:import|from)\s*\(?\s*['"]onnxruntime-web(?:\/[\w./-]+)?['"]/;
+
+  function sourceFiles(dir, out = []) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) sourceFiles(p, out);
+      else if (/\.(js|jsx|mjs)$/.test(e.name)) out.push(p);
+    }
+    return out;
+  }
+
+  test('only backend.js imports onnxruntime-web; everything else goes through loadOrtModule', () => {
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+    const offenders = [];
+    for (const dir of SRC_ROOTS) {
+      for (const file of sourceFiles(join(root, dir))) {
+        const rel = relative(root, file);
+        if (rel === OWNER) continue;
+        // Strip line comments: the ban is on real imports, not prose about them.
+        const code = readFileSync(file, 'utf8')
+          .split('\n').filter((l) => !l.trimStart().startsWith('//')).join('\n');
+        if (ORT_IMPORT.test(code)) offenders.push(rel);
+      }
+    }
+    assert.deepEqual(offenders, [],
+      `these modules import ONNX Runtime directly instead of backend.js's loadOrtModule(), `
+      + `which gives them a second unconfigured ORT instance as soon as the runtime variant moves: `
+      + offenders.join(', '));
+  });
+
+  test('backend.js does own the imports, so the rule above is not vacuous', () => {
+    const owner = fileURLToPath(new URL('../../app/src/backend.js', import.meta.url));
+    const code = readFileSync(owner, 'utf8');
+    assert.ok(ORT_IMPORT.test(code), 'backend.js no longer imports ORT: the guard is testing nothing');
+    assert.ok(/export async function loadOrtModule/.test(code),
+      'loadOrtModule is what the other modules are pointed at; it must exist');
   });
 });

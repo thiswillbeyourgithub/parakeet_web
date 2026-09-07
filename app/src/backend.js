@@ -227,6 +227,97 @@ export function defaultWasmThreads(hardwareConcurrency) {
 }
 
 /**
+ * The ORT module instance live in THIS JS context, and the variant it is.
+ * ORT pins one WASM runtime per context, so there can only ever be one; making
+ * that a module-level singleton is what stops a second consumer from importing
+ * its own copy (see loadOrtModule).
+ */
+let _ortLoad = null;
+let _ortLoadedVariant = null;
+
+/**
+ * Load ONNX Runtime Web ONCE per JS context and hand it verified wasmPaths.
+ *
+ * Every ORT consumer in the app must come through here rather than importing
+ * 'onnxruntime-web' itself. The reason is not tidiness: a direct import returns
+ * a DIFFERENT module instance whenever the two resolve to different variant
+ * entry points, and only the one initOrt configured has the integrity-verified
+ * blob wasmPaths. The other tries to fetch its runtime from wherever the bundle
+ * happens to sit (/assets/ort-wasm-simd-threaded.jsep.mjs), receives the SPA
+ * fallback HTML, and dies with "no available backend found". That is exactly
+ * how speaker embedding broke the moment the main thread was moved to the jspi
+ * runtime: diarization still produced turns, so voice matching failed SILENTLY.
+ *
+ * Callers that do not care which variant is live pass nothing and get whatever
+ * this context already loaded. A caller that asks for a variant after one is
+ * live is a bug, not a request to satisfy (ORT cannot host two runtimes in one
+ * context), so it is warned about rather than honoured.
+ *
+ * @param {Object} [opts]
+ * @param {string} [opts.wasmPaths] Path prefix for the runtime assets.
+ * @param {string} [opts.ortVariant] Variant to load ('jsep' | 'jspi').
+ * @returns {Promise<typeof import('onnxruntime-web').default>}
+ */
+export async function loadOrtModule({ wasmPaths, ortVariant } = {}) {
+  if (_ortLoad) {
+    if (ortVariant && ortVariant !== _ortLoadedVariant) {
+      console.warn(`[Parakeet.js] ORT ${_ortLoadedVariant} runtime is already live in this context; `
+        + `ignoring the ${ortVariant} request (ORT pins one runtime per JS context).`);
+    }
+    return _ortLoad;
+  }
+
+  // Refusing an unsupported request here (a browser without JSPI) rather than
+  // at session-create time keeps the failure one warning instead of a broken load.
+  const { variant, downgraded } = resolveOrtVariant(ortVariant, jspiSupported());
+  if (downgraded) {
+    console.warn('[Parakeet.js] ORT jspi runtime requested but this browser does not implement JSPI; using jsep');
+  }
+  _ortLoadedVariant = variant;
+
+  _ortLoad = (async () => {
+    let ort;
+    try {
+      const ortModule = await ORT_VARIANTS[variant].importer();
+      ort = ortModule.default || ortModule;
+      // Some bundler configurations expose the namespace as ortModule.ort.
+      if (!ort.env && ortModule.ort) ort = ortModule.ort;
+    } catch (e) {
+      console.error('[Parakeet.js] Failed to import onnxruntime-web:', e);
+      throw new Error('Failed to load ONNX Runtime Web. Please check your network connection.');
+    }
+    if (!ort || !ort.env) {
+      throw new Error('ONNX Runtime Web loaded but env is not available. This might be a bundling issue.');
+    }
+
+    // Serve WASM artifacts from same-origin (vendored under app/ui/public/ort/).
+    // Avoids trusting a public CDN at runtime. A jsDelivr/npm compromise would
+    // otherwise silently swap the ML engine for every visitor. Files are baked
+    // into the build, so the version always matches the vendored JS loader.
+    // Additionally verify each runtime asset against the build-time manifest
+    // before handing bytes to ORT; on success this becomes an object map of
+    // blob URLs whose sha384 matched the pin.
+    if (!ort.env.wasm.wasmPaths) {
+      ort.env.wasm.wasmPaths = await _verifiedOrtWasmPaths(wasmPaths || '/ort/', ORT_VARIANTS[variant].assets);
+    }
+    // One line per context, and the marker the WebGPU A/B harness asserts on:
+    // ORT pins one runtime per JS context, so a run that thinks it measured jspi
+    // while a worker quietly loaded jsep would be worse than no measurement. The
+    // context is part of the line because a page has several: only the main
+    // thread holds the GPU session, while the decode/encode workers are WASM and
+    // deliberately stay on the shipped runtime, so an untagged line would let a
+    // worker's 'jsep' be read as the answer for the GPU.
+    const ctx = typeof document === 'undefined' ? 'worker' : 'main';
+    console.log(`[Parakeet.js] ORT runtime variant: ${variant} (${ctx})`);
+    return ort;
+  })();
+
+  // A failed load must not poison the context: let a later attempt retry.
+  _ortLoad.catch(() => { _ortLoad = null; _ortLoadedVariant = null; });
+  return _ortLoad;
+}
+
+/**
  * Initialise ONNX Runtime Web and pick the execution provider.
  * If WebGPU is requested but not supported, we transparently fall back to WASM.
  * @param {Object} opts
@@ -235,52 +326,7 @@ export function defaultWasmThreads(hardwareConcurrency) {
  * @returns {Promise<typeof import('onnxruntime-web').default>}
  */
 export async function initOrt({ backend = 'webgpu', wasmPaths, numThreads, ortVariant } = {}) {
-  // Which ORT distribution to load. Refusing an unsupported request here (a
-  // browser without JSPI) rather than at session-create time keeps the failure
-  // one warning instead of a broken load.
-  const { variant, downgraded } = resolveOrtVariant(ortVariant, jspiSupported());
-  if (downgraded) {
-    console.warn('[Parakeet.js] ORT jspi runtime requested but this browser does not implement JSPI; using jsep');
-  }
-  // Dynamic import to handle Vite bundling issues
-  let ort;
-  
-  try {
-    const ortModule = await ORT_VARIANTS[variant].importer();
-    ort = ortModule.default || ortModule;
-
-    // Some bundler configurations expose the namespace as ortModule.ort.
-    if (!ort.env && ortModule.ort) {
-      ort = ortModule.ort;
-    }
-  } catch (e) {
-    console.error('[Parakeet.js] Failed to import onnxruntime-web:', e);
-    throw new Error('Failed to load ONNX Runtime Web. Please check your network connection.');
-  }
-  
-  if (!ort || !ort.env) {
-    throw new Error('ONNX Runtime Web loaded but env is not available. This might be a bundling issue.');
-  }
-  
-  // Serve WASM artifacts from same-origin (vendored under app/ui/public/ort/).
-  // Avoids trusting a public CDN at runtime. A jsDelivr/npm compromise would
-  // otherwise silently swap the ML engine for every visitor. Files are baked
-  // into the build, so the version always matches the vendored JS loader.
-  // Additionally verify each runtime asset against the build-time manifest
-  // before handing bytes to ORT; on success this becomes an object map of
-  // blob URLs whose sha384 matched the pin.
-  if (!ort.env.wasm.wasmPaths) {
-    ort.env.wasm.wasmPaths = await _verifiedOrtWasmPaths(wasmPaths || '/ort/', ORT_VARIANTS[variant].assets);
-  }
-  // One line per context, and the marker the WebGPU A/B harness asserts on:
-  // ORT pins one runtime per JS context, so a run that thinks it measured jspi
-  // while a worker quietly loaded jsep would be worse than no measurement. The
-  // context is part of the line because a page has several: only the main
-  // thread holds the GPU session, while the decode/encode workers are WASM and
-  // deliberately stay on the shipped runtime, so an untagged line would let a
-  // worker's 'jsep' be read as the answer for the GPU.
-  const ctx = typeof document === 'undefined' ? 'worker' : 'main';
-  console.log(`[Parakeet.js] ORT runtime variant: ${variant} (${ctx})`);
+  const ort = await loadOrtModule({ wasmPaths, ortVariant });
 
   // Configure WASM for better performance
   if (backend === 'wasm' || backend === 'webgpu') {
