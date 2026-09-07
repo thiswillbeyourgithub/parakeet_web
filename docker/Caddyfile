@@ -35,7 +35,7 @@
 	# _CSP_HF_HOSTS is computed by entrypoint.sh: the explicit set of HF
 	# subdomains (cas-bridge.xethub.hf.co for xet-based LFS, cdn-lfs.* for
 	# the older S3-backed path) when HF serving is allowed, empty when
-	# VITE_FORCE_LOCAL_MODEL_FALLBACK=true. It used to be a wildcard
+	# VITE_MODEL_SOURCE=local. It used to be a wildcard
 	# `*.huggingface.co *.hf.co`, but that would also match any future
 	# HF-controlled subdomain (including user-controllable ones if HF ever
 	# opens that namespace) and turn an XSS in the parakeet origin into an
