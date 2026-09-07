@@ -135,6 +135,19 @@ test('choosing in the sidebar after a ?model= visit saves the new choice', async
   await expect.poll(() => readSetting(page, 'modelRepo'), { timeout: 15000 }).toBe(BASE);
 });
 
+test('?model= works on a FIRST visit, before any settings exist', async ({ page }) => {
+  // The case a shared link is actually for. A first-time visitor (and anyone
+  // whose settings were just purged by a version bump) takes the
+  // boot-on-defaults branch of the settings restore, which returns before any
+  // saved value is read. Applying ?model= only in the full-restore path meant
+  // exactly these people silently got the default model.
+  await configureTwoRepos(page);
+  await page.goto('/?model=ultimed');
+
+  const picker = await openEngineSettings(page);
+  await expect(picker).toHaveValue(ULTIMED);
+});
+
 test('an unknown or ambiguous ?model= is ignored, not guessed', async ({ page }) => {
   await configureTwoRepos(page);
   await page.goto('/');

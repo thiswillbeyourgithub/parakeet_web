@@ -14,7 +14,6 @@ import {
   parseModelRepos,
   shortRepoLabel,
   matchModelRepo,
-  resolveModelRepo,
 } from '../../app/ui/src/lib/modelRepos.js';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
@@ -142,52 +141,5 @@ describe('matchModelRepo', () => {
   test('an empty repo list matches nothing', () => {
     assert.equal(matchModelRepo('ultimed', []), null);
     assert.equal(matchModelRepo('ultimed', null), null);
-  });
-});
-
-describe('resolveModelRepo', () => {
-  test('with nothing chosen, the first configured repo is the default', () => {
-    assert.deepEqual(resolveModelRepo({ repos: BOTH }), { repoId: BASE, fromUrl: false });
-    assert.deepEqual(resolveModelRepo({ repos: [ULTIMED, BASE] }), { repoId: ULTIMED, fromUrl: false });
-  });
-
-  test('a saved choice beats the configured default', () => {
-    assert.deepEqual(
-      resolveModelRepo({ repos: BOTH, saved: ULTIMED }),
-      { repoId: ULTIMED, fromUrl: false },
-    );
-  });
-
-  test('the URL param beats the saved choice, and says so', () => {
-    // The flag is what stops the caller persisting a link-driven choice.
-    assert.deepEqual(
-      resolveModelRepo({ repos: BOTH, saved: ULTIMED, urlParam: 'optimized' }),
-      { repoId: BASE, fromUrl: true },
-    );
-    assert.deepEqual(
-      resolveModelRepo({ repos: BOTH, saved: BASE, urlParam: 'ultimed' }),
-      { repoId: ULTIMED, fromUrl: true },
-    );
-  });
-
-  test('an unmatched URL param leaves the saved choice alone', () => {
-    assert.deepEqual(
-      resolveModelRepo({ repos: BOTH, saved: ULTIMED, urlParam: 'whisper' }),
-      { repoId: ULTIMED, fromUrl: false },
-    );
-  });
-
-  test('a saved repo that is no longer offered is discarded', () => {
-    assert.deepEqual(
-      resolveModelRepo({ repos: [BASE], saved: ULTIMED }),
-      { repoId: BASE, fromUrl: false },
-    );
-  });
-
-  test('an empty repo list still yields a loadable repo', () => {
-    assert.deepEqual(
-      resolveModelRepo({ repos: [] }),
-      { repoId: DEFAULT_MODEL_REPO, fromUrl: false },
-    );
   });
 });

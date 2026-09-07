@@ -100,27 +100,3 @@ export function matchModelRepo(query, repos) {
     || null
   );
 }
-
-/**
- * Decide which repo to load, given everything that can have an opinion.
- *
- * Precedence is the whole point: a `?model=` link overrides the saved setting
- * (that is what makes a link shareable to someone who already used the app),
- * and the saved setting overrides the operator's default. A saved repo that is
- * no longer offered is discarded rather than loaded, so removing an entry from
- * VITE_MODEL_REPO actually takes it out of circulation.
- *
- * @param {object} opts
- * @param {string[]} opts.repos Offered repo ids (from parseModelRepos).
- * @param {string|null} [opts.urlParam] Raw ?model= value, if any.
- * @param {string|null} [opts.saved] Persisted repo id, if any.
- * @returns {{repoId: string, fromUrl: boolean}} The repo to load, and whether
- *   the URL decided it (the caller must not persist a URL-driven choice).
- */
-export function resolveModelRepo({ repos, urlParam = null, saved = null }) {
-  const offered = Array.isArray(repos) && repos.length ? repos : [DEFAULT_MODEL_REPO];
-  const fromUrl = matchModelRepo(urlParam, offered);
-  if (fromUrl) return { repoId: fromUrl, fromUrl: true };
-  if (saved && offered.includes(saved)) return { repoId: saved, fromUrl: false };
-  return { repoId: offered[0], fromUrl: false };
-}
