@@ -13,7 +13,7 @@
 // touching the network. The shards still come from serve.mjs, which resolves a
 // bare shard name through app/src/modelLayout.js (MODEL_DIR/fp32/, the flat root,
 // then MODEL_DIR/sharded/ on an older mirror), so the spec self-skips when they
-// are absent (run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py first).
+// are absent (run fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py first).
 //
 // Built with Claude Code.
 
@@ -48,7 +48,7 @@ const ISTUPAKOV_FILES = [
 test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirror', async ({ page, request, baseURL }) => {
   const head = await request.head(SHARD_PROBE).catch(() => null);
   requireWeightsOrSkip(test, !head || !head.ok(),
-    `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py for local fp32 coverage)`);
+    `no sharded fp32 encoder at ${baseURL}${SHARD_PROBE} (run fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py for local fp32 coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
   const GOLDEN = readFileSync(fixture('jfk.expected.txt'), 'utf-8').trim();

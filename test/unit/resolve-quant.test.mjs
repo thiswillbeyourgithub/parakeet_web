@@ -16,7 +16,7 @@ import { resolveModelQuant, quantSatisfiable, parseEncoderShards, isSafeRepoPath
 // fp32 encoder and its 2.3 GB sidecar. With no shard set, fp32 cannot load in a
 // browser on EITHER backend (this is the upstream istupakov file set).
 const NO_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data', 'decoder_joint-model.int8.onnx'];
-// A repo that ships the fp32 encoder as <2GB shards (parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py).
+// A repo that ships the fp32 encoder as <2GB shards (fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py).
 const WITH_FP32_SHARDS = ['encoder-model.int8.onnx', 'encoder-model.onnx', 'encoder-model.onnx.data.000', 'encoder-model.onnx.data.001', 'decoder_joint-model.int8.onnx'];
 // The SAME shards in the layout the optimized repo published before the move:
 // under a `sharded/` subfolder (shard-fp32.py's old default output), which is

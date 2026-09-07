@@ -1225,7 +1225,7 @@ function hasEncoderFor(repoFiles, quant) {
  *     'int8lite' resolves to the lite encoder when the repo ships it (a plain
  *     file swap, no sidecar and no shards), and 'fp32' resolves to fp32 when
  *     `allowWasmFp32` is set AND the repo ships the fp32 encoder as <2GB shards
- *     (encoder-model.onnx.data.NNN, from parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py):
+ *     (encoder-model.onnx.data.NNN, from fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py):
  *     the shards clear both caps and the 2.4 GB fits the ~4 GB wasm32 heap. The
  *     decoder stays int8 either way (tiny, runs fine on WASM). Anything missing
  *     and the int8 pin stands, which is what makes a repo that cannot serve the
@@ -1512,13 +1512,13 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     // Throw so the caller surfaces it instead of proceeding.
     const missing = encoderQuant === 'int8lite'
       ? `the lite int8 encoder (encoder-model${QUANT_SUFFIX.int8lite}, built by `
-        + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05), `
+        + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
       : encoderQuant === 'w4a8'
       ? `the w4a8 encoder (encoder-model${QUANT_SUFFIX.w4a8}, built by scripts/quantize-nbits.py), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
       : `the <2 GB fp32 shards (encoder-model.onnx.data.NNN from `
-        + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
+        + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
         + `which neither HuggingFace nor the local /models mirror ships. Host the shards or pick int8.`;
     throw new QuantUnavailableError({
       backend,
@@ -1578,7 +1578,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       message: `The fp32 encoder cannot run on the ${backend} backend as a single file `
         + `(its ~2.3 GB weights exceed the browser's ~2 GB ArrayBuffer / Blob limits), and no `
         + `source ships the <2 GB shards (encoder-model.onnx.data.NNN from `
-        + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py). Host the shards, `
+        + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py). Host the shards, `
         + `or use the wasm backend.`,
     });
   }

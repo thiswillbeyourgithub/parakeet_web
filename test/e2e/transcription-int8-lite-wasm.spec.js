@@ -43,7 +43,7 @@ test('transcribes JFK English (MP3) with the WASM lite int8 encoder', async ({ p
   const head = await request.head(LITE_PROBE).catch(() => null);
   requireWeightsOrSkip(test, !head || !head.ok(),
     `no lite int8 encoder at ${baseURL}${LITE_PROBE} (build it with `
-    + `parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05, `
+    + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05, `
     + `or symlink it into fallback_models/, for local lite coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
