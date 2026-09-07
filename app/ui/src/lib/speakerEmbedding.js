@@ -2,7 +2,9 @@
 // speaker matching (session-only feature). The vendored sherpa-onnx diarization
 // WASM returns only {start,end,speaker} segments and exposes no embedding API,
 // so we run the SAME CAM++ embedding model the diarizer uses (already downloaded
-// by diarizationModels.js) ourselves through the app's onnxruntime-web: gather
+// by diarizationModels.js) ourselves through the app's ONE ORT instance
+// (backend.js loadOrtModule, never a direct onnxruntime-web import, or this
+// path silently loses voice matching whenever the runtime variant moves): gather
 // each speaker's segment audio, compute the shared 80-dim kaldi fbank
 // (app/src/fbank.js), and run the model (x=[1,T,80] -> embedding=[1,192]).
 //
@@ -12,20 +14,11 @@
 // never persisted (voiceprints are biometric).
 
 import { computeFbank, FBANK_NUM_BINS, FBANK_SAMPLE_RATE } from '../../../src/fbank.js';
+import { loadOrtModule } from '../../../src/backend.js';
 
-let _ort = null;
 let _session = null;
 let _sessionKey = null;
 
-async function getOrt() {
-  if (_ort) return _ort;
-  const m = await import('onnxruntime-web');
-  let ort = m.default || m;
-  if (!ort.env && m.ort) ort = m.ort;
-  if (!ort || !ort.env) throw new Error('onnxruntime-web unavailable for speaker embedding');
-  _ort = ort;
-  return ort;
-}
 
 async function getSession(embeddingBytes) {
   // The embedding model is fixed for a session; key on byte length (cheap) so we
@@ -33,7 +26,7 @@ async function getSession(embeddingBytes) {
   // model is small (~28 MB) and this stays off the GPU path.
   const key = `${embeddingBytes.byteLength}`;
   if (_session && _sessionKey === key) return _session;
-  const ort = await getOrt();
+  const ort = await loadOrtModule();
   _session = await ort.InferenceSession.create(embeddingBytes, { executionProviders: ['wasm'] });
   _sessionKey = key;
   return _session;
@@ -91,7 +84,7 @@ export async function embedSpeakers(pcm16k, segments, embeddingBytes, {
     bySpeaker.get(seg.speaker).push([s, e]);
   }
 
-  const ort = await getOrt();
+  const ort = await loadOrtModule();
   const session = await getSession(embeddingBytes);
   const inName = session.inputNames[0];
   const outName = session.outputNames[0];
