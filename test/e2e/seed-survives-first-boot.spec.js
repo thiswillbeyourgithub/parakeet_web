@@ -75,7 +75,15 @@ test('a seeded int8lite precision survives the reload as the selected radio', as
 
 // The flip side of the whitelist: a value this build does not know about must
 // land on int8 rather than be handed to hub.js as an unresolvable quant. 'fp16'
-// is the real case (a GPU precision, withdrawn 2026-08-23, never a WASM option).
+// is the real case: a GPU-only precision (it needs the adapter's shader-f16
+// feature) that the WASM backend can never run, because the CPU EP has no fp16
+// kernels and upcasts to fp32 at session build.
+//
+// This used to assert the fp16 radio did not EXIST, which held while fp16 was
+// withdrawn outright. It is offered again on WebGPU, and the precision list now
+// renders every row on both backends with the unrunnable ones disabled, so the
+// assertion moved to what actually protects the user: on WASM fp16 is visible
+// but not selectable, and the seeded value did not survive as the choice.
 test('an unknown saved precision falls back to int8 rather than being restored', async ({ page }) => {
   await page.goto('/');
   await seedSettings(page, { wasmEncoderQuant: 'fp16' });
@@ -86,6 +94,9 @@ test('an unknown saved precision falls back to int8 rather than being restored',
   const int8Radio = page.locator('input[name="encoderQuant"][value="int8"]');
   await int8Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
   await expect(int8Radio).toBeChecked();
-  expect(await page.locator('input[name="encoderQuant"][value="fp16"]').count(),
-    'fp16 is not a WASM precision and must not appear as a radio').toBe(0);
+  const fp16Radio = page.locator('input[name="encoderQuant"][value="fp16"]');
+  await expect(fp16Radio,
+    'fp16 has no WASM kernels, so it must not be selectable on this backend').toBeDisabled();
+  await expect(fp16Radio,
+    'the seeded GPU-only precision must not have been restored as the choice').not.toBeChecked();
 });
