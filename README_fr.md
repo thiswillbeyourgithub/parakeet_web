@@ -34,6 +34,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Réinitialiser l'application](#réinitialiser-lapplication)
 - [Débogage mobile](#débogage-mobile)
 - [Architecture](#architecture)
+- [Dépôts liés](#dépôts-liés)
 - [Journal des modifications](./CHANGELOG_fr.md)
 - [Licence](#licence)
 - [Remerciements](#remerciements)
@@ -527,6 +528,20 @@ Sans `?debug=1`, aucune surface de devtools n'est livrée à l'utilisateur.
 Pour une carte fichier par fichier de la base de code (le moteur d'inférence, l'interface,
 le serveur de signalisation, l'empaquetage Docker et la suite de tests) voir
 [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## Dépôts liés
+
+Les modèles chargés par cette application, ainsi que toute la chaîne ASR médicale française qui les produit, sont publics.
+
+| Dépôt | Ce que c'est |
+| --- | --- |
+| **Ce dépôt** | L'application navigateur documentée ici. |
+| [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | La base multilingue : l'ONNX amont re-quantifié pour la précision int8 sur les longs audios et optimisé au niveau du graphe pour la vitesse en navigateur. |
+| [Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) | Le fine-tune médical français de cette base, exporté en ONNX (fp32 / fp16 / int8 / w4a8). |
+| [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | Le jeu de données sur lequel le fine-tune a été entraîné : 601 338 clips / 3 105 h de parole médicale française synthétisée, plus un sous-ensemble PARROT réservé à l'évaluation. |
+| [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts) | La recette ouverte qui a construit ce jeu de données de bout en bout : sources textuelles, normalisation en forme parlée, client de synthèse par lots et passe de contrôle qualité par transcription et rescoring. |
+| [UltiMed-ASR-FR-v1-Voxtral](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-Voxtral) | Le conteneur TTS Voxtral qui a prononcé chaque clip du jeu de données : Dockerfile, réglages et patches vllm-omni. |
+| [UltiMed-ASR-FR-v1-NeMo_training_scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-NeMo_training_scripts) | Le fork NeMo et les configurations d'entraînement utilisés pour le fine-tune lui-même. |
 
 ## Licence
 
