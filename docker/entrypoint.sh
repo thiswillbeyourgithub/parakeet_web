@@ -163,12 +163,11 @@ _validate_csp_hosts() {
 # forever because it is part of the cache key. Defensive validation
 # matches the posture taken by F-26 / F-91 for every other
 # operator-supplied env var.
-_validate_model_repo() {
-  # Empty is fine: the bundle falls back to the default repo.
-  [ -z "$1" ] && return 0
+_validate_one_model_repo() {
   # Forbid ".." substring (parent-dir traversal) and any character
   # outside the HuggingFace repo-id alphabet (letters, digits, _ - . /).
   case "$1" in
+    '') return 1 ;;
     *..*) return 1 ;;
     *[!A-Za-z0-9._/-]*) return 1 ;;
   esac
@@ -180,6 +179,30 @@ _validate_model_repo() {
     */*) return 0 ;;
     *) return 1 ;;
   esac
+}
+# VITE_MODEL_REPO may be a COMMA-SEPARATED LIST of repo ids: the app offers
+# them in the sidebar picker and loads the first by default. Every entry is
+# validated, not just the first, because they all end up concatenated into a
+# HuggingFace URL path and an IndexedDB cache key.
+_validate_model_repo() {
+  # Empty is fine: the bundle falls back to the default repo.
+  [ -z "$1" ] && return 0
+  # Reject the shapes a naive split would silently swallow: a leading,
+  # trailing or doubled comma yields an empty entry, which is a typo, not a
+  # repo. Checked here because the loop below cannot see an empty field.
+  case "$1" in
+    ,*|*,|*,,*) return 1 ;;
+  esac
+  _vmr_old_ifs="$IFS"
+  IFS=','
+  for _vmr_entry in $1; do
+    if ! _validate_one_model_repo "$_vmr_entry"; then
+      IFS="$_vmr_old_ifs"
+      return 1
+    fi
+  done
+  IFS="$_vmr_old_ifs"
+  return 0
 }
 _validate_model_revision() {
   # Empty means "use models.js per-model pin", which is the documented
@@ -202,7 +225,8 @@ _validate_model_source() {
 
 if ! _validate_model_repo "${VITE_MODEL_REPO:-}"; then
   echo "[entrypoint] ERROR: VITE_MODEL_REPO has an unsupported shape: ${VITE_MODEL_REPO}"
-  echo "[entrypoint] Expected: owner/name (letters, digits, _ - . only)."
+  echo "[entrypoint] Expected: owner/name (letters, digits, _ - . only),"
+  echo "[entrypoint] or a comma-separated list of those to offer a model picker."
   exit 1
 fi
 if ! _validate_model_revision "${VITE_MODEL_REVISION:-}"; then
@@ -280,20 +304,59 @@ else
   # one or more HuggingFace-style repo folders (files under <repoId>/, e.g. what
   # `hf download` leaves); when only that is present, descend into it so Caddy
   # (/models/*), the boost prebuild, and the app's probes all see the repo root.
-  _LOCAL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}"
-  if [ ! -f "${LOCAL_MODEL_PATH}/vocab.txt" ] && [ -f "${LOCAL_MODEL_PATH}/${_LOCAL_REPO}/vocab.txt" ]; then
+  _MODEL_REPOS="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}"
+  _LOCAL_REPO="${_MODEL_REPOS%%,*}"   # the default repo: first entry of the list
+  case "${_MODEL_REPOS}" in
+    *,*) _MULTI_REPO=1 ;;
+    *)   _MULTI_REPO=0 ;;
+  esac
+
+  # With ONE repo configured, a nested mount is flattened by descending into it,
+  # which is the long-standing contract and what the app's flat probe expects.
+  #
+  # With SEVERAL, descending would be actively wrong: it would make Caddy serve
+  # one repo at /models/ and hide the rest, and since hub.js falls back to the
+  # flat base for a repo with no subfolder, every picker entry would then load
+  # the descended repo's weights under its own name. So the parent stays the
+  # served root and each repo is reached at /models/<repoId>/.
+  if [ "${_MULTI_REPO}" = "0" ] \
+     && [ ! -f "${LOCAL_MODEL_PATH}/vocab.txt" ] \
+     && [ -f "${LOCAL_MODEL_PATH}/${_LOCAL_REPO}/vocab.txt" ]; then
     echo "[entrypoint] Fallback model found nested under ${_LOCAL_REPO}/; using ${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
     LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
     export LOCAL_MODEL_PATH
   fi
-  if [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
-    echo "[entrypoint] Fallback model present at ${LOCAL_MODEL_PATH}"
-  else
+
+  # Report per repo which ones this mount can actually serve. A repo is served
+  # when its own subfolder has vocab.txt, or (for the default repo only) when
+  # the mount is the flat single-repo layout. A repo that is missing is not
+  # fatal: the app still offers it and downloads it from HuggingFace, which is
+  # exactly what happens on an instance with no local mirror at all. Only a
+  # mount that can serve NOTHING is an operator error worth refusing to boot on.
+  _SERVED_ANY=0
+  _OLD_IFS="$IFS"
+  IFS=','
+  for _repo in ${_MODEL_REPOS}; do
+    if [ -f "${LOCAL_MODEL_PATH}/${_repo}/vocab.txt" ]; then
+      echo "[entrypoint] Fallback model present for ${_repo} at ${LOCAL_MODEL_PATH}/${_repo}"
+      _SERVED_ANY=1
+    elif [ "${_repo}" = "${_LOCAL_REPO}" ] && [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
+      echo "[entrypoint] Fallback model present for ${_repo} at ${LOCAL_MODEL_PATH} (flat layout)"
+      _SERVED_ANY=1
+    else
+      echo "[entrypoint] WARNING: no local weights for ${_repo}; it will be downloaded from HuggingFace."
+      echo "[entrypoint]          Put them at ${LOCAL_MODEL_PATH}/${_repo}/ to serve them from here."
+    fi
+  done
+  IFS="$_OLD_IFS"
+
+  if [ "${_SERVED_ANY}" = "0" ]; then
     echo "[entrypoint] ERROR: fallback model missing at ${LOCAL_MODEL_PATH}."
     echo "[entrypoint] Bind-mount a folder of ONNX files into the container at"
     echo "[entrypoint] ${LOCAL_MODEL_PATH} (the repo root: vocab.txt directly"
     echo "[entrypoint] inside, weights either in their precision folders or flat"
-    echo "[entrypoint] beside it), or nested under ${_LOCAL_REPO}/."
+    echo "[entrypoint] beside it), or nested under <repoId>/ for each of:"
+    echo "[entrypoint]   ${_MODEL_REPOS}"
     echo "[entrypoint] Pre-populate the host folder with e.g.:"
     echo "[entrypoint]   hf download ${_LOCAL_REPO} \\"
     echo "[entrypoint]     --local-dir /some/host/path"
