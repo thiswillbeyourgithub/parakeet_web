@@ -79,6 +79,8 @@ services:
       - VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID}
       - VITE_ANALYTICS_SRI=${VITE_ANALYTICS_SRI:-}
       - VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-true}
+      # One repo id, or several comma-separated to offer a sidebar model
+      # picker (first entry is the default). See docker/env.example.
       - VITE_MODEL_REPO=${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}
       - VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-}
       # Where to fetch model weights from:
