@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
-import { parseModelRepos, shortRepoLabel, resolveModelRepo } from './lib/modelRepos.js';
+import { parseModelRepos, shortRepoLabel, matchModelRepo } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -605,6 +605,23 @@ const URL_MODEL = typeof window !== 'undefined'
   ? new URLSearchParams(window.location.search).get('model')
   : null;
 
+// The repos this instance offers, and which one (if any) the URL asks for.
+// Resolved at module scope, next to the param itself, because the settings
+// restore has FOUR paths that boot without reading a saved value (?reset, a
+// version mismatch, the watchdog, and the catch), and a first-time visitor
+// takes the version-mismatch one. Deciding this inside the full restore meant
+// exactly the people a shared ?model= link is FOR -- someone opening the app
+// for the first time -- silently got the default model instead.
+// CONFIG is already frozen at import (config.js reads window.__CONFIG__ at
+// module load), so this sees the same value the component would.
+const MODEL_REPOS = parseModelRepos(CONFIG.VITE_MODEL_REPO);
+const URL_MODEL_REPO = matchModelRepo(URL_MODEL, MODEL_REPOS);
+if (URL_MODEL && !URL_MODEL_REPO) {
+  console.warn(`[App] ?model=${URL_MODEL} matched none of the offered repos; ignoring it.`);
+} else if (URL_MODEL_REPO) {
+  console.log(`[App] ?model=${URL_MODEL} -> ${URL_MODEL_REPO} (this visit only, not saved)`);
+}
+
 // Debounce (ms) before rebuilding the boosting trie after the phrase text
 // changes. Pasting or fast-typing a large list (10k-100k phrases) would
 // otherwise trigger an encode per keystroke; we wait for the input to settle.
@@ -756,11 +773,12 @@ export default function App() {
   // list; a single id (the historical value) simply yields a one-entry list and
   // the picker hides itself. Order matters: the first entry is the default for
   // a visitor who has never chosen.
-  const modelRepos = useMemo(() => parseModelRepos(CONFIG.VITE_MODEL_REPO), []);
-  // The repo actually loaded. Starts on the operator default; the settings
-  // restore below applies the saved pick and then the ?model= override, which
-  // beats both (see MODEL_REPO_FROM_URL).
-  const [repoId, setRepoId] = useState(modelRepos[0]);
+  const modelRepos = MODEL_REPOS;
+  // The repo actually loaded. Seeded with the URL's choice when it made one
+  // (so it holds on EVERY boot path, including a first visit), else the
+  // operator default; the settings restore below then applies a saved pick,
+  // but only when the URL did not already decide.
+  const [repoId, setRepoId] = useState(URL_MODEL_REPO || MODEL_REPOS[0]);
   // Where model weights are served from:
   //   'hf'    : HuggingFace only (default)
   //   'local' : instance-served /models/ only (skip HF entirely)
@@ -1123,7 +1141,7 @@ export default function App() {
   // visitor. It suppresses persistence (a link must not overwrite their own
   // pick) and is cleared the moment they choose in the sidebar, which makes
   // that choice theirs and saveable again.
-  const modelRepoFromUrlRef = useRef(false);
+  const modelRepoFromUrlRef = useRef(!!URL_MODEL_REPO);
   const armModelReloadIfLoaded = () => {
     if (modelRef.current) reloadModelOnParamChangeRef.current = true;
   };
@@ -1729,21 +1747,13 @@ export default function App() {
         ]);
         if (booted) return; // watchdog won while we awaited; skip the stale restore
 
-        // Model repo: ?model= beats the saved pick beats the operator default.
-        // `fromUrl` is remembered so the persistence effect below does NOT
-        // write a link-driven choice over what this visitor actually chose.
-        const resolvedRepo = resolveModelRepo({
-          repos: modelRepos,
-          urlParam: URL_MODEL,
-          saved: savedModelRepo,
-        });
-        modelRepoFromUrlRef.current = resolvedRepo.fromUrl;
-        if (resolvedRepo.fromUrl) {
-          console.log(`[App] ?model=${URL_MODEL} -> ${resolvedRepo.repoId} (this visit only, not saved)`);
-        } else if (URL_MODEL) {
-          console.warn(`[App] ?model=${URL_MODEL} matched none of the offered repos; keeping ${resolvedRepo.repoId}`);
+        // Model repo: the URL already decided at module scope if it had an
+        // opinion, and it outranks the saved pick, so only fill in the saved
+        // one otherwise. A saved repo the operator has since removed from
+        // VITE_MODEL_REPO is discarded rather than loaded.
+        if (!URL_MODEL_REPO && savedModelRepo && modelRepos.includes(savedModelRepo)) {
+          setRepoId(savedModelRepo);
         }
-        setRepoId(resolvedRepo.repoId);
 
         // A saved value means the user previously picked a backend explicitly;
         // honour it (subject to the WebGPU-availability override below). When
