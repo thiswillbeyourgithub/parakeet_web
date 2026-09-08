@@ -7236,7 +7236,6 @@ export default function App() {
               {modelSource !== 'local'
                 ? <a href={`https://huggingface.co/${repoId}`} target="_blank" rel="noopener noreferrer">{repoId}</a>
                 : repoId}
-              {' '}<span style={{ fontSize: '0.9em', color: 'var(--text-subtle)' }}>(nemo128)</span>
             </p>
 
             <div className="setting-row">
@@ -7626,7 +7625,7 @@ export default function App() {
                     />
                     {row.backend === 'wasm' ? t('wasmCpu') : t('webgpu')} / {row.quant}
                     <span style={{ color: 'var(--text-subtle)' }}>
-                      {row.isCurrent ? ` (${t('benchmarkAlreadyDownloaded')})` : ` (~${row.downloadMB} MB)`}
+                      {row.cached ? ` (${t('benchmarkAlreadyDownloaded')})` : ` (~${row.downloadMB} MB)`}
                     </span>
                   </label>
                 ))}
@@ -7670,7 +7669,7 @@ export default function App() {
 
             {(() => {
               const selected = benchmarkPlan.filter(c => benchmarkSelected[c.id]);
-              const mb = estimatedDownloadMB(selected, benchmarkPlan.filter(c => c.isCurrent).map(c => c.id));
+              const mb = estimatedDownloadMB(selected, benchmarkPlan.filter(c => c.cached).map(c => c.id));
               return (
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-subtle)', margin: '0.25rem 0 0.5rem' }}>
                   {t('benchmarkEstimatedDownload')}: {mb >= 1000 ? `~${(mb / 1000).toFixed(1)} GB` : `~${mb} MB`}
