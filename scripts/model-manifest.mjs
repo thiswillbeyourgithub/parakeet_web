@@ -123,9 +123,12 @@ export async function writeManifest(dir, outDir = dir) {
  */
 export async function writeMirrorManifests(mirror, repos, outMirror = mirror) {
   const written = [];
+  const absent = [];
   const describe = async (repo, rel) => {
     const dir = rel ? join(mirror, rel) : mirror;
-    if (!existsSync(join(dir, 'vocab.txt'))) return;
+    // Distinguished from a write failure on purpose: one means the deployment
+    // has no such weights, the other that it has them and could not say so.
+    if (!existsSync(join(dir, 'vocab.txt'))) { absent.push(repo); return; }
     const outDir = rel ? join(outMirror, rel) : outMirror;
     try { mkdirSync(outDir, { recursive: true }); } catch { /* reported by writeManifest */ }
     const entries = await writeManifest(dir, outDir);
@@ -134,7 +137,18 @@ export async function writeMirrorManifests(mirror, repos, outMirror = mirror) {
   for (const repo of repos) await describe(repo, repo.split('/').join(sep));
   // The flat layout, which is the documented single-repo contract: only when no
   // repo subfolder answered, so a shared mount never also declares a root repo.
-  if (written.length === 0) await describe(repos[0] || '', '');
+  if (written.length === 0) {
+    absent.length = 0;
+    await describe(repos[0] || '', '');
+  } else if (absent.length > 0) {
+    // A configured repo with nothing on the mount is not an error anywhere in
+    // the stack: the app just fetches it from HuggingFace, and a visitor sees a
+    // slow first load rather than a failure. Which makes it exactly the kind of
+    // thing a deploy ships by accident and nobody notices, so say it out loud
+    // here, where the repo list and the mount are both in hand.
+    console.warn(`[model-manifest] WARNING: nothing on this mount serves ${absent.join(', ')}`
+      + ' (configured, but no vocab.txt under that folder). The app will fetch it from HuggingFace instead.');
+  }
   return written;
 }
 
