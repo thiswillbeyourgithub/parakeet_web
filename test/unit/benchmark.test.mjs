@@ -170,6 +170,39 @@ describe('planBenchmark', () => {
     assert.equal(own.find(r => r.id === 'wasm:fp32').defaultSelected, true);
   });
 
+  // What a row costs to download is a property of the PRECISION, not of the
+  // backend that runs it: w4a8 on the GPU reads the same encoder file as w4a8 on
+  // the CPU. The sidebar used to key "already downloaded" off `isCurrent`, so a
+  // visitor on WASM w4a8 was told the GPU w4a8 row would cost them another
+  // 610 MB, which was simply untrue and is the kind of number that decides
+  // whether someone presses Run.
+  test('a precision the visitor already runs reads as cached on BOTH backends', () => {
+    const plan = planBenchmark({ webgpuAvailable: true, currentBackend: 'wasm', currentWasmQuant: 'w4a8' });
+    assert.deepEqual(plan.filter(r => r.cached).map(r => r.id).sort(),
+      ['wasm:w4a8', 'webgpu-hybrid:w4a8']);
+    // ...while `isCurrent` still means the one combination they are actually on,
+    // which is what the default selection and the final ordering are keyed to.
+    assert.deepEqual(plan.filter(r => r.isCurrent).map(r => r.id), ['wasm:w4a8']);
+    assert.equal(plan[plan.length - 1].id, 'wasm:w4a8');
+    // Both cached rows sit at the end, so the shared file is fetched once and
+    // the run still finishes on the weights the visitor arrived with.
+    assert.equal(plan[plan.length - 2].id, 'webgpu-hybrid:w4a8');
+  });
+
+  test('a precision on one backend only is cached on that one alone', () => {
+    // The rule is "same file", not "same name": int8 exists on WASM only, so
+    // there is no second row for it to vouch for.
+    const plan = planBenchmark({ webgpuAvailable: true, currentBackend: 'wasm', currentWasmQuant: 'int8' });
+    assert.deepEqual(plan.filter(r => r.cached).map(r => r.id), ['wasm:int8']);
+  });
+
+  test('a precision selected on both backends is downloaded once, not twice', () => {
+    const plan = planBenchmark({ webgpuAvailable: true });
+    const bothFp32 = plan.filter(r => r.quant === 'fp32');
+    assert.equal(bothFp32.length, 2, 'fp32 runs on both backends');
+    assert.equal(estimatedDownloadMB(bothFp32), QUANT_DOWNLOAD_MB.fp32);
+  });
+
   test('estimatedDownloadMB skips combinations already on disk', () => {
     const plan = planBenchmark({});
     const all = estimatedDownloadMB(plan);
