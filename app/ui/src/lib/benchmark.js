@@ -75,7 +75,9 @@ function comboId(backend, quant) {
 // The visitor's currently selected combination is sorted LAST so the run ends
 // on the model they already had, which is the one the app keeps cached (the
 // model cache holds a single model at a time, so any other ordering forces an
-// extra re-download once the benchmark is over).
+// extra re-download once the benchmark is over). Rows sharing that PRECISION on
+// the other backend go with it: they read the very same encoder file, so they
+// are free to run and belong next to it rather than split across the list.
 export function planBenchmark({
   webgpuAvailable = false,
   webgpuDisabled = false,
@@ -124,6 +126,13 @@ export function planBenchmark({
       downloadMB,
       heavy,
       isCurrent,
+      // Which BYTES this row needs is a property of the precision alone: w4a8 on
+      // the GPU reads the same encoder file as w4a8 on the CPU, and so does
+      // fp32. So a row whose precision the visitor already runs costs no
+      // download, whichever backend it names. Keyed apart from `isCurrent`
+      // because that one still means "the combination they are on", which is
+      // what the default selection and the ordering are about.
+      cached: c.quant === currentQuant,
       // Heavy and alternative rows stay opt-in unless they are the visitor's own
       // choice; the model is then already cached, so re-selecting it costs
       // nothing. Adding a row must never change what a default run downloads.
@@ -131,16 +140,37 @@ export function planBenchmark({
     };
   });
 
-  // Stable order, current combination last.
-  return [...rows.filter((r) => !r.isCurrent), ...rows.filter((r) => r.isCurrent)];
+  // Stable order, the precision the visitor already has last, and their own
+  // combination the very last of those. The model cache holds ONE model at a
+  // time, so any other ordering leaves the benchmark finished on weights they
+  // did not arrive with and forces a re-download. Grouping by PRECISION also
+  // keeps both backends of a shared one adjacent, rather than running one early
+  // and one last and paying for the same file twice.
+  const cached = rows.filter((r) => r.cached);
+  return [
+    ...rows.filter((r) => !r.cached),
+    ...cached.filter((r) => !r.isCurrent),
+    ...cached.filter((r) => r.isCurrent),
+  ];
 }
 
 // Total bytes a selection is expected to pull. `cachedIds` are combinations
-// whose weights are already on disk (currently only the visitor's own, which
-// the app knows it loaded); they cost nothing.
+// whose weights are already on disk (the visitor's own precision, on either
+// backend); they cost nothing.
+//
+// A precision is counted ONCE however many backends it is selected on: the
+// download is a property of the file, and w4a8 on the GPU is byte for byte the
+// w4a8 the CPU reads. Summing per row instead quoted 4.7 GB for the two fp32
+// rows, i.e. twice the real cost, in the one place the number exists to let the
+// visitor decide whether to press Run.
 export function estimatedDownloadMB(combos, cachedIds = []) {
   const cached = new Set(cachedIds);
-  return combos.reduce((sum, c) => sum + (cached.has(c.id) ? 0 : (c.downloadMB || 0)), 0);
+  const counted = new Set();
+  return combos.reduce((sum, c) => {
+    if (cached.has(c.id) || counted.has(c.quant)) return sum;
+    counted.add(c.quant);
+    return sum + (c.downloadMB || 0);
+  }, 0);
 }
 
 // Repeat `pcm` end to end until it covers at least targetSec. Used for the
