@@ -17,9 +17,18 @@
 //
 // Built with Claude Code.
 
+import { MANIFEST_FILE } from '../../scripts/model-manifest.mjs';
+
 // The local /models mirror served by serve.mjs, anchored to the loopback origin
 // so it can never match a huggingface.co URL that happens to contain /models/.
 const LOCAL_MODELS_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/models\//;
+
+// Whether a path names an encoder only a GPU can run. Written to match a full
+// URL and a bare repo-relative manifest entry alike (hence the `^` alternative
+// on the directory), because both spellings of the same file have to disappear
+// together for routeLocalMirrorWithoutGpuEncoders to be honest.
+const GPU_ENCODER_RE = /(?:^|\/)(?:fp32|sharded)\/|encoder-model\.onnx\.data\.\d+/;
+const isGpuEncoderPath = (path) => GPU_ENCODER_RE.test(path);
 
 /** Serve `files` as the repo's HuggingFace file listing (the /api/... endpoints). */
 export async function routeHfRepoListing(page, files) {
@@ -57,9 +66,23 @@ export async function routeNoLocalMirror(page) {
  * the fallback.
  */
 export async function routeLocalMirrorWithoutGpuEncoders(page) {
-  await page.route(LOCAL_MODELS_RE, (route) => {
+  await page.route(LOCAL_MODELS_RE, async (route) => {
     const url = route.request().url();
-    const isGpuEncoder = /\/(?:fp32|sharded)\/|encoder-model\.onnx\.data\.\d+/.test(url);
-    return isGpuEncoder ? route.fulfill({ status: 404, body: 'not found' }) : route.continue();
+    // A mirror that ships model-manifest.json is BELIEVED over any probing
+    // (hub.js reads it verbatim and never HEADs behind it), so 404-ing the
+    // shard files is no longer enough on its own: the manifest would still
+    // announce them, resolveModelQuant would find a servable fp32 shard set,
+    // and the spec's premise (a source with no GPU-runnable encoder) would
+    // quietly evaporate. That is exactly how this spec broke the day the
+    // maintainer mirror grew a manifest. So describe the mirror the same way
+    // through both discovery paths: hand back its own listing with the GPU
+    // encoders removed.
+    if (url.endsWith(`/${MANIFEST_FILE}`)) {
+      const res = await route.fetch().catch(() => null);
+      const files = res && res.ok() ? await res.json().catch(() => null) : null;
+      if (!Array.isArray(files)) return route.fulfill({ status: 404, body: 'not found' });
+      return route.fulfill({ json: files.filter((f) => !isGpuEncoderPath(f)) });
+    }
+    return isGpuEncoderPath(url) ? route.fulfill({ status: 404, body: 'not found' }) : route.continue();
   });
 }
