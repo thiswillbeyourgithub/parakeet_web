@@ -1239,7 +1239,23 @@ export function parseEncoderShards(repoFiles, encoderName = 'encoder-model.onnx'
     .map((f) => { const m = typeof f === 'string' ? f.match(shardRe) : null; return m ? { dir: m[1] || '', base: m[2] } : null; })
     .filter(Boolean)
     .sort((a, b) => a.base.localeCompare(b.base));
-  return { shards: entries.map((e) => e.base), subdir: entries.length ? entries[0].dir : '' };
+  if (entries.length === 0) return { shards: [], subdir: '' };
+  // A repo may carry a whole NESTED SUB-REPO (the optimized repo keeps a second
+  // complete model under istupakov_smoothquant/, precision folders and all), so
+  // the same shard basename can appear in more than one directory. Those are
+  // different weights: mixing them, or fetching a basename twice because two
+  // directories offered it, assembles a corrupt encoder from a doubled
+  // download. So pick ONE directory and take only its shards. The preference is
+  // candidatePaths' own order (the layout dir, the flat root, then sharded/),
+  // which is what every other resolution here uses; a directory none of them
+  // name loses to one they do, and otherwise the first seen wins.
+  const dirsSeen = [...new Set(entries.map((e) => e.dir))];
+  const preferred = candidatePaths(encoderName)
+    .map((p) => p.slice(0, p.lastIndexOf('/') + 1))
+    .find((d) => dirsSeen.includes(d));
+  const subdir = preferred !== undefined ? preferred : dirsSeen[0];
+  const inDir = entries.filter((e) => e.dir === subdir);
+  return { shards: [...new Set(inDir.map((e) => e.base))], subdir };
 }
 
 // Whether the listing carries a loadable fp32 shard set
