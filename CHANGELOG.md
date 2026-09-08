@@ -20,6 +20,12 @@ A link can also pin a model, with `?model=` and a loose match against the offere
 
 For self-hosters serving weights from their own instance, several models are served by mounting the parent folder with one subfolder per repo. A listed model with no local copy is only a warning at startup; it is fetched from HuggingFace exactly as it would be with no local mirror at all.
 
+### Fixed: a repo with a second model inside it could break the fp32 download
+
+The optimized model repository carries a complete second model in a subfolder, and the fp32 encoder is not one file but a set of numbered shards. Because both copies use the same shard names, the loader was seeing each shard twice and downloading it twice: about 4.8 GB fetched instead of 2.4, assembled into an encoder that could not load. It now picks one folder and takes only its shards.
+
+The same reorganisation had moved the lighter int8 encoder into that subfolder. The app itself was unaffected, because it asks the repository where its files are rather than assuming, but the script that prepares the test models did assume, so it was fetching a path that no longer exists. It now asks too. Nothing about which models are offered changes; the point is that a repository can rearrange itself without the app losing track of the weights, which is also what keeps the upstream layout usable.
+
 ### Fixed: a local mirror could serve one model's weights under another's name
 
 The loader checked a locally-served mirror for a flat set of model files before checking for the requested repo by name. With one model configured that is harmless and is the documented layout. With a choice of models it was not: on a mirror holding one model flat and others in subfolders, every model resolved to the flat one, so selecting the second model loaded the first model's weights under the second model's name. Nothing about that failure was visible, since the wrong model still transcribes fluently. The mirror is now asked for the repo by name first, and the flat layout only answers for a repo it has no subfolder for.
