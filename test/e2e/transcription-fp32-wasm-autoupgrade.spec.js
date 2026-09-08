@@ -1,6 +1,7 @@
 // Tier-3 E2E for the "requested quant not on HuggingFace, but the local /models
 // mirror has it" auto-upgrade. The user picks WASM fp32, but the configured HF
-// repo (istupakov) ships only the single 2.4 GB fp32 sidecar (no <2 GB shards),
+// repo ships only the single 2.4 GB fp32 sidecar (no <2 GB shards, the real
+// upstream istupakov file set, routed in below),
 // so resolveModelQuant would downgrade to the int8 pin. hub.js, given
 // localUpgradeBaseUrl='/models' (App passes it on every HF attempt), probes the
 // local mirror BEFORE downloading and, finding the fp32 shards there, switches
@@ -10,7 +11,11 @@
 // this spec leaves the source at the default 'hf' and ROUTES the HF file-listing
 // API to the real istupakov file set (no shards). That makes the downgrade
 // happen for real, then proves the local auto-upgrade kicks in, all without
-// touching the network. The shards still come from serve.mjs, which resolves a
+// touching the network. The listing route answers for whatever repo is
+// configured, so the shard-less HF side and the sharded local side are pinned
+// independently: the repo NAME has to be one the local mirror can serve, since
+// hub.js asks the mirror for a repo by name and a mirror holding several repos
+// has no flat tree to fall back to. The shards still come from serve.mjs, which resolves a
 // bare shard name through app/src/modelLayout.js (MODEL_DIR/fp32/, the flat root,
 // then MODEL_DIR/sharded/ on an older mirror), so the spec self-skips when they
 // are absent (run fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py first).
@@ -66,12 +71,12 @@ test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirr
   });
 
   // Stay on the default 'hf' source so App passes localUpgradeBaseUrl='/models'.
-  await page.addInitScript(() => {
+  await page.addInitScript((repo) => {
     window.__CONFIG__ = {
       VITE_MODEL_SOURCE: 'hf',
-      VITE_MODEL_REPO: 'istupakov/parakeet-tdt-0.6b-v3-onnx',
+      VITE_MODEL_REPO: repo,
     };
-  });
+  }, ASR_REPO);
 
   // Route the HF listing API to the real (shard-less) istupakov file set so the
   // downgrade is genuine. The auto-upgrade switches the actual WEIGHT load to
