@@ -567,7 +567,7 @@ Les modèles chargés par cette application, ainsi que toute la chaîne ASR méd
 
 | Dépôt | Ce que c'est |
 | --- | --- |
-| [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | Le jeu de données sur lequel le fine-tune a été entraîné : 601 338 clips / 3 105 h de parole médicale française synthétisée, plus un sous-ensemble PARROT réservé à l'évaluation. |
+| [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | Le jeu de données sur lequel le fine-tune a été entraîné : 601 338 clips / 3 105 h de parole médicale française synthétisée, plus un sous-ensemble [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) réservé à l'évaluation. |
 | [Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) | Le fine-tune médical français entraîné sur ce jeu de données, exporté en ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | La base multilingue dont dérive le fine-tune : l'ONNX amont re-quantifié pour la précision int8 sur les longs audios et optimisé au niveau du graphe pour la vitesse en navigateur. |
 | [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts) | La recette ouverte qui a construit ce jeu de données de bout en bout : sources textuelles, normalisation en forme parlée, client de synthèse par lots et passe de contrôle qualité par transcription et rescoring. |
