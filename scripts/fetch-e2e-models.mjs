@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 
 import { basenameOf, findRepoFile } from '../app/src/modelLayout.js';
 import { listRepoFiles } from '../app/src/hub.js';
+import { writeMirrorManifests, MANIFEST_FILE } from './model-manifest.mjs';
 
 // Each entry is a { repo, file } HuggingFace descriptor, where `file` is the
 // IN-REPO path: it is both what gets requested from HF and where the file lands
@@ -191,6 +192,12 @@ async function main() {
       await rm(`${destPath(MODEL_DIR, entry.repo, entry.file)}.partial`, { force: true });
       throw e;
     }
+  }
+  // Describe the mirror so the app reads a listing instead of guessing at
+  // paths, exactly as it does against HuggingFace. Written last, from what is
+  // actually on disk, so it can never claim a file the run failed to fetch.
+  for (const { repo, entries } of await writeMirrorManifests(MODEL_DIR, [...new Set(MODELS.map((m) => m.repo))])) {
+    console.log(`[e2e:models] wrote ${repo}/${MANIFEST_FILE} (${entries} entries)`);
   }
   console.log('[e2e:models] done.');
 }
