@@ -1112,7 +1112,58 @@ const LOCAL_PROBE_CANDIDATES = [
  * @param {string} baseUrl Local base URL serving the model files (e.g. '/models').
  * @returns {Promise<string[]>} Repo-relative paths present under baseUrl (subset of the probed candidates).
  */
+/**
+ * Filename a local mirror may use to declare its OWN file list.
+ *
+ * A HuggingFace repo can be listed over the API; a folder behind a static file
+ * server cannot, which is why everything below is HEAD-probing. Probing can only
+ * ever find paths something already predicted, so a repo that files a weight
+ * somewhere new is invisible locally while the app resolves it fine from HF. The
+ * concrete case: the optimized repo keeps a complete second model under
+ * `istupakov_smoothquant/` and moved the lite int8 encoder into it, so an
+ * operator who mirrors that repo and mounts it serves a lite encoder no probe
+ * list will ever name.
+ *
+ * A manifest closes that for good: one small JSON array of repo-relative paths
+ * at the repo root, which is exactly the shape the HF listing already has, so
+ * everything downstream treats the two sources identically. Writing it is the
+ * mirror's job (`scripts/model-manifest.mjs`, run by the CI fetch and by the
+ * container entrypoint at boot); a mirror without one keeps probing and behaves
+ * exactly as before.
+ */
+export const LOCAL_MANIFEST_FILE = 'model-manifest.json';
+
+// A manifest is a listing, not a config file, so anything malformed is simply
+// not a manifest: fall through to probing rather than failing a load over it.
+// The static server the mirror sits behind may also answer a missing file with
+// an SPA index.html at 200, which is why the parse has to be guarded rather
+// than trusted after an `ok` response.
+const MAX_MANIFEST_ENTRIES = 20000;
+async function readLocalManifest(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl}/${LOCAL_MANIFEST_FILE}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!Array.isArray(json) || json.length === 0 || json.length > MAX_MANIFEST_ENTRIES) return null;
+    // Same filter the HF listing gets: a path that is not safe to fetch or cache
+    // does not become one because a mirror wrote it down.
+    const files = json.filter((f) => typeof f === 'string' && isSafeRepoPath(f));
+    if (files.length === 0) return null;
+    if (files.length !== json.length) {
+      console.warn(`[Hub] ${baseUrl}/${LOCAL_MANIFEST_FILE}: dropped ${json.length - files.length} entry(ies) with unsafe filenames`);
+    }
+    return files;
+  } catch { return null; }
+}
+
 export async function listLocalRepoFiles(baseUrl) {
+  // The manifest is authoritative when present: it is the mirror describing
+  // itself, and unlike the probe list it can name a directory nothing predicted.
+  const manifest = await readLocalManifest(baseUrl);
+  if (manifest) {
+    console.log(`[Hub] ${baseUrl}: using ${LOCAL_MANIFEST_FILE} (${manifest.length} entries) instead of probing`);
+    return manifest;
+  }
   const reachable = async (rel) => {
     try {
       const res = await fetch(`${baseUrl}/${rel}`, { method: 'HEAD' });
