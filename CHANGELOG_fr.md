@@ -20,6 +20,12 @@ Un lien peut aussi imposer un modèle, avec `?model=` et une correspondance soup
 
 Pour ceux qui hébergent eux-mêmes les poids sur leur instance, on sert plusieurs modèles en montant le dossier parent avec un sous-dossier par dépôt. Un modèle listé sans copie locale ne produit qu'un avertissement au démarrage ; il est récupéré depuis HuggingFace exactement comme s'il n'existait aucun miroir local.
 
+### Un miroir auto-hébergé indique désormais à l'application ce qu'il contient
+
+Une instance servant sa propre copie des poids avait un angle mort. Un dossier derrière un serveur web ne peut pas être listé : l'application vérifiait donc la poignée de dispositions qu'elle connaît en espérant que l'une corresponde. Cela couvre toutes les dispositions documentées et rien d'autre, si bien qu'un dépôt de modèle rangeant une variante à un endroit inhabituel se téléchargeait très bien depuis HuggingFace tout en apparaissant indisponible depuis un miroir local, sans rien pour expliquer la différence.
+
+Le conteneur écrit désormais, à chaque démarrage, une petite liste de ce que contient réellement le dossier monté, et la sert à côté des poids. Il n'y a rien à configurer ni à tenir à jour : elle est générée à partir du dossier lui-même, elle ne peut donc pas annoncer un fichier absent, et elle est réécrite à chaque démarrage, elle ne peut donc pas devenir périmée. Elle va dans un dossier temporaire à l'intérieur du conteneur plutôt que dans le montage : monter les modèles en lecture seule fonctionne donc toujours. Si elle ne peut pas être écrite, l'application retombe sur le comportement précédent, raison pour laquelle une instance qui met à jour sans rien changer ne voit aucune différence.
+
 ### Corrigé : un dépôt contenant un second modèle pouvait casser le téléchargement fp32
 
 Le dépôt de modèle optimisé contient un second modèle complet dans un sous-dossier, et l'encodeur fp32 n'est pas un fichier unique mais un ensemble de fragments numérotés. Les deux copies portant les mêmes noms de fragments, le chargeur voyait chaque fragment deux fois et le téléchargeait deux fois : environ 4,8 Go récupérés au lieu de 2,4, assemblés en un encodeur impossible à charger. Il choisit désormais un seul dossier et ne prend que ses fragments.
