@@ -184,6 +184,12 @@ COPY --chown=parakeet:parakeet docker/prebuild-boost.mjs /opt/parakeet/docker/pr
 # staleness rule cannot drift between the two.
 COPY --chown=parakeet:parakeet scripts/precompress.mjs /opt/parakeet/scripts/precompress.mjs
 
+# Mirror manifest generator, run at boot over the mounted model folder so the
+# app reads a listing instead of HEAD-probing for paths it can only guess at
+# (see entrypoint.sh and scripts/model-manifest.mjs). Same file the CI model
+# fetch runs, so the two mirrors cannot describe themselves differently.
+COPY --chown=parakeet:parakeet scripts/model-manifest.mjs /opt/parakeet/scripts/model-manifest.mjs
+
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

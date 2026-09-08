@@ -33,6 +33,11 @@ services:
       # Caddy also runs as UID 1000 and writes into /config/caddy + /data/caddy.
       - /var/regex:uid=1000,gid=1000,mode=0700
       - /var/boost:uid=1000,gid=1000,mode=0700
+      # The model mount is read-only by default, so the file list the entrypoint
+      # generates for it (scripts/model-manifest.mjs, served by Caddy under
+      # /models/) is written here instead. Without it the app falls back to
+      # HEAD-probing, which cannot find a weight the repo files somewhere new.
+      - /var/model-manifests:uid=1000,gid=1000,mode=0700
       - /run/config:uid=1000,gid=1000,mode=0700
       - /config/caddy:uid=1000,gid=1000,mode=0700
       - /data/caddy:uid=1000,gid=1000,mode=0700

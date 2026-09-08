@@ -418,6 +418,23 @@ with no local weights is only a warning at startup: it downloads from
 HuggingFace like it would with no mirror at all. The boot only fails when
 none of them can be served locally.
 
+**How the app finds the weights in your folder.** A folder behind a web server
+cannot be listed, so the app would otherwise have to guess: it checks the
+handful of layouts it knows (`int8/`, `fp32/`, flat at the root, and a few
+older spellings). That covers every layout documented here and nothing else, so
+a repo that keeps a build somewhere unusual would load fine from HuggingFace
+and read as unavailable from your mirror.
+
+To remove the guessing, the container writes a small `model-manifest.json` at
+every boot listing what your folder actually contains, and serves it alongside
+the weights. Nothing to configure: it is generated from the folder itself, so
+it cannot describe something you do not have, and it is rewritten each start,
+so it cannot go stale. It is written to a temporary folder inside the
+container, not into your mount, so mounting the models read-only is still fine.
+If it cannot be written you get a warning and the app falls back to the
+guessing above, which is what every mirror did before.
+
+
 Step 4 writes a `<file>.zst` next to each ONNX file, which Caddy then
 serves with `Content-Encoding: zstd`. It takes the int8 encoder from 841 MB
 to 643 MB (27% less to download), and the browser decompresses it natively
