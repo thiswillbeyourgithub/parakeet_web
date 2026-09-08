@@ -185,6 +185,11 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'int8-lite/encoder-model.int8.lite.onnx',
       'int8/decoder_joint-model.int8.onnx',
       'int8/encoder-model.int8.onnx',
+      // The one request that is not a probe: a mirror may declare its own file
+      // list, and asking first is what lets it name a directory no candidate
+      // path predicts. A mirror without one answers 404 and the probing below
+      // runs exactly as it always did.
+      'model-manifest.json',
       'sharded/decoder_joint-model.int8.onnx',
       'sharded/decoder_joint-model.onnx',
       'sharded/decoder_joint-model.onnx.data',
@@ -231,5 +236,117 @@ describe('listLocalRepoFiles: the probe budget', () => {
     ]);
     const files = await listLocalRepoFiles('/models');
     assert.deepEqual(files, []);
+  });
+});
+
+// A mirror that declares its own file list. This is the only way a local mirror
+// can serve a layout nothing predicted, which stopped being hypothetical when
+// the optimized repo moved the lite int8 encoder into its nested
+// istupakov_smoothquant/ sub-repo: over HF the app resolves that from the repo
+// listing, while locally no candidate path names it and the quant reads as
+// unavailable. So the tests below care about two things in equal measure: that
+// a manifest is believed, and that a bad one is never allowed to break a mirror
+// that would have worked by probing.
+describe('listLocalRepoFiles: the mirror manifest', () => {
+  // Serves model-manifest.json with `body`, 404s everything else unless listed
+  // in `present`. `probed` records every request so a test can prove the
+  // probing did or did not run.
+  function mockManifestMirror(body, { present = [], probed = null } = {}) {
+    const set = new Set(present);
+    globalThis.fetch = async (url, opts) => {
+      const rel = String(url).slice('/models/'.length);
+      if (probed) probed.push(rel);
+      if (rel === 'model-manifest.json' && body !== undefined) {
+        if (typeof body === 'function') return body();
+        return { ok: true, json: async () => body };
+      }
+      return { ok: set.has(rel), ...(opts?.method === 'HEAD' ? {} : { json: async () => { throw new Error('not json'); } }) };
+    };
+  }
+
+  test('a manifest is returned verbatim, and nothing is probed', async () => {
+    const probed = [];
+    const listing = [
+      'vocab.txt',
+      'int8/encoder-model.int8.onnx',
+      'int8/decoder_joint-model.int8.onnx',
+      'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx',
+    ];
+    mockManifestMirror(listing, { probed });
+    assert.deepEqual(await listLocalRepoFiles('/models'), listing);
+    // One request, not thirty: the manifest replaces the probe sweep.
+    assert.deepEqual(probed, ['model-manifest.json']);
+  });
+
+  test('it can name a directory no candidate path predicts', async () => {
+    // The whole reason the manifest exists. Probing could never report this
+    // path, so a mirror of the optimized repo could not serve its lite encoder.
+    const nested = 'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx';
+    mockManifestMirror(['vocab.txt', nested]);
+    assert.ok((await listLocalRepoFiles('/models')).includes(nested));
+  });
+
+  test('unsafe entries are dropped, the rest of the manifest still stands', async () => {
+    // Same filter the HF listing gets. A traversal path does not become
+    // fetchable because a mirror wrote it down.
+    mockManifestMirror(['vocab.txt', '../../etc/passwd', 'int8/encoder-model.int8.onnx', 'a//b.onnx']);
+    assert.deepEqual(await listLocalRepoFiles('/models'),
+      ['vocab.txt', 'int8/encoder-model.int8.onnx']);
+  });
+
+  for (const [label, body] of [
+    ['a JSON object rather than an array', { files: ['vocab.txt'] }],
+    ['an empty array', []],
+    ['an array of non-strings', [1, 2, 3]],
+    ['entries that are all unsafe', ['../x.onnx']],
+  ]) {
+    test(`${label} is not a manifest, so the mirror is probed instead`, async () => {
+      const probed = [];
+      mockManifestMirror(body, { present: ['int8/encoder-model.int8.onnx'], probed });
+      const files = await listLocalRepoFiles('/models');
+      assert.deepEqual(files, ['int8/encoder-model.int8.onnx']);
+      assert.ok(probed.length > 1, 'the probe sweep must still have run');
+    });
+  }
+
+  test('an SPA index.html served at 200 is not mistaken for a manifest', async () => {
+    // A static host with an SPA fallback answers a missing file with the app's
+    // HTML at 200, so an ok response is not enough: the parse has to be guarded
+    // or every such mirror would report an empty file list and load nothing.
+    const probed = [];
+    mockManifestMirror(() => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token <'); } }),
+      { present: ['int8/encoder-model.int8.onnx'], probed });
+    assert.deepEqual(await listLocalRepoFiles('/models'), ['int8/encoder-model.int8.onnx']);
+    assert.ok(probed.length > 1);
+  });
+
+  test('a mirror with no manifest at all behaves exactly as before', async () => {
+    const probed = [];
+    mockManifestMirror(undefined, { present: ['vocab.txt', 'int8/encoder-model.int8.onnx'], probed });
+    assert.deepEqual(await listLocalRepoFiles('/models'), ['int8/encoder-model.int8.onnx']);
+    assert.ok(probed.includes('model-manifest.json'));
+  });
+
+  test('a manifest fetch that throws falls back rather than failing the load', async () => {
+    const probed = [];
+    globalThis.fetch = async (url, opts) => {
+      const rel = String(url).slice('/models/'.length);
+      probed.push(rel);
+      if (rel === 'model-manifest.json') throw new TypeError('Failed to fetch');
+      return { ok: rel === 'int8/encoder-model.int8.onnx' };
+    };
+    assert.deepEqual(await listLocalRepoFiles('/models'), ['int8/encoder-model.int8.onnx']);
+    assert.ok(probed.length > 1);
+  });
+
+  test('an absurdly large manifest is refused', async () => {
+    // A listing is small. Something with 20k+ entries is a directory dump of an
+    // unrelated mount, and treating it as the repo would put the loader through
+    // thousands of wrong paths.
+    const probed = [];
+    mockManifestMirror(Array.from({ length: 20001 }, (_, i) => `f${i}.onnx`),
+      { present: ['int8/encoder-model.int8.onnx'], probed });
+    assert.deepEqual(await listLocalRepoFiles('/models'), ['int8/encoder-model.int8.onnx']);
+    assert.ok(probed.length > 1);
   });
 });
