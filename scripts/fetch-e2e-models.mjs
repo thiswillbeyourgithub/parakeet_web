@@ -22,6 +22,13 @@
 // CI builds the nested one so the tier exercises what a multi-model deployment
 // actually runs.
 //
+// Each entry names the file's CANONICAL layout path (app/src/modelLayout.js),
+// which is where it LANDS locally. Where it is FETCHED from is resolved per run
+// against the repo's live listing, because a repo is free to file it elsewhere:
+// upstream istupakov is flat, and the optimized repo moved the lite int8 encoder
+// into its nested istupakov_smoothquant/ sub-repo. So the mirror copies the FILE,
+// not the directory it happened to be under.
+//
 // Usage:  PARAKEET_E2E_MODEL_DIR=/path node scripts/fetch-e2e-models.mjs
 // Skips any file already present (so an actions/cache restore is a no-op).
 //
@@ -34,6 +41,9 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { basenameOf, findRepoFile } from '../app/src/modelLayout.js';
+import { listRepoFiles } from '../app/src/hub.js';
 
 // Each entry is a { repo, file } HuggingFace descriptor, where `file` is the
 // IN-REPO path: it is both what gets requested from HF and where the file lands
@@ -109,7 +119,33 @@ export function asrRootIn(modelDir, repo = ASR_REPO) {
   return existsSync(join(nested, 'vocab.txt')) ? nested : modelDir;
 }
 
-export async function download({ repo, file, optional = false }, modelDir = MODEL_DIR) {
+/**
+ * Where a wanted file actually lives in the repo RIGHT NOW.
+ *
+ * The entries above spell out the CANONICAL layout path, which is where the
+ * file has to land locally: it is what app/src/modelLayout.js resolves, what
+ * serve.mjs serves and what the local-mirror HEAD probes look for. But a repo
+ * is free to keep it somewhere else, and they do. Upstream istupakov is flat;
+ * the optimized repo carries a complete nested sub-repo under
+ * istupakov_smoothquant/ and moved the lite int8 encoder into it, at which
+ * point the hardcoded int8-lite/ path here started 404ing while the app, which
+ * resolves against the real listing, kept loading it fine.
+ *
+ * So ask the listing the same way hub.js does, and let the answer differ from
+ * the canonical path. The download then mirrors the FILE, not the directory it
+ * happened to be filed under, which is the only part a local mirror needs to
+ * agree on.
+ *
+ * @param {string[]} repoFiles The repo's file listing.
+ * @param {string} file Canonical layout path from MODELS.
+ * @returns {string} Repo-relative path to request, falling back to `file` when
+ *   the listing is empty (HF rate-limited or offline: a 404 then says so).
+ */
+export function remotePathFor(repoFiles, file) {
+  return findRepoFile(repoFiles, basenameOf(file)) || file;
+}
+
+export async function download({ repo, file, remote, optional = false }, modelDir = MODEL_DIR) {
   const rel = join(repo, file);
   const dest = destPath(modelDir, repo, file);
   if (await exists(dest)) {
@@ -119,7 +155,9 @@ export async function download({ repo, file, optional = false }, modelDir = MODE
   // `repo` and `file` together carry the whole directory, so make it before
   // streaming into it. Cheap and idempotent.
   await mkdir(dirname(dest), { recursive: true });
-  const url = `https://huggingface.co/${repo}/resolve/${REVISION}/${file}?download=true`;
+  const from = remote || file;
+  if (from !== file) console.log(`[e2e:models] ${file} is served as ${from} in ${repo}`);
+  const url = `https://huggingface.co/${repo}/resolve/${REVISION}/${from}?download=true`;
   console.log(`[e2e:models] downloading ${file} from ${url}`);
   const res = await fetch(url);
   if (!res.ok || !res.body) {
@@ -140,9 +178,15 @@ export async function download({ repo, file, optional = false }, modelDir = MODE
 async function main() {
   await mkdir(MODEL_DIR, { recursive: true });
   console.log(`[e2e:models] target dir: ${MODEL_DIR}`);
+  // One listing per repo (hub.js caches it), so the whole run costs three extra
+  // requests and no entry has to guess at a directory.
+  const listings = new Map();
+  for (const repo of new Set(MODELS.map((m) => m.repo))) {
+    listings.set(repo, await listRepoFiles(repo, REVISION));
+  }
   for (const entry of MODELS) {
     try {
-      await download(entry);
+      await download({ ...entry, remote: remotePathFor(listings.get(entry.repo), entry.file) });
     } catch (e) {
       await rm(`${destPath(MODEL_DIR, entry.repo, entry.file)}.partial`, { force: true });
       throw e;

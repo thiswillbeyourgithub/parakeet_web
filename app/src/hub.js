@@ -159,7 +159,7 @@ export function isSafeRepoPath(name) {
   return name.split('/').every((seg) => SAFE_RFILENAME_RE.test(seg) && seg !== '.' && seg !== '..');
 }
 
-async function listRepoFiles(repoId, revision = 'main') {
+export async function listRepoFiles(repoId, revision = 'main') {
   const cacheKey = `${repoId}@${revision}`;
   if (repoFileCache.has(cacheKey)) return repoFileCache.get(cacheKey);
 
