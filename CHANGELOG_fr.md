@@ -20,6 +20,12 @@ Un lien peut aussi imposer un modèle, avec `?model=` et une correspondance soup
 
 Pour ceux qui hébergent eux-mêmes les poids sur leur instance, on sert plusieurs modèles en montant le dossier parent avec un sous-dossier par dépôt. Un modèle listé sans copie locale ne produit qu'un avertissement au démarrage ; il est récupéré depuis HuggingFace exactement comme s'il n'existait aucun miroir local.
 
+### Corrigé : un dépôt contenant un second modèle pouvait casser le téléchargement fp32
+
+Le dépôt de modèle optimisé contient un second modèle complet dans un sous-dossier, et l'encodeur fp32 n'est pas un fichier unique mais un ensemble de fragments numérotés. Les deux copies portant les mêmes noms de fragments, le chargeur voyait chaque fragment deux fois et le téléchargeait deux fois : environ 4,8 Go récupérés au lieu de 2,4, assemblés en un encodeur impossible à charger. Il choisit désormais un seul dossier et ne prend que ses fragments.
+
+La même réorganisation avait déplacé l'encodeur int8 allégé dans ce sous-dossier. L'application n'était pas touchée, car elle demande au dépôt où se trouvent ses fichiers au lieu de le supposer, mais le script qui prépare les modèles de test, lui, le supposait : il récupérait un chemin qui n'existe plus. Il demande désormais lui aussi. Rien ne change quant aux modèles proposés ; le point est qu'un dépôt peut se réorganiser sans que l'application perde la trace des poids, ce qui est aussi ce qui garde utilisable la disposition du dépôt amont.
+
 ### Corrigé : un miroir local pouvait servir les poids d'un modèle sous le nom d'un autre
 
 Le chargeur cherchait dans un miroir servi localement un ensemble de fichiers de modèle à plat avant de chercher le dépôt demandé par son nom. Avec un seul modèle configuré, c'est sans conséquence et c'est la disposition documentée. Avec un choix de modèles, ça ne l'était pas : sur un miroir contenant un modèle à plat et les autres dans des sous-dossiers, tous les modèles se résolvaient vers celui à plat, si bien que sélectionner le deuxième modèle chargeait les poids du premier sous le nom du deuxième. Rien de cette défaillance n'était visible, puisque le mauvais modèle transcrit tout aussi couramment. Le miroir est désormais interrogé d'abord par nom de dépôt, et la disposition à plat ne répond que pour un dépôt dont il n'a aucun sous-dossier.
