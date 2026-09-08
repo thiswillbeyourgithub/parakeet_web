@@ -138,7 +138,43 @@ export async function writeMirrorManifests(mirror, repos, outMirror = mirror) {
   return written;
 }
 
+/**
+ * Repo roots under `mirror`, as mirror-relative paths.
+ *
+ * The container and the CI fetch both know their repo list, but a maintainer's
+ * mirror does not announce one, so the CLI can find them instead: a repo root is
+ * a directory holding vocab.txt, the marker every supported layout keeps at the
+ * root. Depth 2 covers the <owner>/<name> shape without walking a whole model
+ * repo's working folder looking for more.
+ *
+ * @param {string} mirror Mirror root.
+ * @param {number} [depth=2] Levels below `mirror` to look at.
+ * @returns {Promise<string[]>} Mirror-relative paths ('' for the flat layout).
+ */
+export async function discoverRepoRoots(mirror, depth = 2) {
+  const found = [];
+  const walk = async (dir, rel, left) => {
+    if (existsSync(join(dir, 'vocab.txt'))) { found.push(rel); return; }
+    if (left === 0) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+      const child = join(dir, entry.name);
+      let isDir = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try { isDir = (await stat(child)).isDirectory(); } catch { continue; }
+      }
+      if (isDir) await walk(child, rel ? `${rel}/${entry.name}` : entry.name, left - 1);
+    }
+  };
+  await walk(mirror, '', depth);
+  return found.sort();
+}
+
 // CLI: node scripts/model-manifest.mjs <mirror> <repo,repo,...> [outMirror]
+// An empty repo list means "find them", which is what a maintainer's mirror
+// needs: it has no configured list to hand over.
 // Used by docker/entrypoint.sh, which has no way to import this.
 const invokedDirectly = process.argv[1]
   && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -148,7 +184,11 @@ if (invokedDirectly) {
     console.error('usage: model-manifest.mjs <mirror-dir> <repo,repo,...> [out-dir]');
     process.exit(2);
   }
-  const repos = repoList.split(',').map((r) => r.trim()).filter(Boolean);
+  let repos = repoList.split(',').map((r) => r.trim()).filter(Boolean);
+  if (repos.length === 0) {
+    repos = await discoverRepoRoots(mirror);
+    console.log(`[model-manifest] found ${repos.length} repo root(s) under ${mirror}`);
+  }
   const written = await writeMirrorManifests(mirror, repos, outMirror || mirror);
   for (const { repo, dir, entries } of written) {
     console.log(`[model-manifest] ${repo || relative(mirror, dir) || '(flat)'}: ${entries} entries from ${dir}`);

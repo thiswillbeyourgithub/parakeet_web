@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listFiles, writeManifest, writeMirrorManifests, MANIFEST_FILE } from '../../scripts/model-manifest.mjs';
+import { listFiles, writeManifest, writeMirrorManifests, discoverRepoRoots, MANIFEST_FILE } from '../../scripts/model-manifest.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'model-manifest-'));
 const put = (dir, rel, body = 'x') => {
@@ -214,5 +214,69 @@ describe('writeMirrorManifests', () => {
     assert.equal(existsSync(join(dir, REPO_A, MANIFEST_FILE)), false);
     rmSync(dir, { recursive: true, force: true });
     rmSync(out, { recursive: true, force: true });
+  });
+});
+
+// The container and the CI fetch both know their repo list. A maintainer's
+// mirror does not announce one, so the CLI finds the roots itself; without that
+// the local `npm run e2e:manifest` would have to restate a list that already
+// exists in three other places and would rot in this one.
+describe('discoverRepoRoots', () => {
+  const REPO_A = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
+  const REPO_B = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+
+  test('finds every <owner>/<name> repo root', async () => {
+    const dir = tmp();
+    put(dir, `${REPO_A}/vocab.txt`);
+    put(dir, `${REPO_B}/vocab.txt`);
+    assert.deepEqual(await discoverRepoRoots(dir), [REPO_B, REPO_A].sort());
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('reports the flat layout as the mirror itself', async () => {
+    const dir = tmp();
+    put(dir, 'vocab.txt');
+    assert.deepEqual(await discoverRepoRoots(dir), ['']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('stops at a repo root instead of descending into it', async () => {
+    // The optimized repo carries a whole second model with its own vocab.txt.
+    // That is a directory inside a repo, not another repo on the mount, and
+    // describing it separately would invent a repo id nothing asks for.
+    const dir = tmp();
+    put(dir, `${REPO_A}/vocab.txt`);
+    put(dir, `${REPO_A}/istupakov_smoothquant/vocab.txt`);
+    assert.deepEqual(await discoverRepoRoots(dir), [REPO_A]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('follows symlinked repo folders', async () => {
+    // Which is exactly what fallback_models is.
+    const dir = tmp();
+    const real = tmp();
+    put(real, 'vocab.txt');
+    mkdirSync(join(dir, 'Olicorne'), { recursive: true });
+    symlinkSync(real, join(dir, 'Olicorne', 'a-repo'));
+    assert.deepEqual(await discoverRepoRoots(dir), ['Olicorne/a-repo']);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(real, { recursive: true, force: true });
+  });
+
+  test('a mirror with no weights at all reports nothing', async () => {
+    const dir = tmp();
+    put(dir, 'Olicorne/some-repo/int8/encoder-model.int8.onnx');
+    assert.deepEqual(await discoverRepoRoots(dir), []);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('the generated manifest tree is skipped, not described', async () => {
+    // e2e:manifest writes into <mirror>/.manifests, which is dotted precisely so
+    // it cannot be walked back into and end up describing itself.
+    const dir = tmp();
+    put(dir, `${REPO_A}/vocab.txt`);
+    put(dir, `.manifests/${REPO_A}/vocab.txt`);
+    assert.deepEqual(await discoverRepoRoots(dir), [REPO_A]);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
