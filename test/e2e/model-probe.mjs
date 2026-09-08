@@ -41,7 +41,8 @@
 //
 // Built with Claude Code.
 
-import { candidatePaths } from '../../app/src/modelLayout.js';
+import { candidatePaths, findRepoFile, basenameOf } from '../../app/src/modelLayout.js';
+import { LOCAL_MANIFEST_FILE } from '../../app/src/hub.js';
 
 /**
  * The canary hub.js uses to decide a repo has its own root on this mirror.
@@ -102,14 +103,55 @@ export async function probeModelUrl(request, repo, basename, base = '/models') {
     const head = await request.head(url).catch(() => null);
     return !!(head && head.ok());
   };
+  // A mirror that declares its own file list is answering the question directly,
+  // and the app believes it over any probing, so the harness must too. Skipping
+  // this would leave a spec skipping for "missing weights" on a mirror whose
+  // manifest names the file and whose app loads it happily: the same harness/app
+  // disagreement as the flat-arm bug above, in the other direction.
+  // A manifest is the WHOLE answer for the base that has one, not a first
+  // guess: hub.js returns it verbatim and never probes behind it, so a file it
+  // omits is one the app cannot load however many HEADs would find it.
+  const nested = `${base}/${repo}`;
+  const declaredNested = await manifestPath(request, nested, basename);
+  if (declaredNested !== undefined) return declaredNested && `${nested}/${declaredNested}`;
   for (const url of modelProbeUrls(repo, basename, { base, repoRootServed: true })) {
     if (await ok(url)) return url;
   }
   // Nothing under the repo's own folder. Whether the flat tree may answer for
   // it is the same question hub.js asks, so ask it the same way.
   if (await ok(repoRootUrl(repo, base))) return null;
+  const declaredFlat = await manifestPath(request, base, basename);
+  if (declaredFlat !== undefined) return declaredFlat && `${base}/${declaredFlat}`;
   for (const url of modelProbeUrls(repo, basename, { base }).filter((u) => !u.includes(`/${repo}/`))) {
     if (await ok(url)) return url;
   }
   return null;
+}
+
+/**
+ * What a mirror's own manifest says, when it has one.
+ *
+ * Resolved with findRepoFile, the same call hub.js makes over the same listing,
+ * so the harness cannot decide a file is served from somewhere the app would not
+ * read it from. Takes the base whose manifest to ask, because a repo-nested
+ * mirror and a flat one are separate questions asked at separate points.
+ *
+ * Three outcomes, and the distinction matters: `undefined` for no usable
+ * manifest (probe, as before), a path for one that lists the file, and `null`
+ * for one that does not. That last is not the same as "keep looking": the app
+ * reads the manifest verbatim, so a file it omits is unreachable no matter what
+ * a HEAD would find.
+ *
+ * @param {import('@playwright/test').APIRequestContext} request Playwright's `request` fixture.
+ * @param {string} base Base URL of the repo root to ask (e.g. '/models/owner/repo').
+ * @param {string} basename File basename.
+ * @returns {Promise<string|null|undefined>} Path relative to `base`, null if the
+ *   manifest does not list it, undefined if there is no usable manifest.
+ */
+async function manifestPath(request, base, basename) {
+  const res = await request.get(`${base}/${LOCAL_MANIFEST_FILE}`).catch(() => null);
+  if (!res || !res.ok()) return undefined;
+  const files = await res.json().catch(() => null);
+  if (!Array.isArray(files) || files.length === 0) return undefined;
+  return findRepoFile(files, basenameOf(basename));
 }
