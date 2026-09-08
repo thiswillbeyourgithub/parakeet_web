@@ -76,7 +76,9 @@ jobs:
       # weights and so SELF-SKIPS in the fast job (which downloads no model).
       # Run it here, where the weights already exist, so a batching regression
       # cannot merge green. Uses the vendored ORT (no extra deps); modelDir comes
-      # from PARAKEET_E2E_MODEL_DIR (the flat int8 set fetch-e2e-models writes).
+      # from PARAKEET_E2E_MODEL_DIR; fetch-e2e-models nests by repo, so the test
+      # descends into the ASR repo folder itself (asrRootIn) rather than
+      # assuming a flat root, which would leave it self-skipping and green.
       - name: Batching equivalence gate (needs weights)
         run: node --test test/unit/encode-batch-equivalence.test.mjs
 

@@ -26,16 +26,18 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings } from './seed.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
+import { probeModelUrl } from './model-probe.mjs';
+import { DIARIZATION_EMB_REPO } from '../../scripts/fetch-e2e-models.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
 
-const MODEL_PROBE = '/models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
+const EMB_MODEL = '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
 
 test('reuses a renamed speaker label across recordings by voice match (WASM)', async ({ page, request, baseURL }) => {
-  const head = await request.head(MODEL_PROBE).catch(() => null);
-  requireWeightsOrSkip(test, !head || !head.ok(),
-    `no diarization models at ${baseURL}${MODEL_PROBE} (run \`npm run e2e:models\` to fetch them)`);
+  const probed = await probeModelUrl(request, DIARIZATION_EMB_REPO, EMB_MODEL);
+  requireWeightsOrSkip(test, !probed,
+    `no diarization models under ${baseURL}/models (run \`npm run e2e:models\` to fetch them)`);
 
   const FIXTURE_AUDIO = fixture('two-speakers.wav');
 

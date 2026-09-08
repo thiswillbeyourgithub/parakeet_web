@@ -18,6 +18,7 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { asrRootIn } from '../../scripts/fetch-e2e-models.mjs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 
@@ -29,7 +30,12 @@ const SR = 16000;
 const here = dirname(fileURLToPath(import.meta.url));
 const FALLBACK_DIR = resolve(here, '../../fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx');
 function resolveTestModelDir() {
-  if (process.env.PARAKEET_E2E_MODEL_DIR) return process.env.PARAKEET_E2E_MODEL_DIR;
+  // asrRootIn descends into <dir>/<ASR_REPO>/ when that is where the weights
+  // are, which is what CI's mirror looks like since fetch-e2e-models started
+  // nesting by repo. Without it this gate would find nothing and SELF-SKIP: a
+  // green CI run that silently stopped checking batch equivalence, which is the
+  // one failure this test exists to make impossible.
+  if (process.env.PARAKEET_E2E_MODEL_DIR) return asrRootIn(process.env.PARAKEET_E2E_MODEL_DIR);
   if (existsSync(FALLBACK_DIR)) return FALLBACK_DIR;
   return null; // loader will resolve the HF cache, throwing if absent -> skip
 }
