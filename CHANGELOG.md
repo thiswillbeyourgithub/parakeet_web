@@ -20,6 +20,12 @@ A link can also pin a model, with `?model=` and a loose match against the offere
 
 For self-hosters serving weights from their own instance, several models are served by mounting the parent folder with one subfolder per repo. A listed model with no local copy is only a warning at startup; it is fetched from HuggingFace exactly as it would be with no local mirror at all.
 
+### A self-hosted mirror now tells the app what it holds
+
+An instance serving its own copy of the weights had a blind spot. A folder behind a web server cannot be listed, so the app checked the handful of layouts it knows and hoped one of them matched. That covers every documented layout and nothing else, so a model repository that keeps a build somewhere unusual would download fine from HuggingFace and read as unavailable from a local mirror, with nothing to explain the difference.
+
+The container now writes a small listing of what the mounted folder actually contains, at every start, and serves it next to the weights. There is nothing to configure and nothing to keep up to date: it is generated from the folder itself, so it cannot claim a file that is not there, and it is rewritten each boot, so it cannot go stale. It goes to a temporary folder inside the container rather than into the mount, so mounting the models read-only still works. If it cannot be written the app falls back to the previous behaviour, which is why an instance that upgrades and changes nothing sees no difference at all.
+
 ### Fixed: a repo with a second model inside it could break the fp32 download
 
 The optimized model repository carries a complete second model in a subfolder, and the fp32 encoder is not one file but a set of numbered shards. Because both copies use the same shard names, the loader was seeing each shard twice and downloading it twice: about 4.8 GB fetched instead of 2.4, assembled into an encoder that could not load. It now picks one folder and takes only its shards.
