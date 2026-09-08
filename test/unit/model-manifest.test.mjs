@@ -183,6 +183,40 @@ describe('writeMirrorManifests', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // A configured repo that is simply not on the mount is invisible everywhere
+  // else: the app fetches it from HuggingFace, so the deployment looks healthy
+  // and merely gets slower. That is how a deploy shipped one of two repos and
+  // nobody noticed until visitors hit a mirror that could not serve them.
+  test('warns about a configured repo the mount does not serve', async () => {
+    const dir = tmp();
+    put(dir, `${REPO_A}/vocab.txt`);
+    const warnings = [];
+    const real = console.warn;
+    console.warn = (m) => warnings.push(m);
+    try {
+      const written = await writeMirrorManifests(dir, [REPO_A, REPO_B]);
+      assert.deepEqual(written.map((w) => w.repo), [REPO_A]);
+    } finally { console.warn = real; }
+    assert.equal(warnings.length, 1, warnings.join('\n'));
+    assert.match(warnings[0], new RegExp(REPO_B));
+    assert.doesNotMatch(warnings[0], new RegExp(REPO_A));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a flat single-repo mount is not reported as a missing repo', async () => {
+    // The repo folder is legitimately absent there: the weights sit at the root,
+    // which is the documented single-repo contract. Warning would train the
+    // operator to ignore the message that matters.
+    const dir = tmp();
+    put(dir, 'vocab.txt');
+    const warnings = [];
+    const real = console.warn;
+    console.warn = (m) => warnings.push(m);
+    try { await writeMirrorManifests(dir, [REPO_A]); } finally { console.warn = real; }
+    assert.deepEqual(warnings, []);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('a shared mount never also declares a repo at its root', async () => {
     // hub.js resolves a repo to its own folder and reads only from there, so a
     // root manifest on a nested mount could only describe the wrong thing: the
