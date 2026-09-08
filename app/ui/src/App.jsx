@@ -615,6 +615,15 @@ const URL_MODEL = typeof window !== 'undefined'
 // CONFIG is already frozen at import (config.js reads window.__CONFIG__ at
 // module load), so this sees the same value the component would.
 const MODEL_REPOS = parseModelRepos(CONFIG.VITE_MODEL_REPO);
+// A flat /models mount carries no repo identity, so it can only be attributed
+// to a repo when there is exactly one on offer. With a picker, letting the flat
+// tree answer for a repo it has no subfolder for would load the mounted repo's
+// weights under the selected repo's name: same architecture, same vocab size,
+// so a fluent transcript from the wrong model and no error anywhere. Passed to
+// hub.js, which then refuses that fallback. (docker/entrypoint.sh enforces the
+// same invariant server-side by refusing to descend into a nested mount when
+// several repos are configured; this also covers mounts it never saw.)
+const ALLOW_FLAT_LOCAL_FALLBACK = MODEL_REPOS.length <= 1;
 const URL_MODEL_REPO = matchModelRepo(URL_MODEL, MODEL_REPOS);
 if (URL_MODEL && !URL_MODEL_REPO) {
   console.warn(`[App] ?model=${URL_MODEL} matched none of the offered repos; ignoring it.`);
@@ -2014,15 +2023,26 @@ export default function App() {
   // on the server so the admin gets early feedback about misconfiguration.
   useEffect(() => {
     if (!localFallbackEnabled) return;
-    checkLocalModelFiles('/models', repoId).then((result) => {
+    checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK }).then((result) => {
       if (result.ok) {
         console.log('[App] Local fallback check passed:', result.message);
       } else {
-        const msg = `Local model fallback is enabled but model files are not reachable at /models/. `
-          + `Bind-mount a folder containing the ONNX files (e.g. produced by\n`
-          + `  hf download ${repoId} --local-dir /some/host/path)\n`
-          + `into the container and set LOCAL_MODEL_PATH to that in-container path. `
-          + `See docker-compose.yml.`;
+        // With several repos on offer a flat mount is refused on purpose (see
+        // ALLOW_FLAT_LOCAL_FALLBACK), so the single-repo advice below would send
+        // the operator to build the one layout that cannot work. Name the
+        // per-repo path instead: it is both the fix and the reason.
+        const msg = ALLOW_FLAT_LOCAL_FALLBACK
+          ? `Local model fallback is enabled but model files are not reachable at /models/. `
+            + `Bind-mount a folder containing the ONNX files (e.g. produced by\n`
+            + `  hf download ${repoId} --local-dir /some/host/path)\n`
+            + `into the container and set LOCAL_MODEL_PATH to that in-container path. `
+            + `See docker-compose.yml.`
+          : `Local model fallback is enabled but model files are not reachable at /models/${repoId}/. `
+            + `This instance offers a choice of models, so each one must live in its own `
+            + `subfolder: a flat mount carries no repo id and would be served under the `
+            + `wrong model's name. Bind-mount the PARENT folder (e.g. produced by\n`
+            + `  hf download ${repoId} --local-dir /some/host/path/${repoId})\n`
+            + `and set LOCAL_MODEL_PATH to /some/host/path. See docker-compose.yml.`;
         console.error('[App]', msg);
         setFallbackWarning(msg);
       }
@@ -3286,6 +3306,11 @@ export default function App() {
       // Shield any cached diarization models from the generational orphan sweep
       // (they live in a different repo, so the sweep would otherwise delete them
       // on every model load and force a re-download).
+      // Never let an unattributed flat /models tree stand in for a repo the
+      // mount has no subfolder for (see ALLOW_FLAT_LOCAL_FALLBACK). Applies to
+      // both local paths above: the explicit fallback and the pre-download
+      // quant upgrade.
+      downloadOpts.allowFlatLocalFallback = ALLOW_FLAT_LOCAL_FALLBACK;
       downloadOpts.protectCacheKeys = diarizationModelProtectKeys();
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
@@ -3436,7 +3461,7 @@ export default function App() {
         // fallback (then we'd retry regardless); avoids a needless HEAD request.
         let localReachable = false;
         if (!localFallbackEnabled) {
-          const probe = await checkLocalModelFiles('/models', repoId).catch(() => null);
+          const probe = await checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK }).catch(() => null);
           localReachable = !!probe?.ok;
         }
         if (shouldRetryLocally({

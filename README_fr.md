@@ -409,10 +409,12 @@ sous-dossier `<propriétaire>/<nom>/` :
     parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
 ```
 
-Le chargeur demande un dépôt par son nom avant de retomber sur la
-disposition à plat : un miroir peut donc aussi servir un dépôt à plat à la
-racine et les autres dans des sous-dossiers. Un dépôt listé sans poids
-locaux ne produit qu'un avertissement au démarrage : il est téléchargé
+Chaque dépôt listé a besoin de son propre sous-dossier. Une arborescence à
+plat à la racine est ignorée dès que plusieurs dépôts sont proposés, car
+elle ne porte aucun identifiant de dépôt : la servir sous le nom du modèle
+choisi par le visiteur lui donnerait une transcription fluide issue d'un
+autre modèle, sans rien qui permette de s'en apercevoir. Un dépôt listé sans
+poids locaux ne produit qu'un avertissement au démarrage : il est téléchargé
 depuis HuggingFace, exactement comme s'il n'y avait aucun miroir. Le
 démarrage n'échoue que si aucun d'entre eux ne peut être servi localement.
 

@@ -972,11 +972,29 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
  * first makes that impossible; the flat fallback then only catches mounts that
  * have no subfolder for this repo, which is the single-repo contract unchanged.
  *
+ * That ordering is not enough on its own, though, which is what
+ * `allowFlatFallback` is for. Ordering only saves the repos the mount DOES have
+ * a subfolder for; a mirror that carries one repo flat and nothing else still
+ * answers the flat probe for every OTHER repo in the picker, so selecting the
+ * one the mount doesn't have loads the one it does under the wrong name. A flat
+ * tree carries no repo identity, so it can only be attributed when there is
+ * exactly one candidate. Callers that offer a choice pass allowFlatFallback
+ * false and get null instead, which surfaces as an honest "not served here"
+ * (and, on the HF path, as a download from HuggingFace) rather than a
+ * confident wrong answer. docker/entrypoint.sh already refuses to descend into
+ * a nested mount when several repos are configured, for the same reason; this
+ * is the same invariant enforced on the client, where it also covers mounts
+ * the entrypoint never saw.
+ *
  * @param {string} baseUrl Local base URL serving the model files (e.g. '/models').
  * @param {string} [repoId] Repo id to try as a nested subfolder (e.g. 'istupakov/parakeet-tdt-0.6b-v3-onnx').
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowFlatFallback=true] Accept an unattributed flat tree
+ *   at baseUrl when repoId has no subfolder. Pass false when the deployment
+ *   offers more than one repo, so a flat mount is never served under the wrong id.
  * @returns {Promise<string|null>} The working base URL, or null if vocab.txt is reachable under neither.
  */
-export async function resolveLocalModelBase(baseUrl, repoId) {
+export async function resolveLocalModelBase(baseUrl, repoId, { allowFlatFallback = true } = {}) {
   const canary = 'vocab.txt';
   const reachable = async (base) => {
     try {
@@ -988,6 +1006,9 @@ export async function resolveLocalModelBase(baseUrl, repoId) {
     const nested = `${baseUrl}/${repoId}`;
     if (await reachable(nested)) return nested;
   }
+  // No subfolder for this repo. A flat tree is only attributable to it when it
+  // is the only repo on offer; otherwise refuse rather than guess.
+  if (!allowFlatFallback && repoId) return null;
   if (await reachable(baseUrl)) return baseUrl;
   return null;
 }
@@ -1001,20 +1022,30 @@ export async function resolveLocalModelBase(baseUrl, repoId) {
  *
  * @param {string} baseUrl Local base URL (e.g., '/models')
  * @param {string} [repoId] Repo id to also try as a nested subfolder.
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowFlatFallback=true] See resolveLocalModelBase. False
+ *   when the deployment offers several repos, in which case only the repo's own
+ *   subfolder counts as "served here".
  * @returns {Promise<{ok: boolean, message: string}>} Result with ok=true if the
  *   file is reachable, or ok=false with a descriptive message otherwise.
  */
-export async function checkLocalModelFiles(baseUrl, repoId) {
+export async function checkLocalModelFiles(baseUrl, repoId, { allowFlatFallback = true } = {}) {
   // vocab.txt is small and always required — a good canary file.
   const testFile = 'vocab.txt';
-  const resolved = await resolveLocalModelBase(baseUrl, repoId);
+  const resolved = await resolveLocalModelBase(baseUrl, repoId, { allowFlatFallback });
   if (resolved) {
     return { ok: true, message: 'Local model files are accessible.' };
   }
-  // Neither layout served the canary: re-probe the flat path purely to build a
-  // precise status/error message (the nested path is best-effort, so we report
-  // against the documented flat location the operator is expected to provide).
-  const url = `${baseUrl}/${testFile}`;
+  // Neither layout served the canary: re-probe purely to build a precise
+  // status/error message. Which location to name depends on what would have
+  // counted: with several repos on offer only `<base>/<repoId>/` can serve this
+  // repo, so pointing the operator at the flat path would send them to build a
+  // mount this code deliberately refuses. With one repo, report against the
+  // documented flat location they are expected to provide (the nested path is
+  // best-effort there).
+  const url = (!allowFlatFallback && repoId)
+    ? `${baseUrl}/${repoId}/${testFile}`
+    : `${baseUrl}/${testFile}`;
   try {
     const res = await fetch(url, { method: 'HEAD' });
     return {
@@ -1454,17 +1485,27 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, shaderF16 = false, allowWasmFp32 = false, protectCacheKeys = [] } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, shaderF16 = false, allowWasmFp32 = false, allowFlatLocalFallback = true, protectCacheKeys = [] } = options;
   // The base URL all files are actually fetched from. Starts as the explicit
   // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
   // primary (HF) source cannot serve the requested quant and the local mirror
   // can. `let` because of that pre-download switch.
   // resolveLocalModelBase tolerates a nested HF-style mirror (files under
   // <base>/<repoId>/) as well as a mount of the repo root itself, so a mount of a
-  // parent folder doesn't 404 every fetch. Falls back to the raw base when the
-  // canary is reachable under neither (preserves the prior missing-file flow).
+  // parent folder doesn't 404 every fetch. Falls back to an unresolved base when
+  // the canary is reachable under neither (preserves the prior missing-file flow).
+  //
+  // WHICH unresolved base matters. With allowFlatLocalFallback=false (the
+  // deployment offers several repos) resolveLocalModelBase returns null for a
+  // mount that only has a flat tree — and standing the raw flat base back up
+  // here would serve exactly the tree it just refused, handing this repo another
+  // one's weights. So in that mode the stand-in is the repo's own nested path,
+  // which 404s: the load fails as a plain missing file, never as a wrong model.
+  const unresolvedLocalBase = (!allowFlatLocalFallback && repoId)
+    ? `${localFallbackBaseUrl}/${repoId}`
+    : localFallbackBaseUrl;
   let effectiveLocalBase = localFallbackBaseUrl
-    ? (await resolveLocalModelBase(localFallbackBaseUrl, repoId)) || localFallbackBaseUrl
+    ? (await resolveLocalModelBase(localFallbackBaseUrl, repoId, { allowFlatFallback: allowFlatLocalFallback })) || unresolvedLocalBase
     : localFallbackBaseUrl;
 
   // Resolve the effective revision: operator override (options.revision)
@@ -1495,8 +1536,15 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   if (localUpgradeBaseUrl && !localFallbackBaseUrl
       && (pinnedToInt8 || webgpuFp32NeedsShards || w4a8NeedsFile || fp16NeedsFile)) {
     // Resolve flat-vs-nested once so the listing and the later weight fetches
-    // both target the layout the operator actually mounted.
-    const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId)) || localUpgradeBaseUrl;
+    // both target the layout the operator actually mounted. A refusal (null,
+    // several repos on offer and only an unattributed flat tree here) must NOT
+    // fall back to the flat base: this branch would then read that mirror's
+    // listing, find the quant satisfiable, and switch the whole load to another
+    // repo's weights — the very swap the refusal exists to prevent. Probing the
+    // repo's own nested path instead lists nothing, so the upgrade simply
+    // doesn't fire and the HF download proceeds.
+    const resolvedUpgrade = (await resolveLocalModelBase(localUpgradeBaseUrl, repoId, { allowFlatFallback: allowFlatLocalFallback }))
+      || ((!allowFlatLocalFallback && repoId) ? `${localUpgradeBaseUrl}/${repoId}` : localUpgradeBaseUrl);
     const localFiles = await listLocalRepoFiles(resolvedUpgrade).catch(() => []);
     if (quantSatisfiable({ backend, encoderQuant, decoderQuant, repoFiles: localFiles, shaderF16, allowWasmFp32 })) {
       console.log(`[Hub] HuggingFace cannot serve the requested quant (encoder=${encoderQuant}); `
