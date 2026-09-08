@@ -992,10 +992,14 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
  * @param {boolean} [opts.allowFlatFallback=true] Accept an unattributed flat tree
  *   at baseUrl when repoId has no subfolder. Pass false when the deployment
  *   offers more than one repo, so a flat mount is never served under the wrong id.
- * @returns {Promise<string|null>} The working base URL, or null if vocab.txt is reachable under neither.
+ * @param {string} [opts.canary='vocab.txt'] The file to probe for. Defaults to the
+ *   one file every ASR repo keeps at its root in every layout modelLayout.js
+ *   supports. Callers for a repo with no vocab.txt (the diarization models live
+ *   in their own repos and ship a single ONNX each) pass the file they actually
+ *   want, which is as good a presence marker as any and needs no new convention.
+ * @returns {Promise<string|null>} The working base URL, or null if the canary is reachable under neither.
  */
-export async function resolveLocalModelBase(baseUrl, repoId, { allowFlatFallback = true } = {}) {
-  const canary = 'vocab.txt';
+export async function resolveLocalModelBase(baseUrl, repoId, { allowFlatFallback = true, canary = 'vocab.txt' } = {}) {
   const reachable = async (base) => {
     try {
       const res = await fetch(`${base}/${canary}`, { method: 'HEAD' });
