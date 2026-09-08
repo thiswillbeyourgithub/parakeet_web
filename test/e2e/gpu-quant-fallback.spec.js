@@ -24,6 +24,8 @@ import { test, expect } from '@playwright/test';
 import { seedSettings, expandSettingsSection, APP_VERSION } from './seed.mjs';
 import { routeLocalMirrorWithoutGpuEncoders } from './routes.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
+import { probeModelUrl } from './model-probe.mjs';
+import { ASR_REPO } from '../../scripts/fetch-e2e-models.mjs';
 
 const ADAPTER = () => {
   Object.defineProperty(navigator, 'gpu', {
@@ -43,13 +45,13 @@ const ADAPTER = () => {
   });
 };
 
-const INT8_PROBE = '/models/encoder-model.int8.onnx';
+const INT8_ENCODER = 'encoder-model.int8.onnx';
 
 test('a source with no GPU encoder falls back to WASM instead of failing the load', async ({ page, request, baseURL }) => {
   test.setTimeout(8 * 60 * 1000);
   // The WASM retry is a REAL load, so it needs the int8 encoder present.
-  const head = await request.head(INT8_PROBE).catch(() => null);
-  requireWeightsOrSkip(test, !head || !head.ok(), `no int8 encoder at ${baseURL}${INT8_PROBE}`);
+  const probed = await probeModelUrl(request, ASR_REPO, INT8_ENCODER);
+  requireWeightsOrSkip(test, !probed, `no int8 encoder under ${baseURL}/models (tried the nested and flat layouts)`);
 
   const logs = [];
   page.on('console', (m) => logs.push(m.text()));

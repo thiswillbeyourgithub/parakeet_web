@@ -31,18 +31,19 @@ import { resolve, dirname } from 'node:path';
 import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
+import { probeModelUrl } from './model-probe.mjs';
+import { ASR_REPO } from '../../scripts/fetch-e2e-models.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
 
 const LITE_ENCODER = 'encoder-model.int8.lite.onnx';
 const DEFAULT_ENCODER = 'encoder-model.int8.onnx';
-const LITE_PROBE = `/models/${LITE_ENCODER}`;
 
 test('transcribes JFK English (MP3) with the WASM lite int8 encoder', async ({ page, request, baseURL }) => {
-  const head = await request.head(LITE_PROBE).catch(() => null);
-  requireWeightsOrSkip(test, !head || !head.ok(),
-    `no lite int8 encoder at ${baseURL}${LITE_PROBE} (build it with `
+  const probed = await probeModelUrl(request, ASR_REPO, LITE_ENCODER);
+  requireWeightsOrSkip(test, !probed,
+    `no lite int8 encoder under ${baseURL}/models (build it with `
     + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05, `
     + `or symlink it into fallback_models/, for local lite coverage)`);
 

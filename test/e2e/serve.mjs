@@ -20,6 +20,7 @@ import { resolve, join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findDanglingLinks, danglingLinksMessage, danglingLinksWarning } from './dangling-links.mjs';
 import { candidatePaths } from '../../app/src/modelLayout.js';
+import { asrRootIn } from '../../scripts/fetch-e2e-models.mjs';
 
 const here = resolve(fileURLToPath(import.meta.url), '..');
 const ROOT = resolve(here, '../..');
@@ -144,8 +145,12 @@ if (danglingFatal) {
 
 server.listen(PORT, '127.0.0.1', () => {
   if (!existsSync(DIST)) console.warn(`[e2e:serve] WARNING: ${DIST} missing — run \`npm run build\` in app/ui first.`);
-  if (!existsSync(join(MODEL_DIR, 'vocab.txt'))) {
-    console.warn(`[e2e:serve] WARNING: ${MODEL_DIR}/vocab.txt missing — run \`npm run e2e:models\` or point PARAKEET_E2E_MODEL_DIR at the weights.`);
+  // Either layout counts: flat at the root (the single-repo contract and a
+  // maintainer's fallback_models) or under the repo's own folder (what
+  // fetch-e2e-models writes). Checking only the flat one would warn about
+  // missing weights on every CI run while serving them perfectly well.
+  if (asrRootIn(MODEL_DIR) === MODEL_DIR && !existsSync(join(MODEL_DIR, 'vocab.txt'))) {
+    console.warn(`[e2e:serve] WARNING: no vocab.txt at ${MODEL_DIR} or under its model-repo subfolder — run \`npm run e2e:models\` or point PARAKEET_E2E_MODEL_DIR at the weights.`);
   }
   console.log(`[e2e:serve] Listening on http://127.0.0.1:${PORT} (app=${DIST}, models=${MODEL_DIR})`);
 });
