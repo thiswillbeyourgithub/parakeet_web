@@ -1,0 +1,12 @@
+[
+  ".gitattributes",
+  "README.md",
+  "config.json",
+  "decoder_joint-model.int8.onnx",
+  "decoder_joint-model.onnx",
+  "encoder-model.int8.onnx",
+  "encoder-model.onnx",
+  "encoder-model.onnx.data",
+  "nemo128.onnx",
+  "vocab.txt"
+]
