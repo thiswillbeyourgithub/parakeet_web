@@ -452,9 +452,19 @@ fi
 # that are already declared via sibling env vars.
 #
 # 1. HuggingFace connect-src list: the explicit subdomains HF currently
-#    redirects model files through. Default ON, but cleared entirely when
-#    VITE_MODEL_SOURCE=local, since the app never reaches HF in that mode
-#    and there is no reason to advertise those origins.
+#    redirects model files through, including the Xet CDN (*.aws.cdn.hf.co)
+#    every repo migrated to Xet storage now serves its weights from. Default
+#    ON, but cleared entirely when VITE_MODEL_SOURCE=local, since the app never
+#    reaches HF in that mode and there is no reason to advertise those origins.
+#
+#    A host missing from this list is not a soft failure: the browser blocks the
+#    request, hub.js only sees a failed download, and the app falls through to
+#    the local mirror or to nothing. That is exactly how a deployment broke,
+#    with cas-bridge.xethub.hf.co allowed and us.aws.cdn.hf.co not. The hosts
+#    are spelled out rather than wildcarded because _validate_csp_hosts refuses
+#    `*` from operators and this default should not hold itself to a looser
+#    rule, so a new HF region has to be added here (or via
+#    VITE_CSP_CONNECT_HOSTS).
 # 2. Analytics origin: derived from VITE_ANALYTICS_URL (if set). Appended
 #    to both VITE_CSP_SCRIPT_HOSTS (umami script-src) and
 #    VITE_CSP_CONNECT_HOSTS (umami beacon connect-src), so the operator
@@ -463,7 +473,7 @@ fi
 #    extracted by _extract_origin (which enforces the same character
 #    allowlist as _validate_csp_hosts), so no unvalidated input reaches
 #    the CSP header.
-_HF_HOSTS_DEFAULT="https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co"
+_HF_HOSTS_DEFAULT="https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co https://us.aws.cdn.hf.co https://eu.aws.cdn.hf.co"
 if [ "${VITE_MODEL_SOURCE:-}" = "local" ]; then
   _CSP_HF_HOSTS=""
   echo "[entrypoint] VITE_MODEL_SOURCE=local: dropping HF origins from CSP."
