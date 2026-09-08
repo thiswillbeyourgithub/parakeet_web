@@ -418,6 +418,25 @@ poids locaux ne produit qu'un avertissement au démarrage : il est téléchargé
 depuis HuggingFace, exactement comme s'il n'y avait aucun miroir. Le
 démarrage n'échoue que si aucun d'entre eux ne peut être servi localement.
 
+**Comment l'application trouve les poids dans votre dossier.** Un dossier
+derrière un serveur web ne peut pas être listé, l'application devrait donc
+sinon deviner : elle vérifie la poignée de dispositions qu'elle connaît
+(`int8/`, `fp32/`, à plat à la racine, et quelques anciennes graphies). Cela
+couvre toutes les dispositions documentées ici et rien d'autre : un dépôt qui
+range une variante à un endroit inhabituel se chargerait donc très bien depuis
+HuggingFace tout en apparaissant indisponible depuis votre miroir.
+
+Pour supprimer ces suppositions, le conteneur écrit à chaque démarrage un petit
+`model-manifest.json` listant ce que votre dossier contient réellement, et le
+sert à côté des poids. Rien à configurer : il est généré à partir du dossier
+lui-même, il ne peut donc pas décrire ce que vous n'avez pas, et il est
+réécrit à chaque démarrage, il ne peut donc pas devenir périmé. Il est écrit
+dans un dossier temporaire à l'intérieur du conteneur, pas dans votre montage :
+monter les modèles en lecture seule reste donc parfaitement valable. S'il ne
+peut pas être écrit, vous obtenez un avertissement et l'application retombe sur
+les suppositions ci-dessus, ce que faisait tout miroir auparavant.
+
+
 L'étape 4 écrit un fichier `<fichier>.zst` à côté de chaque fichier ONNX,
 que Caddy sert ensuite avec `Content-Encoding: zstd`. L'encodeur int8 passe
 ainsi de 841 Mo à 643 Mo (27 % de moins à télécharger), et le navigateur le

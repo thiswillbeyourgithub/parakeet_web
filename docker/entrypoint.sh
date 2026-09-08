@@ -363,6 +363,28 @@ else
     exit 1
   fi
 
+  # Mirror manifest. The app cannot list a folder behind a static file server,
+  # so without one it HEAD-probes the paths app/src/modelLayout.js predicts:
+  # every layout anyone wrote down, and no others. A repo that files a weight
+  # somewhere else (the optimized repo keeps a second model under
+  # istupakov_smoothquant/ and put the lite int8 encoder in it) then resolves
+  # fine from HuggingFace and reads as unavailable from this mount. So describe
+  # the mount instead of making the app guess at it.
+  #
+  # Written to a tmpfs, not into the mount, because the mount is read-only by
+  # default and this must work without the operator changing that; Caddy serves
+  # it back under /models/ (see Caddyfile). Regenerated at every boot from what
+  # is actually on disk, so it cannot go stale, and a failure is only a warning:
+  # a mount with no manifest is probed exactly as it was before.
+  MODEL_MANIFEST_DIR="/var/model-manifests"
+  if mkdir -p "${MODEL_MANIFEST_DIR}" 2>/dev/null && [ -w "${MODEL_MANIFEST_DIR}" ]; then
+    node /opt/parakeet/scripts/model-manifest.mjs \
+      "${LOCAL_MODEL_PATH}" "${_MODEL_REPOS}" "${MODEL_MANIFEST_DIR}" \
+      || echo "[entrypoint] WARNING: could not describe the model mount; the app will probe for paths instead."
+  else
+    echo "[entrypoint] WARNING: ${MODEL_MANIFEST_DIR} is not writable; the app will probe for model paths instead."
+  fi
+
   # Precompressed sidecars. Caddy serves `<file>.zst` in place of `<file>` to
   # any browser that accepts zstd (file_server ... precompressed, see
   # Caddyfile), which takes the 841 MB int8 encoder to 643 MB on the wire.

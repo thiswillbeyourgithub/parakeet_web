@@ -300,25 +300,48 @@
 	# bind-mounted into the container at LOCAL_MODEL_PATH (flat layout — the
 	# ONNX files and vocab.txt are expected directly inside that folder).
 	handle_path /models/* {
-		root * {$LOCAL_MODEL_PATH:/models}
-		# Serve `<file>.zst` with Content-Encoding: zstd when the browser
-		# accepts it, so the browser decompresses natively and nothing in
-		# the app changes. The model weights are application/octet-stream,
-		# which the `encode` directive above deliberately skips, so without
-		# this the full 841 MB int8 encoder crosses the wire uncompressed on
-		# every first load; measured, zstd -9 takes it to 643 MB.
+		# The mirror's own file list, generated at boot by the entrypoint (see
+		# scripts/model-manifest.mjs) and read by the app in place of HEAD-probing
+		# for paths it can only guess at. Served from a tmpfs rather than from the
+		# mount, because the mount is read-only by default, and matched here (after
+		# handle_path has stripped /models) so both shapes land on it: the flat
+		# layout's /models/model-manifest.json and a shared mount's
+		# /models/<owner>/<repo>/model-manifest.json.
 		#
-		# The sidecars are generated ONCE, offline, by
-		# `node scripts/precompress.mjs --models`. Compressing on the fly would
-		# cost 6-11 s of CPU per download per visitor. A browser that does
-		# not accept zstd, or a file with no sidecar, gets the plain file
-		# exactly as before, so this can only ever help.
+		# Both branches are `handle` blocks so they are mutually exclusive: the
+		# manifest must not fall through to the model root, where it does not exist.
 		#
-		# Resume is unaffected: browsers send `Accept-Encoding: identity` on
-		# any request carrying a Range header (verified in Chromium 148), so
-		# a resumed download gets plain byte ranges of the real file.
-		file_server {
-			precompressed zstd
+		# The repo shapes are spelled out rather than left to one wildcard: a repo
+		# id is always <owner>/<name>, so the stripped path is exactly two segments
+		# deep, and listing that shape explicitly means the route does not depend on
+		# whether a `*` in a path matcher spans a `/`.
+		@model_manifest path /model-manifest.json /*/model-manifest.json /*/*/model-manifest.json */model-manifest.json
+		handle @model_manifest {
+			root * /var/model-manifests
+			file_server
+		}
+
+		handle {
+			root * {$LOCAL_MODEL_PATH:/models}
+			# Serve `<file>.zst` with Content-Encoding: zstd when the browser
+			# accepts it, so the browser decompresses natively and nothing in
+			# the app changes. The model weights are application/octet-stream,
+			# which the `encode` directive above deliberately skips, so without
+			# this the full 841 MB int8 encoder crosses the wire uncompressed on
+			# every first load; measured, zstd -9 takes it to 643 MB.
+			#
+			# The sidecars are generated ONCE, offline, by
+			# `node scripts/precompress.mjs --models`. Compressing on the fly would
+			# cost 6-11 s of CPU per download per visitor. A browser that does
+			# not accept zstd, or a file with no sidecar, gets the plain file
+			# exactly as before, so this can only ever help.
+			#
+			# Resume is unaffected: browsers send `Accept-Encoding: identity` on
+			# any request carrying a Range header (verified in Chromium 148), so
+			# a resumed download gets plain byte ranges of the real file.
+			file_server {
+				precompressed zstd
+			}
 		}
 	}
 
