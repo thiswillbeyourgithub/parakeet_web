@@ -883,9 +883,9 @@ def parse_args(argv):
 
 def analyze_one(args, audio_path, quants):
     """Run the full-pass + per-section analysis for ONE audio file: print the
-    overall and per-section tables, and return {quant: overall_wer} (None for a
-    failed quant) so a folder sweep can build a cross-file summary."""
-    from jiwer import wer
+    overall and per-section tables, and return per-quant rates (None for a failed
+    quant) so a folder sweep can build a cross-file summary."""
+    from jiwer import wer, cer
 
     print(f"\naudio: {audio_path}")
 
@@ -922,63 +922,85 @@ def analyze_one(args, audio_path, quants):
     print(f"transcribed: {audio_sec:.1f}s ({audio_sec / 60:.1f} min) of the single pass "
           f"(capped at {args.max_pass_sec:g}s)\n")
     print("== Overall (full single pass) ==")
-    print("quant   WER       load     infer     proc_t/dur_t   peak RAM   model RAM   words")
-    print("-----   -------   ------   -------   ------------   --------   ---------   -----")
+    print("quant   WER       CER       load     infer     proc_t/dur_t   peak RAM   model RAM   words")
+    print("-----   -------   -------   ------   -------   ------------   --------   ---------   -----")
     summary = {}
     for q in quants:
         r = results[q]
         if "error" in r:
             print(f"{q:<6}  FAILED: {r['error']}")
-            summary[q] = None
+            summary[q] = (None, None)
             continue
         w = wer(overall_ref, r["text"])
-        summary[q] = w
+        c = cer(overall_ref, r["text"])
+        summary[q] = (w, c)
         proc_per_dur = r["infer_s"] / r["audio_sec"]
         model_mb = r["peak_mb"] - r["baseline_mb"]
         n = len(r["text"].split())
         print(
-            f"{q:<6}  {100 * w:6.2f}%   {r['load_s']:5.1f}s   {r['infer_s']:6.1f}s   "
+            f"{q:<6}  {100 * w:6.2f}%   {100 * c:6.2f}%   {r['load_s']:5.1f}s   {r['infer_s']:6.1f}s   "
             f"{proc_per_dur:>12.3f}   {r['peak_mb']:6.0f} MB   {model_mb:6.0f} MB   {n:5d}"
         )
 
-    # ---- Table 2: per-section WER ----
+    # ---- Table 2: per-section WER and CER ----
     ok = [q for q in quants if "error" not in results[q]]
-    print(f"\n== Per-section WER (hypothesis = full-pass slice; reference = {args.reference_quant} short clip) ==")
-    header = "section          ref words  " + "  ".join(f"{q:>6}" for q in ok)
-    print(header)
-    print("-" * len(header))
-    # Track each quant's WORST (highest) per-section WER and the window it hit, so a
-    # single catastrophic chunk is reported exactly even when the overall WER barely
-    # moves (two quants can agree on every other chunk while one tanks just one).
-    worst = {q: None for q in ok}  # q -> (wer, window-label)
-    for i, sec in enumerate(sections):
+    # Slice each window once and score both rates off the SAME (ref, hyp) pair, so
+    # WER and CER can never disagree about which windows were scorable.
+    per_sec = []  # [(label, ref_words, {quant: (wer_or_None, cer_or_None)})]
+    for sec in sections:
         ref_i = sec["text"]
         label = f"{sec['start']:6.0f}-{sec['end']:<6.0f}s"
-        ref_n = len(ref_i.split())
-        cells = []
+        cells = {}
         for q in ok:
             r = results[q]
             hyp_i = slice_tokens(r["tokens"], r["timestamps"], sec["start"], sec["end"])
-            w = None if not ref_i.strip() else wer(ref_i, hyp_i)
-            if w is not None and (worst[q] is None or w > worst[q][0]):
-                worst[q] = (w, label.strip())
-            cells.append(fmt_pct(w))
-        print(f"{label}      {ref_n:5d}     " + "  ".join(f"{c:>6}" for c in cells))
-    # Worst-chunk row: the MAXIMUM per-section WER per quant (its single worst
-    # window). Aligned under the data columns (data cells start at column 30).
-    print("-" * len(header))
-    worst_cells = [fmt_pct(worst[q][0] if worst[q] else None) for q in ok]
-    print(f"{'worst chunk':<30}" + "  ".join(f"{c:>6}" for c in worst_cells))
-    where = ", ".join(f"{q} @ {worst[q][1]}" for q in ok if worst[q]) or "n/a"
-    print(f"worst chunk window: {where}")
+            cells[q] = (None, None) if not ref_i.strip() else (wer(ref_i, hyp_i), cer(ref_i, hyp_i))
+        per_sec.append((label, len(ref_i.split()), cells))
 
-    print("\nLower WER is better. Per-section WER measures the single long pass against an "
-          "independent short-clip transcription of the same window; a trend of rising WER "
-          "down the table is the long-pass degradation you suspected. The 'worst chunk' row "
-          "is the maximum per-section WER for each quant, surfacing a single bad window the "
-          "overall WER would otherwise average away. "
+    def extremes(idx):
+        """(last-window value, worst value, worst window label) per quant."""
+        last, worst = {}, {}
+        for q in ok:
+            last[q] = per_sec[-1][2][q][idx] if per_sec else None
+            vals = [(c[q][idx], lbl.strip()) for lbl, _, c in per_sec if c[q][idx] is not None]
+            worst[q] = max(vals) if vals else None
+        return last, worst
+
+    for idx, rate in ((0, "WER"), (1, "CER")):
+        print(f"\n== Per-section {rate} (hypothesis = full-pass slice; "
+              f"reference = {args.reference_quant} short clip) ==")
+        header = "section          ref words  " + "  ".join(f"{q:>6}" for q in ok)
+        print(header)
+        print("-" * len(header))
+        for label, ref_n, cells in per_sec:
+            row = "  ".join(f"{fmt_pct(cells[q][idx]):>6}" for q in ok)
+            print(f"{label}      {ref_n:5d}     " + row)
+        print("-" * len(header))
+        last, worst = extremes(idx)
+        # The LAST window is the one that answers "does a long pass fall apart once it
+        # has been running a while": read it against the first row of the table.
+        print(f"{'last chunk':<30}" + "  ".join(f"{fmt_pct(last[q]):>6}" for q in ok))
+        # Worst chunk is kept for triage (WHICH window blew up), not for ranking: it
+        # is a maximum over windows, so it grows with the number of windows in a file
+        # rather than with the error rate.
+        print(f"{'worst chunk':<30}"
+              + "  ".join(f"{fmt_pct(worst[q][0] if worst[q] else None):>6}" for q in ok))
+        where = ", ".join(f"{q} @ {worst[q][1]}" for q in ok if worst[q]) or "n/a"
+        print(f"worst chunk window: {where}")
+
+    print("\nLower is better. Per-section rates measure the single long pass against an "
+          "independent short-clip transcription of the same window; a trend of rising error "
+          "down a table is the long-pass degradation you suspected, and the 'last chunk' row "
+          "against the first data row is the direct read on that. The 'worst chunk' row is a "
+          "maximum, so treat it as a pointer to one bad window rather than as a score. "
           "RAM is host memory, not VRAM (see the module docstring).")
-    return {q: {"overall": summary[q], "worst": (worst[q][0] if worst.get(q) else None)}
+
+    last_w, worst_w = extremes(0)
+    last_c, worst_c = extremes(1)
+    return {q: {"overall": summary[q][0], "overall_cer": summary[q][1],
+                "last": last_w.get(q), "last_cer": last_c.get(q),
+                "worst": (worst_w[q][0] if worst_w.get(q) else None),
+                "worst_cer": (worst_c[q][0] if worst_c.get(q) else None)}
             for q in quants}
 
 
@@ -1009,7 +1031,13 @@ def print_cross_file_summary(summaries, quants):
         print(f"{'mean':<{name_w}}  " + "  ".join(f"{fmt_pct(m):>7}" for m in means))
 
     table("overall WER", "overall")
+    table("overall CER", "overall_cer")
+    # Last chunk before worst chunk: the last window is the one that answers whether a
+    # long pass degrades with length, which is what these files are here to test.
+    table("last-chunk WER", "last")
+    table("last-chunk CER", "last_cer")
     table("worst-chunk WER", "worst")
+    table("worst-chunk CER", "worst_cer")
     print("\nLower WER is better. 'overall WER' is the whole single pass; 'worst-chunk WER' "
           "is each file's single worst per-section window (a one-chunk collapse the overall "
           "mean would otherwise hide). The mean is over the files each quant transcribed; a "
