@@ -20,6 +20,7 @@ import { resolve, join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findDanglingLinks, danglingLinksMessage, danglingLinksWarning } from './dangling-links.mjs';
 import { candidatePaths } from '../../app/src/modelLayout.js';
+import { MANIFEST_FILE } from '../../scripts/model-manifest.mjs';
 import { asrRootIn } from '../../scripts/fetch-e2e-models.mjs';
 
 const here = resolve(fileURLToPath(import.meta.url), '..');
@@ -30,6 +31,10 @@ const MODEL_DIR = resolve(process.env.PARAKEET_E2E_MODEL_DIR || join(ROOT, 'fall
 // <name>.json), mirroring what Caddy serves at /boost-phrases/* in production.
 // Lets a spec exercise the curated-list + prebuilt-artifact path without weights.
 const BOOST_DIR = resolve(process.env.PARAKEET_E2E_BOOST_DIR || join(here, 'fixtures/boost-phrases'));
+// Where `npm run e2e:manifest` writes the mirror's file list. Inside MODEL_DIR
+// but dotted, so the manifest generator's own walk skips it and it cannot end up
+// describing itself.
+const MANIFEST_DIR = resolve(process.env.PARAKEET_E2E_MANIFEST_DIR || join(MODEL_DIR, '.manifests'));
 const PORT = parseInt(process.env.PORT, 10) || 4178;
 
 const MIME = {
@@ -98,6 +103,16 @@ const server = http.createServer((req, res) => {
   // the fp32 spec skips itself.
   if (pathname.startsWith('/models/')) {
     const rel = pathname.slice('/models/'.length);
+    // The mirror manifest (scripts/model-manifest.mjs) is looked up in a sidecar
+    // tree first, mirroring what the container does: there Caddy serves it from a
+    // tmpfs because the model mount is read-only, and here MODEL_DIR is usually a
+    // maintainer's symlinks INTO the model repo, which is not ours to write a
+    // generated file into. Falls through to MODEL_DIR, which is where the CI
+    // fetch writes it, so both placements work.
+    if (rel.endsWith(`/${MANIFEST_FILE}`) || rel === MANIFEST_FILE) {
+      const sidecar = safeJoin(MANIFEST_DIR, rel);
+      if (sidecar && existsSync(sidecar) && statSync(sidecar).isFile()) return sendFile(req, res, sidecar);
+    }
     const tries = rel.includes('/') ? [rel] : candidatePaths(rel);
     for (const candidate of tries) {
       const filePath = safeJoin(MODEL_DIR, candidate);
