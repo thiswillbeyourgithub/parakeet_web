@@ -62,6 +62,11 @@ scripts/*
 # the brotli sidecars Caddy serves, and the runtime image keeps a copy for the
 # opt-in PRECOMPRESS_MODELS pass over the mounted model folder.
 !scripts/precompress.mjs
+# ...and the mirror-manifest writer: the entrypoint runs it over the mounted
+# model folder at boot so the app can read the layout instead of HEAD-probing
+# for it. Without this exception the image simply fails to build (the COPY finds
+# nothing), which is how the omission was caught.
+!scripts/model-manifest.mjs
 # ...but never a host node_modules inside it: the builder stage runs `npm ci`
 # from the lockfile, and copying a host tree in would defeat that.
 scripts/openai-like-server/node_modules/
