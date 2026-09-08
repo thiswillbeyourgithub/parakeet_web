@@ -8,7 +8,7 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Unreleased
+## 11.0.0 (2026-09-08)
 
 ### A choice of models, and a link that picks one
 
@@ -208,6 +208,26 @@ What this changes for you:
 - Self-hosters can drop `encoder-model.int8.lite.onnx`, `encoder-model.fp16.onnx` and `decoder_joint-model.fp16.onnx` from their mirror. **The fp32 shards are now mandatory for any deployment that wants to serve WebGPU visitors at all**, since fp16 is no longer there to cover for a mirror that lacks them. A mirror serving neither still degrades safely: those visitors fall back to the CPU path with a warning, as before.
 
 The fp16 build script is kept in the model repo so the build can be regenerated if a machine with `shader-f16` ever makes it testable.
+
+### Fixed: nothing could be downloaded after HuggingFace moved its file host
+
+Model files stopped loading on self-hosted instances. HuggingFace now serves the weights of migrated repositories from a different address than the one it used before, and an instance's security policy lists the addresses the browser is allowed to reach: the new one was not on that list, so the browser refused every download before it left the page.
+
+It failed in the most confusing way it could. The app never learns why a blocked request failed, so it did what it does for any failed download and turned to the local copy of the weights, then reported whatever that copy was missing. Every visible symptom pointed at the local mirror, and nothing anywhere named the security policy.
+
+The new addresses are allowed now. There is also a check (`node scripts/check-hf-cdn-hosts.mjs`) that resolves a real download and names any address the list no longer covers, since HuggingFace will move again.
+
+### An instance says at startup when a configured model has no weights behind it
+
+An instance can list several models, and one of them having nothing on the local mirror was invisible: the app simply fetches that model from HuggingFace, so the instance looks healthy and is only slower for whoever picks it. A deploy can therefore ship half the models it was configured with and nothing says a word. Startup now names any configured model the mounted folder cannot serve. It stays a warning, because falling back to HuggingFace is a legitimate way to run.
+
+### Smaller adjustments to the sidebar
+
+The encoder-precision list is now ordered by download size, smallest first, so it reads as a single ramp instead of asking you to compare each line. The recommended choice is still marked as such.
+
+In the benchmark section, a precision you already have was marked as downloaded only for the backend you are running it on, even though a precision is one file that both backends read: choosing the same precision on the other backend looked like a fresh download of several hundred megabytes and is free. The estimate below the list also counted such a precision twice.
+
+The model line no longer carries the `(nemo128)` suffix, which named an internal component and was the same for every model offered.
 
 ---
 

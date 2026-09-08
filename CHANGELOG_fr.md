@@ -8,7 +8,7 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Non publié
+## 11.0.0 (2026-09-08)
 
 ### Un choix de modèles, et un lien qui en sélectionne un
 
@@ -208,6 +208,26 @@ Ce que cela change pour vous :
 - Les personnes qui autohébergent peuvent supprimer `encoder-model.int8.lite.onnx`, `encoder-model.fp16.onnx` et `decoder_joint-model.fp16.onnx` de leur miroir. **Les fragments fp32 deviennent obligatoires pour toute installation qui souhaite servir des visiteurs WebGPU**, puisque fp16 n'est plus là pour compenser un miroir qui en manque. Un miroir qui ne sert ni l'un ni l'autre se dégrade toujours proprement : ces visiteurs basculent sur la voie CPU avec un avertissement, comme auparavant.
 
 Le script de génération fp16 est conservé dans le dépôt du modèle, de sorte que la version puisse être régénérée si une machine dotée de `shader-f16` la rend un jour testable.
+
+### Corrigé : plus rien ne se téléchargeait après le déménagement de HuggingFace
+
+Les fichiers de modèle ne se chargeaient plus sur les instances autohébergées. HuggingFace sert désormais les poids des dépôts migrés depuis une adresse différente de celle qu'il utilisait auparavant, et la politique de sécurité d'une instance énumère les adresses que le navigateur a le droit de joindre : la nouvelle n'y figurait pas, donc le navigateur refusait chaque téléchargement avant même qu'il ne quitte la page.
+
+L'échec prenait la forme la plus déroutante possible. L'application n'apprend jamais pourquoi une requête bloquée a échoué : elle a donc fait ce qu'elle fait pour tout téléchargement échoué et s'est tournée vers la copie locale des poids, puis a signalé ce qui manquait à cette copie. Tous les symptômes visibles désignaient le miroir local, et rien nulle part ne nommait la politique de sécurité.
+
+Les nouvelles adresses sont désormais autorisées. Une vérification (`node scripts/check-hf-cdn-hosts.mjs`) résout un vrai téléchargement et nomme toute adresse que la liste ne couvre plus, car HuggingFace déménagera de nouveau.
+
+### Une instance signale au démarrage qu'un modèle configuré n'a aucun poids derrière lui
+
+Une instance peut proposer plusieurs modèles, et le fait que l'un d'eux n'ait rien sur le miroir local était invisible : l'application va simplement chercher ce modèle sur HuggingFace, donc l'instance paraît en bonne santé et se contente d'être plus lente pour qui le choisit. Un déploiement peut ainsi livrer la moitié des modèles configurés sans que rien ne le signale. Le démarrage nomme désormais tout modèle configuré que le dossier monté ne peut pas servir. Cela reste un avertissement, car se rabattre sur HuggingFace est une façon légitime de fonctionner.
+
+### Ajustements plus modestes dans la barre latérale
+
+La liste des précisions de l'encodeur est désormais ordonnée par taille de téléchargement, de la plus petite à la plus grande : elle se lit comme une progression au lieu d'exiger la comparaison de chaque ligne. Le choix recommandé reste indiqué comme tel.
+
+Dans la section de test de performance, une précision que vous possédez déjà n'était marquée comme téléchargée que pour le backend sur lequel vous l'exécutez, alors qu'une précision est un seul fichier que les deux backends lisent : choisir la même précision sur l'autre backend semblait coûter un nouveau téléchargement de plusieurs centaines de mégaoctets, alors qu'il est gratuit. L'estimation sous la liste comptait aussi une telle précision deux fois.
+
+La ligne du modèle ne porte plus le suffixe `(nemo128)`, qui nommait un composant interne et était identique pour tous les modèles proposés.
 
 ---
 
