@@ -71,3 +71,61 @@ describe('resolveLocalModelBase', () => {
     assert.equal(await resolveLocalModelBase('/models', REPO), `/models/${REPO}`);
   });
 });
+
+// Probing nested-first only protects the repos a mount HAS a subfolder for. A
+// mirror carrying a single repo flat and nothing else still answers the flat
+// probe for every other repo in the picker, so the repo the mount lacks loads
+// the one it has, under the wrong name. Both offered repos share an
+// architecture, a vocab size and a mel-bin count here (see app/src/models.js),
+// so the swap produces a fluent transcript and raises nothing. A flat tree
+// carries no repo identity, so it is only attributable when there is exactly
+// one candidate: that is what allowFlatFallback encodes.
+describe('resolveLocalModelBase allowFlatFallback', () => {
+  const OTHER = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+
+  test('refuses an unattributed flat mirror for a repo it has no subfolder for', async () => {
+    mockUrls(['/models/vocab.txt']);
+    assert.equal(await resolveLocalModelBase('/models', OTHER, { allowFlatFallback: false }), null);
+  });
+
+  test('still resolves that repo when the mount DOES carry its subfolder', async () => {
+    // The refusal is about attribution, not about nesting: a named subfolder is
+    // proof of identity, so it answers regardless of the flag.
+    mockUrls([`/models/${OTHER}/vocab.txt`]);
+    assert.equal(await resolveLocalModelBase('/models', OTHER, { allowFlatFallback: false }), `/models/${OTHER}`);
+  });
+
+  test('refusing does not depend on the flat tree being absent', async () => {
+    // Both layouts present, but only for the OTHER repo. The flat tree is
+    // reachable and would have answered; the point is that it must not.
+    mockUrls(['/models/vocab.txt', `/models/${REPO}/vocab.txt`]);
+    assert.equal(await resolveLocalModelBase('/models', OTHER, { allowFlatFallback: false }), null);
+    // ...and the repo that IS mounted nested still resolves, so disabling the
+    // fallback costs a multi-repo deployment nothing it should have had.
+    assert.equal(await resolveLocalModelBase('/models', REPO, { allowFlatFallback: false }), `/models/${REPO}`);
+  });
+
+  test('never probes the flat base at all when the fallback is off', async () => {
+    // Not just "ignores the answer": the HEAD request is not made, so a mount
+    // that is slow or hostile at the flat path costs a multi-repo load nothing.
+    const probed = [];
+    globalThis.fetch = async (url) => { probed.push(String(url)); return { ok: true }; };
+    await resolveLocalModelBase('/models', OTHER, { allowFlatFallback: false });
+    assert.deepEqual(probed, [`/models/${OTHER}/vocab.txt`]);
+  });
+
+  test('with no repoId the flag is inert (nothing to mis-attribute)', async () => {
+    // No repo was named, so the flat base cannot be served under the wrong id.
+    // Callers that pass no repoId (older API shape) keep the old behaviour.
+    mockUrls(['/models/vocab.txt']);
+    assert.equal(await resolveLocalModelBase('/models', undefined, { allowFlatFallback: false }), '/models');
+  });
+
+  test('defaults to allowing the flat fallback (single-repo contract intact)', async () => {
+    // Explicitly pinned: the guard is opt-in, so every existing single-repo
+    // deployment and every caller that passes no options behaves as before.
+    mockUrls(['/models/vocab.txt']);
+    assert.equal(await resolveLocalModelBase('/models', OTHER), '/models');
+    assert.equal(await resolveLocalModelBase('/models', OTHER, {}), '/models');
+  });
+});

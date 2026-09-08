@@ -590,3 +590,110 @@ describe('getParakeetModel file selection: canonical names only', () => {
     }
   });
 });
+
+// The flat-local-fallback guard, at the getParakeetModel seam rather than at
+// resolveLocalModelBase (which resolve-local-model-base.test.mjs covers on its
+// own). Worth its own coverage because the refusal is easy to defeat one layer
+// up: both local call sites here stand an unresolved base back up so a missing
+// mirror keeps failing as a plain missing file, and standing the FLAT base back
+// up would re-serve the very tree the refusal just rejected. That mistake is
+// invisible from resolveLocalModelBase's own tests and raises nothing at
+// runtime: it just returns another repo's weights under this repo's name.
+//
+// Both tests below ask for fp32, which only a mirror can serve, so the guard's
+// effect is a visible fork rather than a subtle one: leaking loads fp32 from
+// the mirror, holding throws before a single weight byte is fetched.
+describe('getParakeetModel local mirror attribution', () => {
+  const SELECTED = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+  // A mirror mounted FLAT (the documented single-repo contract) holding some
+  // other repo's build, sharded fp32 included. It has no subfolder for
+  // SELECTED, so nothing about it proves it is that repo, yet every path here
+  // is reachable and would satisfy the request.
+  const FLAT_MIRROR = [
+    'vocab.txt', 'nemo128.onnx',
+    'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx',
+    'fp32/encoder-model.onnx', 'fp32/encoder-model.onnx.data.000', 'fp32/encoder-model.onnx.data.001',
+  ];
+
+  // Serves the flat mirror and records every URL touched, so a test can assert
+  // on what was NOT requested as well as on what was.
+  function mockFlatMirror() {
+    const requested = [];
+    const present = new Set(FLAT_MIRROR.map((f) => `/models/${f}`));
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url).split('?')[0];
+      requested.push(u);
+      if (!present.has(u)) return new Response('not found', { status: 404 });
+      if (opts.method === 'HEAD') return new Response(null, { status: 200 });
+      return bodyResponse();
+    };
+    return requested;
+  }
+
+  // Every /models path that does not carry the selected repo's id: bytes that
+  // could only have come from a tree with no claim to be this repo.
+  const leaks = (requested) =>
+    requested.filter((u) => u.startsWith('/models/') && !u.startsWith(`/models/${SELECTED}/`));
+
+  test('a flat mirror still serves the only repo on offer (contract unchanged)', async () => {
+    // The control, and the thing that makes the refusal below meaningful: this
+    // mirror genuinely can serve the request, so a refusal is the guard acting
+    // and not the mirror coming up short.
+    const requested = mockFlatMirror();
+    const r = await getParakeetModel(SELECTED, {
+      backend: 'wasm', encoderQuant: 'fp32', allowWasmFp32: true,
+      localFallbackBaseUrl: '/models',
+    });
+    assert.equal(r.quantisation.encoder, 'fp32');
+    assert.ok(leaks(requested).length > 0, 'the single-repo path is expected to read the flat mirror');
+  });
+
+  test('with several repos on offer the flat mirror serves NONE of its files', async () => {
+    const requested = mockFlatMirror();
+    await assert.rejects(
+      getParakeetModel(SELECTED, {
+        backend: 'wasm', encoderQuant: 'fp32', allowWasmFp32: true,
+        localFallbackBaseUrl: '/models', allowFlatLocalFallback: false,
+      }),
+      QuantUnavailableError,
+      'an unattributable mirror must fail the load, not silently substitute another repo',
+    );
+    assert.deepEqual(leaks(requested), [],
+      `no flat-mirror path may be touched for a repo it cannot be attributed to; leaked ${leaks(requested).join(', ')}`);
+  });
+
+  test('the pre-download quant upgrade cannot switch to an unattributable mirror', async () => {
+    // The second local call site: on the HF path the mirror is probed as an
+    // UPGRADE when HF cannot serve the requested quant. Refusing the flat base
+    // there but listing it anyway would let it satisfy the quant and move the
+    // whole load onto the wrong repo's weights.
+    const requested = [];
+    const present = new Set(FLAT_MIRROR.map((f) => `/models/${f}`));
+    globalThis.fetch = async (url, opts = {}) => {
+      const u = String(url).split('?')[0];
+      requested.push(u);
+      // HF lists a repo with no fp32 shards, so fp32 is unservable there and
+      // the upgrade probe is what fires next.
+      if (u.includes('/api/models/') || u.includes('/tree/')) {
+        return new Response(JSON.stringify(REPO_FLAT.map((path) => ({ path, type: 'file' }))), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.startsWith('/models/')) {
+        if (!present.has(u)) return new Response('not found', { status: 404 });
+        return opts.method === 'HEAD' ? new Response(null, { status: 200 }) : bodyResponse();
+      }
+      return opts.method === 'HEAD' ? new Response(null, { status: 200 }) : bodyResponse();
+    };
+    await assert.rejects(
+      getParakeetModel(SELECTED, {
+        backend: 'wasm', encoderQuant: 'fp32', allowWasmFp32: true,
+        localUpgradeBaseUrl: '/models', allowFlatLocalFallback: false,
+      }),
+      QuantUnavailableError,
+      'neither source can serve fp32 for this repo, so the load must fail rather than upgrade onto another repo',
+    );
+    assert.deepEqual(leaks(requested), [],
+      `the upgrade probe must not read an unattributable flat mirror; leaked ${leaks(requested).join(', ')}`);
+  });
+});

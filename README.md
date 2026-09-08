@@ -410,11 +410,13 @@ subfolder underneath:
     parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
 ```
 
-The loader asks for a repo by name before falling back to the flat layout,
-so a mirror can also serve one repo flat at the root and the others in
-subfolders. A listed repo with no local weights is only a warning at
-startup: it downloads from HuggingFace like it would with no mirror at all.
-The boot only fails when none of them can be served locally.
+Every listed repo needs its own subfolder. A flat tree at the root is
+ignored once more than one repo is on offer, because it carries no repo id:
+serving it under whichever model the visitor picked would hand them a fluent
+transcript from a different model, with nothing to notice. A listed repo
+with no local weights is only a warning at startup: it downloads from
+HuggingFace like it would with no mirror at all. The boot only fails when
+none of them can be served locally.
 
 Step 4 writes a `<file>.zst` next to each ONNX file, which Caddy then
 serves with `Content-Encoding: zstd`. It takes the int8 encoder from 841 MB
