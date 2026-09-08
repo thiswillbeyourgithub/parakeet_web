@@ -551,11 +551,18 @@ const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'fp32'];
 // adapter probe below decides whether it is offered on THIS machine.
 const WEBGPU_ENCODER_QUANTS = ['fp32', 'w4a8', 'fp16'];
 
-// Every precision the radios can render, in display order. The two lists above
-// stay the per-backend whitelists (a saved value is validated against them);
-// this is only what the UI iterates, so a WebGPU-only precision like fp16 has a
-// row to be greyed out in when the WASM backend is selected.
-const ENCODER_QUANT_ROWS = ['int8lite', 'int8', 'w4a8', 'fp16', 'fp32'];
+// Every precision the radios can render, in display order: ascending DOWNLOAD
+// SIZE, smallest first (w4a8 ~610MB, int8 lite ~810MB, int8 ~900MB, fp16 ~1.2GB,
+// fp32 ~2.4GB). Size is what the visitor is actually trading here, and it is the
+// one axis every row can be compared on (quality and speed do not order the same
+// way, and w4a8 is smallest but slowest), so the column reads as a single ramp
+// rather than needing each label to be read to place it. The recommended choice
+// is int8, which the label says; ordering does not carry that.
+//
+// The two lists above stay the per-backend whitelists (a saved value is
+// validated against them); this is only what the UI iterates, so a WebGPU-only
+// precision like fp16 has a row to be greyed out in when WASM is selected.
+const ENCODER_QUANT_ROWS = ['w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
 
 // Where a benchmark report is POSTed, and whether the "send it to the
 // maintainer" half of the Benchmark section exists at all. The operator opts in
@@ -7332,7 +7339,8 @@ export default function App() {
             )}
 
             {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
-              // Single fixed list (int8 lite / int8 / w4a8 / fp16 / fp32); only
+              // Single fixed list (w4a8 / int8 lite / int8 / fp16 / fp32, in
+              // ascending download size, see ENCODER_QUANT_ROWS); only
               // the greying moves with the backend. Neither int8 build has a
               // GPU encoder kernel (both unavailable on WebGPU); fp32 and w4a8
               // run on both, w4a8 through the MatMulNBits kernel the GPU EP
