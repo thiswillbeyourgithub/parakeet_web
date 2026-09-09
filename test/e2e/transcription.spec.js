@@ -93,6 +93,20 @@ for (const fx of FIXTURES) {
     await page.locator('.history-modes button', { hasText: 'Audio' }).first().click();
     await expect(page.locator('.history-audio audio').first()).toBeVisible({ timeout: 10 * 1000 });
 
+    // Copy lives inline with the view buttons (Raw / Dictation / Speakers), not
+    // behind the kebab. Clicking it writes the entry as displayed to the
+    // clipboard; the label flips to "Copied" only on a successful write (the
+    // failure path alerts instead), so the flip is the assertion. Read the
+    // clipboard back to prove it copied THIS entry's text, not something stale.
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    const copyBtn = page.locator('.history-modes .display-mode-button--copy').first();
+    await expect(copyBtn).toBeVisible();
+    await copyBtn.click();
+    await expect(copyBtn).toHaveText(/Copied/, { timeout: 5000 });
+    const clip = (await page.evaluate(() => navigator.clipboard.readText())).trim();
+    expect(overlap(words(clip), words((await historyText.innerText()).trim())),
+      `clipboard "${clip}"`).toBeGreaterThanOrEqual(0.9);
+
     // "Transcribe again" lives in the per-entry kebab (⋮) "More actions" menu.
     // Open the menu, then click it to re-run the pipeline on the stored audio;
     // the re-run replaces the entry's text in place (no new entry is appended).

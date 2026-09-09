@@ -60,6 +60,7 @@ import {
   buildVerdict, planTimedRuns, median as probeMedian,
 } from './lib/perfProbe.js';
 import { isChromiumFamily } from './lib/browserFamily.js';
+import { isHandheldDevice } from './lib/deviceClass.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -2878,6 +2879,18 @@ export default function App() {
   // slowness is real on every visit, so the popup returns on every reload.
   const slowBrowser = useMemo(() => !isChromiumFamily(typeof navigator !== 'undefined' ? navigator : null), []);
   const [slowBrowserDismissed, setSlowBrowserDismissed] = useState(false);
+  // Same treatment for phones and tablets (lib/deviceClass.js): a
+  // hundreds-of-megabytes download decoded on the device's own CPU is a desktop
+  // workload, and a backgrounded mobile tab is suspended mid-transcription.
+  // Also not persisted, for the same reason: the mismatch is real every visit.
+  const handheldDevice = useMemo(() => isHandheldDevice(typeof navigator !== 'undefined' ? navigator : null), []);
+  const [handheldDismissed, setHandheldDismissed] = useState(false);
+  // Second warning, gated on the same detection: on a handheld, "Phone Mic"
+  // offers to pair a phone with the machine running the model, which is the
+  // device the visitor is holding. Acknowledged once per load, then it starts
+  // the pairing normally.
+  const [remoteMicHandheldWarn, setRemoteMicHandheldWarn] = useState(false);
+  const remoteMicHandheldAckRef = useRef(false);
   // Compute the hardware plan and start (or skip) the pool for the stashed
   // model. Shared by loadModel and the toggle effect so the gate and logging
   // cannot drift between them.
@@ -6725,6 +6738,52 @@ export default function App() {
         </Modal>
       )}
 
+      {/* Handheld warning: same contract as the slow-browser one above
+          (dismissable, never persisted). Shown first, before any weights are
+          fetched, because the point is to warn ahead of the download. */}
+      {handheldDevice && !handheldDismissed && (
+        <Modal onClose={() => setHandheldDismissed(true)}>
+          <div data-testid="handheld-modal">
+            <h3 style={{ marginTop: 0 }}>📱 {t('handheldTitle')}</h3>
+            <p>{t('handheldBody1')}</p>
+            <p>{t('handheldBody2')}</p>
+            <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+              <button className="btn" onClick={() => setHandheldDismissed(true)}>
+                {t('handheldDismiss')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Phone Mic on a handheld: explain what the feature is actually for
+          before pairing, since here it would pair a phone with a phone. Unlike
+          the two warnings above this one is a fork, so it offers a way out. */}
+      {remoteMicHandheldWarn && (
+        <Modal onClose={() => setRemoteMicHandheldWarn(false)}>
+          <div data-testid="remote-mic-handheld-modal">
+            <h3 style={{ marginTop: 0 }}>📱 {t('remoteMicHandheldTitle')}</h3>
+            <p>{t('remoteMicHandheldBody1')}</p>
+            <p>{t('remoteMicHandheldBody2')}</p>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginTop: '1rem', flexWrap: 'wrap' }}>
+              <button className="btn" onClick={() => setRemoteMicHandheldWarn(false)}>
+                {t('cancel')}
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  remoteMicHandheldAckRef.current = true;
+                  setRemoteMicHandheldWarn(false);
+                  startRemoteMic();
+                }}
+              >
+                {t('remoteMicHandheldContinue')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* About modal */}
       {showAbout && (
         <Modal onClose={() => setShowAbout(false)} className="modal-panel--about">
@@ -8162,7 +8221,15 @@ export default function App() {
               {recordingCountdown !== null ? `${t('getReady')} (${recordingCountdown})` : t('recordAudio')}
             </button>
             <button
-              onClick={() => startRemoteMic()}
+              onClick={() => {
+                // On a phone/tablet, say what Phone Mic is for before pairing.
+                // Acknowledged once, then this is the plain button again.
+                if (handheldDevice && !remoteMicHandheldAckRef.current) {
+                  setRemoteMicHandheldWarn(true);
+                  return;
+                }
+                startRemoteMic();
+              }}
               disabled={isRecording || isRemoteMic}
               className="primary record-button"
               style={{ background: '#8b5cf6', flex: 1 }}
@@ -8481,6 +8548,19 @@ export default function App() {
                           {t('debugMode')}
                         </button>
                       )}
+                      {/* Copy sits with the view buttons, not in the kebab: it
+                          copies the entry exactly as the buttons to its left
+                          render it (base view + dictation layer), so having to
+                          open a menu for the most common action was pure
+                          friction. Same handler as the old kebab item. */}
+                      <button
+                        onClick={() => copyHistoryItem(trans)}
+                        disabled={anyModalOpen}
+                        className="display-mode-button display-mode-button--copy"
+                        title={t('copyDisplayedHint')}
+                      >
+                        {copiedHistoryId === trans.id ? t('copied') : t('copyText')}
+                      </button>
                     </div>
                     {/* Kebab (three-dot) menu for per-entry actions */}
                     <div className="kebab-menu-wrapper">
@@ -8502,9 +8582,10 @@ export default function App() {
                               {t('rtf')}: {trans.rtf.toFixed(2)}×
                             </div>
                           )}
-                          <button onClick={() => { copyHistoryItem(trans); setOpenKebabId(null); }}>
-                            {copiedHistoryId === trans.id ? t('copied') : t('copyText')}
-                          </button>
+                          {/* "Copy text" moved out to the view-button row above;
+                              this one stays because it copies something the
+                              buttons cannot show: the dictation-cleaned text
+                              while the entry is displayed raw. */}
                           {dictationRegexRules.length > 0 && (
                             <button onClick={async () => {
                               const cleaned = applyDictationRegex(trans.text);
