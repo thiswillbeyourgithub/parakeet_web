@@ -2064,8 +2064,17 @@ export default function App() {
     // so plain typing/navigation outside inputs never triggers record/settings.
     if (!keyboardShortcutsEnabled) return;
     const handleKeyPress = (e) => {
-      // Don't trigger shortcuts if user is typing in an input/textarea
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      // Never shadow a browser/OS chord: Ctrl+R (reload), Ctrl+S (save),
+      // Ctrl+F (find), Cmd+R on macOS. The bindings are single keys, so any
+      // Ctrl/Cmd/Alt modifier means the press was not aimed at us. (Shift is
+      // allowed: a capital letter is still just that letter.)
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Don't trigger shortcuts while a form control has focus: text entry
+      // (INPUT/TEXTAREA/contenteditable) but also SELECT, whose own type-ahead
+      // and Space/Enter open-list behaviour we would otherwise swallow.
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) {
         return;
       }
 
@@ -6807,10 +6816,11 @@ export default function App() {
                 <tbody>
                   {[
                     ['S', t('shortcutToggleSettings')],
-                    ['R / S / Space', t('shortcutStopRecording')],
+                    ['Space / Enter', t('shortcutLoadModel')],
                     ['R / Space', t('shortcutStartRecording')],
+                    ['R / S / Space', t('shortcutStopRecording')],
+                    ['P', t('shortcutPauseRecording')],
                     ['F', t('shortcutSelectFile')],
-                    ['L', t('shortcutLoadModel')],
                   ].map(([key, desc]) => (
                     <tr key={key}>
                       <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', fontWeight: 'bold', fontFamily: 'monospace' }}>{key}</td>

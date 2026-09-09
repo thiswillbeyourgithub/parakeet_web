@@ -271,7 +271,7 @@ const translations = {
     tooltipDisplayMode: 'Choose how transcriptions are displayed by default. Raw = unmodified text. Dictation = text cleaned with regex rules (punctuation, medical vocab, etc.). Speakers = diarized into speaker turns. Speakers + Dictation = speaker turns with the dictation cleanup applied to each turn. Default: Raw.',
     tooltipAutoCopy: 'Automatically copies text to clipboard after transcription. Copies the dictation-cleaned transcript when display mode is set to Dictation (and rules are loaded), otherwise copies raw text. Default: on.',
     tooltipPersistTranscripts: 'When OFF (default): transcripts stay only in memory and disappear when you close the tab. When ON: transcripts are written to IndexedDB and survive across sessions. Note that even after you turn this OFF and clear history, residue may remain on disk until the browser compacts its storage. To fully erase, use the browser’s "Clear site data" option.',
-    tooltipKeyboardShortcuts: 'When ON: single-letter keys (R/S/F/Space/Enter) control recording, settings, file selection and model loading from anywhere outside a text field. When OFF (default): those keys do nothing so plain typing and navigation are never intercepted.',
+    tooltipKeyboardShortcuts: 'When ON: single-letter keys (R/S/P/F/Space/Enter) control recording, settings, file selection and model loading from anywhere outside a form field. Browser chords (Ctrl/Cmd/Alt combinations such as Ctrl+R or Ctrl+S) are never intercepted. When OFF (default): those keys do nothing so plain typing and navigation are never intercepted.',
     tooltipDebugLogging: 'Off (default): minimal console output, no extra UI metrics. Full logs: shows system memory/heap, per-transcription performance metrics (proc_t/dur_t, timings), detailed audio metadata, and the most verbose level in the browser devtools console.',
     tooltipNoiseSuppression: 'Reduces background noise for clearer voice. Disable for music or when maximum audio fidelity is needed. Default: on.',
     tooltipAutoGainControl: 'Automatically adjusts volume levels. Disable for music or when you want consistent volume. Default: on.',
@@ -310,10 +310,11 @@ const translations = {
     keyboardShortcuts: 'Keyboard Shortcuts',
     shortcutToggleSettings: 'Toggle settings panel',
     shortcutStopRecording: 'Stop recording (while recording)',
+    shortcutPauseRecording: 'Pause / resume recording (while recording)',
     shortcutStartRecording: 'Start recording',
     shortcutSelectFile: 'Select audio file',
     shortcutLoadModel: 'Load model',
-    shortcutsDisabledInInputs: 'Shortcuts are disabled while typing in input fields.',
+    shortcutsDisabledInInputs: 'Shortcuts are disabled inside form fields, and never override browser chords such as Ctrl+R or Ctrl+S.',
 
     // Transcriptions
     transcriptions: 'Transcriptions',
@@ -722,7 +723,7 @@ const translations = {
     tooltipDisplayMode: "Choisissez l'affichage par d\u00e9faut. Brut = texte non modifi\u00e9. Dict\u00e9e = texte nettoy\u00e9 par r\u00e8gles regex. Locuteurs = d\u00e9coup\u00e9 en tours de parole. Locuteurs + Dict\u00e9e = tours de parole avec le nettoyage dict\u00e9e appliqu\u00e9 \u00e0 chaque tour. D\u00e9faut : Brut.",
     tooltipAutoCopy: "Copie automatiquement le texte dans le presse-papiers apr\u00e8s la transcription. Copie le texte nettoy\u00e9 en mode Dict\u00e9e si les r\u00e8gles sont charg\u00e9es. D\u00e9faut : activ\u00e9.",
     tooltipPersistTranscripts: "Quand d\u00e9sactiv\u00e9 (d\u00e9faut) : les transcriptions restent en m\u00e9moire et disparaissent \u00e0 la fermeture de l\u2019onglet. Quand activ\u00e9 : elles sont \u00e9crites dans IndexedDB et survivent aux sessions. M\u00eame apr\u00e8s d\u00e9sactivation et effacement, des r\u00e9sidus peuvent persister sur le disque jusqu\u2019\u00e0 ce que le navigateur compacte son stockage. Pour effacer compl\u00e8tement, utilisez \u00ab Effacer les donn\u00e9es du site \u00bb du navigateur.",
-    tooltipKeyboardShortcuts: "Quand activ\u00e9 : les touches uniques (R/S/F/Espace/Entr\u00e9e) commandent l'enregistrement, les param\u00e8tres, la s\u00e9lection de fichier et le chargement du mod\u00e8le depuis n'importe o\u00f9 hors d'un champ de texte. Quand d\u00e9sactiv\u00e9 (d\u00e9faut) : ces touches n'ont aucun effet, la frappe et la navigation ne sont jamais intercept\u00e9es.",
+    tooltipKeyboardShortcuts: "Quand activ\u00e9 : les touches uniques (R/S/P/F/Espace/Entr\u00e9e) commandent l'enregistrement, les param\u00e8tres, la s\u00e9lection de fichier et le chargement du mod\u00e8le depuis n'importe o\u00f9 hors d'un champ de formulaire. Les raccourcis du navigateur (combinaisons Ctrl/Cmd/Alt comme Ctrl+R ou Ctrl+S) ne sont jamais intercept\u00e9s. Quand d\u00e9sactiv\u00e9 (d\u00e9faut) : ces touches n'ont aucun effet, la frappe et la navigation ne sont jamais intercept\u00e9es.",
     tooltipDebugLogging: "D\u00e9sactiv\u00e9e (d\u00e9faut) : sortie console minimale, pas de m\u00e9triques suppl\u00e9mentaires. Logs complets : affiche l'utilisation m\u00e9moire, les m\u00e9triques de performance par transcription, les m\u00e9tadonn\u00e9es audio d\u00e9taill\u00e9es, et le niveau de log le plus d\u00e9taill\u00e9 dans la console du navigateur.",
     tooltipNoiseSuppression: "R\u00e9duit le bruit de fond pour une voix plus claire. D\u00e9sactivez pour la musique ou pour une fid\u00e9lit\u00e9 audio maximale. D\u00e9faut : activ\u00e9.",
     tooltipAutoGainControl: "Ajuste automatiquement les niveaux de volume. D\u00e9sactivez pour la musique ou quand vous voulez un volume constant. Défaut : activé.",
@@ -761,10 +762,11 @@ const translations = {
     keyboardShortcuts: 'Raccourcis clavier',
     shortcutToggleSettings: 'Ouvrir/fermer les param\u00e8tres',
     shortcutStopRecording: "Arr\u00eater l'enregistrement (pendant l'enregistrement)",
+    shortcutPauseRecording: "Mettre en pause / reprendre l'enregistrement (pendant l'enregistrement)",
     shortcutStartRecording: "D\u00e9marrer l'enregistrement",
     shortcutSelectFile: 'S\u00e9lectionner un fichier audio',
     shortcutLoadModel: 'Charger le mod\u00e8le',
-    shortcutsDisabledInInputs: 'Les raccourcis sont d\u00e9sactiv\u00e9s dans les champs de saisie.',
+    shortcutsDisabledInInputs: 'Les raccourcis sont d\u00e9sactiv\u00e9s dans les champs de formulaire et ne remplacent jamais les raccourcis du navigateur comme Ctrl+R ou Ctrl+S.',
 
     // Transcriptions
     transcriptions: 'Transcriptions',
