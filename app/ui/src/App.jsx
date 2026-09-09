@@ -61,6 +61,7 @@ import {
 } from './lib/perfProbe.js';
 import { isChromiumFamily } from './lib/browserFamily.js';
 import { isHandheldDevice } from './lib/deviceClass.js';
+import { numberWordsToDigits, numberWordsToDigitsInWords } from './lib/numberWords.js';
 
 // Number of distinct colours in the speaker palette (CSS .diar-speaker-0..N-1
 // in App.css); speaker labels cycle through it.
@@ -1555,6 +1556,13 @@ export default function App() {
   // does not constrain extension content-scripts), so the privacy contract
   // is broken if this defaults on. Users who want auto-copy must opt in.
   const [autoCopyToClipboard, setAutoCopyToClipboard] = useState(false);
+  // Rewrite spelled-out cardinal numbers as digits in the finished transcript
+  // ("vingt-cinq milligrammes" -> "25 milligrammes"). ON by default: a dictated
+  // dose or measurement is what the reader actually wants to see. The language
+  // is the UI language, since the converter's vocabularies overlap ("cent" is
+  // 100 in French and money in English) and guessing wrong is worse than not
+  // converting. See lib/numberWords.js.
+  const [numbersToDigits, setNumbersToDigits] = useState(true);
   // Opt-in transcript persistence. Default OFF for new installs (privacy-first
   // baseline matching the headline "audio never leaves your device" promise:
   // memory-only by default). Existing users with on-disk transcripts at the
@@ -1679,6 +1687,7 @@ export default function App() {
           savedAutoGainControl,
           savedRemoteMicGain,
           savedAutoCopyToClipboard,
+          savedNumbersToDigits,
           savedPersistTranscripts,
           savedShowAdvancedInfo,
           savedKeyboardShortcutsEnabled,
@@ -1726,6 +1735,7 @@ export default function App() {
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
           loadSetting('autoCopyToClipboard', false),
+          loadSetting('numbersToDigits', true),
           // Load with `null` so the F-132 default below can tell "never set"
           // apart from an explicit choice (see the setPersistTranscripts comment).
           loadSetting('persistTranscripts', null),
@@ -1838,6 +1848,7 @@ export default function App() {
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
         setAutoCopyToClipboard(savedAutoCopyToClipboard);
+        setNumbersToDigits(savedNumbersToDigits !== false);
         // F-132: strict privacy-first default. When the toggle key is null
         // (fresh install, profile import without the toggle, manual DevTools
         // edit that removed only the key) always default to OFF. The prior
@@ -2382,6 +2393,7 @@ export default function App() {
     } catch (_) { /* channel may be closing */ }
   }, [isRemoteMic, noiseSuppression, autoGainControl, remoteMicGain]);
   usePersistedSetting('autoCopyToClipboard', autoCopyToClipboard, settingsLoaded);
+  usePersistedSetting('numbersToDigits', numbersToDigits, settingsLoaded);
   usePersistedSetting('persistTranscripts', persistTranscripts, settingsLoaded);
   usePersistedSetting('keyboardShortcutsEnabled', keyboardShortcutsEnabled, settingsLoaded);
   usePersistedSetting('enableChunking', enableChunking, settingsLoaded);
@@ -5159,6 +5171,15 @@ export default function App() {
         };
       }
 
+      // Spelled-out numbers -> digits, applied once here, after the benchmark
+      // early-return above (that path is measured against a known sentence, so
+      // it must see the model's raw output). Text and word timestamps go through
+      // the same core, so the plain and speaker views can never disagree.
+      if (numbersToDigits) {
+        res.utterance_text = numberWordsToDigits(res.utterance_text, lang);
+        res.words = numberWordsToDigitsInWords(res.words || [], lang);
+      }
+
       // Fields refreshed on every run, whether we append or replace in place.
       const resultFields = {
         filename: safeName,
@@ -6904,6 +6925,14 @@ export default function App() {
 
             <div className="setting-row">
               <label>
+                <input type="checkbox" checked={numbersToDigits} onChange={e => setNumbersToDigits(e.target.checked)} />
+                {t('numbersToDigits')}
+                <InfoTooltip text={t('tooltipNumbersToDigits')} />
+              </label>
+            </div>
+
+            <div className="setting-row">
+              <label>
                 <input
                   type="checkbox"
                   checked={persistTranscripts}
@@ -8336,7 +8365,12 @@ export default function App() {
             </div>
           )}
           {liveTranscript.text
-            ? (dictationRegexRules.length > 0 ? applyDictationRegex(liveTranscript.text) : liveTranscript.text)
+            ? (() => {
+                // Same two transforms the finished transcript gets, so the live
+                // preview does not respell itself when the final pass lands.
+                const live = numbersToDigits ? numberWordsToDigits(liveTranscript.text, lang) : liveTranscript.text;
+                return dictationRegexRules.length > 0 ? applyDictationRegex(live) : live;
+              })()
             : (
               <span className="live-dots" aria-label="Listening" style={{ color: 'var(--text-subtle)' }}>
                 <span /><span /><span />

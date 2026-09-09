@@ -102,5 +102,14 @@ test('chunks and stitches the 3 min JFK moon speech at a seeded 20 s window', as
     `stitched output is ${words(got).length} words vs golden ${words(GOLDEN).length}; runaway seam duplication?`)
     .toBeLessThanOrEqual(words(GOLDEN).length * 1.5);
 
+  // The "numbers as digits" setting is ON by default, and this clip is the only
+  // fixture that dictates numbers as words ("ten years ago", "five years ago",
+  // "all three"). So the finished transcript must carry no spelled-out cardinal
+  // at all. Deliberately one-directional: if a run simply does not produce those
+  // words the assertion is vacuous rather than flaky, and it only fails when the
+  // conversion is genuinely not wired into the transcription path.
+  const spelled = got.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred|thousand)\b/gi);
+  expect(spelled, `spelled-out numbers survived: ${spelled?.join(', ')}`).toBeNull();
+
   expect(errors, `page console errors: ${errors.join('\n')}`).toHaveLength(0);
 });
