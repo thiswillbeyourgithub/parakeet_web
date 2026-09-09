@@ -45,6 +45,9 @@ const EN = {
   tens: { twenty: 20, thirty: 30, forty: 40, fourty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 },
   scales: { hundred: 100, hundreds: 100, thousand: 1000, thousands: 1000, million: 1e6, millions: 1e6, billion: 1e9, billions: 1e9 },
   joiners: new Set(['and']),
+  // Decimal separator, spoken. Only ever recognised BETWEEN two numbers, which
+  // is what keeps the ordinary noun ("the point is") out of it.
+  decimals: new Set(['point']),
   // Never a number on its own: "one of them".
   ambiguousAlone: new Set(['one']),
   // French-only compound rules stay off.
@@ -63,6 +66,7 @@ const FR = {
     million: 1e6, millions: 1e6, milliard: 1e9, milliards: 1e9,
   },
   joiners: new Set(['et']),
+  decimals: new Set(['virgule']),
   ambiguousAlone: new Set(['un', 'une']),
   // Enables "quatre-vingt" (4 + 20 = 80), "soixante-dix" (60 + 10 = 70) and
   // "dix-sept" (10 + 7 = 17), which French builds by juxtaposition.
@@ -85,6 +89,7 @@ function classify(word, vocab) {
     return { kind: value === 100 ? 'hundred' : 'bigscale', value };
   }
   if (vocab.joiners.has(word)) return { kind: 'joiner', value: 0 };
+  if (vocab.decimals.has(word)) return { kind: 'decimal', value: 0 };
   return null;
 }
 
@@ -115,7 +120,20 @@ function newAcc() {
     lastBigScale: Infinity,
     seen: 0,         // number of numeric pieces consumed
     words: [],       // the pieces consumed, for the ambiguity guard
+    // Decimals. `fraction` is null until a decimal marker is seen, then holds
+    // the digits after it. The part after the separator is read out digit
+    // group by digit group rather than as one number ("deux virgule zéro cinq"
+    // is 2.05, not 2 and 5), so each group that cannot continue the previous
+    // one is simply appended instead of ending the number.
+    fraction: null,
+    frac: null,      // sub-accumulator for the group being read
   };
+}
+
+// Digits of the fraction so far, including the group still under construction.
+function fractionDigits(acc) {
+  if (acc.fraction === null) return '';
+  return acc.fraction + (acc.frac && acc.frac.seen ? String(accValue(acc.frac)) : '');
 }
 
 // Can this piece continue the number in progress? Returning false ends the run
@@ -123,6 +141,16 @@ function newAcc() {
 function accepts(acc, piece, vocab) {
   const { kind, value } = piece;
   const { last } = acc;
+
+  // Past the decimal separator every numeric word belongs to the fraction: a
+  // group that cannot continue the previous one starts a new one instead of
+  // ending the number. Only a second separator is refused.
+  if (acc.fraction !== null) {
+    if (kind === 'decimal') return false;
+    if (kind === 'joiner') return acc.frac ? accepts(acc.frac, piece, vocab) : false;
+    return true;
+  }
+
   switch (kind) {
     case 'unit':
       if (last === null || last === 'hundred' || last === 'bigscale' || last === 'joiner') return true;
@@ -155,6 +183,10 @@ function accepts(acc, piece, vocab) {
       // Only ever inside a number, and only where the language puts it.
       if (vocab.compound) return last === 'ten' && (acc.lastTen === 20 || acc.lastTen === 30 || acc.lastTen === 40 || acc.lastTen === 50 || acc.lastTen === 60 || acc.lastTen === 80);
       return last === 'hundred' || last === 'bigscale';
+    case 'decimal':
+      // Needs a number in front of it, so "the point is" and a bare "virgule"
+      // dictated as punctuation are never read as a separator.
+      return acc.seen > 0;
     default:
       return false;
   }
@@ -162,6 +194,29 @@ function accepts(acc, piece, vocab) {
 
 function apply(acc, piece, vocab) {
   const { kind, value } = piece;
+
+  if (kind === 'decimal') {
+    acc.fraction = '';
+    acc.frac = newAcc();
+    acc.last = 'decimal';
+    return;
+  }
+
+  // In fraction mode the pieces feed the sub-accumulator; a piece it cannot
+  // take closes that digit group and opens the next ("zéro cinq" -> "05").
+  if (acc.fraction !== null) {
+    if (acc.frac.seen && !accepts(acc.frac, piece, vocab)) {
+      acc.fraction += String(accValue(acc.frac));
+      acc.frac = newAcc();
+    }
+    apply(acc.frac, piece, vocab);
+    if (piece.kind !== 'joiner') {
+      acc.seen += 1;
+      acc.words.push(piece.word);
+    }
+    return;
+  }
+
   if (kind === 'joiner') {
     // Remember what the joiner attached to: "and" only carries a number
     // forward after a scale ("a hundred and twelve"), never after a bare unit.
@@ -243,7 +298,8 @@ export function findNumberSpans(tokens, lang) {
 
   const flush = () => {
     if (start >= 0 && worthConverting(acc, vocab)) {
-      spans.push({ start, end, digits: String(accValue(acc)) });
+      const frac = fractionDigits(acc);
+      spans.push({ start, end, digits: String(accValue(acc)) + (frac ? `.${frac}` : '') });
     }
     acc = newAcc();
     start = -1;
@@ -254,9 +310,10 @@ export function findNumberSpans(tokens, lang) {
     const parts = pieces(tokens[i], vocab);
     if (!parts) { flush(); continue; }
 
-    // A joiner only ever lives INSIDE a number. On its own ("give me five and
-    // six") it is an ordinary word, so it must not open a run.
-    const joinerOnly = parts.every(p => p.kind === 'joiner');
+    // A joiner or a decimal separator only ever lives INSIDE a number. On its
+    // own ("give me five and six", "the point is") it is an ordinary word, so
+    // it must not open a run, and a trailing one must stay in the text.
+    const joinerOnly = parts.every(p => p.kind === 'joiner' || p.kind === 'decimal');
     if (joinerOnly && start < 0) { flush(); continue; }
 
     // A hyphenated token is all-or-nothing: if any piece cannot continue the
@@ -283,7 +340,7 @@ export function findNumberSpans(tokens, lang) {
     if (start < 0) start = i;
     // Tokens that are only joiners ("and") do not extend the span on their own:
     // a trailing "and" must stay in the text.
-    if (parts.some(p => p.kind !== 'joiner')) end = i + 1;
+    if (parts.some(p => p.kind !== 'joiner' && p.kind !== 'decimal')) end = i + 1;
   }
   flush();
   return spans;
