@@ -41,6 +41,28 @@ test('French cardinals, including the compound forms', () => {
   assert.equal(fr('zéro'), '0');
 });
 
+test('decimals convert, in both languages, with a dot', () => {
+  // A decimal is exactly the case where "un" IS part of a number, so the
+  // ambiguity guard must not keep it as a word here.
+  assert.equal(fr('un virgule trente'), '1.30');
+  assert.equal(fr('un virgule cinq milligrammes'), '1.5 milligrammes');
+  assert.equal(fr('un virgule trente et un'), '1.31');
+  assert.equal(fr('zéro virgule cinq'), '0.5');
+  assert.equal(en('one point five'), '1.5');
+  assert.equal(en('two point five milligrams'), '2.5 milligrams');
+  // The fraction is read group by group, so a leading zero survives.
+  assert.equal(fr('deux virgule zéro cinq'), '2.05');
+  assert.equal(en('three point one four'), '3.14');
+});
+
+test('a decimal separator outside a number stays an ordinary word', () => {
+  assert.equal(en('the point is'), 'the point is');
+  assert.equal(fr('virgule'), 'virgule');
+  // A trailing separator with nothing after it is left in the text.
+  assert.equal(fr('deux virgule'), '2 virgule');
+  assert.equal(fr('vingt-cinq, virgule'), '25, virgule');
+});
+
 test('words that are only sometimes numbers stay words when alone', () => {
   // The whole point of the guard: these are articles and pronouns far more
   // often than they are the digit 1.
