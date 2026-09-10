@@ -1265,8 +1265,25 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   border-bottom: 1px solid var(--border);
 }
 
-.med-mode-button {
+/* Filled accent, unlike the drawer's other .primary rows, which the sidebar
+   flattens into transparent list items. This one is the headline shortcut of
+   the whole panel and has to read as a call to action rather than as one more
+   row; the selector matches the flattening rule's specificity and comes later,
+   so it wins without !important. */
+.settings-section > .setting-row--med-mode > button.med-mode-button {
   width: 100%;
+  margin-top: 0;
+  text-align: center;
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.settings-section > .setting-row--med-mode > button.med-mode-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
 }
 
 .setting-row--med-mode .setting-hint {
