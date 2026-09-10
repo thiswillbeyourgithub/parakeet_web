@@ -10,6 +10,20 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### The settings panel now says what is actually running
+
+Every model control in the panel describes a request: which repository, which backend, which encoder precision the next load will ask for. What the app then loads is allowed to differ, and for good reasons. A precision your source cannot serve falls back. A visitor the performance measurement moved onto the GPU is moved back to the processor when the deployment ships no GPU-runnable encoder. Weights can arrive from the server hosting this app rather than from HuggingFace.
+
+Every one of those was invisible. The radios kept showing the request, so a machine could sit on "WebGPU / fp32" while an int8 processor model did the work, and neither the interface nor the transcript said a word about it.
+
+A **Currently loaded** line now sits above those controls whenever a model is up, naming the backend, the precision that really mounted and where the weights came from. It appears only once something is loaded and disappears the moment the model is disposed, so it can never describe a model that is no longer there. When what is loaded disagrees with what is selected, the line says so and tells you a reload will apply the selection.
+
+Two things it deliberately does not do. Weights coming from this server rather than HuggingFace are reported but not flagged as a disagreement: they disagree with nothing you chose, and a warning that fires on every load of an offline-capable install is a warning people stop reading. And a load that could not report its precision says nothing about it rather than inventing a mismatch.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### A blocked network no longer costs you a connect timeout
 
 On the default configuration the app asks HuggingFace for the weights first and only falls back to the copy your own instance serves once that attempt has failed. On a normal network that ordering costs nothing. On one that blackholes outbound traffic instead of refusing it (a hospital or lab firewall, typically) the failure is not a refusal but a stall: the browser waits out its own connect timeout while a perfectly good local copy sits unused, so the progress bar simply sits there for a minute or more before anything starts downloading.

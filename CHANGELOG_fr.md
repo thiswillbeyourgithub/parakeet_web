@@ -10,6 +10,20 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### Le panneau de réglages indique désormais ce qui tourne réellement
+
+Tous les réglages de modèle du panneau décrivent une demande : quel dépôt, quel moteur, quelle précision d'encodeur le prochain chargement va réclamer. Ce que l'application charge ensuite a le droit d'être différent, et pour de bonnes raisons. Une précision que votre source ne peut pas servir est remplacée. Un visiteur que la mesure de performance a placé sur le GPU est ramené sur le processeur si l'installation ne fournit aucun encodeur exécutable sur GPU. Les poids peuvent venir du serveur qui héberge cette application plutôt que de HuggingFace.
+
+Rien de tout cela n'était visible. Les boutons continuaient d'afficher la demande : une machine pouvait donc rester sur « WebGPU / fp32 » pendant qu'un modèle int8 sur processeur faisait le travail, sans que l'interface ni la transcription n'en disent un mot.
+
+Une ligne **Actuellement chargé** figure maintenant au-dessus de ces réglages dès qu'un modèle est en place, et nomme le moteur, la précision réellement montée et la provenance des poids. Elle n'apparaît qu'une fois quelque chose de chargé et disparaît dès que le modèle est libéré, si bien qu'elle ne peut jamais décrire un modèle qui n'est plus là. Lorsque ce qui est chargé diffère de ce qui est sélectionné, la ligne le signale et indique qu'un rechargement appliquera la sélection.
+
+Deux choses qu'elle se garde de faire. Des poids venant de ce serveur plutôt que de HuggingFace sont indiqués mais pas signalés comme un désaccord : ils ne contredisent aucun de vos choix, et un avertissement qui se déclenche à chaque chargement d'une installation autonome est un avertissement qu'on cesse de lire. Et un chargement incapable de rapporter sa précision n'affirme rien à son sujet plutôt que d'inventer une divergence.
+
+Écrit avec [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Un réseau bloqué ne coûte plus un délai d'attente de connexion
 
 Dans la configuration par défaut, l'application demande d'abord les poids à HuggingFace et ne se rabat sur la copie servie par votre propre instance qu'une fois cette tentative échouée. Sur un réseau normal, cet ordre ne coûte rien. Sur un réseau qui absorbe le trafic sortant au lieu de le refuser (un pare-feu d'hôpital ou de laboratoire, typiquement), l'échec n'est pas un refus mais un blocage : le navigateur attend l'expiration de son propre délai de connexion pendant qu'une copie locale parfaitement utilisable reste inutilisée, et la barre de progression reste donc figée une minute ou plus avant que quoi que ce soit ne commence à se télécharger.

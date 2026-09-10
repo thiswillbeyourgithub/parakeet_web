@@ -42,6 +42,7 @@ import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
+import { describeLoadedModel } from './lib/loadedModel.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
@@ -896,6 +897,16 @@ export default function App() {
   // source, so the load fell back to WASM. Separate from modelLoadError
   // because the load then SUCCEEDS, and loadModel clears that on entry.
   const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
+  // What the CURRENTLY LOADED model actually is:
+  // `{ repoId, backend, encoderQuant, decoderQuant, servedFrom }`, or null when
+  // nothing is loaded. Deliberately NOT persisted: it describes a live session's
+  // model, and a value restored from disk would assert something about a model
+  // that has not been loaded yet. Every other model control in the sidebar shows
+  // a REQUEST; this is the only thing that shows the OUTCOME, which is what makes
+  // a divergence visible instead of silent (a WebGPU pick answered by an int8 CPU
+  // model after the quant fallback, or weights served by /models rather than by
+  // HuggingFace).
+  const [loadedModelInfo, setLoadedModelInfo] = useState(null);
   // The repo+precision combination this source was PROVEN unable to serve to
   // the GPU (`<repoId>|<webgpuEncoderQuant>`), or null. Written when the
   // QuantUnavailableError fallback below flips a visitor to WASM, and read by
@@ -3451,6 +3462,10 @@ export default function App() {
       console.log('[App] Disposing existing model before loading new one...');
       modelRef.current.dispose();
       modelRef.current = null;
+      // The previous load's outcome no longer describes anything running, and a
+      // stale one is worse than none: it would keep claiming a precision while a
+      // different one is being fetched.
+      setLoadedModelInfo(null);
       // Drop the old vocab signature so the boost effect clears its trie now
       // (no tokenizer) and rebuilds once the new model publishes its signature.
       setTokenizerVocabSig(null);
@@ -3711,6 +3726,25 @@ export default function App() {
       }
 
       console.timeEnd('LoadModel');
+      // Record what ACTUALLY loaded, as opposed to what was requested.
+      // Everything else in the sidebar describes the request: the backend and
+      // precision radios keep showing the visitor's pick even when this load
+      // resolved to something else, which it legitimately can (the WASM int8
+      // pin, the GPU->WASM fallback on an unservable precision, a switch to the
+      // local /models mirror). Nothing reported the outcome before, so a
+      // divergence was completely silent: a station could sit on a WebGPU
+      // selection while an int8 CPU model did the work. This is the value the
+      // sidebar renders back, so the two can be compared at a glance.
+      setLoadedModelInfo({
+        repoId,
+        backend: modelUrls.resolvedBackend || backend,
+        encoderQuant: modelUrls.quantisation?.encoder || null,
+        decoderQuant: modelUrls.quantisation?.decoder || null,
+        servedFrom: modelUrls.servedFrom || (useLocalFallback ? 'local' : 'hf'),
+      });
+      console.log(`[App] Loaded ${repoId} on ${modelUrls.resolvedBackend || backend} `
+        + `(encoder ${modelUrls.quantisation?.encoder}, from `
+        + `${modelUrls.servedFrom === 'local' ? '/models' : 'HuggingFace'})`);
       // Publish the loaded tokenizer's vocab signature so the boost-trie rebuild
       // effect runs now (model became ready) and on a later vocab-changing swap,
       // but NOT on the unrelated status churn of recording/transcribing.
@@ -5747,6 +5781,7 @@ export default function App() {
     }
     teardownEncodePool(reason);
     stopDecodeWorker(reason);
+    setLoadedModelInfo(null);
     // The boost effect keys off the vocab signature: clearing it drops the trie
     // built for the model that just went away.
     setTokenizerVocabSig(null);
@@ -6902,6 +6937,25 @@ export default function App() {
     || isRecording
     || remoteMicRecording;
 
+  // Which encoder precision the CURRENT selection would really load. Hoisted to
+  // component scope because two places need the identical answer and a second
+  // copy of these rules is exactly how they drift: the precision radios (which
+  // must never sit on an option the backend cannot serve) and the loaded-model
+  // row (which compares what loaded against what is selected, and would cry
+  // "mismatch" on every fp16 pick made on a GPU with no shader-f16 if it
+  // compared against the raw selection instead of this).
+  const isWebgpuSelected = backend.startsWith('webgpu');
+  const selectedEncoderQuant = isWebgpuSelected ? webgpuEncoderQuant : wasmEncoderQuant;
+  // fp16 needs the adapter's shader-f16 feature. `null` (still probing, or no
+  // adapter) counts as "not yet", so it is never offered on the strength of an
+  // unanswered question.
+  const encoderQuantRunnable = (q) => (isWebgpuSelected
+    ? WEBGPU_ENCODER_QUANTS.includes(q) && !(q === 'fp16' && webgpuShaderF16 !== true)
+    : WASM_ENCODER_QUANTS.includes(q));
+  const effectiveEncoderQuant = encoderQuantRunnable(selectedEncoderQuant)
+    ? selectedEncoderQuant
+    : (isWebgpuSelected ? 'fp32' : 'int8');
+
   // Show the record / upload / phone controls as soon as a load has STARTED,
   // not only once it finishes (Q2): the user can capture during the download
   // and the audio is queued (captureQueue) until the model is ready. In idle /
@@ -7644,6 +7698,38 @@ export default function App() {
               )}
             </div>
 
+            {/* What actually loaded, versus what the controls below request.
+                Rendered only once a model is up, and called out when the two
+                disagree. hub.js is allowed to resolve a request differently
+                (the WASM int8 pin, the GPU->WASM fallback on a precision this
+                source cannot serve, a switch to the /models mirror), and every
+                one of those was invisible before this row existed: the controls
+                kept showing the request, so a station could sit on
+                "WebGPU / fp32" while an int8 CPU model did the work. */}
+            {(() => {
+              const described = describeLoadedModel(
+                loadedModelInfo,
+                { repoId, backend, encoderQuant: effectiveEncoderQuant },
+                {
+                  wasm: t('wasmCpu'),
+                  webgpu: t('webgpu'),
+                  fromHub: t('loadedFromHub'),
+                  fromLocal: t('loadedFromLocal'),
+                },
+              );
+              if (!described) return null;
+              return (
+                <div className={`setting-row setting-row--loaded${described.mismatch ? ' setting-row--mismatch' : ''}`}>
+                  <span className="setting-label">
+                    {t('loadedModel')}:
+                    <InfoTooltip text={t('tooltipLoadedModel')} />
+                  </span>
+                  <span className="loaded-model-value" data-testid="loaded-model">{described.text}</span>
+                  {described.mismatch && <p className="setting-hint">{t('loadedDiffers')}</p>}
+                </div>
+              );
+            })()}
+
             <div className="setting-row">
               <span className="setting-label">
                 {t('backend')}:
@@ -7723,20 +7809,14 @@ export default function App() {
               // does implement; fp16 is WebGPU-only AND adapter-dependent. The
               // remembered selection is per-backend, so WASM keeps its choice
               // independently of WebGPU.
-              const isWebgpu = backend.startsWith('webgpu');
-              const currentQuant = isWebgpu ? webgpuEncoderQuant : wasmEncoderQuant;
+              // The runnable/effective rules live at component scope
+              // (isWebgpuSelected / encoderQuantRunnable / effectiveEncoderQuant)
+              // because the loaded-model row above needs the same answer; a
+              // local copy here is how the two would drift apart.
+              const isWebgpu = isWebgpuSelected;
               const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
-              // fp16 needs the adapter's shader-f16 feature. `null` (still
-              // probing, or no adapter) counts as "not yet", so the row is
-              // never offered on the strength of an unanswered question.
-              const noShaderF16 = isWebgpu && webgpuShaderF16 !== true;
-              // Show the precision that will ACTUALLY load, so the radio never
-              // sits on an option the backend cannot serve. Same fallback the
-              // download path applies, kept in step with it deliberately.
-              const quantRunnable = (q) => (isWebgpu
-                ? WEBGPU_ENCODER_QUANTS.includes(q) && !(q === 'fp16' && noShaderF16)
-                : WASM_ENCODER_QUANTS.includes(q));
-              const effectiveQuant = quantRunnable(currentQuant) ? currentQuant : (isWebgpu ? 'fp32' : 'int8');
+              const quantRunnable = encoderQuantRunnable;
+              const effectiveQuant = effectiveEncoderQuant;
               // int8 is the default on WASM. int8 lite is the same recipe with
               // fewer MatMuls quantised: ~88 MB smaller and lighter on RAM, at
               // slightly higher error, and only the model repo ships it (a repo

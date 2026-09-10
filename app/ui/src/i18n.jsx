@@ -179,9 +179,17 @@ const translations = {
     // Medical dictation preset (lib/medMode.js). The label is French in BOTH
     // locales because what it configures is French-only: a French model, a
     // French clinical lexicon and French dictation rules.
+    // The loaded-model row: the one place in the sidebar that reports an
+    // OUTCOME rather than a request, so a load that resolved to a different
+    // backend, precision or source is visible instead of silent.
+    loadedModel: 'Currently loaded',
+    loadedFromHub: 'from HuggingFace',
+    loadedFromLocal: 'from this server',
+    loadedDiffers: 'This differs from the selection below; reload the model to apply it.',
+    tooltipLoadedModel: 'What is actually running right now, which is not always what is selected below: a precision this source could not serve falls back (and says so), and weights can come from this server rather than HuggingFace. The controls below describe what the NEXT load will ask for.',
     medMode: 'Mode Dict\u00e9e M\u00e9dical',
     medModeHint: 'Configures this machine for French medical dictation in one click.',
-    tooltipMedMode: 'Sets up French medical dictation in one click: the UltiMed model, the French medical phrase list, 30-second chunks, the dictation view, a French interface, and the encoder precision best suited to each backend (int8 on the processor, fp16 on the GPU). It also measures this machine to pick between the processor and the GPU. Every one of these settings stays editable afterwards, and the same preset is available from a ?mode=med link.',
+    tooltipMedMode: 'Sets up French medical dictation in one click: the UltiMed model, the French medical phrase list, 30-second chunks, the dictation view, a French interface, and the encoder precision best suited to each backend (int8 on the processor, fp32 on the GPU). It also measures this machine to pick between the processor and the GPU. Every one of these settings stays editable afterwards, and the same preset is available from a ?mode=med link.',
     settingsGroupRecording: 'Recording',
     settingsGroupEngine: 'Model and performance',
     settingsGroupBoosting: 'Phrase boosting',
@@ -647,9 +655,14 @@ const translations = {
     settingsGroupGeneral: 'G\u00e9n\u00e9ral',
     // Pr\u00e9r\u00e9glage de dict\u00e9e m\u00e9dicale (lib/medMode.js). Le libell\u00e9 est
     // volontairement identique en anglais : ce qu\u2019il configure est francophone.
+    loadedModel: 'Actuellement charg\u00e9',
+    loadedFromHub: 'depuis HuggingFace',
+    loadedFromLocal: 'depuis ce serveur',
+    loadedDiffers: 'Cela diff\u00e8re de la s\u00e9lection ci-dessous ; rechargez le mod\u00e8le pour l\u2019appliquer.',
+    tooltipLoadedModel: 'Ce qui tourne r\u00e9ellement en ce moment, qui n\u2019est pas toujours ce qui est s\u00e9lectionn\u00e9 ci-dessous : une pr\u00e9cision que cette source ne pouvait pas servir est remplac\u00e9e (et signal\u00e9e), et les poids peuvent venir de ce serveur plut\u00f4t que de HuggingFace. Les r\u00e9glages ci-dessous d\u00e9crivent ce que le PROCHAIN chargement demandera.',
     medMode: 'Mode Dict\u00e9e M\u00e9dical',
     medModeHint: 'Configure cette machine pour la dict\u00e9e m\u00e9dicale fran\u00e7aise en un clic.',
-    tooltipMedMode: 'Configure la dict\u00e9e m\u00e9dicale fran\u00e7aise en un clic : le mod\u00e8le UltiMed, la liste de phrases m\u00e9dicales fran\u00e7aises, des segments de 30 secondes, l\u2019affichage dict\u00e9e, une interface en fran\u00e7ais, et la pr\u00e9cision d\u2019encodeur adapt\u00e9e \u00e0 chaque moteur (int8 sur le processeur, fp16 sur le GPU). Il mesure aussi cette machine pour choisir entre le processeur et le GPU. Tous ces r\u00e9glages restent modifiables ensuite, et le m\u00eame pr\u00e9r\u00e9glage est accessible via un lien ?mode=med.',
+    tooltipMedMode: 'Configure la dict\u00e9e m\u00e9dicale fran\u00e7aise en un clic : le mod\u00e8le UltiMed, la liste de phrases m\u00e9dicales fran\u00e7aises, des segments de 30 secondes, l\u2019affichage dict\u00e9e, une interface en fran\u00e7ais, et la pr\u00e9cision d\u2019encodeur adapt\u00e9e \u00e0 chaque moteur (int8 sur le processeur, fp32 sur le GPU). Il mesure aussi cette machine pour choisir entre le processeur et le GPU. Tous ces r\u00e9glages restent modifiables ensuite, et le m\u00eame pr\u00e9r\u00e9glage est accessible via un lien ?mode=med.',
     settingsGroupRecording: 'Enregistrement',
     settingsGroupEngine: 'Mod\u00e8le et performance',
     settingsGroupBoosting: 'Renforcement de phrases',

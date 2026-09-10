@@ -1265,6 +1265,38 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   border-bottom: 1px solid var(--border);
 }
 
+/* The loaded-model row: what is ACTUALLY running, as opposed to what the
+   controls under it request. Laid out as a label with its value on the same
+   line, and given the soft warning treatment only when the two disagree, so
+   the ordinary agreeing case stays quiet background information and the
+   divergence (a precision fallback, a mirror serving the weights, a backend
+   flipped under the visitor) is the thing that catches the eye. */
+.setting-row--loaded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.loaded-model-value {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.setting-row--loaded.setting-row--mismatch {
+  background: var(--warning-soft-bg);
+  border: 1px solid var(--warning-soft-border);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+}
+
+.setting-row--loaded.setting-row--mismatch .loaded-model-value,
+.setting-row--loaded.setting-row--mismatch .setting-label,
+.setting-row--loaded.setting-row--mismatch .setting-hint {
+  color: var(--warning-soft-text);
+  opacity: 1;
+}
+
 /* Filled accent, unlike the drawer's other .primary rows, which the sidebar
    flattens into transparent list items. This one is the headline shortcut of
    the whole panel and has to read as a call to action rather than as one more

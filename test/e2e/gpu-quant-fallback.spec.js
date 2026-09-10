@@ -110,6 +110,19 @@ test('a source with no GPU encoder falls back to WASM instead of failing the loa
   await expect(page.locator('input[name="backend"][value="wasm"]')).toBeChecked();
   expect(logs.some((l) => /int8/.test(l))).toBe(true);
 
+  // And it must SAY so, rather than leave the radios agreeing by luck. The
+  // "Currently loaded" row is the only thing in the UI that reports an OUTCOME
+  // instead of a request, which is what makes a fallback like this one legible:
+  // the backend, the precision that really mounted, and the source.
+  const loadedRow = page.getByTestId('loaded-model');
+  await expect(loadedRow).toBeVisible();
+  await expect(loadedRow).toHaveText(/int8/);
+  await expect(loadedRow).toHaveText(/from this server/);
+  // The fallback reconciled the selection with reality (it flipped the backend
+  // too), so the row must NOT be crying divergence: a warning that fires after
+  // a fallback did its job correctly is a warning people learn to ignore.
+  await expect(page.locator('.setting-row--loaded.setting-row--mismatch')).toHaveCount(0);
+
   // Still exactly one after the whole load: the WASM retry must not re-enter.
   const attempts = logs.filter((l) => l.includes('no GPU-capable encoder from this source'));
   expect(attempts).toHaveLength(1);
