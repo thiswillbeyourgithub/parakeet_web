@@ -2965,6 +2965,10 @@ export default function App() {
       const onMsg = (ev) => {
         if (ev.data.id !== reqId) return;
         worker.removeEventListener('message', onMsg);
+        if (ev.data.oversize) {
+          console.warn(`[Boost] prebuilt encoding at ${url} is oversized `
+            + `(${ev.data.declared} bytes > ${maxBytes}); encoding the list in-browser instead.`);
+        }
         resolve(ev.data.ok ? ev.data.prebuilt : null);
       };
       worker.addEventListener('message', onMsg);
