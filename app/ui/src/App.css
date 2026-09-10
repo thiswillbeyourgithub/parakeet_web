@@ -1250,6 +1250,29 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   justify-content: space-between;
 }
 
+/* "Mode Dictee Medical" preset button, pinned above the collapsible groups.
+   Stacked rather than the usual label-then-control row: it is a full-width
+   action with its own one-line explanation, not a setting with a value. The
+   separator below it marks where the shortcut ends and the ordinary grouped
+   settings begin. */
+.setting-row--med-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.med-mode-button {
+  width: 100%;
+}
+
+.setting-row--med-mode .setting-hint {
+  margin: 0;
+}
+
 /* ─── Sidebar checkboxes / radios ───────────────────────────────────────── */
 .settings-sidebar input[type="checkbox"],
 .settings-sidebar input[type="radio"] {

@@ -1,1 +1,2 @@
 clinical-cjk.txt
+french_medical.txt
