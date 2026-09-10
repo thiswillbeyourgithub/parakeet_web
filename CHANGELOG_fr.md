@@ -8,6 +8,22 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.2.0 (2026-09-10)
+
+### Un clic configure la dictée médicale française
+
+Un nouveau bouton **Mode Dictée Médical** figure en haut du panneau de réglages, au-dessus de tout le reste. Un clic configure l'ensemble du poste : le modèle UltiMed, la liste de phrases médicales françaises à ses réglages par défaut, des segments de 30 secondes au lieu de 60, l'affichage dictée, une interface en français, et la précision d'encodeur adaptée à chaque moteur (int8 sur le processeur, fp16 sur le GPU, pour que le choix soit déjà le bon quel que soit celui sur lequel la machine atterrira).
+
+Le même préréglage est accessible par lien : `?mode=med` fonctionne, ainsi que `medecin`, `médecin`, `doc`, `doctor` et `ultimed`, quelle que soit la casse et avec ou sans accent, car ce paramètre existe pour des adresses que les gens tapent de mémoire ou se dictent entre eux. Une valeur `?mode=` qui n'en fait pas partie signifie « pas d'avis » et ne change rien, ce qui compte car ce préréglage, contrairement à `?model=`, est enregistré : un lien nommé « mode médical » est une instruction de configuration, donc la machine reste configurée après un simple rechargement. Chaque réglage qu'il touche reste un contrôle ordinaire, modifiable ensuite.
+
+Dans ce mode, la mesure processeur-ou-GPU se lance aussi au chargement de la page, au lieu d'attendre le clic sur Charger le modèle : le moteur est donc tranché avant que vous ne touchiez à quoi que ce soit. Elle respecte les règles qu'elle avait déjà : elle ne remplace jamais un moteur choisi à la main, ne remesure jamais une machine déjà mesurée, et ne fait rien du tout sur une machine sans GPU.
+
+Le préréglage se dégrade au lieu d'échouer. Une instance qui ne propose pas le modèle UltiMed, ou qui ne sert pas la liste médicale française, applique tout le reste et indique en console l'élément ignoré, car un lexique médical sur le modèle générique reste bien plus proche de ce qui était demandé qu'un refus pur et simple.
+
+Rédigé avec [Claude Code](https://claude.com/claude-code).
+
+---
+
 ## 11.1.0 (2026-09-09)
 
 ### Les nombres dictés en toutes lettres s'écrivent en chiffres

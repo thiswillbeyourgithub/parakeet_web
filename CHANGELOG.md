@@ -8,6 +8,22 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.2.0 (2026-09-10)
+
+### One click sets up French medical dictation
+
+A new **Mode Dictée Médical** button sits at the top of the settings panel, above everything else. One click configures the whole station: the UltiMed model, the French medical phrase list at its default settings, 30-second chunks instead of 60, the dictation view, a French interface, and the encoder precision that suits each backend (int8 on the processor, fp16 on the GPU, so the choice is already right whichever one this machine ends up on).
+
+The same preset is available as a link: `?mode=med` works, and so do `medecin`, `médecin`, `doc`, `doctor` and `ultimed`, in any capitalisation and with or without the accent, because the parameter exists for addresses people type from memory or read out to each other. A `?mode=` value that is none of those means "no opinion" and changes nothing, which matters because this preset, unlike `?model=`, is saved: a link named "medical mode" is a setup instruction, so the machine stays configured after a plain reload. Every setting it touches remains an ordinary control you can change afterwards.
+
+In this mode the processor-vs-GPU measurement also runs when the page loads, rather than waiting for the Load Model click, so the backend is settled before you touch anything. It follows the rules it already had: it never overrides a backend you picked by hand, never re-measures a machine it has already measured, and does nothing at all on a machine with no GPU.
+
+The preset degrades rather than fails. An instance that does not offer the UltiMed model, or does not serve the French medical list, applies everything else and says in the console which piece it skipped, because a medical lexicon over the generic model is far closer to what was asked than refusing the whole thing.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ## 11.1.0 (2026-09-09)
 
 ### Numbers dictated as words now come out as digits
