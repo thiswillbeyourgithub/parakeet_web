@@ -94,7 +94,10 @@ self.onmessage = async (e) => {
       const res = await fetchTextCapped(url, maxBytes);
       const prebuilt = res.ok ? parsePrebuiltBoost(res.text) : null;
       self.postMessage(
-        { id, ok: true, prebuilt, oversize: !!res.oversize, status: res.status },
+        // `oversize` is the one miss worth telling the operator about: the
+        // artifact is served but too large to use, so every visitor silently
+        // pays the in-browser BPE encode it was built to skip.
+        { id, ok: true, prebuilt, oversize: !!res.oversize, declared: res.declared },
         prebuilt ? packedTransferables(prebuilt.encoded) : [],
       );
       return;
