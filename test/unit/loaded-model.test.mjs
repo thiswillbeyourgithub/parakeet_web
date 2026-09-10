@@ -19,7 +19,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadedModelDiverges, describeLoadedModel } from '../../app/ui/src/lib/loadedModel.js';
+import { loadedModelDiverges, describeLoadedModel, reconcileSelection } from '../../app/ui/src/lib/loadedModel.js';
 
 const LABELS = { wasm: 'CPU', webgpu: 'GPU', fromHub: 'from HuggingFace', fromLocal: 'from this server' };
 const REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
@@ -111,5 +111,62 @@ describe('describeLoadedModel: the line the sidebar renders', () => {
   test('a load with no reported precision simply omits it', () => {
     assert.equal(describeLoadedModel(loaded({ encoderQuant: null }), selected(), LABELS).text,
       'CPU · from HuggingFace');
+  });
+});
+
+describe('reconcileSelection: a fallback must move the controls, not just the console', () => {
+  // The stored selection, as persisted (NOT the effective/display value).
+  const stored = (over = {}) => ({
+    repoId: REPO, backend: 'webgpu-hybrid', wasmEncoderQuant: 'int8', webgpuEncoderQuant: 'fp16', ...over,
+  });
+
+  test('writes the precision that really loaded back to the selection', () => {
+    // The case this exists for: fp16 was picked, the machine or the source
+    // could not honour it, fp32 loaded. The radios already SHOWED fp32 (they
+    // display an effective value), so leaving the stored setting on fp16 only
+    // meant the saved state disagreed with the screen, reload after reload.
+    assert.deepEqual(
+      reconcileSelection({ backend: 'webgpu-hybrid', encoderQuant: 'fp32' }, stored()),
+      { webgpuEncoderQuant: 'fp32' },
+    );
+  });
+
+  test('writes to the backend that was loaded, not the other one', () => {
+    // Each backend remembers its own precision. Correcting WASM's because a
+    // WebGPU load resolved differently would corrupt a setting that was right.
+    assert.deepEqual(
+      reconcileSelection({ backend: 'wasm', encoderQuant: 'w4a8' },
+        stored({ backend: 'wasm', wasmEncoderQuant: 'int8' })),
+      { wasmEncoderQuant: 'w4a8' },
+    );
+  });
+
+  test('an already-agreeing selection is left alone', () => {
+    assert.deepEqual(reconcileSelection({ backend: 'webgpu-hybrid', encoderQuant: 'fp16' }, stored()), {});
+  });
+
+  test('does nothing when the visitor has already moved the backend radio', () => {
+    // The finishing load describes a configuration they have left (moving that
+    // radio arms its own reload), so writing to it would undo a choice made a
+    // moment ago, and would do it invisibly.
+    assert.deepEqual(reconcileSelection({ backend: 'wasm', encoderQuant: 'int8' }, stored()), {});
+  });
+
+  test('a load that could not report its precision writes nothing', () => {
+    assert.deepEqual(reconcileSelection({ backend: 'webgpu-hybrid', encoderQuant: null }, stored()), {});
+  });
+
+  test('never touches the repo', () => {
+    // A picker change outlives the loaded model on purpose: reconciling it
+    // would silently cancel the switch the visitor just asked for. The
+    // "Currently loaded" row reports that divergence instead.
+    const fixes = reconcileSelection(
+      { backend: 'webgpu-hybrid', encoderQuant: 'fp32', repoId: OTHER }, stored());
+    assert.equal('repoId' in fixes, false);
+  });
+
+  test('nothing loaded, or nothing stored, writes nothing', () => {
+    assert.deepEqual(reconcileSelection(null, stored()), {});
+    assert.deepEqual(reconcileSelection({ backend: 'wasm', encoderQuant: 'int8' }, null), {});
   });
 });
