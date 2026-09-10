@@ -10,9 +10,21 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### A blocked network no longer costs you a connect timeout
+
+On the default configuration the app asks HuggingFace for the weights first and only falls back to the copy your own instance serves once that attempt has failed. On a normal network that ordering costs nothing. On one that blackholes outbound traffic instead of refusing it (a hospital or lab firewall, typically) the failure is not a refusal but a stall: the browser waits out its own connect timeout while a perfectly good local copy sits unused, so the progress bar simply sits there for a minute or more before anything starts downloading.
+
+The app now asks the question in the background from the moment the page loads, with a four-second budget of its own, and remembers the answer. If HuggingFace did not answer AND your instance's own `/models` copy verifiably has this model, the load starts there and skips the doomed attempt entirely.
+
+It only ever reorders two sources that were both going to be tried. An unanswered probe, or one blocked by something other than the network, changes nothing and the usual HuggingFace-first path runs untouched; a machine with no local copy still tries HuggingFace, because turning a slow success into a fast failure would be the worse trade.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### One click sets up French medical dictation
 
-A new **Mode Dictée Médical** button sits at the top of the settings panel, above everything else. One click configures the whole station: the UltiMed model, the French medical phrase list at its default settings, 30-second chunks instead of 60, the dictation view, auto-copy to the clipboard, a French interface, and the encoder precision that suits each backend (int8 on the processor, fp16 on the GPU, so the choice is already right whichever one this machine ends up on).
+A new **Mode Dictée Médical** button sits at the top of the settings panel, above everything else. One click configures the whole station: the UltiMed model, the French medical phrase list at its default settings, 30-second chunks instead of 60, the dictation view, auto-copy to the clipboard, a French interface, and the encoder precision that suits each backend (int8 on the processor, fp32 on the GPU, so the choice is already right whichever one this machine ends up on).
 
 Auto-copy is the only setting the preset switches on rather than resetting. It ships off because the system clipboard is readable by other apps and extensions; on a station whose entire workflow is dictate-then-paste into a record, that cost buys back a click on every utterance. It stays an ordinary checkbox in the General section.
 

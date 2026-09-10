@@ -88,7 +88,13 @@ test('WASM fp32 auto-upgrades from HF (no shards) to the local sharded fp32 mirr
   // fail the load loudly (no ✔) instead of silently succeeding.
   const abortedHfUrls = [];
   await routeHfRepoListing(page, ISTUPAKOV_FILES);
-  // Not abortHfDownloads(): this spec needs the aborted URLs recorded.
+  // Not abortHfDownloads(): this spec needs the aborted URLs recorded. The
+  // (?!api/) exclusion matters for more than the listing now: the background
+  // reachability preflight (lib/hubReachability.js) probes /api/models/<repo>,
+  // so leaving the API answering is what tells the app HuggingFace is up. That
+  // is the situation being simulated here (an HF that answers but ships no fp32
+  // shards); aborting the probe too would send the whole load local-first and
+  // the auto-upgrade under test would never be reached.
   await page.route(/https:\/\/(huggingface\.co|cdn-lfs[^/]*\.huggingface\.co)\/(?!api\/).*/, (route) => {
     abortedHfUrls.push(route.request().url());
     return route.abort();

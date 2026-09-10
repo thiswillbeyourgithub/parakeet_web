@@ -10,9 +10,21 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### Un réseau bloqué ne coûte plus un délai d'attente de connexion
+
+Dans la configuration par défaut, l'application demande d'abord les poids à HuggingFace et ne se rabat sur la copie servie par votre propre instance qu'une fois cette tentative échouée. Sur un réseau normal, cet ordre ne coûte rien. Sur un réseau qui absorbe le trafic sortant au lieu de le refuser (un pare-feu d'hôpital ou de laboratoire, typiquement), l'échec n'est pas un refus mais un blocage : le navigateur attend l'expiration de son propre délai de connexion pendant qu'une copie locale parfaitement utilisable reste inutilisée, et la barre de progression reste donc figée une minute ou plus avant que quoi que ce soit ne commence à se télécharger.
+
+L'application pose désormais la question en arrière-plan dès le chargement de la page, avec son propre budget de quatre secondes, et retient la réponse. Si HuggingFace n'a pas répondu ET que la copie `/models` de votre instance possède bien ce modèle, le chargement démarre là et saute entièrement la tentative vouée à l'échec.
+
+Cela ne fait jamais que réordonner deux sources qui allaient de toute façon être essayées toutes les deux. Une sonde sans réponse, ou bloquée par autre chose que le réseau, ne change rien et le chemin habituel HuggingFace-d'abord s'exécute tel quel ; une machine sans copie locale tente quand même HuggingFace, parce que transformer une réussite lente en échec rapide serait le pire des deux échanges.
+
+Écrit avec [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Un clic configure la dictée médicale française
 
-Un nouveau bouton **Mode Dictée Médical** figure en haut du panneau de réglages, au-dessus de tout le reste. Un clic configure l'ensemble du poste : le modèle UltiMed, la liste de phrases médicales françaises à ses réglages par défaut, des segments de 30 secondes au lieu de 60, l'affichage dictée, la copie automatique dans le presse-papiers, une interface en français, et la précision d'encodeur adaptée à chaque moteur (int8 sur le processeur, fp16 sur le GPU, pour que le choix soit déjà le bon quel que soit celui sur lequel la machine atterrira).
+Un nouveau bouton **Mode Dictée Médical** figure en haut du panneau de réglages, au-dessus de tout le reste. Un clic configure l'ensemble du poste : le modèle UltiMed, la liste de phrases médicales françaises à ses réglages par défaut, des segments de 30 secondes au lieu de 60, l'affichage dictée, la copie automatique dans le presse-papiers, une interface en français, et la précision d'encodeur adaptée à chaque moteur (int8 sur le processeur, fp32 sur le GPU, pour que le choix soit déjà le bon quel que soit celui sur lequel la machine atterrira).
 
 La copie automatique est le seul réglage que le préréglage active au lieu de le réinitialiser. Il est désactivé d'origine car le presse-papiers système est lisible par d'autres applications et extensions ; sur un poste dont tout le flux de travail consiste à dicter puis coller dans un dossier, ce coût rachète un clic à chaque énoncé. Il reste une case à cocher ordinaire dans la section Général.
 

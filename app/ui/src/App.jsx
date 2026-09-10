@@ -41,6 +41,7 @@ import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
+import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
@@ -843,6 +844,40 @@ export default function App() {
   const modelSource = (rawModelSource === 'local' || rawModelSource === 'both') ? rawModelSource : 'hf';
   const forceLocalFallback = modelSource === 'local';
   const localFallbackEnabled = modelSource === 'local' || modelSource === 'both';
+  // Background HuggingFace preflight (lib/hubReachability.js). On a network that
+  // BLACKHOLES outbound traffic rather than refusing it, the default HF-first
+  // load stalls for a full browser connect timeout before the local mirror it
+  // could have used from the start is even tried. Answering the question from
+  // page load, in the background, turns that stall into a reordering. The ref is
+  // what loadModel reads, because loadModel's default arguments are evaluated
+  // against a closure that a state update would leave stale.
+  const localFirstRef = useRef(false);
+  useEffect(() => {
+    // 'local' never touches HF, so there is nothing to learn and no request
+    // worth making (the CSP does not even list the host in that configuration).
+    if (modelSource === 'local') return;
+    let cancelled = false;
+    (async () => {
+      const hubReachable = await probeHubReachable({ repoId });
+      if (cancelled || hubReachable) return;
+      // Only now is the same-origin probe worth making: it is cheap, but it is
+      // pointless on the overwhelmingly common healthy-network path.
+      const probe = await checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK })
+        .catch(() => null);
+      if (cancelled) return;
+      const localFirst = preferLocalFirst({
+        modelSource, hubReachable, localReachable: !!probe?.ok,
+      });
+      localFirstRef.current = localFirst;
+      console.log(localFirst
+        ? '[App] HuggingFace looks unreachable and /models has this repo; loading locally first.'
+        : '[App] HuggingFace looks unreachable, but /models cannot serve this repo; trying HuggingFace anyway.');
+    })();
+    return () => { cancelled = true; };
+    // Re-probes when the visitor switches repo, since "can /models serve it" is
+    // a per-repo answer even though HF reachability is not.
+  }, [modelSource, repoId]);
+
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
   // Corrupt-cached-model recovery. A cached weight file that fails ONNX
@@ -3409,7 +3444,7 @@ export default function App() {
    * @param {boolean} [opts.useLocalFallback=false] When true, download weights
    *   from this instance (/models/) instead of HuggingFace.
    */
-  async function loadModel({ useLocalFallback = forceLocalFallback, corruptionRetried = false,
+  async function loadModel({ useLocalFallback = forceLocalFallback || localFirstRef.current, corruptionRetried = false,
                              gpuQuantFallbackTried = false } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
