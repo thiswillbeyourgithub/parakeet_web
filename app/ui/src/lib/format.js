@@ -184,3 +184,36 @@ export function wavNameFor(entry) {
   // No usable name (a bare extension like ".mp3" leaves an empty stem too).
   return `transcription-${entry?.id ?? 'audio'}.wav`;
 }
+
+/**
+ * Split a translated string on `**bold**` markers into an ordered list of
+ * `{ text, bold }` runs, so a caller can render the marked words in a
+ * `<strong>` without either hand-splitting every translation at the call site
+ * or reaching for `dangerouslySetInnerHTML` on text that comes from i18n.
+ *
+ * Only the exact `**` pair is a marker, and only in pairs: an odd trailing
+ * `**` is left as literal text rather than swallowing the rest of the string,
+ * because a translator's typo must degrade to a visible asterisk and not to a
+ * silently emphasised half-sentence. Empty runs are dropped so `**a**b` yields
+ * two runs, not four.
+ *
+ * Example: 'int8 (~900MB, **recommended**)' ->
+ *   [{ text: 'int8 (~900MB, ', bold: false },
+ *    { text: 'recommended', bold: true },
+ *    { text: ')', bold: false }]
+ */
+export function boldRuns(text) {
+  const str = String(text ?? '');
+  const parts = str.split('**');
+  // An even number of markers leaves an odd number of parts; anything else
+  // means the last marker is unclosed, so re-attach it as literal text.
+  const runs = [];
+  for (let i = 0; i < parts.length; i++) {
+    const bold = i % 2 === 1;
+    const unclosed = bold && i === parts.length - 1;
+    const chunk = unclosed ? `**${parts[i]}` : parts[i];
+    if (!chunk) continue;
+    runs.push({ text: chunk, bold: bold && !unclosed });
+  }
+  return runs;
+}
