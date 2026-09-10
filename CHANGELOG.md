@@ -30,9 +30,9 @@ Written with [Claude Code](https://claude.com/claude-code).
 
 On the default configuration the app asks HuggingFace for the weights first and only falls back to the copy your own instance serves once that attempt has failed. On a normal network that ordering costs nothing. On one that blackholes outbound traffic instead of refusing it (a hospital or lab firewall, typically) the failure is not a refusal but a stall: the browser waits out its own connect timeout while a perfectly good local copy sits unused, so the progress bar simply sits there for a minute or more before anything starts downloading.
 
-The app now asks the question in the background from the moment the page loads, with a four-second budget of its own, and remembers the answer. If HuggingFace did not answer AND your instance's own `/models` copy verifiably has this model, the load starts there and skips the doomed attempt entirely.
+The app now asks the question in the background from the moment the page loads, with a four-second budget of its own, and remembers the answer. If HuggingFace did not answer, the load starts from the copy your own instance serves and skips the doomed attempt entirely. The two speaker-diarization models follow the same answer, since they live in their own repositories with their own HuggingFace-first ordering and were otherwise still paying a connect timeout each, one after the other, on a machine that had already established the site was unreachable.
 
-It only ever reorders two sources that were both going to be tried. An unanswered probe, or one blocked by something other than the network, changes nothing and the usual HuggingFace-first path runs untouched; a machine with no local copy still tries HuggingFace, because turning a slow success into a fast failure would be the worse trade.
+It only ever reorders two sources that were both going to be tried, and the reorder is reversible: if the local copy cannot serve the model after all, HuggingFace is tried anyway, so a probe wrongly blocked by an extension costs one instant same-origin miss rather than a failed load. An unanswered probe changes nothing at all and the usual HuggingFace-first path runs untouched.
 
 Written with [Claude Code](https://claude.com/claude-code).
 

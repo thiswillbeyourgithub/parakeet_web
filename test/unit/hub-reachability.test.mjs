@@ -93,26 +93,34 @@ describe('probeHubReachable: can this machine reach HuggingFace at all', () => {
 });
 
 describe('preferLocalFirst: when it is safe to skip HuggingFace entirely', () => {
-  test('skips HF only when it is unreachable AND local verifiably has the files', () => {
-    assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable: false, localReachable: true }), true);
-    assert.equal(preferLocalFirst({ modelSource: 'both', hubReachable: false, localReachable: true }), true);
+  test('a definite negative reorders the sources', () => {
+    assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable: false }), true);
+    assert.equal(preferLocalFirst({ modelSource: 'both', hubReachable: false }), true);
   });
 
-  test('an unreachable HF with no local mirror still tries HF', () => {
-    // Reordering here would turn a slow success into a fast failure.
-    assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable: false, localReachable: false }), false);
-    assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable: false, localReachable: null }), false);
+  test('it does NOT also require a verified local mirror', () => {
+    // This used to demand proof that /models held the repo, and that condition
+    // is what kept the feature from ever firing on the deployment it was built
+    // for. It cannot be reinstated on the old reasoning ("do not trade a slow
+    // success for a fast failure"), because once the probe says HuggingFace is
+    // unreachable there is no success on that side to trade away: both orders
+    // fail, and this one fails against a same-origin 404 in milliseconds
+    // instead of waiting out a connect timeout. What makes it safe is that the
+    // caller retries HuggingFace when the local attempt fails.
+    assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable: false, localReachable: false }), true);
+    assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable: false, localReachable: null }), true);
   });
 
   test('an unanswered or successful probe changes nothing', () => {
+    // The probe never GATES a load: only a definite negative reorders anything.
     for (const hubReachable of [null, undefined, true]) {
-      assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable, localReachable: true }), false, String(hubReachable));
+      assert.equal(preferLocalFirst({ modelSource: 'hf', hubReachable }), false, String(hubReachable));
     }
   });
 
   test('a local-only instance is left alone', () => {
     // It already skips HF; answering true would only obscure why.
-    assert.equal(preferLocalFirst({ modelSource: 'local', hubReachable: false, localReachable: true }), false);
+    assert.equal(preferLocalFirst({ modelSource: 'local', hubReachable: false }), false);
   });
 
   test('no arguments at all is not a reason to reorder', () => {

@@ -599,11 +599,13 @@ la page, si HuggingFace est joignable (un HEAD vers son API, budget de quatre
 secondes). Cela compte sur les réseaux qui absorbent le trafic sortant au lieu de
 le refuser : la tentative HuggingFace-d'abord n'y échoue pas, elle se BLOQUE
 pendant tout le délai de connexion du navigateur avant que la copie locale ne
-soit même essayée. Si la vérification est négative **et** que `/models/` possède
-bien le dépôt demandé, le chargement démarre localement et saute la tentative
-vouée à l'échec. Tout ce qui est moins certain (pas de réponse, ou pas de copie
-locale de ce dépôt) laisse l'ordre inchangé : la vérification ne peut donc que
-faire gagner du temps, jamais coûter un chargement.
+soit même essayée. Si la vérification est négative, le chargement démarre depuis
+`/models/` et saute la tentative vouée à l'échec, et les deux modèles de
+diarisation suivent la même réponse. Si `/models/` s'avère finalement ne pas
+servir le modèle, HuggingFace est tenté quand même : le réordonnancement ne peut
+donc pas coûter un chargement, et une vérification bloquée à tort (par une
+extension, par exemple) coûte un échec instantané sur votre propre serveur.
+L'absence de réponse laisse l'ordre inchangé.
 
 Le conteneur s'exécute sous l'UID 1000. Si vos fichiers finissent par être illisibles pour l'UID
 1000, exécutez `chmod -R a+rX /host/path/to/onnx-files` (ou
