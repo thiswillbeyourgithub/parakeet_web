@@ -1800,6 +1800,15 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           decoder: decoderName
       },
       quantisation: { encoder: encoderQ, decoder: decoderQ },
+      // Where the weights actually came from, and on which backend they were
+      // resolved. Callers need this to TELL THE USER what loaded, because every
+      // other signal is about what was REQUESTED: the sidebar radios show the
+      // request, and this module is allowed to serve a different source (the
+      // local /models upgrade above) or a different precision (the WASM int8
+      // pin) than the one asked for. Without it a load that quietly landed
+      // somewhere else is indistinguishable from one that did exactly as told.
+      servedFrom: effectiveLocalBase ? 'local' : 'hf',
+      resolvedBackend: backend,
       // Downgrade flag: true when this source could not satisfy the requested
       // quant (the WASM int8 pin). The caller uses it to decide whether a local
       // /models mirror should be tried instead.
