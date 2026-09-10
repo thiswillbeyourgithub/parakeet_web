@@ -455,14 +455,17 @@ the **Mode Dictée Médical** button at the top of the settings sidebar, or a
   resetting: it ships off because the system clipboard is readable by other apps
   and extensions, and a dictation station trades that for the click it saves on
   every utterance. Uncheck it in the General section if you would rather not;
-- **int8** precision on the processor and **fp16** on the GPU, so the choice is
+- **int8** precision on the processor and **fp32** on the GPU, so the choice is
   already right whichever backend this machine ends up on;
 - a **French interface**;
 - an **autoconfigure run on page load** rather than at the Load Model click, so
-  the processor-vs-GPU question is settled before you touch anything. It obeys
-  the usual rules: it never overrides a backend you picked by hand, never
-  re-measures a machine it has already measured, and does nothing at all on a
-  machine with no GPU.
+  the processor-vs-GPU question is settled before you touch anything. Here it
+  measures even a machine whose backend was once picked by hand, unlike the run
+  on an ordinary page load: asking for medical mode is asking for the whole
+  station, and the preset above already replaces the model, the window, the
+  view, the interface language and both encoder precisions, every one of which
+  you may equally have set yourself. It still measures a given machine only
+  once, and still does nothing at all on a machine with no GPU.
 
 Unlike `?model=`, this one **is** saved: a link named "medical mode" is a setup
 instruction, so the machine stays configured after a plain reload. Every one of

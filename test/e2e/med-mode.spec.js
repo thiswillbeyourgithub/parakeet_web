@@ -16,7 +16,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { readSetting } from './seed.mjs';
+import { readSetting, seedSettings } from './seed.mjs';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
 const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
@@ -171,4 +171,49 @@ test('the sidebar button applies the same preset with no link involved', async (
   await expect(medModeButton(page)).toHaveText('Mode Dictée Médical');
   await medModeButton(page).click();
   await expectMedModeApplied(page);
+});
+
+test('?mode=med measures the machine even when a backend was once picked by hand', async ({ page }) => {
+  // The regression this pins, reported from a deployed station: the link
+  // applied every OTHER preset value (the 30 s window was visibly there) while
+  // the backend stayed on WASM and no measurement ran, yet the sidebar button
+  // measured every time. The cause was the med-mode path reusing
+  // shouldAutoProbe's `userPickedBackend` refusal, which is right for an
+  // ordinary page load (an unrequested measurement must not overrule a
+  // deliberate choice) and wrong here: `?mode=med` IS the request, and it
+  // already overwrites the model, the window, the display, the language and
+  // both precisions, every one of which the visitor may equally have set by
+  // hand. Since backendUserPicked persists, it was sticky forever after: any
+  // machine anyone had ever touched the radios on silently lost the mode's
+  // headline promise.
+  await configureTwoRepos(page);
+  // A machine that HAS a GPU, so the probe is a decision worth making. It
+  // enumerates but cannot build a device, which is fine here: this test is
+  // about the measurement RUNNING, not about which backend wins (headless
+  // Chromium has no GPU, so the honest verdict is always WASM).
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      value: {
+        requestAdapter: async () => ({
+          features: new Set(), limits: {},
+          info: { vendor: 'test', architecture: 'stub', device: '' },
+        }),
+        getPreferredCanvasFormat: () => 'bgra8unorm',
+      },
+    });
+  });
+  const probeLogs = [];
+  page.on('console', (m) => { const t = m.text(); if (t.includes('[Probe]')) probeLogs.push(t); });
+
+  // Boot once to create the settings DB, then record a hand-picked backend
+  // exactly as the radios would.
+  await page.goto('/');
+  await seedSettings(page, { backend: 'wasm', backendUserPicked: true });
+
+  await page.goto('/?mode=med');
+  await expect.poll(() => probeLogs.length, {
+    timeout: 60 * 1000,
+    message: 'the medical-mode link never measured this machine',
+  }).toBeGreaterThan(0);
 });

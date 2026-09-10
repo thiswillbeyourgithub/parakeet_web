@@ -464,16 +464,20 @@ deux appliquent le même préréglage :
   car le presse-papiers système est lisible par d'autres applications et
   extensions, et un poste de dictée échange cela contre le clic économisé à
   chaque énoncé. Décochez-le dans la section Général si vous préférez ;
-- la précision **int8** sur le processeur et **fp16** sur le GPU, pour que le
+- la précision **int8** sur le processeur et **fp32** sur le GPU, pour que le
   choix soit déjà le bon quel que soit le moteur sur lequel la machine
   atterrira ;
 - une **interface en français** ;
 - un **autoconfigure lancé au chargement de la page** plutôt qu'au clic sur
   Charger le modèle, afin que la question processeur-ou-GPU soit tranchée avant
-  que vous ne touchiez à quoi que ce soit. Il respecte les règles habituelles :
-  il ne remplace jamais un moteur que vous avez choisi à la main, ne remesure
-  jamais une machine déjà mesurée, et ne fait rien du tout sur une machine sans
-  GPU.
+  que vous ne touchiez à quoi que ce soit. Ici il mesure même une machine dont
+  le moteur avait été choisi à la main, contrairement au lancement d'un
+  chargement de page ordinaire : demander le mode médical, c'est demander le
+  poste entier, et le préréglage ci-dessus remplace déjà le modèle, la fenêtre,
+  l'affichage, la langue de l'interface et les deux précisions d'encodeur,
+  autant de choses que vous pouviez tout aussi bien avoir réglées vous-même. Il
+  ne mesure toujours une machine donnée qu'une seule fois, et ne fait toujours
+  rien du tout sur une machine sans GPU.
 
 Contrairement à `?model=`, celui-ci **est** enregistré : un lien nommé « mode
 médical » est une instruction de configuration, donc la machine reste
