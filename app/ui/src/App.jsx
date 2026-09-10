@@ -26,10 +26,11 @@ import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
 import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { BoostingTrie, compileBoostList, packEncoded, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
+import { BoostingTrie, compileBoostList, parsePrebuiltBoost, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor } from './lib/format.js';
+import { fetchTextCapped } from './lib/fetchCapped.js';
 import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
 import { findSilenceCuts, excisePcm, remapSegments } from './lib/silenceCut.js';
 import { shouldPiecewise, runPiecewiseDiarization } from './lib/diarizePiecewise.js';
@@ -494,14 +495,6 @@ function sanitizeClipboardText(s) {
   );
 }
 
-// Cap for any operator-supplied file fetched from a same-origin served
-// directory (dictation-regex CSVs, boost-phrase TXTs). F-102: a poisoned
-// upstream that fed the entrypoint a multi-GB body would otherwise OOM the
-// tab when we call .text() with no cap. The entrypoint enforces the same
-// cap server-side (defense in depth); this re-enforces it client-side
-// because a host-side write to /var/regex or /var/boost can bypass that.
-const SERVED_FILE_MAX_BYTES = 5 * 1024 * 1024;
-
 // Sentinel for the boost-phrase source selector meaning "the user's own
 // manually-typed text" rather than one of the operator-supplied files. Not a
 // valid manifest entry (those all end in .txt), so it can never collide.
@@ -759,44 +752,6 @@ function defaultBeamWidth() {
 }
 const DEFAULT_BEAM_WIDTH = defaultBeamWidth();
 
-// Fetch text from `url`, streaming and aborting if the body exceeds
-// `maxBytes`. Returns {ok:true, text} on success, {ok:false, status} for a
-// non-2xx response, or {ok:false, oversize:true, declared} when the body is
-// too large (declared = the byte count that tripped the cap). Shared by the
-// dictation-regex and boost-phrase loaders.
-async function fetchTextCapped(url, maxBytes = SERVED_FILE_MAX_BYTES) {
-  const res = await fetch(url);
-  if (!res.ok) return { ok: false, status: res.status };
-  const declared = Number(res.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    try { res.body?.cancel(); } catch (_) { /* noop */ }
-    return { ok: false, oversize: true, declared };
-  }
-  const reader = res.body?.getReader();
-  if (!reader) {
-    const text = await res.text();
-    if (text.length > maxBytes) {
-      return { ok: false, oversize: true, declared: text.length };
-    }
-    return { ok: true, text };
-  }
-  let total = 0;
-  const chunks = [];
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      try { reader.cancel(); } catch (_) { /* noop */ }
-      return { ok: false, oversize: true, declared: total };
-    }
-    chunks.push(value);
-  }
-  const merged = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
-  return { ok: true, text: new TextDecoder('utf-8').decode(merged) };
-}
 
 // Sanitise an arbitrary device-supplied string before rendering it in
 // the UI. WebHID productName comes from the USB descriptor and is
@@ -2705,20 +2660,23 @@ export default function App() {
       console.log(`[Boost] loading list "${src}"`
         + `${hasPrebuilt ? ` (+ prebuilt "${jsonName}")` : ' (no prebuilt encoding served; encoding in-browser)'}...`);
     }
-    const [r, pj] = await Promise.all([
+    const [r, parsedPrebuilt] = await Promise.all([
       fetchTextCapped(`/boost-phrases/${encodeURIComponent(src)}`),
-      // A prebuilt-JSON failure must never break the text load, so swallow it
-      // to a soft miss (the browser then encodes the text itself).
+      // Fetched, parsed AND packed inside the boost worker: on a large clinical
+      // list this artifact is tens of megabytes and parses to ~330k objects, and
+      // doing that here blocked the main thread for over a second at page load.
+      // A prebuilt failure must never break the text load, so every miss (absent,
+      // oversized, malformed) comes back as null and the browser encodes the
+      // text itself.
       hasPrebuilt
-        ? fetchTextCapped(`/boost-phrases/${encodeURIComponent(jsonName)}`, BOOST_PREBUILT_MAX_BYTES)
-          .catch(() => ({ ok: false }))
-        : Promise.resolve({ ok: false }),
+        ? loadPrebuiltBoost(`/boost-phrases/${encodeURIComponent(jsonName)}`, BOOST_PREBUILT_MAX_BYTES)
+        : Promise.resolve(null),
     ]);
     if (verboseLogRef.current) {
       const ms = (performance.now() - fetchT0).toFixed(0);
       console.log(`[Boost] fetched "${src}" in ${ms}ms `
         + `(text: ${r.ok ? `${r.text.length} chars` : 'FAILED'}, `
-        + `prebuilt JSON: ${pj.ok ? `${pj.text.length} chars` : 'absent (will encode in-browser)'}).`);
+        + `prebuilt: ${parsedPrebuilt ? `${encodedCount(parsedPrebuilt.encoded)} entries` : 'absent (will encode in-browser)'}).`);
     }
     if (!r.ok) {
       console.warn(`[Boost] could not load phrase list "${src}":`,
@@ -2727,34 +2685,11 @@ export default function App() {
       return;
     }
     // Tag the prebuilt encoding with the exact text it corresponds to, so the
-    // rebuild effect only trusts it while the textarea is unedited.
-    let pre = null;
-    if (pj.ok) {
-      try {
-        const parsed = JSON.parse(pj.text);
-        // Require a string augmentDefault: that field is the v2 marker, so a
-        // legacy (v1 caseDefault) artifact is ignored here and re-encoded in the
-        // browser rather than reused with stale, differently-expanded ids.
-        if (parsed && Array.isArray(parsed.encoded) && typeof parsed.vocabSig === 'string'
-            && typeof parsed.augmentDefault === 'string') {
-          pre = {
-            text: r.text,
-            vocabSig: parsed.vocabSig,
-            // The global augmentation-default the prebuild expanded at.
-            augmentDefault: parsed.augmentDefault,
-            // Packed once, here, rather than on every rebuild: the artifact
-            // parses to one object per surface form (~330k of them for a large
-            // clinical list), and that shape costs ~450 ms to structured-clone
-            // every time the decode worker's trie is re-synced. Packing is ~17 ms
-            // and happens next to the JSON.parse that already dominates this step.
-            encoded: packEncoded(parsed.encoded),
-            skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
-          };
-        }
-      } catch (e) {
-        console.warn(`[Boost] prebuilt encoding for "${src}" was unparseable; will encode in-browser.`, e);
-      }
-    }
+    // rebuild effect only trusts it while the textarea is unedited. Everything
+    // else about it (parse, v2 validation, packing) already happened in the
+    // worker, and the packed arrays arrived transferred, so nothing is copied
+    // here.
+    const pre = parsedPrebuilt ? { ...parsedPrebuilt, text: r.text } : null;
     prebuiltBoostRef.current = pre;
     if (verboseLogRef.current) {
       if (pre) {
@@ -3007,6 +2942,36 @@ export default function App() {
   // skipped. Everything here used to run inline in the rebuild effect below,
   // where the expansion alone froze the tab for ~1 s per keystroke on a large
   // list, un-debounced (only the encode was behind the debounce).
+  // Fetch + parse + pack a server-prebuilt boost encoding, off the main thread
+  // when a worker can be created. The artifact is tens of megabytes and parses
+  // to ~330k small objects for a large clinical list, so doing it inline froze
+  // the tab for well over a second at page load on a slow device -- the exact
+  // stall a `?mode=` link hits, since it selects a curated list before the
+  // visitor has touched anything.
+  //
+  // Resolves the parsed prebuilt, or null when there is nothing usable (missing,
+  // oversized, malformed, or a legacy v1 artifact); the caller then encodes the
+  // list in-browser, exactly as on a deployment that ships no artifact.
+  const loadPrebuiltBoost = useCallback((url, maxBytes) => {
+    const worker = getBoostWorker();
+    if (!worker) {
+      // No worker: same work, same shared helpers, just on this thread.
+      return fetchTextCapped(url, maxBytes)
+        .then(res => (res.ok ? parsePrebuiltBoost(res.text) : null))
+        .catch(() => null);
+    }
+    return new Promise((resolve) => {
+      const reqId = ++boostReqIdRef.current;
+      const onMsg = (ev) => {
+        if (ev.data.id !== reqId) return;
+        worker.removeEventListener('message', onMsg);
+        resolve(ev.data.ok ? ev.data.prebuilt : null);
+      };
+      worker.addEventListener('message', onMsg);
+      worker.postMessage({ id: reqId, kind: 'prebuilt', url, maxBytes });
+    });
+  }, [getBoostWorker]);
+
   const compileBoostPhrases = useCallback((text, { encode, tokenizer, augmentDefault = '' }) => {
     const worker = getBoostWorker();
     if (!worker) {

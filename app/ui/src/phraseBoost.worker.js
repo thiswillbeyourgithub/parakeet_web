@@ -10,6 +10,13 @@
 // See App.jsx (the rebuild effect) and phraseBoost.js (compileBoostList /
 // BoostingTrie.buildFromEncoded) for the two halves.
 //
+// It also owns the OTHER heavy step, which has nothing to do with encoding: when
+// the operator ships a server-prebuilt encoding next to the list, fetching that
+// artifact and turning it into the packed arrays costs a multi-MB JSON.parse
+// plus a walk over ~330k entries. That used to run on the main thread the moment
+// a curated list was selected, which is exactly page load for a `?mode=` link,
+// and it blocked the UI for over a second on a slow device.
+//
 // Protocol: postMessage({ id, text, augmentDefault, encode, id2token, assetUrl }) ->
 //   postMessage({ id, ok: true, phraseCount, expandedCount, warnings, conflicts,
 //                 encoded, skipped })                on success
@@ -20,10 +27,18 @@
 // yet, or when a server-prebuilt encoding is being reused, and it skips both the
 // expansion and the BPE loop.
 //
+// Second request kind: postMessage({ id, kind: 'prebuilt', url, maxBytes }) ->
+//   postMessage({ id, ok: true, prebuilt: {vocabSig, augmentDefault, encoded,
+//                 skipped} | null })                 on success (null = no usable
+//                                                    artifact; the caller then
+//                                                    encodes in-browser)
+//   postMessage({ id, ok: false, error })            on a transport failure
+//
 // Built with Claude Code.
 
 import { BpeEncoder, buildVocabToId, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEncoder.js';
-import { compileBoostList, packEncoded, packedTransferables } from '../../src/phraseBoost.js';
+import { compileBoostList, packEncoded, packedTransferables, parsePrebuiltBoost } from '../../src/phraseBoost.js';
+import { fetchTextCapped } from './lib/fetchCapped.js';
 
 // The BPE asset is identical across requests, so fetch + parse it once. The
 // encoder is rebuilt only when the tokenizer vocabulary changes (model swap),
@@ -68,9 +83,22 @@ async function getEncoder(id2token, assetUrl) {
 
 self.onmessage = async (e) => {
   const {
-    id, text, augmentDefault = '', encode = true, id2token, assetUrl = BPE_ASSET_URL,
+    id, kind, text, augmentDefault = '', encode = true, id2token, assetUrl = BPE_ASSET_URL,
+    url, maxBytes,
   } = e.data || {};
   try {
+    if (kind === 'prebuilt') {
+      // A prebuilt that is missing, oversized or malformed is not an error: the
+      // caller falls back to encoding the list itself, exactly as on a
+      // deployment that ships no artifact at all.
+      const res = await fetchTextCapped(url, maxBytes);
+      const prebuilt = res.ok ? parsePrebuiltBoost(res.text) : null;
+      self.postMessage(
+        { id, ok: true, prebuilt, oversize: !!res.oversize, status: res.status },
+        prebuilt ? packedTransferables(prebuilt.encoded) : [],
+      );
+      return;
+    }
     const encoder = encode ? await getEncoder(id2token, assetUrl) : null;
     // Cap accumulated stale (removed-line) entries: once the cache is more than
     // 2x the live variant count, most of it is dead, so start fresh. This

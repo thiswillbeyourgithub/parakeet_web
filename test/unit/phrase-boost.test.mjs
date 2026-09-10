@@ -15,7 +15,7 @@ import {
   augmentVariants, expandAugmentations, selectPrebuilt, DEFAULT_BOOST_MIN_P,
   isDefaultsLine, resolveBoostLines, findBoostConflicts, formatBoostConflict,
   countPhraseLines, compileBoostList, FULL_AUGMENT,
-  packEncoded, isPackedEncoding, encodedCount, packedTransferables,
+  packEncoded, isPackedEncoding, encodedCount, packedTransferables, parsePrebuiltBoost,
 } from '../../app/src/phraseBoost.js';
 import { loadCachedFixture, loadMergesAsset } from '../support/bpe-fixture.mjs';
 
@@ -965,5 +965,65 @@ describe('selectPrebuilt (reload fast-path gate)', () => {
     const r = selectPrebuilt(pre, { text: 'edited', vocabSig: 'other', augmentDefault: 'fap' });
     assert.equal(r.usePrebuilt, false);
     assert.equal(r.reasons.length, 3);
+  });
+});
+
+describe('parsePrebuiltBoost (server artifact -> packed encoding)', () => {
+  // This runs in the phrase-boost worker, in front of the trie build, and it is
+  // the step that used to freeze the tab: on a real clinical list the artifact
+  // is ~37 MB and parses to ~478k entries. Every rejection below has to come
+  // back as null rather than throw, because null is what makes the caller fall
+  // back to encoding the list in-browser instead of losing the list entirely.
+  const artifact = {
+    vocabSig: 'sig-abc',
+    augmentDefault: '',
+    encoded: [{ ids: [1, 2], weight: 2, minp: 0.5 }, { ids: [3], weight: 1 }],
+    skipped: ['\u4e2d\u6587'],
+  };
+
+  test('parses a v2 artifact into the packed shape', () => {
+    const pre = parsePrebuiltBoost(JSON.stringify(artifact));
+    assert.equal(pre.vocabSig, 'sig-abc');
+    assert.equal(pre.augmentDefault, '');
+    assert.deepEqual(pre.skipped, ['\u4e2d\u6587']);
+    assert.equal(isPackedEncoding(pre.encoded), true);
+    assert.equal(encodedCount(pre.encoded), 2);
+    // Same ids and weights the unpacked form carries, so the trie is identical.
+    assert.deepEqual([...pre.encoded.ids], [1, 2, 3]);
+    assert.deepEqual([...pre.encoded.offsets], [0, 2, 3]);
+    assert.deepEqual([...pre.encoded.weights], [2, 1]);
+    assert.equal(pre.encoded.minps[0], 0.5);
+    assert.equal(pre.encoded.minps[1], DEFAULT_BOOST_MIN_P);
+  });
+
+  test('builds the same trie as the unpacked artifact would', () => {
+    const pre = parsePrebuiltBoost(JSON.stringify(artifact));
+    const fromPacked = BoostingTrie.buildFromEncoded(pre.encoded, { strength: 1 });
+    const fromPlain = BoostingTrie.buildFromEncoded(artifact.encoded, { strength: 1 });
+    assert.equal(fromPacked.size, fromPlain.size);
+  });
+
+  test('a missing skipped list becomes an empty one', () => {
+    const { skipped, ...noSkipped } = artifact;
+    assert.deepEqual(parsePrebuiltBoost(JSON.stringify(noSkipped)).skipped, []);
+  });
+
+  test('unparseable JSON is a null miss, not a throw', () => {
+    assert.equal(parsePrebuiltBoost('{ not json'), null);
+    assert.equal(parsePrebuiltBoost(''), null);
+  });
+
+  test('a legacy v1 artifact (no augmentDefault) is refused', () => {
+    // v1 expanded a different set of surface forms, so reusing its ids would
+    // silently boost the wrong strings; re-encoding in the browser is correct.
+    const { augmentDefault, ...v1 } = artifact;
+    assert.equal(parsePrebuiltBoost(JSON.stringify(v1)), null);
+  });
+
+  test('a structurally wrong artifact is refused', () => {
+    assert.equal(parsePrebuiltBoost(JSON.stringify({ ...artifact, encoded: 'nope' })), null);
+    assert.equal(parsePrebuiltBoost(JSON.stringify({ ...artifact, vocabSig: 42 })), null);
+    assert.equal(parsePrebuiltBoost('null'), null);
+    assert.equal(parsePrebuiltBoost('[]'), null);
   });
 });
