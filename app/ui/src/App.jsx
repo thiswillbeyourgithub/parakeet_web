@@ -29,7 +29,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, compileBoostList, parsePrebuiltBoost, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor, boldRuns } from './lib/format.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
 import { findSilenceCuts, excisePcm, remapSegments } from './lib/silenceCut.js';
@@ -889,7 +889,7 @@ export default function App() {
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState('int8');
   // Encoder precision for the WebGPU backend: fp32 (~2.4 GB, sharded) by
   // default, w4a8 (MatMulNBits, the only quantised encoder with a GPU kernel;
-  // int8 has none) or fp16 (~1.2 GB, near-lossless). fp16 was withdrawn on
+  // int8 has none) or fp16 (~1.2 GB, lossless). fp16 was withdrawn on
   // 2026-08-23 on the premise that no reachable GPU exposes the `shader-f16`
   // adapter feature its WGSL kernels need; a benchmark report from an Intel
   // UHD 630 laptop (2026-09-03) reported that feature present, so the premise
@@ -8075,7 +8075,7 @@ export default function App() {
               // the smallest download by far and the fastest to load, but
               // slower to run than int8 on WASM and than fp32 on WebGPU (the
               // encoder is compute-bound, so shrinking the weights buys load
-              // time, not throughput). fp16 is WebGPU-only: near-lossless at
+              // time, not throughput). fp16 is WebGPU-only: lossless at
               // half the fp32 download, the best GPU option on an adapter that
               // reports shader-f16. fp32 is opt-in on WASM via the <2 GB
               // shards (~2.4 GB, ~35 % slower) and the WebGPU default.
@@ -8122,12 +8122,22 @@ export default function App() {
                     <InfoTooltip text={t('tooltipEncoderPrecision')} />
                   </span>
                   <div className="setting-options">
+                    {/* The rows run smallest download first (ENCODER_QUANT_ROWS),
+                        and that is worth stating because the obvious reading of
+                        the ladder is wrong: the smallest entry, w4a8, is also
+                        the slowest to run and the weakest on long audio. Without
+                        this line a visitor reasonably assumes small means fast.
+                        Full width so it sits on its own line above the radios. */}
+                    <span className="setting-hint precision-order-hint">{t('precisionOrderHint')}</span>
                     {rows.map(r => {
                       const disabled = modelSwapBlocked || !r.available;
                       return (
                         <label key={r.value} className={disabled ? 'disabled-option' : ''}>
                           <input type="radio" name="encoderQuant" value={r.value} checked={r.available && effectiveQuant === r.value} onChange={e => { armModelReloadIfLoaded(); setQuant(e.target.value); }} disabled={disabled} />
-                          {r.label}{!r.available ? ` ${r.note}` : ''}
+                          {/* The label carries `**bold**` markers (int8's
+                              "recommended"), so it renders as runs rather than
+                              as one text node. */}
+                          <span>{boldRuns(r.label).map((run, i) => (run.bold ? <strong key={i}>{run.text}</strong> : run.text))}{!r.available ? ` ${r.note}` : ''}</span>
                         </label>
                       );
                     })}

@@ -1659,3 +1659,12 @@ html.gpu-run *::after {
   align-items: center;
   gap: 0.35rem;
 }
+
+/* The "smallest download first" note above the encoder-precision radios.
+   .setting-options is a wrapping flex row, so a full basis is what puts the
+   note on its own line instead of inline with the first radio. */
+.precision-order-hint {
+  flex: 0 0 100%;
+  font-size: 0.75rem;
+  margin-bottom: 0.15rem;
+}
