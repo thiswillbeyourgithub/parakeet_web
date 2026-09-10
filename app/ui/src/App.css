@@ -1641,3 +1641,21 @@ html.gpu-run *::after {
   color: var(--success);
   margin: 0.4rem 0 0;
 }
+
+/* Benchmark rows that have not produced a number yet. The table is laid out in
+   full when a run starts (lib/benchmark.js planBenchmarkRows) so the visitor can
+   see what is coming and how far along it is, which means most of it is empty
+   for most of a run: dim the waiting rows so the finished ones are still what
+   the eye lands on. */
+.benchmark-row--waiting {
+  opacity: 0.55;
+}
+.benchmark-cell--pending {
+  color: var(--text-subtle);
+  font-style: italic;
+}
+.benchmark-cell--running {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}

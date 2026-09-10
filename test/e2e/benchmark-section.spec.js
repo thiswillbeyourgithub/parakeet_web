@@ -114,7 +114,20 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   // first is what makes this assertion real: before it, the app is idle and
   // they would be absent anyway.
   await expect(page.locator('[data-umami-event="benchmark_run"]')).toBeDisabled();
+
+  // The table exists from the first moment of the run, not only at the end. A
+  // run takes minutes, and the visitor used to watch a one-line progress string
+  // with no idea which rows were coming or how far along it was. The row is
+  // laid out with its backend and precision already named, and it says it is
+  // waiting rather than showing a number it does not have yet.
+  const liveRow = page.getByTestId('benchmark-row-wasm:int8-short');
+  await expect(liveRow).toBeVisible({ timeout: 30_000 });
+  await expect(liveRow).toContainText('wasm / int8');
+  await expect(liveRow).toHaveAttribute('data-status', /pending|running/);
+
   await expect(page.locator('.benchmark-progress')).toContainText('Loading', { timeout: 60_000 });
+  // ...and the row follows the run, not just the progress line.
+  await expect(liveRow).toHaveAttribute('data-status', 'running', { timeout: 60_000 });
   const tLoading = await page.evaluate(() => Date.now());
   await expect(page.locator('[data-umami-event="upload_file_button"]')).toHaveCount(0);
   await expect(page.locator('[data-umami-event="record_button"]')).toHaveCount(0);
@@ -175,6 +188,17 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   expect(row.warmup).toBe(true);
   expect(row.wallMs).toBeGreaterThan(0);
   expect(row.rtf).toBeGreaterThan(0);
+  // The REPORT keeps the conventional real-time factor (compute per second of
+  // audio, lower is better) so scripts/benchmark-throughput.mjs and older
+  // reports stay comparable, while the TABLE shows its reciprocal, which is the
+  // direction a reader parses without translating ("6x" = an hour of audio in
+  // ten minutes, bigger is better). Pinned together here because they are
+  // reciprocals of one measurement and a change to either that forgets the
+  // other would quietly publish two different numbers for the same run.
+  const speedCell = await page.getByTestId('benchmark-row-wasm:int8-short').locator('td').nth(2).innerText();
+  const shown = Number(speedCell.match(/([\d.]+)x/)?.[1]);
+  expect(shown).toBeGreaterThan(0);
+  expect(shown).toBeCloseTo(1 / row.rtf, 1);
   expect(row.similarity, 'the shipped clip must transcribe to its known sentence').toBeGreaterThanOrEqual(0.7);
   expect(row.metrics.encode_ms).toBeGreaterThan(0);
 

@@ -32,17 +32,13 @@ export const BENCHMARK_CLIP = {
 // which the report makes visible through the recorded chunkDurationSec.
 export const LONG_PROFILE_TARGET_SEC = 90;
 
-// Approximate download per encoder precision, in MB, used ONLY to warn about
-// bandwidth before a run (the real sizes come from the repo being served).
-// Measured on the shipped Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx
-// weights; the decoder (~18 MB) and preprocessor (~1 MB) are folded in.
-export const QUANT_DOWNLOAD_MB = {
-  int8lite: 810,
-  int8: 900,
-  w4a8: 610,
-  fp16: 1220,
-  fp32: 2350,
-};
+// Approximate download per encoder precision, used here ONLY to warn about
+// bandwidth before a run. Re-exported rather than redefined: the same table
+// orders the automatic GPU precision substitution in lib/encoderQuants.js, and
+// two copies of it would let a benchmark quote one size while the fallback
+// reasoned from another.
+export { QUANT_DOWNLOAD_MB } from './encoderQuants.js';
+import { QUANT_DOWNLOAD_MB } from './encoderQuants.js';
 
 // Above this estimated download a combination is treated as "heavy" and left
 // UNCHECKED by default: fp32 costs 2.3 GB, which nobody should spend by
@@ -67,10 +63,18 @@ function comboId(backend, quant) {
 }
 
 // Build the list of backend/precision combinations worth attempting on this
-// device. Availability of a precision INSIDE the served repo is deliberately
-// not probed here: hub.js already throws QuantUnavailableError when the repo
-// ships no such file, and the driver records that as a first-class
-// "unavailable" outcome, which is itself useful information in the report.
+// device AND servable by this deployment.
+//
+// `servableQuants` is the answer lib/encoderQuants.js derives from the model
+// source's own listing, and it is null when no listing could be read. Null
+// means offer everything: a mirror that publishes no manifest must not lose
+// every row. When it IS known, a precision the source does not host is dropped
+// rather than offered, because that row can only ever produce "not served
+// here" (hub.js refuses to downgrade silently) after spending a load attempt on
+// finding out. This used to be left to the driver on the reasoning that the
+// failure was itself informative; it is, but the same information now reaches
+// the visitor before the click, in the sidebar radios, where it can still
+// change what they select.
 //
 // The visitor's currently selected combination is sorted LAST so the run ends
 // on the model they already had, which is the one the app keeps cached (the
@@ -85,6 +89,7 @@ export function planBenchmark({
   currentWasmQuant = 'int8',
   currentWebgpuQuant = 'fp32',
   shaderF16 = false,
+  servableQuants = null,
 } = {}) {
   const combos = [
     // int8lite is the same SmoothQuant recipe with 11 fp32 MatMuls kept instead
@@ -115,7 +120,12 @@ export function planBenchmark({
   const currentQuant = currentBackend.startsWith('webgpu') ? currentWebgpuQuant : currentWasmQuant;
   const currentId = comboId(currentBackend, currentQuant);
 
-  const rows = combos.map((c) => {
+  const servable = servableQuants
+    ? combos.filter((c) => (c.backend.startsWith('webgpu') ? servableQuants.webgpu : servableQuants.wasm)
+      ?.includes(c.quant))
+    : combos;
+
+  const rows = servable.map((c) => {
     const downloadMB = QUANT_DOWNLOAD_MB[c.quant] ?? null;
     const heavy = downloadMB != null && downloadMB > HEAVY_DOWNLOAD_MB;
     const isCurrent = comboId(c.backend, c.quant) === currentId;
@@ -317,6 +327,100 @@ function summarizeRuns({ combo, profile, loadMs, loadTransfer, runs, audioSec, e
   };
 }
 
+// ── Live table ──────────────────────────────────────────────────────────────
+//
+// A benchmark run takes minutes, and until it finished the table did not exist:
+// the visitor watched a one-line progress string and had no idea what was
+// coming, how far along it was, or whether the row they cared about had already
+// been measured. So the table is now laid out in full the moment Run is
+// pressed, one placeholder per (combination, profile), and each placeholder is
+// replaced by its real row as the driver produces it.
+//
+// The placeholders are built from the SAME (combos x profiles) product the
+// driver iterates, so a row can never appear in the table that the run will not
+// visit, and none can be missing.
+
+/**
+ * The table skeleton for a run: one pending row per combination and profile.
+ *
+ * @param {Array} combos
+ * @param {string[]} profiles
+ * @returns {Array} rows carrying `status: 'pending'`
+ */
+export function planBenchmarkRows(combos, profiles = ['short']) {
+  const rows = [];
+  for (const c of combos) {
+    for (const profile of profiles) {
+      rows.push({ id: c.id, backend: c.backend, quant: c.quant, profile, status: 'pending' });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Fold one incoming row into the table.
+ *
+ * Matching is by (id, profile) for an ordinary result. A row with NO profile is
+ * the load-failure and cancellation shape the driver emits once per
+ * combination, before it knows which profile it would have run: it replaces
+ * that combination's first pending row and REMOVES the rest, because a
+ * combination whose model never loaded has no per-profile story to tell and
+ * leaving those placeholders behind would show a table that never finishes.
+ *
+ * Anything with no placeholder to claim is appended, so a driver that grows a
+ * new row shape shows it rather than dropping it.
+ *
+ * @param {Array} rows
+ * @param {object} row
+ * @returns {Array} a new array
+ */
+export function mergeBenchmarkRow(rows, row) {
+  const stillPending = (r) => r.status === 'pending' || r.status === 'running';
+  if (row.profile == null) {
+    // It claims the first row of this combination that is still WAITING, never
+    // one that already carries a measurement: cancellation arrives in this
+    // shape too, and a run stopped after the short profile completed must keep
+    // that number rather than have it overwritten by "cancelled".
+    const known = rows.some((r) => r.id === row.id);
+    if (known && !rows.some((r) => r.id === row.id && stillPending(r))) return rows;
+    let claimed = false;
+    const out = [];
+    for (const r of rows) {
+      if (r.id !== row.id) { out.push(r); continue; }
+      if (!claimed && stillPending(r)) { out.push({ ...r, ...row }); claimed = true; continue; }
+      if (!stillPending(r)) out.push(r);
+    }
+    return claimed ? out : [...rows, row];
+  }
+  let claimed = false;
+  const out = rows.map((r) => {
+    if (claimed || r.id !== row.id || r.profile !== row.profile || !stillPending(r)) return r;
+    claimed = true;
+    return { ...r, ...row };
+  });
+  return claimed ? out : [...out, row];
+}
+
+/**
+ * Mark which placeholder the run is currently working on, so the table shows
+ * where it is rather than only where it has been. `phase` comes straight from
+ * the driver's onProgress and is what the cell renders.
+ *
+ * @returns {Array} a new array, or `rows` unchanged when nothing matches
+ */
+export function markBenchmarkRowRunning(rows, { id, profile, phase }) {
+  let hit = false;
+  const out = rows.map((r) => {
+    // A load has no profile yet: light up every pending row of that
+    // combination, since the load is work all of them are waiting on.
+    const match = r.id === id && r.status === 'pending' && (profile == null || r.profile === profile);
+    if (!match) return r;
+    hit = true;
+    return { ...r, status: 'running', phase };
+  });
+  return hit ? out : rows;
+}
+
 // Run every selected combination: load the model, then transcribe each
 // profile `repeats` times. Never throws: a combination that cannot load or
 // transcribe becomes a result row with a status, because "fp32 fails on this
@@ -346,15 +450,21 @@ export async function runBenchmarkPlan(combos, {
   expectedText = BENCHMARK_CLIP.expectedText,
   now = () => Date.now(),
   onProgress = () => {},
+  // Called with each row the instant it is finished, so a caller can fill a
+  // live table instead of waiting minutes for the return value. The returned
+  // array is unchanged and still complete, so a caller that ignores this keeps
+  // working exactly as before.
+  onResult = () => {},
   shouldCancel = () => false,
 } = {}) {
   const results = [];
+  const record = (row) => { results.push(row); onResult(row); };
   const totalSteps = combos.length * profiles.length;
   let step = 0;
 
   for (const combo of combos) {
     if (shouldCancel()) {
-      results.push({ id: combo.id, backend: combo.backend, quant: combo.quant, status: 'cancelled' });
+      record({ id: combo.id, backend: combo.backend, quant: combo.quant, status: 'cancelled' });
       continue;
     }
     onProgress({ phase: 'load', combo, step, totalSteps });
@@ -373,7 +483,7 @@ export async function runBenchmarkPlan(combos, {
       // weights. That is a configuration fact, not a device limitation, so it
       // gets its own status instead of being counted as a failure.
       const unavailable = err?.name === 'QuantUnavailableError';
-      results.push({
+      record({
         id: combo.id,
         backend: combo.backend,
         quant: combo.quant,
@@ -388,7 +498,7 @@ export async function runBenchmarkPlan(combos, {
     for (const profile of profiles) {
       step += 1;
       if (shouldCancel()) {
-        results.push({ id: combo.id, backend: combo.backend, quant: combo.quant, profile, status: 'cancelled' });
+        record({ id: combo.id, backend: combo.backend, quant: combo.quant, profile, status: 'cancelled' });
         continue;
       }
       const runs = [];
@@ -418,10 +528,10 @@ export async function runBenchmarkPlan(combos, {
         }
       }
       if (!runs.length) {
-        results.push({ id: combo.id, backend: combo.backend, quant: combo.quant, profile, status: 'cancelled' });
+        record({ id: combo.id, backend: combo.backend, quant: combo.quant, profile, status: 'cancelled' });
         continue;
       }
-      results.push(summarizeRuns({
+      record(summarizeRuns({
         combo, profile, loadMs, loadTransfer, runs, audioSec, expectedText, warmup: warmup === true,
       }));
     }

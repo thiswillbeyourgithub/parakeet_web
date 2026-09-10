@@ -10,6 +10,18 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### The benchmark table fills in as it measures
+
+A benchmark run takes minutes, and the table used to appear only once every combination had finished. Now the whole table is drawn as soon as you press Run: every row it is going to measure is there from the start, marked as waiting, then shows what it is doing while it does it (loading, transcribing), then settles into its number. The plan is visible for the whole run, and a row that has already been measured keeps its result no matter what happens to the rest.
+
+The speed column changed direction. It used to report seconds of work per second of audio, where lower was better; it now reports seconds of audio per second of work, so 5x means five minutes of recording handled in one minute, and bigger is better. That is the way the number is quoted everywhere else, and it was the one column in the table where a smaller value was the good news.
+
+Rows the run cannot honestly measure now say so. A benchmark load no longer accepts a substitute precision: everywhere else in the app, answering a missing file with a file that does exist is a kindness, but in a benchmark it would file another precision's timings under this row's name. Combinations this source cannot serve are dropped from the plan up front, so a run does not spend minutes discovering what the file listing already said.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### A precision your source lacks now changes the file, not the backend
 
 When the GPU precision you asked for turned out not to be hosted anywhere, the app moved you to the processor. That fallback exists for a good reason (the automatic measurement can put a visitor on the GPU without them ever choosing it, and stranding those visitors on a failed load would be worse), but it answered a missing file by giving up the graphics card, which is rarely what someone who picked the GPU wants.
