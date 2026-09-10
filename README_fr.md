@@ -586,6 +586,17 @@ Utilisez `VITE_MODEL_SOURCE` pour choisir d'où l'interface récupère les poids
 Lorsque `LOCAL_MODEL_PATH` est défini et que `VITE_MODEL_SOURCE` est laissé non défini, il
 est automatiquement promu en `both`.
 
+Avec `hf` et `both`, l'application vérifie en arrière-plan, dès le chargement de
+la page, si HuggingFace est joignable (un HEAD vers son API, budget de quatre
+secondes). Cela compte sur les réseaux qui absorbent le trafic sortant au lieu de
+le refuser : la tentative HuggingFace-d'abord n'y échoue pas, elle se BLOQUE
+pendant tout le délai de connexion du navigateur avant que la copie locale ne
+soit même essayée. Si la vérification est négative **et** que `/models/` possède
+bien le dépôt demandé, le chargement démarre localement et saute la tentative
+vouée à l'échec. Tout ce qui est moins certain (pas de réponse, ou pas de copie
+locale de ce dépôt) laisse l'ordre inchangé : la vérification ne peut donc que
+faire gagner du temps, jamais coûter un chargement.
+
 Le conteneur s'exécute sous l'UID 1000. Si vos fichiers finissent par être illisibles pour l'UID
 1000, exécutez `chmod -R a+rX /host/path/to/onnx-files` (ou
 `chown -R 1000:1000 /host/path/to/onnx-files`).

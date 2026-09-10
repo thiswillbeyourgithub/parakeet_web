@@ -578,6 +578,17 @@ Use `VITE_MODEL_SOURCE` to choose where the UI fetches weights from:
 When `LOCAL_MODEL_PATH` is set and `VITE_MODEL_SOURCE` is left unset, it
 is auto-promoted to `both`.
 
+On `hf` and `both`, the app checks in the background from page load
+whether HuggingFace is reachable at all (a HEAD to its API, four-second
+budget). This matters on networks that blackhole outbound traffic rather
+than refusing it, where the HuggingFace-first attempt does not fail but
+STALLS for a full browser connect timeout before the local copy is even
+tried. When the check comes back negative **and** `/models/` verifiably
+holds the requested repo, the load starts locally and skips the doomed
+attempt. Anything less certain (no answer, or no local copy of that repo)
+leaves the ordering exactly as it was, so the check can only ever save
+time, never cost a load.
+
 The container runs as UID 1000. If your files end up unreadable to UID
 1000, run `chmod -R a+rX /host/path/to/onnx-files` (or
 `chown -R 1000:1000 /host/path/to/onnx-files`).

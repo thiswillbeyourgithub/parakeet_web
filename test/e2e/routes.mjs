@@ -36,7 +36,15 @@ export async function routeHfRepoListing(page, files) {
     route.fulfill({ json: files.map((path) => ({ type: 'file', path })) }));
 }
 
-/** Abort every HuggingFace *file* download (the listing above still resolves). */
+/**
+ * Abort every HuggingFace *file* download (the listing above still resolves).
+ *
+ * The listing route is what keeps the background reachability preflight
+ * (lib/hubReachability.js) happy: it probes `/api/models/<repo>`, so a spec
+ * that fulfils the API while aborting the weights simulates exactly what it
+ * means to (a HuggingFace that answers but cannot serve this load), and the
+ * app does not switch to a local-first path the spec never meant to exercise.
+ */
 export async function abortHfDownloads(page) {
   await page.route(
     /https:\/\/(huggingface\.co|cdn-lfs[^/]*\.huggingface\.co)\/(?!api\/).*/,
