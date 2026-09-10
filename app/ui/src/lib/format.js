@@ -163,3 +163,24 @@ export function updateDownloadRate(state, { file, loaded, total, now }, opts = {
   const next = { file, samples, rate };
   return { state: next, rate, eta: etaFor(rate) };
 }
+
+/**
+ * Download filename for a history entry's stored audio.
+ *
+ * The stored blob is always the 16 kHz mono WAV the model actually heard (built
+ * from the resampled PCM, never the uploaded bytes), so the extension is always
+ * `.wav` whatever the source was called: `notes.mp3` saves as `notes.wav`, and
+ * a recording that never had a name falls back to the entry id. Only the final
+ * dot-extension is replaced, so a name like `visite.2026-01-02.m4a` keeps its
+ * dotted stem.
+ *
+ * @param {{filename?: string, id?: string|number}} entry A history entry.
+ * @returns {string} A filename ending in `.wav`, never empty.
+ */
+export function wavNameFor(entry) {
+  const raw = typeof entry?.filename === 'string' ? entry.filename.trim() : '';
+  const stem = raw ? raw.replace(/\.[^./\\]*$/, '') : '';
+  if (stem) return `${stem}.wav`;
+  // No usable name (a bare extension like ".mp3" leaves an empty stem too).
+  return `transcription-${entry?.id ?? 'audio'}.wav`;
+}

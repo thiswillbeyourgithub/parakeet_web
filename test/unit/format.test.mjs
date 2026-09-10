@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from '../../app/ui/src/lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor } from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
   test('zero', () => assert.equal(formatTime(0), '0:00'));
@@ -217,5 +217,28 @@ describe('relativeAge (coarse "n units ago")', () => {
     assert.equal(relativeAge('garbage', now), null);
     assert.equal(relativeAge(undefined, now), null);
     assert.equal(relativeAge('', now), null);
+  });
+});
+
+describe('wavNameFor (download name for a stored entry audio)', () => {
+  test('swaps the source extension for .wav', () => {
+    assert.equal(wavNameFor({ filename: 'notes.mp3', id: 7 }), 'notes.wav');
+    assert.equal(wavNameFor({ filename: 'recording-1234.wav', id: 7 }), 'recording-1234.wav');
+  });
+  test('only the last extension goes, so a dotted stem survives', () => {
+    assert.equal(wavNameFor({ filename: 'visite.2026-01-02.m4a', id: 7 }), 'visite.2026-01-02.wav');
+  });
+  test('an extensionless name just gains .wav', () => {
+    assert.equal(wavNameFor({ filename: 'dictee', id: 7 }), 'dictee.wav');
+  });
+  test('falls back to the entry id when there is no usable stem', () => {
+    assert.equal(wavNameFor({ id: 42 }), 'transcription-42.wav');
+    assert.equal(wavNameFor({ filename: '   ', id: 42 }), 'transcription-42.wav');
+    // A bare extension has no stem to keep.
+    assert.equal(wavNameFor({ filename: '.mp3', id: 42 }), 'transcription-42.wav');
+  });
+  test('survives a missing entry entirely', () => {
+    assert.equal(wavNameFor(undefined), 'transcription-audio.wav');
+    assert.equal(wavNameFor({}), 'transcription-audio.wav');
   });
 });

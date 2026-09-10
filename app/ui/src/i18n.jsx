@@ -398,6 +398,8 @@ const translations = {
     // Misc
     help: 'Help',
     moreActions: 'More actions',
+    downloadAudio: '\u2b07 Download audio',
+    downloadAudioHint: 'Save this entry\u2019s audio as a 16 kHz mono WAV (what the model heard, not the file you uploaded)',
     toggleInfo: 'Toggle info',
     hideInfo: 'Hide info',
     showInfo: 'Show info',
@@ -875,6 +877,8 @@ const translations = {
     // Misc
     help: 'Aide',
     moreActions: 'Plus d\'actions',
+    downloadAudio: '\u2b07 T\u00e9l\u00e9charger l\u2019audio',
+    downloadAudioHint: 'Enregistrer l\u2019audio de cette entr\u00e9e en WAV mono 16 kHz (ce que le mod\u00e8le a entendu, pas le fichier envoy\u00e9)',
     toggleInfo: 'Basculer les infos',
     hideInfo: 'Masquer les infos',
     showInfo: 'Afficher les infos',
