@@ -27,6 +27,7 @@
 export const MED_MODE_ALIASES = Object.freeze([
   'med',
   'medecin',
+  'medical',
   'doc',
   'doctor',
   'ultimed',

@@ -445,9 +445,9 @@ Réalisé avec [Claude Code](https://claude.com/claude-code).
 
 Il existe une configuration en un clic pour la dictée médicale française,
 accessible de deux façons : le bouton **Mode Dictée Médical** en haut du
-panneau de réglages, ou un lien `?mode=med` (`medecin`, `médecin`, `doc`,
-`doctor` et `ultimed` fonctionnent aussi, quelle que soit la casse). Les deux
-appliquent le même préréglage :
+panneau de réglages, ou un lien `?mode=med` (`medecin`, `médecin`, `medical`,
+`doc`, `doctor` et `ultimed` fonctionnent aussi, quelle que soit la casse). Les
+deux appliquent le même préréglage :
 
 - le modèle **UltiMed**, si cette instance le propose ;
 - la **liste de phrases médicales françaises** (`french_medical.txt`) à son
