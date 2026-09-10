@@ -59,6 +59,34 @@ export async function routeNoLocalMirror(page) {
 }
 
 /**
+ * Serve a made-up local mirror that holds exactly `files` and nothing else.
+ *
+ * Where routeLocalMirrorWithoutGpuEncoders SUBTRACTS from whatever the box
+ * happens to have, this one states the whole file set, which is what a spec
+ * about the PRECISION RADIOS needs: those radios are decided entirely by the
+ * source listing, so a spec that has to be model-free and identical on every
+ * machine (CI has no weights at all, a developer box may have any subset) has to
+ * supply the listing rather than subtract from an unknown one. Nothing is
+ * downloaded, so the files need no bytes behind them: the canary HEAD that
+ * resolveLocalModelBase uses gets a body, everything else answers empty.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string[]} files Repo-relative paths, as model-manifest.json lists them.
+ */
+export async function routeSyntheticLocalMirror(page, files) {
+  await page.route(LOCAL_MODELS_RE, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith(`/${MANIFEST_FILE}`)) return route.fulfill({ json: files });
+    // Anchored on the trailing path so both layouts resolve: `/models/vocab.txt`
+    // (flat) and `/models/<owner>/<repo>/vocab.txt` (nested).
+    if (files.some((f) => path.endsWith(`/${f}`))) {
+      return route.fulfill({ status: 200, body: 'x', contentType: 'application/octet-stream' });
+    }
+    return route.fulfill({ status: 404, body: 'not found' });
+  });
+}
+
+/**
  * 404 only the GPU-runnable encoder layout in the local mirror (the fp32 shard
  * set and the graph that points at it), leaving int8 and everything else served
  * normally. That is a model source which cannot serve WebGPU but can serve WASM,

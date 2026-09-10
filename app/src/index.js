@@ -5,7 +5,7 @@ import { getParakeetModel } from './hub.js';
 
 export { ParakeetModel } from './parakeet.js';
 export { defaultWasmThreads } from './backend.js';
-export { getModelFile, getModelText, getParakeetModel, getLocalModelFile, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, resolveModelQuant, quantSatisfiable, HubDownloadError, QuantUnavailableError, shouldRetryLocally, evictModelFiles, isModelDeserializeError, modelFileCacheKeys } from './hub.js';
+export { getModelFile, getModelText, getParakeetModel, getLocalModelFile, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, resolveModelQuant, quantSatisfiable, HubDownloadError, QuantUnavailableError, shouldRetryLocally, evictModelFiles, isModelDeserializeError, modelFileCacheKeys } from './hub.js';
 
 /**
  * Convenience factory to load from a local path.

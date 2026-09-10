@@ -10,6 +10,18 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### Precisions this instance cannot serve are greyed out before you pick them
+
+The encoder precision buttons used to describe what the app knows how to run, not what your instance can actually hand it. On a deployment whose model copy carries fp32, int8 and w4a8 but no fp16, picking fp16 looked perfectly normal, started a load, and ended a minute later on a message explaining that the file was not there and a processor model had been loaded instead. Everything in that message was true and all of it arrived too late.
+
+The app now asks the model source what it holds while the page is still loading, and greys out the precisions that source cannot serve, each one saying why. That matters because three quite different things can rule a precision out and they point at different people: this backend cannot run it at all, this GPU does not report `shader-f16`, or this model source does not host the file. The first is permanent, the second is your hardware and nobody can fix it from here, and the third is a missing file your instance's operator can copy in. Telling a visitor their GPU is at fault for a file nobody mirrored is the one answer that helps no one.
+
+It stays a hint rather than a gate. If the listing cannot be read, or has not answered yet, every precision remains offered exactly as before: a check that is unsure must never take away a choice that would have worked.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### The settings panel now says what is actually running
 
 Every model control in the panel describes a request: which repository, which backend, which encoder precision the next load will ask for. What the app then loads is allowed to differ, and for good reasons. A precision your source cannot serve falls back. A visitor the performance measurement moved onto the GPU is moved back to the processor when the deployment ships no GPU-runnable encoder. Weights can arrive from the server hosting this app rather than from HuggingFace.

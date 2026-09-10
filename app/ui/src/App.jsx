@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
 import { parseModelRepos, shortRepoLabel, matchModelRepo } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
@@ -43,6 +43,13 @@ import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
 import { describeLoadedModel, reconcileSelection } from './lib/loadedModel.js';
+import {
+  QUANT_DOWNLOAD_MB,
+  WASM_ENCODER_QUANTS,
+  WEBGPU_ENCODER_QUANTS,
+  nextGpuEncoderQuant,
+  servableEncoderQuants,
+} from './lib/encoderQuants.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
@@ -548,21 +555,20 @@ const ORT_VARIANT = (typeof location !== 'undefined'
 // or seeded 'webgpu-hybrid' can never actually be loaded. A no-op otherwise.
 const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') ? 'wasm' : b);
 
-// The encoder precisions the WASM radios offer, and the whitelist the settings
-// restore validates a saved value against. Anything else (an older 'fp16', a
-// value from a newer build, a hand-edited record) falls back to int8 rather than
-// reaching hub.js as a quant it cannot resolve.
-const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'fp32'];
-
-// What WebGPU can actually run: fp32, plus w4a8 (MatMulNBits has a GPU kernel,
-// unlike int8) and fp16. Same role as the WASM list, and it is why a saved
-// WebGPU precision is validated rather than coerced to fp32 outright.
+// The encoder precisions each backend's radios offer, and the whitelist the
+// settings restore validates a saved value against. Anything else (a value from
+// a newer build, a hand-edited record) falls back to the backend's default
+// rather than reaching hub.js as a quant it cannot resolve.
 //
-// fp16 carries a SECOND condition the list cannot express: ORT's fp16 kernels
-// emit WGSL `f16`, which only compiles on an adapter that reports the
-// `shader-f16` feature. Membership here means "the app may offer it"; the
-// adapter probe below decides whether it is offered on THIS machine.
-const WEBGPU_ENCODER_QUANTS = ['fp32', 'w4a8', 'fp16'];
+// They live in lib/encoderQuants.js with the download-size table and the
+// servability rules, because those three answer one question between them and
+// had drifted apart while they were three places: the lists were here, the
+// sizes were in lib/benchmark.js, and "can this source actually serve it" was
+// nowhere, which is how the sidebar came to offer an fp16 no mirror hosted.
+//
+// Membership is only the FIRST of three gates. fp16 additionally needs the
+// adapter's `shader-f16` feature (the adapter probe below), and every precision
+// needs the model source to host its files (sourceQuants, further down).
 
 // Every precision the radios can render, in display order: ascending DOWNLOAD
 // SIZE, smallest first (w4a8 ~610MB, int8 lite ~810MB, int8 ~900MB, fp16 ~1.2GB,
@@ -1630,6 +1636,75 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  // NOTE ON PLACEMENT: this block reads `settingsLoaded` and `webgpuShaderF16`
+  // in a dependency array, which React evaluates during RENDER, so it has to
+  // sit below both declarations. Putting it up with the other model state
+  // (where it belongs by subject) threw `Cannot access '...' before
+  // initialization` and took the whole app down, blank page and all.
+  // Which encoder precisions the MODEL SOURCE can actually serve.
+  //
+  // Precision availability has three independent gates and only two of them
+  // used to be checked before the visitor clicked. The backend's kernel list
+  // (lib/encoderQuants.js) and the adapter's `shader-f16` feature were both
+  // consulted up front; whether the deployment HOSTS the file was discovered
+  // only after a load had already failed. That is how a station whose mirror
+  // serves int8, w4a8 and sharded fp32 came to offer an fp16 radio, take the
+  // click, and answer with "this source does not host it" plus a demotion to
+  // the CPU. Nothing was broken in that message, it just arrived far too late
+  // and after a decision it should have prevented.
+  //
+  // A source always describes itself in the end: a local mirror publishes
+  // model-manifest.json (docker/entrypoint.sh writes one per repo at every
+  // boot) and HuggingFace has a listing API. hub.js reads exactly that listing
+  // during every load, so this asks the same question earlier and for all
+  // precisions at once, and `quantSatisfiable` stays the single predicate.
+  //
+  // null means NO OPINION, and every consumer must treat it that way: an
+  // unreachable listing, a mirror with no manifest, or a probe still in flight
+  // must offer everything rather than grey out a precision that would have
+  // loaded. Failing to the permissive side keeps this a hint, never a gate.
+  const [sourceRepoFiles, setSourceRepoFiles] = useState(null);
+  useEffect(() => {
+    if (!settingsLoaded) return undefined;
+    let cancelled = false;
+    setSourceRepoFiles(null);
+    (async () => {
+      // Wait for the reachability answer before choosing WHICH source to list:
+      // on a network that blocks HuggingFace the listing that matters is the
+      // mirror's, and asking the hub first would just stall this out too.
+      await new Promise((r) => setTimeout(r, 0));
+      const localOnly = forceLocalFallback || localFirstRef.current;
+      const listLocal = async () => {
+        const base = (await resolveLocalModelBase('/models', repoId, {
+          allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK,
+        }).catch(() => null))
+          || ((!ALLOW_FLAT_LOCAL_FALLBACK && repoId) ? `/models/${repoId}` : '/models');
+        return listLocalRepoFiles(base).catch(() => null);
+      };
+      let files = localOnly ? await listLocal() : await listRepoFiles(repoId).catch(() => null);
+      // The same both-ways fallback the load itself performs, so the radios
+      // describe whichever source will really answer rather than the one that
+      // happens to be tried first.
+      if (!files?.length && !localOnly) files = await listLocal();
+      if (!files?.length && localOnly && modelSource !== 'local') {
+        files = await listRepoFiles(repoId).catch(() => null);
+      }
+      if (cancelled) return;
+      setSourceRepoFiles(files?.length ? files : null);
+    })();
+    return () => { cancelled = true; };
+  }, [settingsLoaded, modelSource, repoId, forceLocalFallback]);
+
+  // Recomputed rather than stored, because the adapter probe finishes on its own
+  // schedule: a listing that arrived before `shader-f16` was known would
+  // otherwise be frozen into an answer that says fp16 is unservable on a machine
+  // that can run it.
+  const sourceQuants = useMemo(
+    () => servableEncoderQuants({ repoFiles: sourceRepoFiles, shaderF16: webgpuShaderF16 === true }),
+    [sourceRepoFiles, webgpuShaderF16],
+  );
+
   // True once the (potentially large/slow) transcript history has actually been
   // read back into state. The history loads *after* settingsLoaded flips, so the
   // transcript-persist effect must wait on this too: otherwise the early
@@ -7018,15 +7093,35 @@ export default function App() {
   // compared against the raw selection instead of this).
   const isWebgpuSelected = backend.startsWith('webgpu');
   const selectedEncoderQuant = isWebgpuSelected ? webgpuEncoderQuant : wasmEncoderQuant;
-  // fp16 needs the adapter's shader-f16 feature. `null` (still probing, or no
-  // adapter) counts as "not yet", so it is never offered on the strength of an
-  // unanswered question.
-  const encoderQuantRunnable = (q) => (isWebgpuSelected
-    ? WEBGPU_ENCODER_QUANTS.includes(q) && !(q === 'fp16' && webgpuShaderF16 !== true)
-    : WASM_ENCODER_QUANTS.includes(q));
+  // Three gates, deliberately asymmetric in how they fail.
+  //
+  //  1. The backend's kernel list, which is fixed and always known.
+  //  2. fp16's `shader-f16` adapter feature. `null` (still probing, or no
+  //     adapter) counts as "not yet", so it is never offered on the strength of
+  //     an unanswered question: without the feature ORT builds a session and
+  //     then transcribes silence, which is worse than a greyed-out radio.
+  //  3. Whether the model source hosts the files (sourceQuants). This one fails
+  //     the OTHER way: `null` means the listing is unknown, and an unknown
+  //     source must offer everything, because greying a precision out because a
+  //     mirror published no manifest would make a perfectly loadable model
+  //     unreachable. A precision this rejects would have failed the load with
+  //     QuantUnavailableError anyway; rejecting it here just moves the answer
+  //     to before the click instead of after it.
+  const encoderQuantRunnable = (q) => {
+    if (!(isWebgpuSelected ? WEBGPU_ENCODER_QUANTS : WASM_ENCODER_QUANTS).includes(q)) return false;
+    if (isWebgpuSelected && q === 'fp16' && webgpuShaderF16 !== true) return false;
+    const servable = isWebgpuSelected ? sourceQuants?.webgpu : sourceQuants?.wasm;
+    return !servable || servable.includes(q);
+  };
+  // What a load would REALLY use. The first runnable precision rather than a
+  // hardcoded default, because the default itself can be unservable: upstream
+  // istupakov ships a flat fp32 encoder and no shards, so fp32 is not loadable
+  // there on either backend, and naming it here would have this row and the
+  // radios disagree about what is about to happen.
   const effectiveEncoderQuant = encoderQuantRunnable(selectedEncoderQuant)
     ? selectedEncoderQuant
-    : (isWebgpuSelected ? 'fp32' : 'int8');
+    : ((isWebgpuSelected ? WEBGPU_ENCODER_QUANTS : WASM_ENCODER_QUANTS).find(encoderQuantRunnable)
+      || (isWebgpuSelected ? 'fp32' : 'int8'));
 
   // Show the record / upload / phone controls as soon as a load has STARTED,
   // not only once it finishes (Q2): the user can capture during the download
@@ -7917,14 +8012,23 @@ export default function App() {
               const rows = ENCODER_QUANT_ROWS.map((value) => {
                 const available = quantRunnable(value);
                 const label = PRECISION_ROW[value]();
-                // Why it is greyed out, so a missing fp16 never reads as an app
-                // bug: wrong backend for this build, or the right backend on a
-                // GPU whose adapter does not report shader-f16.
+                // Why it is greyed out, so a missing fp16 never reads as an
+                // app bug. Three different reasons, and they must not be
+                // collapsed: the wrong backend for this build (permanent), the
+                // right backend on a GPU whose adapter does not report
+                // shader-f16 (a property of the machine, unfixable here), or a
+                // model source that does not host the file (a property of the
+                // deployment, which the operator CAN fix, and which a visitor
+                // would otherwise read as their own hardware being at fault).
+                // Checked in that order because the later reasons only make
+                // sense once the earlier ones have been ruled out.
                 let note = '';
                 if (!available) {
-                  if (!isWebgpu) note = t('precisionUnavailableWasm');
-                  else if (value === 'fp16') note = t('precisionUnavailableNoF16');
-                  else note = t('precisionUnavailableWebgpu');
+                  const offeredHere = (isWebgpu ? WEBGPU_ENCODER_QUANTS : WASM_ENCODER_QUANTS)
+                    .includes(value);
+                  if (!offeredHere) note = isWebgpu ? t('precisionUnavailableWebgpu') : t('precisionUnavailableWasm');
+                  else if (isWebgpu && value === 'fp16' && webgpuShaderF16 !== true) note = t('precisionUnavailableNoF16');
+                  else note = t('precisionUnavailableSource');
                 }
                 return { value, label, available, note };
               });

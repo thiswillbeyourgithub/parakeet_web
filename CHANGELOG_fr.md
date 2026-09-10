@@ -10,6 +10,18 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### Les précisions que cette instance ne peut pas fournir sont grisées avant d'être choisies
+
+Les boutons de précision d'encodeur décrivaient ce que l'application sait exécuter, pas ce que votre instance peut réellement lui fournir. Sur un déploiement dont la copie des modèles contient fp32, int8 et w4a8 mais pas fp16, choisir fp16 semblait parfaitement normal, lançait un chargement, et se terminait une minute plus tard sur un message expliquant que le fichier était absent et qu'un modèle processeur avait été chargé à la place. Tout était exact dans ce message, et tout arrivait trop tard.
+
+L'application demande maintenant à la source de modèles ce qu'elle héberge pendant que la page charge encore, et grise les précisions que cette source ne peut pas fournir, chacune avec sa raison. C'est important parce que trois choses très différentes peuvent écarter une précision, et elles ne désignent pas les mêmes personnes : ce moteur ne sait pas l'exécuter, ce GPU n'annonce pas `shader-f16`, ou cette source de modèles n'héberge pas le fichier. La première est définitive, la deuxième relève de votre matériel et personne ne peut y remédier ici, la troisième est un fichier manquant que l'administrateur de votre instance peut copier. Dire à un visiteur que son GPU est en cause pour un fichier que personne n'a mis en miroir est la seule réponse qui n'aide personne.
+
+Cela reste une indication, jamais un verrou. Si la liste des fichiers ne peut pas être lue, ou n'a pas encore répondu, toutes les précisions restent proposées exactement comme avant : une vérification incertaine ne doit jamais retirer un choix qui aurait fonctionné.
+
+Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Le panneau de réglages indique désormais ce qui tourne réellement
 
 Tous les réglages de modèle du panneau décrivent une demande : quel dépôt, quel moteur, quelle précision d'encodeur le prochain chargement va réclamer. Ce que l'application charge ensuite a le droit d'être différent, et pour de bonnes raisons. Une précision que votre source ne peut pas servir est remplacée. Un visiteur que la mesure de performance a placé sur le GPU est ramené sur le processeur si l'installation ne fournit aucun encodeur exécutable sur GPU. Les poids peuvent venir du serveur qui héberge cette application plutôt que de HuggingFace.

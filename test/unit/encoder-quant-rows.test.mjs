@@ -14,7 +14,13 @@
 //
 // Both files are read as text: App.jsx is a Preact component and i18n.jsx a
 // large literal, neither importable under node, and the repo already tests
-// shipped source this way (pipeline-trouble, entrypoint-model-repo).
+// shipped source this way (pipeline-trouble, entrypoint-model-repo). The
+// per-backend whitelists and the download sizes are NOT scraped, though: they
+// live in lib/encoderQuants.js, which is plain JS on purpose (so hub.js's
+// servability rules can be unit-tested), so they are imported and compared as
+// real values. Scraping them was how this test broke when they moved out of
+// App.jsx, and a scrape that stops matching reports the same thing as a
+// genuine drift.
 //
 // Built with Claude Code.
 
@@ -22,6 +28,11 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import {
+  QUANT_DOWNLOAD_MB,
+  WASM_ENCODER_QUANTS,
+  WEBGPU_ENCODER_QUANTS,
+} from '../../app/ui/src/lib/encoderQuants.js';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8');
 const APP = read('app/ui/src/App.jsx');
@@ -60,10 +71,7 @@ describe('encoder-precision radio order', () => {
   test('the rows are the union of the per-backend whitelists', () => {
     // A precision a backend accepts but the UI never renders is unreachable
     // except by seeding storage by hand, which is how int8lite first shipped.
-    const whitelisted = new Set([
-      ...arrayLiteral('WASM_ENCODER_QUANTS', APP),
-      ...arrayLiteral('WEBGPU_ENCODER_QUANTS', APP),
-    ]);
+    const whitelisted = new Set([...WASM_ENCODER_QUANTS, ...WEBGPU_ENCODER_QUANTS]);
     assert.deepEqual([...ROWS].sort(), [...whitelisted].sort());
   });
 
@@ -71,6 +79,25 @@ describe('encoder-precision radio order', () => {
     for (const row of ROWS) {
       const [en, fr] = sizesMb(LABEL_KEY[row]);
       assert.equal(fr, en, `${row}: the French label quotes a different size`);
+    }
+  });
+
+  test('the banner and the radio label quote the same download for a row', () => {
+    // Two places now tell the visitor how big a precision is: the radio label
+    // (i18n, prose, rounded to a human number) and the GPU substitution banner
+    // (QUANT_DOWNLOAD_MB, interpolated as a bare MB count when a precision this
+    // source cannot serve is swapped for one it can). They describe the SAME
+    // file, so a visitor who reads "~610MB" on the radio and is then told the
+    // substitute is 900MB has to be reading two consistent numbers or the
+    // banner is worse than no banner. Rounding is allowed (the labels say
+    // ~1.2GB for 1220MB), a different file is not.
+    for (const row of ROWS) {
+      const [labelMb] = sizesMb(LABEL_KEY[row]);
+      const tableMb = QUANT_DOWNLOAD_MB[row];
+      assert.ok(tableMb, `${row}: no QUANT_DOWNLOAD_MB entry`);
+      const drift = Math.abs(tableMb - labelMb) / labelMb;
+      assert.ok(drift < 0.05,
+        `${row}: label says ~${labelMb}MB but QUANT_DOWNLOAD_MB says ${tableMb}MB`);
     }
   });
 
