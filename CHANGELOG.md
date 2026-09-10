@@ -96,6 +96,18 @@ Written with [Claude Code](https://claude.com/claude-code).
 
 ---
 
+### A self-hosted diarization model is found where it was put
+
+The two speaker-diarization models are named in the instance's configuration by filename, and that filename is looked up inside the repository named next to it. Written as a full path (`/fallback_models/csukuangfj/.../model.onnx`) it was joined onto the repository prefix whole, so the request could only ever miss.
+
+Nothing failed out loud. A path a mirror does not recognise is answered with the application's own page rather than a refusal, so the miss read as "this mirror does not carry the diarization models" and the download quietly went to HuggingFace instead. On a network that blocks HuggingFace, which is the reason to self-host these files at all, the speaker feature simply stopped working, and the configuration file said something that looked exactly right.
+
+The setting now takes the filename out of whatever was written, so a path, a Windows path, or a stray space all resolve to the file that was meant, and a value naming no file falls back to the built-in default rather than requesting a directory.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ## 11.1.0 (2026-09-09)
 
 ### Numbers dictated as words now come out as digits

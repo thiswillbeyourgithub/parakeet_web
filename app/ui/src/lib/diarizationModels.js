@@ -14,14 +14,18 @@
 
 import { getModelFile, getLocalModelFile, resolveLocalModelBase, HubDownloadError, modelFileCacheKeys } from 'parakeet.js';
 import { CONFIG } from '../config.js';
+import { diarizationFileName } from './modelRepos.js';
 
 const SEG_REPO = CONFIG.VITE_DIARIZATION_SEG_REPO || 'csukuangfj/sherpa-onnx-pyannote-segmentation-3-0';
-const SEG_FILE = CONFIG.VITE_DIARIZATION_SEG_FILE || 'model.onnx';
+const SEG_FILE = diarizationFileName(CONFIG.VITE_DIARIZATION_SEG_FILE, 'model.onnx');
 const EMB_REPO = CONFIG.VITE_DIARIZATION_EMB_REPO || 'csukuangfj/speaker-embedding-models';
 // Multilingual (zh+en "advanced common") CAM++: speaker embeddings transfer
 // across languages, and this is the broadest CAM++, a better default for the
 // en/fr Parakeet model than the zh-cn-only baked-in ERes2Net.
-const EMB_FILE = CONFIG.VITE_DIARIZATION_EMB_FILE || '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
+const EMB_FILE = diarizationFileName(
+  CONFIG.VITE_DIARIZATION_EMB_FILE,
+  '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
+);
 
 /** The (repo, file) descriptors for the two diarization models. */
 export const DIARIZATION_MODELS = [
