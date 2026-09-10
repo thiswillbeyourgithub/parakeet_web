@@ -122,6 +122,25 @@ for (const fx of FIXTURES) {
     const rtfLine = page.locator('.kebab-info').first();
     await expect(rtfLine).toBeVisible();
     await expect(rtfLine).toHaveText(/RTF:\s*\d+\.\d{2}×/);
+
+    // "Download audio" saves the entry's in-memory audio. What is stored is the
+    // 16 kHz mono WAV the model actually heard, not the uploaded container, so
+    // the suggested name is the fixture's stem with a .wav extension whatever
+    // the upload was (.aac / .mp3). Downloading also dismisses the kebab, so the
+    // menu is reopened for "Transcribe again" below.
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 15 * 1000 }),
+      page.getByRole('button', { name: 'Download audio' }).first().click(),
+    ]);
+    const stem = fx.audio.replace(/\.[^.]*$/, '');
+    expect(download.suggestedFilename()).toBe(`${stem}.wav`);
+    // A saved file that is empty (or not a RIFF/WAVE) would still "download".
+    const saved = readFileSync(await download.path());
+    expect(saved.byteLength).toBeGreaterThan(1000);
+    expect(saved.subarray(0, 4).toString('latin1')).toBe('RIFF');
+    expect(saved.subarray(8, 12).toString('latin1')).toBe('WAVE');
+
+    await page.getByRole('button', { name: 'More actions' }).first().click();
     await page.getByRole('button', { name: 'Transcribe again' }).first().click();
     // Wait for the pipeline to log a second completion (the re-run finished).
     await expect.poll(() => transcribeRuns, { timeout: 6 * 60 * 1000 }).toBeGreaterThan(runsBefore);

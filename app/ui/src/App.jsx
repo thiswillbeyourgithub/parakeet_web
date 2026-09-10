@@ -29,7 +29,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, compileBoostList, packEncoded, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor } from './lib/format.js';
 import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
 import { findSilenceCuts, excisePcm, remapSegments } from './lib/silenceCut.js';
 import { shouldPiecewise, runPiecewiseDiarization } from './lib/diarizePiecewise.js';
@@ -6257,6 +6257,30 @@ export default function App() {
       entryAudioUrlsRef.current.delete(id);
     }
   }
+  // Save an entry's audio to disk. Mints its own object URL rather than reusing
+  // the inline player's (getEntryAudioUrl), so revoking it here can never pull
+  // the source out from under an open player; the download has already been
+  // handed to the browser by the time the click returns.
+  //
+  // The blob is the 16 kHz mono WAV the model actually heard (built in
+  // processAudioFile / stopRecording), not the uploaded file, so the name gets
+  // a .wav extension whatever the source was named.
+  function downloadEntryAudio(trans) {
+    if (!trans.audioBlob) return;
+    const url = URL.createObjectURL(trans.audioBlob);
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = wavNameFor(trans);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      // Give the navigation the URL is feeding a tick before dropping it.
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ } }, 0);
+    }
+  }
+
   // Toggle the inline audio player for an entry; revoke its URL when collapsing.
   function toggleAudio(id) {
     setOpenAudioIds(prev => {
@@ -9281,8 +9305,16 @@ export default function App() {
                               {t('copyDictation')}
                             </button>
                           )}
-                          {/* Audio is in-memory only, so this is absent on
-                              entries restored after a reload. */}
+                          {/* Audio is in-memory only, so both of these are
+                              absent on entries restored after a reload. */}
+                          {trans.audioBlob && (
+                            <button
+                              onClick={() => { downloadEntryAudio(trans); setOpenKebabId(null); }}
+                              title={t('downloadAudioHint')}
+                            >
+                              {t('downloadAudio')}
+                            </button>
+                          )}
                           {trans.audioBlob && (
                             <button
                               disabled={isTranscribing}
