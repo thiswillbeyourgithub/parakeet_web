@@ -40,6 +40,7 @@ import { embedSpeakers } from './lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from './lib/speakerMatch.js';
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
+import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
@@ -431,6 +432,14 @@ const COMMIT = __APP_COMMIT__;
 // high (recovering up to ~1.8 CER at strength 4).
 const BOOST_MINP_DEFAULT = 0.1;
 
+// Default for the global boost-strength multiplier (the "Boost strength"
+// slider). 1 = apply each phrase's own weight as written; 0 disables boosting
+// entirely. Named rather than repeated as a literal because it is asserted in
+// four places (initial state, the load default, the restore fallback, and the
+// medical-mode preset) and a drifting copy would mean the app booted at one
+// strength and reset to another.
+const BOOST_STRENGTH_DEFAULT = 1;
+
 // Module-scope hook: persists `value` to IndexedDB whenever it changes,
 // gated on `loaded` so we don't overwrite the on-disk value with the
 // initial React default before loadSetting has had a chance to run.
@@ -640,6 +649,33 @@ if (URL_MODEL && !URL_MODEL_REPO) {
   console.log(`[App] ?model=${URL_MODEL} -> ${URL_MODEL_REPO} (this visit only, not saved)`);
 }
 
+// `?mode=med` (and the other aliases in lib/medMode.js) boots the app straight
+// into the French medical dictation preset: the UltiMed model, the French
+// medical phrase list, 30 s chunks, int8 on CPU / fp16 on GPU, the dictation
+// display, a French UI, and an autoconfigure probe fired on page load instead
+// of at the Load-model click.
+//
+// UNLIKE `?model=`, this one IS sticky: the preset is applied through the
+// ordinary setters so every value persists like a hand pick. That is the owner's
+// call, and the reasoning is that a link named "medical mode" is a setup
+// instruction ("configure this machine as a dictation station"), not a one-visit
+// override the way pinning a model for a comparison is. The sidebar button
+// applies the exact same preset, so a visitor can always re-run it, and the
+// individual controls stay editable afterwards.
+//
+// Read once at module load (the query string doesn't change within a session).
+const URL_MED_MODE = typeof window !== 'undefined' && medModeRequested(window.location.search);
+// The offered repo the preset's model query resolves to, or null when this
+// instance serves no UltiMed repo. Null is not fatal: the preset applies every
+// OTHER setting and leaves the model alone (with a warning), because a medical
+// lexicon over the generic model is still far closer to what was asked than
+// refusing the whole preset would be.
+const MED_MODE_REPO = matchModelRepo(MED_MODE_PRESET.modelQuery, MODEL_REPOS);
+if (URL_MED_MODE && !MED_MODE_REPO) {
+  console.warn(`[App] medical mode: no offered repo matches "${MED_MODE_PRESET.modelQuery}" `
+    + `(VITE_MODEL_REPO = ${MODEL_REPOS.join(', ')}); keeping the current model.`);
+}
+
 // Debounce (ms) before rebuilding the boosting trie after the phrase text
 // changes. Pasting or fast-typing a large list (10k-100k phrases) would
 // otherwise trigger an encode per keystroke; we wait for the input to settle.
@@ -786,7 +822,9 @@ function truncateFilename(filename, maxLength = 40) {
 }
 
 export default function App() {
-  const { t, lang } = useI18n();
+  // setLang is pulled in for the medical-mode preset, which forces the UI to
+  // French (its model, lexicon and dictation rules are all French).
+  const { t, lang, setLang } = useI18n();
   // The model repos this instance offers. VITE_MODEL_REPO is a comma-separated
   // list; a single id (the historical value) simply yields a one-entry list and
   // the picker hides itself. Order matters: the first entry is the default for
@@ -1013,7 +1051,7 @@ export default function App() {
   // we rebuild it only when the phrase text changes (not on every keystroke of
   // unrelated state), and the strength slider just mutates trie.strength.
   const [boostPhrases, setBoostPhrases] = useState('');
-  const [boostStrength, setBoostStrength] = useState(1);
+  const [boostStrength, setBoostStrength] = useState(BOOST_STRENGTH_DEFAULT);
   // Advanced boost knobs, mirroring the CLI's --boost-minp / --depth-scaling
   // (scripts/transcribe.mjs). `boostMinp` is a GLOBAL min-p override: a number
   // in [0, 1] supersedes every per-phrase min-p at decode time
@@ -1049,7 +1087,7 @@ export default function App() {
   // small edit never flashes it (small lists rebuild in a few ms).
   const [boostRebuilding, setBoostRebuilding] = useState(false);
   const phraseBoostRef = useRef(null);   // BoostingTrie | null (null = inert)
-  const boostStrengthRef = useRef(1);
+  const boostStrengthRef = useRef(BOOST_STRENGTH_DEFAULT);
   // Current min-p override for the debounced rebuild closure (which, like
   // strength, must not be a rebuild dependency: moving the knob only mutates
   // the live trie, but a rebuild from another cause must carry it over).
@@ -1753,7 +1791,7 @@ export default function App() {
           loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
           loadSetting('boostPhrases', ''),
-          loadSetting('boostStrength', 1),
+          loadSetting('boostStrength', BOOST_STRENGTH_DEFAULT),
           loadSetting('boostMinp', BOOST_MINP_DEFAULT), // null = off; number in [0,1] = gate (0 boost-all, 1 off)
           loadSetting('boostDepthScaling', DEFAULT_DEPTH_SCALING),
           // Load with `null` (not the Custom sentinel) so the restore below can
@@ -1899,7 +1937,7 @@ export default function App() {
         // would be a no-op, so the prebuilt would never get a chance to apply.
         setBoostPhrases(restoredSource === BOOST_SOURCE_CUSTOM && typeof savedBoostPhrases === 'string'
           ? savedBoostPhrases : '');
-        setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : 1);
+        setBoostStrength(Number.isFinite(savedBoostStrength) ? savedBoostStrength : BOOST_STRENGTH_DEFAULT);
         // The override is `null` (a blank field) = off, so each phrase keeps its
         // own gate; or a number in [0, 1] = the global gate (0 = boost all, 1 =
         // disabled). Any other stored value (undefined/NaN) falls back to the
@@ -2593,6 +2631,123 @@ export default function App() {
   // restore block, so the param/env default must be applied unconditionally.
   const boostSourceSavedRef = useRef(false);
   const boostInitRef = useRef(false);
+
+  // ---- Medical dictation mode ("Mode Dictee Medical") -----------------------
+  // One preset, two entry points that MUST configure the same station: the
+  // `?mode=` link (applied here, on page load) and the sidebar button (applied
+  // on click). Both go through applyMedModeSettings over the single table in
+  // lib/medMode.js. Declared ABOVE the boost-source init effect on purpose: the
+  // effect below claims boostInitRef, and effects fire in declaration order, so
+  // the preset's list is the one that wins instead of the two racing to be the
+  // last fetch to land.
+  const medModeSettingsAppliedRef = useRef(false);
+  const medModeProbeDoneRef = useRef(false);
+
+  /**
+   * Apply the French medical dictation preset. Every value goes through the
+   * ordinary setter, so it persists exactly like a hand pick: this is a setup
+   * instruction, not a one-visit override (see URL_MED_MODE at module scope).
+   *
+   * @param {object} [opts]
+   * @param {boolean} [opts.fromUser] True when it came from the sidebar button.
+   *   Arms a model reload, because the preset changes model-defining settings
+   *   and a model already in memory is now the wrong one. On the page-load path
+   *   there is nothing loaded yet, so arming would be noise.
+   */
+  async function applyMedModeSettings({ fromUser = false } = {}) {
+    console.log('[MedMode] applying the French medical dictation preset.');
+    // French UI first, so the rest of the screen is already in the right
+    // language while the (large) phrase list is still being fetched below.
+    setLang(MED_MODE_PRESET.lang);
+
+    // Model. An explicit ?model= is the more specific request of the two, so it
+    // wins; and when this instance offers no UltiMed repo, MED_MODE_REPO is null
+    // (warned about at module scope) and the current model is left alone.
+    if (MED_MODE_REPO && !URL_MODEL_REPO) {
+      if (fromUser) armModelReloadIfLoaded();
+      // Clear the ?model= no-persist guard: the preset IS a persisted choice, so
+      // without this the repo would have to be re-picked on every single visit.
+      modelRepoFromUrlRef.current = false;
+      setRepoId(MED_MODE_REPO);
+    }
+
+    // Encoder precision is set for BOTH backends, not just the current one,
+    // because the autoconfigure probe below can still move the visitor between
+    // them after this has run.
+    if (fromUser) armModelReloadIfLoaded();
+    setWasmEncoderQuant(MED_MODE_PRESET.wasmEncoderQuant);
+    setWebgpuEncoderQuant(MED_MODE_PRESET.webgpuEncoderQuant);
+
+    setEnableChunking(MED_MODE_PRESET.enableChunking);
+    setChunkDuration(MED_MODE_PRESET.chunkDurationSec);
+    setTranscriptDisplayMode(MED_MODE_PRESET.transcriptDisplayMode);
+
+    // Phrase boosting: the curated French medical list at its DEFAULT tuning.
+    // The three globals are re-asserted rather than left at whatever the visitor
+    // happened to have, so the preset lands on the same station every time. They
+    // are only multipliers: the list carries its own per-phrase weights via its
+    // `*:WEIGHT:MINP:AUG` header line, which is what actually tunes it.
+    setBoostStrength(BOOST_STRENGTH_DEFAULT);
+    setBoostMinp(BOOST_MINP_DEFAULT);
+    setBoostDepthScaling(DEFAULT_DEPTH_SCALING);
+    if (boostFiles.includes(MED_MODE_PRESET.boostSource)) {
+      await applyBoostSource(MED_MODE_PRESET.boostSource);
+    } else {
+      console.warn(`[MedMode] "${MED_MODE_PRESET.boostSource}" is not served at /boost-phrases/ `
+        + `(manifest: ${boostFiles.join(', ') || 'empty'}); leaving phrase boosting untouched. `
+        + `Point BOOST_PHRASES_SOURCE at a folder containing it to enable the medical lexicon.`);
+    }
+  }
+
+  /**
+   * Decide WASM vs WebGPU by measuring this machine, and apply the answer.
+   *
+   * Medical mode runs this on PAGE LOAD rather than at the Load-model click the
+   * ordinary path uses: a dictation station should already know which backend it
+   * is on before the clinician touches anything, and the verdict is what decides
+   * which encoder weights the Load button will then fetch (int8 vs fp16).
+   *
+   * The gates are the ordinary ones (shouldAutoProbe): it never overrides a
+   * hand-picked backend, never re-measures a machine that already has a valid
+   * stored verdict, and does nothing at all without a WebGPU adapter. So a
+   * repeat visit costs nothing and a CPU-only machine never pays for the probe.
+   */
+  async function autoconfigureBackendForMedMode() {
+    if (!shouldAutoProbe({
+      settingsLoaded,
+      userPickedBackend: backendUserPicked,
+      webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
+      hasValidVerdict: verdictStillValid(probeVerdict, {
+        appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
+      }),
+      running: probeRunningRef.current,
+    })) return;
+    const verdict = await runPerfProbe({ trigger: 'medmode' });
+    if (verdict) await applyProbeVerdict(verdict);
+  }
+
+  // ?mode= entry point, part 1: the settings. Waits for the boost manifest as
+  // well as the settings restore, because the preset's phrase list can only be
+  // validated against a manifest that has actually loaded.
+  useEffect(() => {
+    if (!URL_MED_MODE || medModeSettingsAppliedRef.current) return;
+    if (!settingsLoaded || !boostFilesLoaded) return;
+    medModeSettingsAppliedRef.current = true;
+    // Claim the one-shot boost-source slot so the init effect below stands down
+    // (see the declaration-order note above).
+    boostInitRef.current = true;
+    applyMedModeSettings();
+  }, [settingsLoaded, boostFilesLoaded]);
+
+  // ?mode= entry point, part 2: the backend. Split from part 1 so a WebGPU
+  // adapter probe that never settles cannot hold up the settings preset; it
+  // waits on webgpuAvailable resolving to true/false instead of the manifest.
+  useEffect(() => {
+    if (!URL_MED_MODE || medModeProbeDoneRef.current) return;
+    if (!settingsLoaded || webgpuAvailable === null) return;
+    medModeProbeDoneRef.current = true;
+    autoconfigureBackendForMedMode();
+  }, [settingsLoaded, webgpuAvailable]);
   useEffect(() => {
     if (!settingsLoaded || !boostFilesLoaded || boostInitRef.current) return;
     boostInitRef.current = true;
@@ -6856,6 +7011,43 @@ export default function App() {
         <div className="setting-row setting-row--language">
           <span className="setting-label">{t('language')}</span>
           <LanguageSwitcher />
+        </div>
+
+        {/* "Mode Dictee Medical": the same preset `?mode=med` applies, one click
+            away. It sits ABOVE the collapsible groups rather than inside one
+            because it is not a setting, it is a shortcut that rewrites a dozen
+            of them across four different groups (model, precision, chunking,
+            display, boosting, language), and burying it in any single group
+            would misrepresent its reach. Locked while a model swap is unsafe,
+            like every other model-defining control. */}
+        <div className="setting-row setting-row--med-mode">
+          <button
+            type="button"
+            className="primary med-mode-button"
+            onClick={async () => {
+              await applyMedModeSettings({ fromUser: true });
+              // The button means "set this machine up as a dictation station",
+              // and choosing the backend by measurement is part of that setup.
+              // Unlike the page-load path this ignores the hand-picked-backend
+              // and stored-verdict gates: the click IS the user asking the
+              // machine to decide, now. It is still skipped when WebGPU could
+              // not be selected here anyway, because then there is no question
+              // to answer and the probe would just be a wait.
+              if (!WEBGPU_DISABLED && webgpuAvailable === true) {
+                const verdict = await runPerfProbe({ trigger: 'medmode-button' });
+                if (verdict && coerceBackend(verdict.backend) !== liveSettingsRef.current.backend) {
+                  armModelReloadIfLoaded();
+                  await applyProbeVerdict(verdict);
+                }
+              }
+            }}
+            disabled={modelSwapBlocked || probeState === 'running'}
+            title={t('tooltipMedMode')}
+            data-umami-event="med_mode_button"
+          >
+            {t('medMode')}
+          </button>
+          <p className="setting-hint">{t('medModeHint')}</p>
         </div>
 
           <div className="settings-content">
