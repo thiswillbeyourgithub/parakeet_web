@@ -65,13 +65,40 @@ _enforce_size_cap() {
 # a giant log) and (re)writes the manifest.txt that the browser fetches
 # to discover which files exist. Centralised here so the regex and boost
 # paths cannot drift apart.
+_write_served_manifest() {
+  # $1: directory, $2..: file extensions without dot (e.g. csv, or "txt json").
+  #
+  # Split out of _finalize_served_dir because the boost directory has to be
+  # listed TWICE: once for the .txt lists it serves, and again after the
+  # prebuild has (maybe) produced a .json alongside each one. The browser reads
+  # this manifest as the authoritative statement of what exists, so an artifact
+  # missing from it is never requested; that is what stops every visitor on a
+  # deployment with no local vocab from collecting a 404 for a prebuilt file
+  # that was never going to be there.
+  #
+  # Built into a dot-file first and moved into place: manifest.txt matches the
+  # txt glob itself, so writing it in place would race the very listing being
+  # built from it (and would list itself on the second call).
+  _dir="$1"; shift
+  : > "$_dir/.manifest.new" 2>/dev/null || return 0
+  for _ext in "$@"; do
+    for _f in "$_dir"/*."$_ext"; do
+      [ -f "$_f" ] || continue
+      _b=$(basename "$_f")
+      [ "$_b" = "manifest.txt" ] && continue
+      echo "$_b"
+    done
+  done >> "$_dir/.manifest.new" 2>/dev/null
+  mv "$_dir/.manifest.new" "$_dir/manifest.txt" 2>/dev/null || true
+}
+
 _finalize_served_dir() {
   # $1: directory, $2: file extension without dot (e.g. csv, txt)
   for f in "$1"/*."$2"; do
     [ -f "$f" ] || continue
     _enforce_size_cap "$f" "$_SERVED_MAX_BYTES" || true
   done
-  ls "$1"/*."$2" 2>/dev/null | xargs -n1 basename > "$1/manifest.txt" 2>/dev/null || true
+  _write_served_manifest "$1" "$2"
 }
 
 # F-26: Validate DICTATION_REGEX_SOURCE / BOOST_PHRASES_SOURCE early.
@@ -609,6 +636,16 @@ if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
   else
     echo "[entrypoint] No local vocab — skipping boost prebuild (browser will encode lists)."
   fi
+  # Re-list AFTER the prebuild so the manifest also names the .json artifacts it
+  # produced, which is how the browser knows whether a prebuilt encoding exists
+  # for a list at all. Without it, it had to speculatively GET <name>.json for
+  # every list and eat a 404 on every deployment with no local vocab to prebuild
+  # from: that reads like a broken install in the console, and a console full of
+  # expected errors is one nobody finds the real error in. Not run through
+  # _finalize_served_dir on purpose: the operator-typo byte cap belongs on files
+  # an operator supplied, and these were produced here from an already-capped
+  # .txt, so a large list's legitimate prebuild must not be deleted for size.
+  _write_served_manifest "$BOOST_DIR" txt json
 else
   echo "[entrypoint] BOOST_PHRASES_SOURCE not set — no boost phrase lists served."
 fi

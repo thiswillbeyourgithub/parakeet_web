@@ -2551,6 +2551,11 @@ export default function App() {
   // between a file and Custom) always read the latest value.
   useEffect(() => { boostCustomTextRef.current = boostCustomText; }, [boostCustomText]);
 
+  // Names of the server-prebuilt boost encodings (<name>.json) the manifest
+  // advertises. Empty until the manifest lands, and empty forever on a
+  // deployment that prebuilds nothing, which is what keeps the app from
+  // requesting an artifact that was never generated.
+  const boostPrebuiltFilesRef = useRef(new Set());
   // Discover operator-supplied boost lists served at /boost-phrases/. No
   // manifest (BOOST_PHRASES_SOURCE unset) just means no selector is shown and
   // the box stays in manual-entry mode.
@@ -2560,10 +2565,17 @@ export default function App() {
       try {
         const manifest = await fetchTextCapped('/boost-phrases/manifest.txt');
         if (!cancelled && manifest.ok) {
-          const files = manifest.text.trim().split('\n')
+          const entries = manifest.text.trim().split('\n')
             .map(f => f.trim())
-            .filter(f => f.endsWith('.txt'));
-          setBoostFiles(files);
+            .filter(Boolean);
+          setBoostFiles(entries.filter(f => f.endsWith('.txt')));
+          // The manifest also names the server-prebuilt encodings (<name>.json)
+          // when the container had a local vocab to build them from. It is the
+          // ONLY way to know whether one exists: fetching to find out means a
+          // 404 per list on every deployment without them, which looks like a
+          // broken install and is the sole trace this optional optimisation
+          // leaves in the console.
+          boostPrebuiltFilesRef.current = new Set(entries.filter(f => f.endsWith('.json')));
         }
       } catch (e) {
         console.warn('[Boost] failed to load phrase-list manifest:', e);
@@ -2603,16 +2615,26 @@ export default function App() {
     // skip BPE; it is absent on pure-HF deploys or empty lists, in which case
     // the browser encodes the text itself (prebuiltBoostRef stays null).
     const jsonName = src.replace(/\.txt$/, '.json');
+    // Only ask for the prebuilt encoding when the manifest says it is there.
+    // The artifact is written by the container's prebuild step and only when a
+    // local vocab exists, so on every other deployment the speculative GET was
+    // a guaranteed 404 per list: harmless (it is swallowed below) but it is the
+    // one red line in the console of an otherwise healthy install, and it sent
+    // at least one operator hunting for a bug that was not there.
+    const hasPrebuilt = boostPrebuiltFilesRef.current.has(jsonName);
     const fetchT0 = performance.now();
     if (verboseLogRef.current) {
-      console.log(`[Boost] loading list "${src}" (+ prebuilt "${jsonName}")...`);
+      console.log(`[Boost] loading list "${src}"`
+        + `${hasPrebuilt ? ` (+ prebuilt "${jsonName}")` : ' (no prebuilt encoding served; encoding in-browser)'}...`);
     }
     const [r, pj] = await Promise.all([
       fetchTextCapped(`/boost-phrases/${encodeURIComponent(src)}`),
       // A prebuilt-JSON failure must never break the text load, so swallow it
       // to a soft miss (the browser then encodes the text itself).
-      fetchTextCapped(`/boost-phrases/${encodeURIComponent(jsonName)}`, BOOST_PREBUILT_MAX_BYTES)
-        .catch(() => ({ ok: false })),
+      hasPrebuilt
+        ? fetchTextCapped(`/boost-phrases/${encodeURIComponent(jsonName)}`, BOOST_PREBUILT_MAX_BYTES)
+          .catch(() => ({ ok: false }))
+        : Promise.resolve({ ok: false }),
     ]);
     if (verboseLogRef.current) {
       const ms = (performance.now() - fetchT0).toFixed(0);

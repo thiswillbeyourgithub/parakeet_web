@@ -38,6 +38,14 @@ Cela ne fait jamais que réordonner deux sources qui allaient de toute façon ê
 
 ---
 
+### Plus de 404 fantôme pour les listes de phrases
+
+Une instance qui sert ses propres listes de phrases peut aussi fournir une copie pré-encodée de chacune, afin que les navigateurs des visiteurs évitent le travail de tokenisation. Cette copie n'est construite que si le conteneur dispose du vocabulaire du modèle, mais l'application la demandait systématiquement et la console de chaque visiteur récoltait un 404 pour un fichier qui n'allait jamais exister. La liste des listes disponibles fait désormais autorité sur les deux points, si bien que la requête n'est émise que lorsqu'il y a quelque chose à récupérer. Rien ne change quant aux listes que vous voyez ni à la façon dont elles s'appliquent ; la console est simplement redevenue honnête, ce qui compte car une console pleine d'erreurs attendues est une console dans laquelle personne ne lit les vraies erreurs.
+
+Rédigé avec [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Un clic configure la dictée médicale française
 
 Un nouveau bouton **Mode Dictée Médical** figure en haut du panneau de réglages, au-dessus de tout le reste. Un clic configure l'ensemble du poste : le modèle UltiMed, la liste de phrases médicales françaises à ses réglages par défaut, des segments de 30 secondes au lieu de 60, l'affichage dictée, la copie automatique dans le presse-papiers, une interface en français, et la précision d'encodeur adaptée à chaque moteur (int8 sur le processeur, fp32 sur le GPU, pour que le choix soit déjà le bon quel que soit celui sur lequel la machine atterrira).
