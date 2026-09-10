@@ -84,9 +84,12 @@ async function expectMedModeApplied(page) {
   await expect.poll(() => readSetting(page, 'chunkDuration'), { timeout: 15 * 1000 }).toBe(30);
   await expect.poll(() => readSetting(page, 'enableChunking'), { timeout: 15 * 1000 }).toBe(true);
 
-  // Dictation view by default.
+  // Dictation view by default, and auto-copy on: the preset's only value that
+  // flips a default rather than restoring it, so it is worth its own assertion.
   await expect.poll(() => readSetting(page, 'transcriptDisplayMode'), { timeout: 15 * 1000 })
     .toBe('dictation');
+  await expect.poll(() => readSetting(page, 'autoCopyToClipboard'), { timeout: 15 * 1000 })
+    .toBe(true);
 
   // One precision per backend. Headless Chromium has no adapter, so the visible
   // radio is the WASM one (int8); the WebGPU choice is only checkable on disk,
@@ -137,6 +140,10 @@ test('an unknown ?mode= leaves the visitor\'s settings alone', async ({ page }) 
   await expandSection(page, ENGINE_SECTION);
   await expect(modelPicker(page)).toHaveValue(BASE);
   await expect.poll(() => readSetting(page, 'chunkDuration'), { timeout: 15 * 1000 }).toBe(60);
+  // Including the privacy-relevant one: an unknown mode must not switch the
+  // clipboard on behind the visitor's back.
+  await expect.poll(() => readSetting(page, 'autoCopyToClipboard'), { timeout: 15 * 1000 })
+    .toBe(false);
 });
 
 test('the preset is sticky: it survives a reload without the param', async ({ page }) => {

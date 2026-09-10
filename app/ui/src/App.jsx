@@ -2681,6 +2681,9 @@ export default function App() {
     setEnableChunking(MED_MODE_PRESET.enableChunking);
     setChunkDuration(MED_MODE_PRESET.chunkDurationSec);
     setTranscriptDisplayMode(MED_MODE_PRESET.transcriptDisplayMode);
+    // The one default this preset flips ON rather than restores (see the field
+    // note in lib/medMode.js): dictate-then-paste is the whole workflow here.
+    setAutoCopyToClipboard(MED_MODE_PRESET.autoCopyToClipboard);
 
     // Phrase boosting: the curated French medical list at its DEFAULT tuning.
     // The three globals are re-asserted rather than left at whatever the visitor

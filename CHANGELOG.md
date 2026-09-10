@@ -12,7 +12,9 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ### One click sets up French medical dictation
 
-A new **Mode Dictée Médical** button sits at the top of the settings panel, above everything else. One click configures the whole station: the UltiMed model, the French medical phrase list at its default settings, 30-second chunks instead of 60, the dictation view, a French interface, and the encoder precision that suits each backend (int8 on the processor, fp16 on the GPU, so the choice is already right whichever one this machine ends up on).
+A new **Mode Dictée Médical** button sits at the top of the settings panel, above everything else. One click configures the whole station: the UltiMed model, the French medical phrase list at its default settings, 30-second chunks instead of 60, the dictation view, auto-copy to the clipboard, a French interface, and the encoder precision that suits each backend (int8 on the processor, fp16 on the GPU, so the choice is already right whichever one this machine ends up on).
+
+Auto-copy is the only setting the preset switches on rather than resetting. It ships off because the system clipboard is readable by other apps and extensions; on a station whose entire workflow is dictate-then-paste into a record, that cost buys back a click on every utterance. It stays an ordinary checkbox in the General section.
 
 The same preset is available as a link: `?mode=med` works, and so do `medecin`, `médecin`, `doc`, `doctor` and `ultimed`, in any capitalisation and with or without the accent, because the parameter exists for addresses people type from memory or read out to each other. A `?mode=` value that is none of those means "no opinion" and changes nothing, which matters because this preset, unlike `?model=`, is saved: a link named "medical mode" is a setup instruction, so the machine stays configured after a plain reload. Every setting it touches remains an ordinary control you can change afterwards.
 

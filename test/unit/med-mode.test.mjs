@@ -107,6 +107,15 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
     assert.equal(MED_MODE_PRESET.lang, 'fr');
   });
 
+  test('turns auto-copy ON, the one default it flips rather than restores', () => {
+    // Asserted explicitly because it is the preset's only privacy-relevant
+    // value: auto-copy ships OFF (the system clipboard is readable by other
+    // apps), and a dictation station trades that for the dictate-then-paste
+    // workflow. Flipping it back to false must be a deliberate edit here, not
+    // something that can drift in unnoticed.
+    assert.equal(MED_MODE_PRESET.autoCopyToClipboard, true);
+  });
+
   test('pins one precision per backend, each runnable on that backend', () => {
     // int8 has no WebGPU kernel and fp16 has no WASM one, so these two cannot
     // be swapped: this is the pairing, not a preference.

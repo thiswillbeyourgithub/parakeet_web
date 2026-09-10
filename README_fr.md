@@ -454,6 +454,12 @@ appliquent le même préréglage :
   intensité et sa garde min-p par défaut ;
 - des **segments de 30 secondes** pour l'audio long, au lieu des 60 habituelles ;
 - l'**affichage dictée** comme vue par défaut des transcriptions ;
+- la **copie automatique dans le presse-papiers**, pour que chaque énoncé
+  terminé soit prêt à coller dans un dossier. C'est le seul réglage que le
+  préréglage *active* au lieu de le réinitialiser : il est désactivé d'origine
+  car le presse-papiers système est lisible par d'autres applications et
+  extensions, et un poste de dictée échange cela contre le clic économisé à
+  chaque énoncé. Décochez-le dans la section Général si vous préférez ;
 - la précision **int8** sur le processeur et **fp16** sur le GPU, pour que le
   choix soit déjà le bon quel que soit le moteur sur lequel la machine
   atterrira ;

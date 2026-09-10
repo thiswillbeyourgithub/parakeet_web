@@ -446,6 +446,11 @@ too, in any capitalisation). Both apply the same preset:
   strength and min-p gate;
 - **30-second chunks** for long audio, instead of the usual 60;
 - the **dictation view** as the default transcript display;
+- **auto-copy to the clipboard**, so each finished utterance is ready to paste
+  into a record. This is the one setting the preset switches *on* rather than
+  resetting: it ships off because the system clipboard is readable by other apps
+  and extensions, and a dictation station trades that for the click it saves on
+  every utterance. Uncheck it in the General section if you would rather not;
 - **int8** precision on the processor and **fp16** on the GPU, so the choice is
   already right whichever backend this machine ends up on;
 - a **French interface**;
