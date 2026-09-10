@@ -59,7 +59,10 @@ import {
   buildBenchmarkReport,
   estimatedDownloadMB,
   formatBenchmarkReport,
+  markBenchmarkRowRunning,
+  mergeBenchmarkRow,
   planBenchmark,
+  planBenchmarkRows,
   runBenchmarkPlan,
   tilePcm,
 } from './lib/benchmark.js';
@@ -5891,6 +5894,11 @@ export default function App() {
       currentWasmQuant: wasmEncoderQuant,
       currentWebgpuQuant: webgpuEncoderQuant,
       shaderF16: webgpuShaderF16 === true,
+      // Rows this deployment cannot serve are not offered: they can only spend
+      // a load attempt to report "not served here", and the sidebar radios
+      // already say so before the visitor gets here. Null (no listing) offers
+      // everything, exactly as before.
+      servableQuants: sourceQuants,
     });
     setBenchmarkPlan(plan);
     setBenchmarkSelected((prev) => {
@@ -5899,7 +5907,7 @@ export default function App() {
       return next;
     });
   }, [sectionsOpen.benchmark, benchmarkRunning, webgpuAvailable, webgpuShaderF16,
-      backend, wasmEncoderQuant, webgpuEncoderQuant]);
+      backend, wasmEncoderQuant, webgpuEncoderQuant, sourceQuants]);
 
   // Push one combination into the settings and wait until the change is LIVE.
   // React state lands on the next render, and loadModel/runTranscription read
@@ -5999,7 +6007,11 @@ export default function App() {
     benchmarkLoadedComboRef.current = null;
     setBenchmarkRunning(true);
     setBenchmarkDone(false);
-    setBenchmarkResults([]);
+    // Lay the whole table out up front, one placeholder per row the run will
+    // visit, and let the driver fill it in as it goes. A run takes minutes, and
+    // an empty panel behind a one-line progress string said nothing about what
+    // was coming or how far along it was.
+    setBenchmarkResults(planBenchmarkRows(combos, benchmarkLongProfile ? ['short', 'long'] : ['short']));
     setBenchmarkReport('');
     setBenchmarkSendState('idle');
     setBenchmarkProgress(t('benchmarkPreparing'));
@@ -6037,11 +6049,26 @@ export default function App() {
             : phase === 'warmup' ? t('benchmarkWarmingUp')
             : t('benchmarkTranscribing');
           setBenchmarkProgress(`${what} ${combo.backend} / ${combo.quant}`
-            + (profile ? ` (${profile})` : '') + ` — ${Math.min(step + 1, totalSteps)}/${totalSteps}`);
+            + (profile ? ` (${profile})` : '') + ` (${Math.min(step + 1, totalSteps)}/${totalSteps})`);
+          // Same words in the row itself, so the table says where the run is
+          // and not only where it has been.
+          setBenchmarkResults((rows) => markBenchmarkRowRunning(rows, { id: combo.id, profile, phase: what }));
+          return undefined;
         },
+        onResult: (row) => setBenchmarkResults((rows) => mergeBenchmarkRow(rows, row)),
         applyCombo: (combo) => applyBenchmarkCombo(combo),
         loadModel: async (combo) => {
-          await loadModelRef.current();
+          // No substitution during a benchmark. The app's own load happily
+          // swaps an unservable precision for one that works, which is right
+          // for a visitor who just wants to transcribe and wrong here: the
+          // driver would time whatever loaded and file it under the row's
+          // label, so an fp16 row on a mirror with no fp16 would report w4a8's
+          // numbers as fp16's, with nothing in the table saying otherwise. With
+          // substitution off the load throws QuantUnavailableError and the row
+          // reads "not served here", which is both true and useful. It also
+          // stops a benchmark from pulling a multi-GB substitute nobody asked
+          // to measure.
+          await loadModelRef.current({ allowQuantSubstitution: false });
           if (!modelRef.current) throw new Error('model failed to load');
           benchmarkLoadedComboRef.current = combo.id;
           // Bytes this load actually pulled (loadTransferRef is reset at the top
@@ -6065,6 +6092,10 @@ export default function App() {
         },
       });
 
+      // The live merges above already produced this table; assigning the
+      // driver's own array at the end is what guarantees the two agree, so a
+      // merge bug can never leave a stale placeholder on screen next to a
+      // report that has the real row.
       setBenchmarkResults(results);
       const env = await collectEnvironment();
       const report = buildBenchmarkReport({
@@ -8408,13 +8439,38 @@ export default function App() {
                 </thead>
                 <tbody>
                   {benchmarkResults.map((r, i) => (
-                    <tr key={`${r.id}-${r.profile || 'na'}-${i}`}>
+                    <tr
+                      key={`${r.id}-${r.profile || 'na'}-${i}`}
+                      className={r.status === 'pending' || r.status === 'running' ? 'benchmark-row--waiting' : ''}
+                      data-testid={`benchmark-row-${r.id}-${r.profile || 'na'}`}
+                      data-status={r.status}
+                    >
                       <td>{r.backend} / {r.quant}</td>
                       <td>{r.profile || '-'}</td>
                       <td>
-                        {r.status === 'ok'
-                          ? `${r.rtf != null ? `${r.rtf}x` : '-'} (${formatDuration((r.wallMs || 0) / 1000)})`
-                          : t(`benchmarkStatus_${r.status}`)}
+                        {/* Speed as AUDIO PER SECOND OF COMPUTE, not the
+                            inverse. Both describe the same measurement, but this
+                            way round is the one that reads without translation:
+                            "6x" means an hour of audio in ten minutes, and
+                            bigger is better, which is what every other speed
+                            figure in the app already means. The report keeps the
+                            conventional rtf (compute per second of audio) so
+                            scripts/benchmark-throughput.mjs and older reports
+                            stay comparable; the two are reciprocals, so nothing
+                            is lost by showing one and storing the other. */}
+                        {r.status === 'ok' ? (
+                          `${r.rtf > 0 ? `${(1 / r.rtf).toFixed(2)}x` : '-'} (${formatDuration((r.wallMs || 0) / 1000)})`
+                        ) : r.status === 'pending' ? (
+                          // An em dash would be a value; this is the absence of
+                          // one, and it has to stay visibly different from a row
+                          // that ran and produced nothing.
+                          <span className="benchmark-cell--pending">{t('benchmarkRowPending')}</span>
+                        ) : r.status === 'running' ? (
+                          <span className="benchmark-cell--running">
+                            <span className="spinner spinner--inline" aria-hidden="true" />
+                            {r.phase || t('benchmarkTranscribing')}
+                          </span>
+                        ) : t(`benchmarkStatus_${r.status}`)}
                         {r.status === 'ok' && r.similarity != null && r.similarity < 0.8 && (
                           <span style={{ color: 'var(--danger)' }}> ⚠</span>
                         )}
@@ -8424,7 +8480,8 @@ export default function App() {
                           session build. The GPU rows are always cold, because the
                           fp32 shards cannot be cached. */}
                       <td>
-                        {r.loadMs != null ? formatDuration(r.loadMs / 1000) : '-'}
+                        {r.loadMs != null ? formatDuration(r.loadMs / 1000)
+                          : (r.status === 'pending' || r.status === 'running') ? '' : '-'}
                         {r.loadCached === true && <span className="benchmark-load-note"> ({t('benchmarkLoadCached')})</span>}
                         {r.loadCached === false && r.loadDownloadMB > 0 && (
                           <span className="benchmark-load-note"> ({Math.round(r.loadDownloadMB)} MB)</span>

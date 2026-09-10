@@ -18,10 +18,13 @@ import {
   engineHintFromUserAgent,
   estimatedDownloadMB,
   formatBenchmarkReport,
+  markBenchmarkRowRunning,
   median,
+  mergeBenchmarkRow,
   normalizeForCompare,
   OPT_IN_QUANTS,
   planBenchmark,
+  planBenchmarkRows,
   runBenchmarkPlan,
   tilePcm,
   transcriptSimilarity,
@@ -609,5 +612,180 @@ describe('coarseTimestamp', () => {
     assert.equal(coarseTimestamp(null), null);
     assert.equal(coarseTimestamp(undefined), null);
     assert.equal(coarseTimestamp('not a date'), null);
+  });
+});
+
+describe('the live table: placeholders that get replaced as the run goes', () => {
+  // Before this, the table did not exist until the run finished, so a visitor
+  // watched a one-line progress string for minutes with no idea what was
+  // coming or how far along it was. The rules below are what keep the live
+  // version honest: it must show exactly the rows the run will visit, it must
+  // never leave a placeholder stranded, and a row must never be replaced by
+  // another row's numbers.
+  const COMBOS = [
+    { id: 'wasm:int8', backend: 'wasm', quant: 'int8' },
+    { id: 'webgpu-hybrid:fp32', backend: 'webgpu-hybrid', quant: 'fp32' },
+  ];
+
+  test('the skeleton is exactly the combinations times the profiles', () => {
+    const rows = planBenchmarkRows(COMBOS, ['short', 'long']);
+    assert.equal(rows.length, 4);
+    assert.deepEqual(rows.map((r) => `${r.id}/${r.profile}`), [
+      'wasm:int8/short', 'wasm:int8/long',
+      'webgpu-hybrid:fp32/short', 'webgpu-hybrid:fp32/long',
+    ]);
+    assert.ok(rows.every((r) => r.status === 'pending'));
+    // The backend and precision are known up front, so the table reads as a
+    // plan from the first frame rather than filling in from the left.
+    assert.equal(rows[0].backend, 'wasm');
+    assert.equal(rows[0].quant, 'int8');
+  });
+
+  test('a result replaces its own placeholder and nothing else', () => {
+    let rows = planBenchmarkRows(COMBOS, ['short', 'long']);
+    rows = mergeBenchmarkRow(rows, { id: 'wasm:int8', profile: 'long', status: 'ok', rtf: 0.5 });
+    assert.equal(rows.length, 4);
+    assert.equal(rows[1].status, 'ok');
+    assert.equal(rows[1].rtf, 0.5);
+    // Order is the plan's order, not arrival order: a run that finishes long
+    // before short must not reshuffle the table under the reader.
+    assert.equal(rows[0].status, 'pending');
+    assert.equal(rows[0].profile, 'short');
+  });
+
+  test('a load failure claims one row and clears that combination\'s others', () => {
+    // The driver emits ONE profile-less row when a model never loads. Leaving
+    // the sibling placeholders behind would show a table that never completes.
+    let rows = planBenchmarkRows(COMBOS, ['short', 'long']);
+    rows = mergeBenchmarkRow(rows, { id: 'webgpu-hybrid:fp32', status: 'unavailable', stage: 'load' });
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows.map((r) => r.status), ['pending', 'pending', 'unavailable']);
+    // The other combination is untouched.
+    assert.equal(rows[0].id, 'wasm:int8');
+  });
+
+  test('a finished row is never clobbered by a later profile-less row', () => {
+    // Cancellation arrives as a profile-less row too, and a run cancelled after
+    // one profile completed must keep that measurement.
+    let rows = planBenchmarkRows(COMBOS, ['short', 'long']);
+    rows = mergeBenchmarkRow(rows, { id: 'wasm:int8', profile: 'short', status: 'ok', rtf: 0.4 });
+    rows = mergeBenchmarkRow(rows, { id: 'wasm:int8', status: 'cancelled' });
+    const kept = rows.filter((r) => r.id === 'wasm:int8');
+    // The completed profile keeps its number; the one that never ran takes the
+    // cancellation, which is exactly what happened.
+    assert.deepEqual(kept.map((r) => [r.profile, r.status]), [['short', 'ok'], ['long', 'cancelled']]);
+    assert.equal(kept[0].rtf, 0.4);
+
+    // And once every profile of a combination has been reported, a further
+    // profile-less row has nothing left to claim and must not append a
+    // duplicate that would sit under the finished ones forever.
+    const settled = mergeBenchmarkRow(kept, { id: 'wasm:int8', status: 'cancelled' });
+    assert.equal(settled, kept);
+  });
+
+  test('a row with no placeholder is appended rather than dropped', () => {
+    // A driver that grows a new row shape must still be visible.
+    const rows = mergeBenchmarkRow([], { id: 'wasm:w4a8', profile: 'short', status: 'ok' });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, 'wasm:w4a8');
+  });
+
+  test('merging returns a new array and leaves the old one alone', () => {
+    // React state: mutating in place renders nothing.
+    const before = planBenchmarkRows(COMBOS, ['short']);
+    const after = mergeBenchmarkRow(before, { id: 'wasm:int8', profile: 'short', status: 'ok' });
+    assert.notEqual(before, after);
+    assert.equal(before[0].status, 'pending');
+  });
+
+  test('the active row is marked, and a load lights up every profile of it', () => {
+    let rows = planBenchmarkRows(COMBOS, ['short', 'long']);
+    rows = markBenchmarkRowRunning(rows, { id: 'wasm:int8', profile: null, phase: 'Loading' });
+    assert.deepEqual(rows.slice(0, 2).map((r) => r.status), ['running', 'running']);
+    assert.equal(rows[0].phase, 'Loading');
+    assert.deepEqual(rows.slice(2).map((r) => r.status), ['pending', 'pending']);
+  });
+
+  test('marking never revives a row that already has a result', () => {
+    // The driver reports progress per step, so a late progress event for a
+    // combination whose row is already filled must not blank it again.
+    let rows = planBenchmarkRows(COMBOS, ['short']);
+    rows = mergeBenchmarkRow(rows, { id: 'wasm:int8', profile: 'short', status: 'ok', rtf: 0.4 });
+    const after = markBenchmarkRowRunning(rows, { id: 'wasm:int8', profile: 'short', phase: 'Transcribing' });
+    assert.equal(after[0].status, 'ok');
+    // Nothing matched, so the same array comes back and React skips the render.
+    assert.equal(after, rows);
+  });
+
+  test('runBenchmarkPlan reports each row as it finishes, in the same order it returns them', async () => {
+    // This is what makes the live table possible at all, and the equality is
+    // the contract: a caller that only listens must end up with exactly what a
+    // caller that only waits gets.
+    const live = [];
+    const results = await runBenchmarkPlan(COMBOS, {
+      profiles: ['short'],
+      warmup: false,
+      applyCombo: async () => {},
+      loadModel: async () => ({ downloadedBytes: 0 }),
+      transcribe: async () => ({ text: BENCHMARK_CLIP.expectedText, audioSec: 11, metrics: {} }),
+      now: () => 0,
+      onResult: (row) => live.push(row),
+    });
+    assert.deepEqual(live, results);
+    assert.equal(live.length, 2);
+  });
+
+  test('a row is reported live even when its load failed', async () => {
+    const live = [];
+    const results = await runBenchmarkPlan(COMBOS, {
+      profiles: ['short'],
+      warmup: false,
+      applyCombo: async () => {},
+      loadModel: async () => { const e = new Error('nope'); e.name = 'QuantUnavailableError'; throw e; },
+      transcribe: async () => ({ text: '', audioSec: 11 }),
+      onResult: (row) => live.push(row),
+    });
+    assert.equal(live.length, 2);
+    assert.ok(live.every((r) => r.status === 'unavailable'));
+    assert.deepEqual(live, results);
+  });
+});
+
+describe('planBenchmark: rows a deployment cannot serve are not offered', () => {
+  // The reported case: a mirror serving int8, w4a8 and sharded fp32 offered an
+  // fp16 row on a shader-f16 GPU, spent a load attempt on it, and could only
+  // report "not served here". The answer is known from the source's own
+  // listing, so the row is simply not offered.
+  const SERVABLE = { wasm: ['int8', 'w4a8', 'fp32'], webgpu: ['fp32', 'w4a8'] };
+
+  test('fp16 disappears when the source does not host it', () => {
+    const rows = planBenchmark({
+      webgpuAvailable: true, shaderF16: true, servableQuants: SERVABLE,
+    });
+    assert.ok(!rows.some((r) => r.quant === 'fp16'));
+    assert.ok(rows.some((r) => r.backend === 'webgpu-hybrid' && r.quant === 'w4a8'));
+    // int8lite is dropped for the same reason, from the WASM side.
+    assert.ok(!rows.some((r) => r.quant === 'int8lite'));
+  });
+
+  test('an unknown listing still offers everything', () => {
+    // A mirror with no manifest must not lose its whole benchmark.
+    const rows = planBenchmark({ webgpuAvailable: true, shaderF16: true, servableQuants: null });
+    assert.ok(rows.some((r) => r.quant === 'fp16'));
+    assert.ok(rows.some((r) => r.quant === 'int8lite'));
+  });
+
+  test('the ordering and default-selection rules survive the filter', () => {
+    // The visitor's own combination still runs LAST (the model cache holds one
+    // model, so any other order forces a re-download afterwards).
+    const rows = planBenchmark({
+      webgpuAvailable: true,
+      shaderF16: true,
+      currentBackend: 'wasm',
+      currentWasmQuant: 'int8',
+      servableQuants: SERVABLE,
+    });
+    assert.equal(rows[rows.length - 1].id, 'wasm:int8');
+    assert.ok(rows[rows.length - 1].defaultSelected);
   });
 });

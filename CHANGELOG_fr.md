@@ -10,6 +10,18 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### Le tableau du banc d'essai se remplit au fil des mesures
+
+Un banc d'essai prend plusieurs minutes, et le tableau n'apparaissait qu'une fois toutes les combinaisons terminées. Le tableau complet s'affiche désormais dès que vous lancez la mesure : toutes les lignes prévues sont là dès le départ, marquées en attente, puis indiquent ce qu'elles font pendant qu'elles le font (chargement, transcription), puis se figent sur leur résultat. Le plan est visible pendant toute la durée du test, et une ligne déjà mesurée conserve son résultat quoi qu'il advienne des autres.
+
+La colonne de vitesse a changé de sens. Elle indiquait des secondes de calcul par seconde d'audio, où plus petit valait mieux ; elle indique maintenant des secondes d'audio par seconde de calcul, donc 5x signifie cinq minutes d'enregistrement traitées en une minute, et plus grand vaut mieux. C'est ainsi que ce chiffre est cité partout ailleurs, et c'était la seule colonne du tableau où une petite valeur était une bonne nouvelle.
+
+Les lignes que le test ne peut pas mesurer honnêtement le disent. Un chargement de banc d'essai n'accepte plus de précision de substitution : partout ailleurs dans l'application, répondre à un fichier manquant par un fichier existant rend service, mais dans un banc d'essai cela classerait les temps d'une autre précision sous le nom de cette ligne. Les combinaisons que la source ne peut pas fournir sont retirées du plan dès le départ, pour qu'un test ne passe pas des minutes à découvrir ce que la liste des fichiers disait déjà.
+
+Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Une précision absente de votre source change de fichier, pas de moteur
 
 Lorsque la précision GPU demandée n'était hébergée nulle part, l'application vous basculait sur le processeur. Ce repli existe pour une bonne raison (la mesure automatique peut placer un visiteur sur le GPU sans qu'il l'ait choisi, et laisser ces visiteurs sur un chargement en échec serait pire), mais il répondait à un fichier manquant en abandonnant la carte graphique, ce que souhaite rarement quelqu'un qui a choisi le GPU.
