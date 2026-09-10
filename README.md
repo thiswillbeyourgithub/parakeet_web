@@ -434,6 +434,41 @@ two repos equally well, is ignored rather than guessed.
 
 Built with [Claude Code](https://claude.com/claude-code).
 
+### Medical Dictation Mode
+
+There is a one-click setup for French medical dictation, reachable two ways:
+the **Mode Dictée Médical** button at the top of the settings sidebar, or a
+`?mode=med` link (`medecin`, `médecin`, `doc`, `doctor` and `ultimed` all work
+too, in any capitalisation). Both apply the same preset:
+
+- the **UltiMed** model, if this instance offers it;
+- the **French medical phrase list** (`french_medical.txt`) at its default
+  strength and min-p gate;
+- **30-second chunks** for long audio, instead of the usual 60;
+- the **dictation view** as the default transcript display;
+- **int8** precision on the processor and **fp16** on the GPU, so the choice is
+  already right whichever backend this machine ends up on;
+- a **French interface**;
+- an **autoconfigure run on page load** rather than at the Load Model click, so
+  the processor-vs-GPU question is settled before you touch anything. It obeys
+  the usual rules: it never overrides a backend you picked by hand, never
+  re-measures a machine it has already measured, and does nothing at all on a
+  machine with no GPU.
+
+Unlike `?model=`, this one **is** saved: a link named "medical mode" is a setup
+instruction, so the machine stays configured after a plain reload. Every one of
+those settings is still an ordinary control you can change afterwards. A
+`?mode=` value that is not one of the aliases above means "no opinion" and
+changes nothing.
+
+Two pieces depend on the operator: the preset can only select the UltiMed model
+if it is listed in `VITE_MODEL_REPO`, and it can only load the medical lexicon
+if `french_medical.txt` is among the lists served through
+`BOOST_PHRASES_SOURCE`. When one is missing, the rest of the preset still
+applies and a console warning says which piece was skipped.
+
+Built with [Claude Code](https://claude.com/claude-code).
+
 ### Local Model Fallback
 
 If HuggingFace is blocked or unreachable in your environment, you can serve
