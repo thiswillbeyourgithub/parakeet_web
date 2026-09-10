@@ -30,6 +30,7 @@ import { BoostingTrie, compileBoostList, parsePrebuiltBoost, encodedCount, selec
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor, boldRuns } from './lib/format.js';
+import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
 import { findSilenceCuts, excisePcm, remapSegments } from './lib/silenceCut.js';
@@ -956,6 +957,10 @@ export default function App() {
   // and it is the only way to see that the GPU path re-downloads its uncacheable
   // fp32 shards on every single load while the int8 path pays once.
   const loadTransferRef = useRef(new Map());
+  // When the first byte of this load actually crossed the network, or null
+  // if none ever did. Set from the progress callback rather than from the
+  // top of loadModel, so a cache-only load reports no fetch time at all.
+  const fetchStartedRef = useRef(null);
   // Open/closed state of each collapsible settings group, keyed by section id.
   // A section is open only when its id maps to true, so every group starts
   // collapsed; the whole object is persisted so the choice survives reloads.
@@ -2255,7 +2260,7 @@ export default function App() {
           // while a transcription is running (isTranscribing: the status is a
           // free-form "Transcribing ..." string then); the capture queues.
           e.preventDefault();
-          if ((status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions' || isTranscribing)
+          if ((status === 'modelReady' || isModelLoading(status) || isTranscribing)
               && !isRecording && !isRemoteMic) {
             startRecordingCountdown();
           }
@@ -2266,7 +2271,7 @@ export default function App() {
           // decoded and queued, same gate as the upload button).
           e.preventDefault();
           if (fileInputRef.current
-              && (status === 'modelReady' || status === 'loadingModel' || status === 'creatingSessions' || isTranscribing)
+              && (status === 'modelReady' || isModelLoading(status) || isTranscribing)
               && !isRecording) {
             fileInputRef.current.click();
           }
@@ -3561,6 +3566,14 @@ export default function App() {
     }
 
     setStatus('loadingModel');
+    // Phase clock. A load is a cache lookup, then whatever has to come over the
+    // network, then the ORT session build, and only their SUM was ever recorded
+    // (as the benchmark's loadMs). That made "the load took 48 minutes"
+    // unanswerable without a rerun: a connection and a GPU shader compile are
+    // not the same problem. fetchStartedRef stays null on a fully cached load.
+    const loadT0 = performance.now();
+    fetchStartedRef.current = null;
+    let sessionT0 = null;
     // Remember the thread count this (re)load is built with, so the CPU-threads
     // field's onBlur only triggers another reload when the value truly changed.
     loadedCpuThreadsRef.current = cpuThreads;
@@ -3603,6 +3616,12 @@ export default function App() {
         // Byte events only ever fire for a file being streamed, so this map
         // counts network bytes and nothing else.
         loadTransferRef.current.set(file, Math.max(loadTransferRef.current.get(file) || 0, loaded || 0));
+        // ...which is also what makes this the honest moment to say
+        // "downloading". The phase cannot be announced up front, because a load
+        // answered entirely from IndexedDB never streams anything and would
+        // then claim a download it never made. A byte event is proof.
+        if (fetchStartedRef.current === null) fetchStartedRef.current = performance.now();
+        setStatus('downloadingModel');
         const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
         const prefix = resumed ? `${t('resuming')} ` : '';
         const sizes = total > 0 ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
@@ -3697,6 +3716,7 @@ export default function App() {
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
       // Show compiling sessions stage
+      sessionT0 = performance.now();
       setStatus('creatingSessions');
       setProgressText(t('compilingModel'));
       setProgressPct(null);
@@ -3864,6 +3884,27 @@ export default function App() {
       if (!isRecordingRef.current) setStatus('modelReady');
       setProgressText('');
       setProgressPct(null);
+      // Account for the load, phase by phase. The sum alone (which is all the
+      // benchmark's loadMs ever was) cannot tell a slow connection from a slow
+      // session build, and those have nothing to do with each other: the fp32
+      // shards are re-downloaded on EVERY load, since each is over hub.js's
+      // MAX_CACHEABLE_STREAM_BYTES, so a multi-minute fetch here is expected
+      // and a multi-minute `sessions` is not.
+      {
+        const loadEnd = performance.now();
+        let bytes = 0;
+        for (const n of loadTransferRef.current.values()) bytes += n;
+        console.log(formatLoadTiming({
+          totalMs: loadEnd - loadT0,
+          // Measured from the first byte, so a cache lookup that found
+          // everything reports 0 rather than being charged for the lookup.
+          fetchMs: fetchStartedRef.current === null
+            ? 0
+            : (sessionT0 ?? loadEnd) - fetchStartedRef.current,
+          sessionMs: sessionT0 === null ? 0 : loadEnd - sessionT0,
+          bytes,
+        }));
+      }
       // Transcribe anything captured while the model was loading.
       captureQueue.drain();
     } catch (e) {
@@ -5181,7 +5222,7 @@ export default function App() {
     // Accept the file even while the model is still loading (Q2): decode +
     // resample need no model, and the queue transcribes it once ready. Only
     // refuse when nothing is loaded AND nothing is loading (idle/failed).
-    const modelLoadingNow = status === 'loadingModel' || status === 'creatingSessions';
+    const modelLoadingNow = isModelLoading(status);
     if (!modelRef.current && !modelLoadingNow) return alert(t('loadModelFirst'));
     if (!file) return;
 
@@ -5711,7 +5752,7 @@ export default function App() {
     // Accept the file even while the model is still loading (Q2): processAudioFile
     // decodes it (no model needed) and the queue transcribes it once the model
     // is ready. Only refuse when nothing is loaded AND nothing is loading.
-    if (!modelRef.current && status !== 'loadingModel' && status !== 'creatingSessions') {
+    if (!modelRef.current && !isModelLoading(status)) {
       alert(t('loadModelFirst'));
       return;
     }
@@ -7162,8 +7203,7 @@ export default function App() {
   // active transcription (Q3 - don't dispose the session mid-inference), during
   // an in-flight (re)load, or during a live recording/phone capture.
   const modelSwapBlocked = isTranscribing
-    || status === 'loadingModel'
-    || status === 'creatingSessions'
+    || isModelLoading(status)
     || isRecording
     || remoteMicRecording;
 
@@ -7218,8 +7258,7 @@ export default function App() {
   // otherwise sit there looking usable. They are not: a capture would fight the
   // run for the model it is timing. Hide them until it is over.
   const showCaptureControls = !benchmarkRunning && (modelLoaded
-    || status === 'loadingModel'
-    || status === 'creatingSessions'
+    || isModelLoading(status)
     || isRecording
     || isRemoteMic);
 
@@ -7230,7 +7269,7 @@ export default function App() {
   // being stranded between the logo and the controls.
   const statusLine = (
     <p className="app-status">
-      {(status === 'loadingModel' || isTranscribing || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
+      {(status === 'loadingModel' || status === 'downloadingModel' || isTranscribing || isRecording || (isRemoteMic && remoteMicRecording) || recordingCountdown !== null || awaitingFinal) && (
         <span className="spinner spinner--inline" aria-hidden="true" />
       )}
       {t('status')}: {t(status) || status}

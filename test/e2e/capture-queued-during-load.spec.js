@@ -2,10 +2,10 @@
 // and transcribed automatically once the model is ready (Q2), not dropped or
 // refused. Previously the upload path hard-refused with an alert while loading.
 //
-// We make the loading window deterministic by delaying ONLY the encoder weight
-// fetch (the long pole): the app parks in 'loadingModel' for ~15 s, during which
+// We make the loading window deterministic by delaying ONE weight-adjacent file
+// fetch: the app parks mid-load for ~15 s, during which
 // we upload a clip. Decode/resample need no model, so the clip is buffered; when
-// the delayed encoder finally arrives and the model becomes ready, the queue
+// the delayed file finally arrives and the model becomes ready, the queue
 // drains and the buffered clip transcribes on its own. We then assert the
 // transcript recovered the spoken content.
 //
@@ -29,10 +29,15 @@ test('a file uploaded while the model is loading is queued and transcribed once 
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-  // Hold the encoder download open for ~15 s so the app stays in 'loadingModel'
-  // long enough to upload a file mid-load. Only the encoder is delayed; every
-  // other file loads normally, so the load completes shortly after the delay.
-  await page.route('**/encoder-model.int8.onnx', async (route) => {
+  // Hold ONE weight file open for ~15 s so the app parks mid-load long enough
+  // to upload a file into it. The held file is deliberately NOT the encoder:
+  // hub.js fetches filesToGet strictly in order and the encoder is first, so
+  // holding it means the load stalls before a single byte has crossed the
+  // network. That is a real state (and the app correctly still says "Loading
+  // model" in it), but it is the wrong one for the download-phase assertion
+  // below. Holding vocab.txt instead lets the encoder and decoder stream in
+  // full first, so bytes have provably moved by the time we look.
+  await page.route('**/vocab.txt', async (route) => {
     await new Promise((r) => setTimeout(r, 15000));
     await route.continue();
   });
@@ -52,6 +57,13 @@ test('a file uploaded while the model is loading is queued and transcribed once 
   // Prove we really are mid-load, not already ready, when we hand over the file.
   await expect(page.locator('[data-umami-event="load_model_button"]')).toBeHidden();
   await expect(page.locator('body')).not.toContainText('✔');
+  // And that the status line names the phase it is actually in. The encoder and
+  // decoder have streamed by now, so anything still saying "Loading model"
+  // would be the old conflation that made a multi-minute cold download
+  // indistinguishable from a slow machine. The word only ever switches on a
+  // real byte event, which is what keeps a cache-only load from claiming a
+  // download it never made.
+  await expect(page.locator('.app-status')).toContainText('Downloading model', { timeout: 15 * 1000 });
   await fileInput.setInputFiles(FIXTURE_AUDIO);
 
   // The queued-capture banner confirms the clip was buffered (not dropped/refused)
