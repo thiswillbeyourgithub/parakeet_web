@@ -8,6 +8,38 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.3.0 (2026-09-10)
+
+### Conserver l'audio d'une transcription
+
+Chaque entrée de l'historique contient déjà l'audio à partir duquel elle a été transcrite : c'est ce que joue le lecteur intégré et ce que « Retranscrire » réexécute. Il n'y avait simplement aucun moyen de le récupérer hors du navigateur. Le menu ⋮ de l'entrée le propose désormais, à côté des autres actions qui ont besoin de cet audio, et disparaît sur les entrées restaurées après un rechargement pour la même raison qu'elles : l'audio ne vit que dans l'onglet, jamais sur le disque.
+
+Ce que vous obtenez est le WAV mono 16 kHz que le modèle a réellement entendu, pas le fichier que vous avez envoyé : `notes.mp3` est donc enregistré en `notes.wav`. C'est la copie utile quand on veut entendre ce que le modèle a entendu, ou fournir le même audio ailleurs, et le menu le dit avant le clic.
+
+Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
+
+---
+
+### Un lien de dictée ne fige plus la page pendant son ouverture
+
+Ouvrir l'application avec le lien de dictée médicale endormait toute la page un instant, et la première chose sur laquelle on clique (le panneau des réglages) ne faisait rien tant qu'elle ne s'était pas réveillée. Sur un téléphone, cela durait assez longtemps pour donner l'impression d'une panne.
+
+Le lexique médical compte 77 000 expressions, et les déploiements qui le pré-encodent livrent un fichier compagnon de 37 Mo pour qu'aucun navigateur de visiteur n'ait à refaire ce travail. C'est la lecture de ce fichier qui figeait la page : elle était effectuée sur le fil d'exécution même qui dessine la page et répond aux clics. Elle se fait désormais sur un fil d'arrière-plan, là où le reste du travail sur la liste d'expressions se faisait déjà.
+
+Mesuré sur le vrai lexique, sur une machine ralentie six fois pour tenir lieu de téléphone : le blocage le plus long est passé de 2,7 secondes à 0,2, et le temps total pendant lequel la page était incapable de répondre à un clic durant les vingt premières secondes est passé de 3,3 secondes à 0,8.
+
+Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
+
+---
+
+### Le bouton d'envoi tient sur une ligne en français
+
+« Envoyer un fichier audio » était plus large que la place que se partagent les trois boutons de capture : en français, lui seul passait à la ligne et rendait la rangée plus haute que nécessaire. L'icône de dossier dit déjà « fichier », le libellé est donc simplement « Fichier audio », et le verbe abandonné est passé dans l'infobulle.
+
+Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
+
+---
+
 ## 11.2.0 (2026-09-10)
 
 ### Le tableau du banc d'essai se remplit au fil des mesures
