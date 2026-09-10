@@ -13,13 +13,25 @@
 // pinned here: a file the helper hides must be hidden in BOTH the bytes and the
 // listing.
 //
+// The second invariant landed the same way, one behaviour change later. Hiding
+// fp32 alone used to mean "cannot serve WebGPU" because fp32 was the only GPU
+// precision the app would reach for. It stopped meaning that when App.jsx began
+// answering an unservable precision by trying the next precision on the SAME
+// backend (nextGpuEncoderQuant): a mirror still serving w4a8 satisfies the GPU
+// perfectly well, so the fallback spec would have gone on passing while
+// exercising a GPU-to-GPU substitution instead of the GPU-to-WASM fallback it
+// exists for. So the whitelist of GPU-runnable precisions is asked of the same
+// module the app asks (lib/encoderQuants.js) rather than restated here, and
+// every one of them has to come back unservable through the filtered listing.
+//
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { routeLocalMirrorWithoutGpuEncoders } from '../../test/e2e/routes.mjs';
 import { MANIFEST_FILE } from '../../scripts/model-manifest.mjs';
-import { resolveModelQuant } from '../../app/src/hub.js';
+import { quantSatisfiable, resolveModelQuant } from '../../app/src/hub.js';
+import { WEBGPU_ENCODER_QUANTS } from '../../app/ui/src/lib/encoderQuants.js';
 
 const ORIGIN = 'http://127.0.0.1:4178';
 
@@ -41,6 +53,9 @@ async function install() {
   };
 }
 
+// A mirror that is generous on purpose: it ships every GPU-runnable precision,
+// in both fp32 shard layouts, so the helper has something to hide for each of
+// them and "nothing left for the GPU" is a claim it has to earn.
 const MANIFEST = [
   'vocab.txt',
   'int8/encoder-model.int8.onnx',
@@ -49,13 +64,22 @@ const MANIFEST = [
   'fp32/encoder-model.onnx.data.000',
   'fp32/encoder-model.onnx.data.001',
   'sharded/encoder-model.onnx.data.000',
+  'w4a8/encoder-model.w4a8.onnx',
+  'fp16/encoder-model.fp16.onnx',
 ];
 
 describe('routeLocalMirrorWithoutGpuEncoders', () => {
-  test('404s the shard bytes and passes everything else through', async () => {
+  test('404s every GPU encoder byte and passes everything else through', async () => {
     const call = await install();
-    assert.equal((await call(`${ORIGIN}/models/repo/fp32/encoder-model.onnx.data.000`)).status, 404);
-    assert.equal((await call(`${ORIGIN}/models/repo/sharded/encoder-model.onnx.data.000`)).status, 404);
+    for (const path of [
+      'fp32/encoder-model.onnx',
+      'fp32/encoder-model.onnx.data.000',
+      'sharded/encoder-model.onnx.data.000',
+      'w4a8/encoder-model.w4a8.onnx',
+      'fp16/encoder-model.fp16.onnx',
+    ]) {
+      assert.equal((await call(`${ORIGIN}/models/repo/${path}`)).status, 404, path);
+    }
     assert.deepEqual(await call(`${ORIGIN}/models/repo/int8/encoder-model.int8.onnx`), { continued: true });
     assert.deepEqual(await call(`${ORIGIN}/models/repo/vocab.txt`), { continued: true });
   });
@@ -64,6 +88,32 @@ describe('routeLocalMirrorWithoutGpuEncoders', () => {
     const call = await install();
     const { json } = await call(`${ORIGIN}/models/repo/${MANIFEST_FILE}`, MANIFEST);
     assert.deepEqual(json, ['vocab.txt', 'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx']);
+  });
+
+  test('the filtered manifest serves NO GPU precision, not merely no fp32', async () => {
+    // The invariant the helper's name claims, asked of the same predicate the
+    // app uses to grey a radio out or to pick a substitute. Asserting only
+    // "fp32 is gone" would pass against a mirror still handing the GPU w4a8,
+    // and the spec that installs this helper would then prove nothing about
+    // the GPU-to-WASM fallback.
+    const call = await install();
+    const { json } = await call(`${ORIGIN}/models/repo/${MANIFEST_FILE}`, MANIFEST);
+    for (const encoderQuant of WEBGPU_ENCODER_QUANTS) {
+      assert.equal(
+        quantSatisfiable({
+          backend: 'webgpu-hybrid', encoderQuant, decoderQuant: 'int8', repoFiles: MANIFEST, shaderF16: true,
+        }),
+        true,
+        `${encoderQuant}: the unfiltered mirror was supposed to serve it`,
+      );
+      assert.equal(
+        quantSatisfiable({
+          backend: 'webgpu-hybrid', encoderQuant, decoderQuant: 'int8', repoFiles: json, shaderF16: true,
+        }),
+        false,
+        `${encoderQuant}: still servable after filtering, so the mirror can still feed the GPU`,
+      );
+    }
   });
 
   test('the filtered manifest reads as a source that cannot serve GPU fp32', async () => {

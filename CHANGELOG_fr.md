@@ -10,6 +10,16 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### Une précision absente de votre source change de fichier, pas de moteur
+
+Lorsque la précision GPU demandée n'était hébergée nulle part, l'application vous basculait sur le processeur. Ce repli existe pour une bonne raison (la mesure automatique peut placer un visiteur sur le GPU sans qu'il l'ait choisi, et laisser ces visiteurs sur un chargement en échec serait pire), mais il répondait à un fichier manquant en abandonnant la carte graphique, ce que souhaite rarement quelqu'un qui a choisi le GPU.
+
+L'application cherche désormais une autre précision que le GPU sait exécuter et que cette source héberge, en commençant par le plus petit téléchargement, et charge celle-là. Le moteur sur lequel vous êtes reste le moteur sur lequel vous êtes, et le message indique la précision demandée, celle qui a été chargée et sa taille approximative : un téléchargement surprise devient un téléchargement annoncé. Ce n'est que si aucune précision GPU ne peut être servie que l'ancien basculement vers le processeur se produit, avec le message qu'il a toujours eu.
+
+Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Les précisions que cette instance ne peut pas fournir sont grisées avant d'être choisies
 
 Les boutons de précision d'encodeur décrivaient ce que l'application sait exécuter, pas ce que votre instance peut réellement lui fournir. Sur un déploiement dont la copie des modèles contient fp32, int8 et w4a8 mais pas fp16, choisir fp16 semblait parfaitement normal, lançait un chargement, et se terminait une minute plus tard sur un message expliquant que le fichier était absent et qu'un modèle processeur avait été chargé à la place. Tout était exact dans ce message, et tout arrivait trop tard.
