@@ -10,6 +10,16 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.0 (2026-09-10)
 
+### La ligne d'état distingue le téléchargement du chargement
+
+« Chargement du modèle » s'affichait pendant les trois phases d'un chargement : la consultation du cache, le téléchargement de ce qui manque, et la construction des sessions d'inférence. C'est sans conséquence pour un démarrage à chaud de quelques secondes, et inutile précisément dans le cas où cela compte. L'encodeur fp32 est retéléchargé intégralement à chaque chargement (ses deux morceaux dépassent chacun la taille qu'un navigateur restitue de façon fiable depuis son propre cache, donc rien n'est conservé), et une ligne d'état affichant « Chargement du modèle » pendant neuf minutes ne permet pas de distinguer une connexion lente d'une machine lente.
+
+Il existe désormais une phase « Téléchargement du modèle » distincte. Elle apparaît au premier octet qui traverse réellement le réseau, et non au début du chargement : un démarrage entièrement servi par le cache ne revendique donc jamais un téléchargement qu'il n'a pas fait.
+
+Chaque chargement écrit également une ligne de bilan dans la console du navigateur, par exemple `[Load] ready in 9m12s: fetch 9m04s (2331 MB), sessions 8.1s`. Seul le total existait auparavant, dans la colonne « Chargement » du banc d'essai, si bien qu'un chargement très long ne pouvait pas être attribué sans le relancer, alors même qu'une connexion et un pilote graphique qui compile des shaders n'ont aucun rapport. Un chargement qui n'a rien téléchargé affiche `cached`, et un chargement dont le volume est inconnu le dit au lieu d'emprunter ce mot.
+
+Écrit avec Claude Code.
+
 ### La liste des précisions d'encodeur en dit moins, et le dit correctement
 
 Les cinq entrées du sélecteur de précision de l'encodeur, dans la barre latérale, se décrivaient encore avec le vocabulaire de l'époque où il n'y avait que deux options, int8 ou fp32, et où « plus petit » voulait effectivement dire « plus rapide ». Avec cinq précisions dans la liste, cette lecture est devenue fausse, et les étiquettes avaient dérivé par ailleurs : fp32 s'annonçait « 2x plus lent » alors que la mesure sur la machine de référence donne environ 35 % sur la voie CPU.

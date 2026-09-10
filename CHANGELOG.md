@@ -10,6 +10,16 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.0 (2026-09-10)
 
+### The status line says whether it is downloading or loading
+
+"Loading model" was shown for all three phases of a model load: looking in the cache, pulling whatever is missing over the network, and building the inference sessions. That is fine for a warm start measured in seconds and useless for the case it actually matters in. The fp32 encoder is re-downloaded in full on every load (its two pieces are each larger than the size a browser will reliably hand back out of its own cache, so nothing is kept), and a status line reading "Loading model" for nine minutes gives no way to tell a slow connection from a slow machine.
+
+There is now a separate "Downloading model" phase. It appears on the first byte that actually crosses the network, not at the start of the load, so a start answered entirely from cache never claims a download it did not make.
+
+Every load also writes one line to the browser console accounting for itself, for example `[Load] ready in 9m12s: fetch 9m04s (2331 MB), sessions 8.1s`. Only the total existed before, as the benchmark's Load column, which meant a report of a very long load could not be attributed without running it again, even though a connection and a graphics driver compiling shaders have nothing to do with each other. A load that pulled nothing says `cached`, and one whose byte count is unknown says so rather than borrowing the word.
+
+Written with Claude Code.
+
 ### The encoder precision list says less, and says it right
 
 The five entries in the sidebar's encoder precision picker still described themselves in the vocabulary of the two-option era, when the choice was int8 or fp32 and smaller really did mean faster. With five precisions on the list that reading is now wrong, and the labels had drifted besides: fp32 announced itself as "2x slower" where the measurement on the reference machine is about 35 % on the CPU path.
