@@ -42,7 +42,7 @@ import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
-import { describeLoadedModel } from './lib/loadedModel.js';
+import { describeLoadedModel, reconcileSelection } from './lib/loadedModel.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
 import { defaultWasmThreads } from '../../src/backend.js';
 import { collectEnvironment, buildSupportReport } from './lib/supportReport.js';
@@ -3745,6 +3745,24 @@ export default function App() {
       console.log(`[App] Loaded ${repoId} on ${modelUrls.resolvedBackend || backend} `
         + `(encoder ${modelUrls.quantisation?.encoder}, from `
         + `${modelUrls.servedFrom === 'local' ? '/models' : 'HuggingFace'})`);
+      // A fallback must move the CONTROLS, not just the console. The backend
+      // half already does (the GPU->WASM fallback flips it through applyBackend
+      // before retrying, since the retry has to read the new value); the
+      // precision was the half left behind, showing a resolved value on screen
+      // while the stored setting quietly said something else. Writing the
+      // outcome back is what stops the two from drifting apart across reloads.
+      const fixes = reconcileSelection(
+        { backend: modelUrls.resolvedBackend || backend, encoderQuant: modelUrls.quantisation?.encoder || null },
+        { backend, wasmEncoderQuant, webgpuEncoderQuant },
+      );
+      if (fixes.wasmEncoderQuant) {
+        console.log(`[App] Sidebar precision corrected to ${fixes.wasmEncoderQuant} (WASM) to match what loaded`);
+        setWasmEncoderQuant(fixes.wasmEncoderQuant);
+      }
+      if (fixes.webgpuEncoderQuant) {
+        console.log(`[App] Sidebar precision corrected to ${fixes.webgpuEncoderQuant} (WebGPU) to match what loaded`);
+        setWebgpuEncoderQuant(fixes.webgpuEncoderQuant);
+      }
       // Publish the loaded tokenizer's vocab signature so the boost-trie rebuild
       // effect runs now (model became ready) and on a later vocab-changing swap,
       // but NOT on the unrelated status churn of recording/transcribing.

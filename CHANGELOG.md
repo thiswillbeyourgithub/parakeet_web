@@ -16,6 +16,8 @@ Every model control in the panel describes a request: which repository, which ba
 
 Every one of those was invisible. The radios kept showing the request, so a machine could sit on "WebGPU / fp32" while an int8 processor model did the work, and neither the interface nor the transcript said a word about it.
 
+When a fallback happens, the controls themselves now move: the backend radio already did (it has to, since the retry reads it), and the encoder precision now follows, so the saved settings stop disagreeing with what the panel displays. It only ever corrects the precision of the backend that actually loaded, only while that is still the one selected, and it never touches the repository picker: a model switch you just asked for must not be cancelled behind your back.
+
 A **Currently loaded** line now sits above those controls whenever a model is up, naming the backend, the precision that really mounted and where the weights came from. It appears only once something is loaded and disappears the moment the model is disposed, so it can never describe a model that is no longer there. When what is loaded disagrees with what is selected, the line says so and tells you a reload will apply the selection.
 
 Two things it deliberately does not do. Weights coming from this server rather than HuggingFace are reported but not flagged as a disagreement: they disagree with nothing you chose, and a warning that fires on every load of an offline-capable install is a warning people stop reading. And a load that could not report its precision says nothing about it rather than inventing a mismatch.

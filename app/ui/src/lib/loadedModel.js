@@ -80,3 +80,46 @@ export function describeLoadedModel(loaded, selected, labels) {
     mismatch: loadedModelDiverges(loaded, selected),
   };
 }
+
+/**
+ * Bring the sidebar's stored selection into line with what a load really
+ * produced, so a fallback is not console-only.
+ *
+ * The backend half of this already happens elsewhere and earlier: the
+ * GPU->WASM quant fallback flips the backend through `applyBackend` BEFORE it
+ * retries, because the retry has to read the new value. What was left behind
+ * was the precision, which stayed on the request forever: the radios kept
+ * displaying an "effective" value computed for display only, while the stored
+ * setting said something else and nothing ever wrote the outcome back.
+ *
+ * Two limits keep this from fighting the visitor:
+ *
+ *   - It only touches the precision of the backend that was ACTUALLY loaded,
+ *     and only while that is still the selected one. If they have since moved
+ *     the backend radio (a change that arms its own reload), the finishing load
+ *     describes a configuration they have already left, and writing to it would
+ *     undo a choice made a moment ago.
+ *   - It never touches the repo. A picker change outlives the loaded model on
+ *     purpose, and reconciling it would silently cancel the switch the visitor
+ *     just asked for. That divergence is reported by the row instead.
+ *
+ * What it does overwrite is a precision the machine or the source could not
+ * honour (fp16 picked on a GPU with no `shader-f16`, say). That costs nothing
+ * visible, because the radios were already SHOWING the resolved value: the
+ * write only stops the stored setting from disagreeing with the screen.
+ *
+ * @param {LoadedModel|null} loaded
+ * @param {{repoId: string, backend: string, wasmEncoderQuant: string, webgpuEncoderQuant: string}} stored
+ *   The raw persisted selection (not the effective/display value).
+ * @returns {{wasmEncoderQuant?: string, webgpuEncoderQuant?: string}} The
+ *   settings to write, empty when the selection already matches.
+ */
+export function reconcileSelection(loaded, stored) {
+  if (!loaded || !stored) return {};
+  if (!loaded.encoderQuant) return {};
+  // Only reconcile the configuration still on screen.
+  if (loaded.backend !== stored.backend) return {};
+  const key = loaded.backend.startsWith('webgpu') ? 'webgpuEncoderQuant' : 'wasmEncoderQuant';
+  if (stored[key] === loaded.encoderQuant) return {};
+  return { [key]: loaded.encoderQuant };
+}
