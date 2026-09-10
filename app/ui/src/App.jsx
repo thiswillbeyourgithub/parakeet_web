@@ -2795,7 +2795,24 @@ export default function App() {
     });
     if (shouldAutoProbe({
       settingsLoaded,
-      userPickedBackend: backendUserPicked,
+      // Deliberately NOT `backendUserPicked`, and this is the whole reason the
+      // measurement failed to run from a ?mode=med link while the button did it
+      // every time. shouldAutoProbe refuses whenever the visitor has ever
+      // touched the backend radios, which is exactly right for the ordinary
+      // page load it was written for: an unasked-for measurement must not
+      // overrule a deliberate choice. But `?mode=med` is not an ordinary page
+      // load. It is an explicit instruction to set this machine up as a
+      // dictation station, and it already overwrites the model, the chunk
+      // window, the display mode, the language and both precisions, every one
+      // of which the visitor may equally have set by hand. Honouring their
+      // backend pick while overwriting all of that is not caution, it is an
+      // inconsistency, and on any machine where the radios had once been
+      // touched (which is every machine anyone has ever debugged on) the mode's
+      // headline promise (decide CPU-vs-GPU for me) silently did nothing.
+      // The measurement still cannot pick a backend that does not work: it
+      // measures rather than assumes, and the unservable-weights guard below
+      // keeps it from re-selecting a GPU this source cannot feed.
+      userPickedBackend: false,
       webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
       hasValidVerdict: storedVerdictValid,
       running: probeRunningRef.current,
@@ -2804,9 +2821,11 @@ export default function App() {
       if (verdict) await applyProbeVerdict(verdict);
       return;
     }
-    // Not measuring. Honour an answer already on disk, unless the visitor has
-    // since picked a backend by hand (theirs wins over any measurement).
-    if (!storedVerdictValid || backendUserPicked) return;
+    // Not measuring, because this machine has already been measured. Honour the
+    // answer on disk (same reasoning as above: the link outranks an earlier
+    // hand-pick, and re-measuring on every page load of a station that reloads
+    // all day would be the wrong way to reconcile them).
+    if (!storedVerdictValid) return;
     const want = coerceBackend(probeVerdict.backend);
     if (want === liveSettingsRef.current.backend) return;
     if (want.startsWith('webgpu') && gpuWeightsUnservableSig === `${repoId}|${webgpuEncoderQuant}`) {
