@@ -5,7 +5,7 @@
 // this app now ships no longer shows that drop; this bench still lets you A/B any
 // encoder across chunk windows.)
 //
-// fp16 is the candidate middle ground (~1.2 GB, near-lossless), but it cannot load
+// fp16 is the candidate middle ground (~1.2 GB, lossless), but it cannot load
 // on the WASM backend (the CPU/WASM EP upcasts fp16->fp32 and overflows the 32-bit
 // heap), so this bench runs on the NATIVE onnxruntime-node backend (--ort node),
 // which loads fp16/fp32 fine and is a faithful proxy for fp16 *quality*. By default

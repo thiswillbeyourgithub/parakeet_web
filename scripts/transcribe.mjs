@@ -325,7 +325,7 @@ Options:
       --quant int8|fp16|fp32
                            ENCODER quantisation. Default int8. fp16 files come
                            from fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py
-                           (~1.2 GB encoder, near-lossless vs fp32).
+                           (~1.2 GB encoder, lossless vs fp32).
       --decoder-quant int8|fp16|fp32
                            DECODER/joiner quantisation, chosen independently of
                            --quant. Default int8: on this model the int8 joiner is

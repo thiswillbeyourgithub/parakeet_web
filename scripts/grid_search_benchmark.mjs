@@ -347,7 +347,7 @@ Model (ONNX; the web pipeline cannot read a raw .nemo):
                            encoder cache (the encoder output is quant-specific).
                            The accuracy table gains a "quant" column. fp16 files
                            come from fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py
-                           (~1.2 GB encoder, near-lossless vs fp32; native CPU upcasts to fp32 for
+                           (~1.2 GB encoder, lossless vs fp32; native CPU upcasts to fp32 for
                            compute, a faithful proxy for WebGPU fp16 quality).
   --decoder-quants LIST    DECODER/joiner quantisation(s) to benchmark, a
                            comma-separated list of int8/fp16/fp32 (e.g.
