@@ -18,13 +18,17 @@
 //  1. Unknown means "behave exactly as before". The probe never gates a load;
 //     if it has not answered yet, or it errored in some way we did not predict,
 //     the ordinary HF-first path runs untouched.
-//  2. A negative only counts when the local mirror is VERIFIED to hold the
-//     files. Going local-first on a machine with no local weights would trade a
-//     slow success for a fast failure.
-//  3. The existing HF -> local retry stays exactly as it is. This is an
-//     optimisation layered on top, not a replacement, so a false negative (an
-//     extension blocking the probe on a machine where HF actually works) costs
-//     nothing beyond loading from a mirror that was already good enough.
+//  2. The reorder is REVERSIBLE. Callers retry against HF when the local
+//     attempt fails, mirroring the HF -> local retry that already existed, so a
+//     false negative (an extension blocking the probe on a machine where HF
+//     works) costs one fast same-origin miss and nothing else. This is what
+//     replaced an earlier, stricter rule that only went local-first once
+//     `/models` had been verified to hold the repo: on a network that really
+//     does block HF, that check gated the whole feature behind a mirror probe
+//     that is easy to miss, while the failure it guarded against cannot happen
+//     (if HF is unreachable, the HF attempt was never going to succeed either).
+//  3. It only ever changes the ORDER of two sources that were both going to be
+//     tried. Nothing is skipped, so no load that used to work can stop working.
 //
 // Built with Claude Code.
 
@@ -120,19 +124,35 @@ export async function probeHubReachable({
  * Decide whether a load should go straight to the local mirror and skip the
  * HuggingFace attempt entirely.
  *
+ * It used to demand a second condition: that `/models` had been VERIFIED to
+ * hold this repo, on the reasoning that reordering on an uncertain answer would
+ * trade a slow success for a fast failure. That reasoning does not survive
+ * contact with the case this module exists for. When the probe has come back
+ * negative, the HuggingFace attempt cannot succeed either, so there is no slow
+ * success left to protect: both orders end in failure, and the local-first one
+ * fails in milliseconds against a same-origin 404 instead of waiting out a
+ * connect timeout. Meanwhile the extra condition made the whole feature
+ * conditional on a mirror check that is easy to miss (a mount serving a
+ * different repo, a layout the probe cannot attribute), which is precisely how
+ * a deployment on a network that blocks HuggingFace still spent every load
+ * talking to HuggingFace.
+ *
+ * What keeps this safe is not the check, it is that the reorder is REVERSIBLE:
+ * callers retry against HuggingFace when the local attempt fails, mirroring the
+ * HF -> local retry that already existed. So a false negative (an extension
+ * blocking the probe on a machine where HuggingFace works fine) costs one fast
+ * local miss, not a failed load.
+ *
  * @param {object} args
  * @param {string} args.modelSource 'hf' | 'local' | 'both'.
  * @param {boolean|null} args.hubReachable Probe result, null while unknown.
- * @param {boolean|null} args.localReachable Whether `/models` verifiably holds
- *   this repo's files, null while unknown.
  * @returns {boolean} true to start local, false to behave exactly as before.
  */
-export function preferLocalFirst({ modelSource, hubReachable, localReachable } = {}) {
+export function preferLocalFirst({ modelSource, hubReachable } = {}) {
   // 'local' already skips HF, so there is nothing to reorder and saying "yes"
   // here would only make the caller's intent harder to read.
   if (modelSource === 'local') return false;
-  // Rule 1: only a definite negative changes anything.
-  if (hubReachable !== false) return false;
-  // Rule 2: and only when the local mirror can actually serve the load.
-  return localReachable === true;
+  // Only a definite negative changes anything: an unanswered probe leaves the
+  // ordinary HuggingFace-first path running untouched.
+  return hubReachable === false;
 }

@@ -590,11 +590,12 @@ whether HuggingFace is reachable at all (a HEAD to its API, four-second
 budget). This matters on networks that blackhole outbound traffic rather
 than refusing it, where the HuggingFace-first attempt does not fail but
 STALLS for a full browser connect timeout before the local copy is even
-tried. When the check comes back negative **and** `/models/` verifiably
-holds the requested repo, the load starts locally and skips the doomed
-attempt. Anything less certain (no answer, or no local copy of that repo)
-leaves the ordering exactly as it was, so the check can only ever save
-time, never cost a load.
+tried. When the check comes back negative the load starts from `/models/`
+and skips the doomed attempt, and the two diarization models follow the
+same answer. If `/models/` then turns out not to serve the model,
+HuggingFace is tried anyway, so the reorder cannot cost a load: a check
+wrongly blocked (by an extension, say) costs one instant same-origin
+miss. No answer at all leaves the ordering exactly as it was.
 
 The container runs as UID 1000. If your files end up unreadable to UID
 1000, run `chmod -R a+rX /host/path/to/onnx-files` (or

@@ -860,23 +860,18 @@ export default function App() {
     let cancelled = false;
     (async () => {
       const hubReachable = await probeHubReachable({ repoId });
-      if (cancelled || hubReachable) return;
-      // Only now is the same-origin probe worth making: it is cheap, but it is
-      // pointless on the overwhelmingly common healthy-network path.
-      const probe = await checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK })
-        .catch(() => null);
       if (cancelled) return;
-      const localFirst = preferLocalFirst({
-        modelSource, hubReachable, localReachable: !!probe?.ok,
-      });
+      const localFirst = preferLocalFirst({ modelSource, hubReachable });
       localFirstRef.current = localFirst;
-      console.log(localFirst
-        ? '[App] HuggingFace looks unreachable and /models has this repo; loading locally first.'
-        : '[App] HuggingFace looks unreachable, but /models cannot serve this repo; trying HuggingFace anyway.');
+      if (localFirst) {
+        console.log('[App] HuggingFace is unreachable from this machine; '
+          + 'loading from /models first (and only falling back to HuggingFace if that misses).');
+      }
     })();
     return () => { cancelled = true; };
-    // Re-probes when the visitor switches repo, since "can /models serve it" is
-    // a per-repo answer even though HF reachability is not.
+    // Re-probes when the visitor switches repo: the probe URL is repo-scoped,
+    // so a different repo is a different question even though host
+    // reachability is not.
   }, [modelSource, repoId]);
 
   // Warning message when local fallback is enabled but model files are missing
@@ -3475,7 +3470,7 @@ export default function App() {
    *   from this instance (/models/) instead of HuggingFace.
    */
   async function loadModel({ useLocalFallback = forceLocalFallback || localFirstRef.current, corruptionRetried = false,
-                             gpuQuantFallbackTried = false } = {}) {
+                             gpuQuantFallbackTried = false, hubRetryTried = false } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');
@@ -3805,6 +3800,18 @@ export default function App() {
       // unconditionally; otherwise (default 'hf') we probe /models first and only
       // retry when the files are actually there, so we never swap a clear HF
       // error for a confusing "local folder missing" failure.
+      // The MIRROR of the retry below, and what makes the reachability
+      // preflight safe to act on without first verifying the mirror: this load
+      // went local-first only because HuggingFace looked unreachable, and the
+      // mirror turned out not to serve it. A false negative (an extension or a
+      // proxy blocking the probe on a machine where HuggingFace works) must
+      // therefore cost one fast same-origin miss, not a failed load.
+      if (e instanceof HubDownloadError && useLocalFallback && !forceLocalFallback
+          && localFirstRef.current && !hubRetryTried) {
+        console.log('[App] /models could not serve this model and HuggingFace only LOOKED '
+          + 'unreachable; trying HuggingFace after all');
+        return loadModel({ useLocalFallback: false, hubRetryTried: true });
+      }
       if (e instanceof HubDownloadError && !useLocalFallback) {
         // Only probe /models when the operator hasn't already enabled local
         // fallback (then we'd retry regardless); avoids a needless HEAD request.
@@ -6128,6 +6135,12 @@ export default function App() {
       models = await getDiarizationModels({
         localBaseUrl: '/models',
         localOnly: forceLocalFallback,
+        // Same preflight answer the ASR weights use. These models live in their
+        // own repos and had their own HF-first order, so on a network that
+        // blocks HuggingFace they went on paying the connect timeout after the
+        // ASR load had learned better. localFirst REORDERS rather than skips,
+        // so a mirror that does not carry them still falls back to HuggingFace.
+        localFirst: localFirstRef.current,
       });
       setDiarizationModelError(null);
     } catch (e) {
@@ -6290,7 +6303,7 @@ export default function App() {
   useEffect(() => {
     if (status !== 'modelReady' || diarPrefetchDoneRef.current) return;
     diarPrefetchDoneRef.current = true;
-    getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback })
+    getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback, localFirst: localFirstRef.current })
       .then(() => setDiarizationModelError(null))
       .catch((e) => {
         console.warn('[Diarize] background model prefetch failed (non-fatal):', e);

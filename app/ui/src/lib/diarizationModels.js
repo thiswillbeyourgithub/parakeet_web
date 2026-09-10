@@ -54,11 +54,27 @@ async function localBase(baseUrl, repo, file) {
   return (await resolveLocalModelBase(baseUrl, repo, { canary: file })) || baseUrl;
 }
 
-async function fetchBytes(repo, file, { localBaseUrl, localOnly, progress }) {
+async function fetchBytes(repo, file, { localBaseUrl, localOnly, localFirst, progress }) {
   const fromLocal = async () => getLocalModelFile(
     await localBase(localBaseUrl, repo, file), repo, file, { asBytes: true, progress });
   if (localOnly) {
     return fromLocal();
+  }
+  // The background reachability preflight (lib/hubReachability.js) says this
+  // machine cannot reach HuggingFace. These two models had their own HF-first
+  // order, so on a blocked network they went on paying a full connect timeout
+  // each even after the ASR load had learned better, and a visitor's only clue
+  // was two more failed huggingface.co requests in the console. Reordering, not
+  // skipping: a mirror that does not carry them still ends up at HuggingFace,
+  // which is what keeps a false negative from breaking diarization outright.
+  if (localFirst && localBaseUrl) {
+    try {
+      return await fromLocal();
+    } catch (err) {
+      console.warn(`[Diarize] HuggingFace looked unreachable so ${file} was tried at `
+        + `${localBaseUrl} first, and missed; falling back to HuggingFace.`, err);
+      return getModelFile(repo, file, { asBytes: true, progress });
+    }
   }
   try {
     return await getModelFile(repo, file, { asBytes: true, progress });
@@ -79,11 +95,14 @@ async function fetchBytes(repo, file, { localBaseUrl, localOnly, progress }) {
  * @param {string|null} [opts.localBaseUrl] local mirror base (e.g. '/models')
  *   to fall back to when HF is unreachable; null to disable the fallback.
  * @param {boolean} [opts.localOnly=false] skip HF entirely, serve from localBaseUrl.
+ * @param {boolean} [opts.localFirst=false] try localBaseUrl BEFORE HF (and fall
+ *   back to HF if it misses), for when the reachability preflight has found HF
+ *   unreachable from this machine.
  * @param {(p:{loaded:number,total:number})=>void} [opts.onProgress] aggregate
  *   byte progress across both files.
  * @returns {Promise<{segmentationBytes:Uint8Array, embeddingBytes:Uint8Array}>}
  */
-export function getDiarizationModels({ localBaseUrl = null, localOnly = false, onProgress } = {}) {
+export function getDiarizationModels({ localBaseUrl = null, localOnly = false, localFirst = false, onProgress } = {}) {
   if (_modelsPromise) return _modelsPromise;
   _modelsPromise = (async () => {
     // Aggregate progress across the two parallel downloads.
@@ -97,8 +116,8 @@ export function getDiarizationModels({ localBaseUrl = null, localOnly = false, o
       : undefined;
 
     const [segmentationBytes, embeddingBytes] = await Promise.all([
-      fetchBytes(SEG_REPO, SEG_FILE, { localBaseUrl, localOnly, progress: mkProgress('seg') }),
-      fetchBytes(EMB_REPO, EMB_FILE, { localBaseUrl, localOnly, progress: mkProgress('emb') }),
+      fetchBytes(SEG_REPO, SEG_FILE, { localBaseUrl, localOnly, localFirst, progress: mkProgress('seg') }),
+      fetchBytes(EMB_REPO, EMB_FILE, { localBaseUrl, localOnly, localFirst, progress: mkProgress('emb') }),
     ]);
     return { segmentationBytes, embeddingBytes };
   })().catch((err) => {
