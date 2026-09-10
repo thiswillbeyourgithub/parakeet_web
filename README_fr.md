@@ -441,6 +441,44 @@ plutôt que devinée.
 
 Réalisé avec [Claude Code](https://claude.com/claude-code).
 
+### Mode dictée médicale
+
+Il existe une configuration en un clic pour la dictée médicale française,
+accessible de deux façons : le bouton **Mode Dictée Médical** en haut du
+panneau de réglages, ou un lien `?mode=med` (`medecin`, `médecin`, `doc`,
+`doctor` et `ultimed` fonctionnent aussi, quelle que soit la casse). Les deux
+appliquent le même préréglage :
+
+- le modèle **UltiMed**, si cette instance le propose ;
+- la **liste de phrases médicales françaises** (`french_medical.txt`) à son
+  intensité et sa garde min-p par défaut ;
+- des **segments de 30 secondes** pour l'audio long, au lieu des 60 habituelles ;
+- l'**affichage dictée** comme vue par défaut des transcriptions ;
+- la précision **int8** sur le processeur et **fp16** sur le GPU, pour que le
+  choix soit déjà le bon quel que soit le moteur sur lequel la machine
+  atterrira ;
+- une **interface en français** ;
+- un **autoconfigure lancé au chargement de la page** plutôt qu'au clic sur
+  Charger le modèle, afin que la question processeur-ou-GPU soit tranchée avant
+  que vous ne touchiez à quoi que ce soit. Il respecte les règles habituelles :
+  il ne remplace jamais un moteur que vous avez choisi à la main, ne remesure
+  jamais une machine déjà mesurée, et ne fait rien du tout sur une machine sans
+  GPU.
+
+Contrairement à `?model=`, celui-ci **est** enregistré : un lien nommé « mode
+médical » est une instruction de configuration, donc la machine reste
+configurée après un simple rechargement. Chacun de ces réglages reste un
+contrôle ordinaire que vous pouvez modifier ensuite. Une valeur `?mode=` qui ne
+fait pas partie des alias ci-dessus signifie « pas d'avis » et ne change rien.
+
+Deux éléments dépendent de l'opérateur : le préréglage ne peut sélectionner le
+modèle UltiMed que s'il figure dans `VITE_MODEL_REPO`, et il ne peut charger le
+lexique médical que si `french_medical.txt` fait partie des listes servies via
+`BOOST_PHRASES_SOURCE`. Lorsqu'il en manque un, le reste du préréglage
+s'applique quand même et un avertissement en console indique l'élément ignoré.
+
+Réalisé avec [Claude Code](https://claude.com/claude-code).
+
 ### Modèle local de secours
 
 Si HuggingFace est bloqué ou injoignable dans votre environnement, vous pouvez
