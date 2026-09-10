@@ -8,6 +8,7 @@ const translations = {
     // Status messages
     idle: 'Idle',
     loadingModel: 'Loading model\u2026',
+    downloadingModel: 'Downloading model\u2026',
     retryingDownload: 'Retry {n}/{total}: {file}',
     resuming: 'Resuming',
     etaRemaining: 'left',
@@ -495,6 +496,7 @@ const translations = {
     // Status messages
     idle: 'En attente',
     loadingModel: 'Chargement du mod\u00e8le\u2026',
+    downloadingModel: 'T\u00e9l\u00e9chargement du mod\u00e8le\u2026',
     retryingDownload: 'Tentative {n}/{total} : {file}',
     resuming: 'Reprise',
     etaRemaining: 'restant',
