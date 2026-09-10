@@ -10,6 +10,14 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.0 (2026-09-10)
 
+### La liste des précisions d'encodeur en dit moins, et le dit correctement
+
+Les cinq entrées du sélecteur de précision de l'encodeur, dans la barre latérale, se décrivaient encore avec le vocabulaire de l'époque où il n'y avait que deux options, int8 ou fp32, et où « plus petit » voulait effectivement dire « plus rapide ». Avec cinq précisions dans la liste, cette lecture est devenue fausse, et les étiquettes avaient dérivé par ailleurs : fp32 s'annonçait « 2x plus lent » alors que la mesure sur la machine de référence donne environ 35 % sur la voie CPU.
+
+Chaque étiquette a désormais la même forme courte, une taille et une caractéristique distinctive, et l'ordre est énoncé une seule fois au-dessus plutôt que réargumenté à chaque ligne : du plus petit téléchargement au plus grand, et la taille ne prédit pas la vitesse. C'est cette dernière proposition qui justifie la ligne. La plus petite entrée, w4a8, est aussi la plus lente à l'exécution et la plus faible sur les longs audios, car un encodeur de parole réutilise chaque poids sur un millier de trames : il est limité par le calcul et non par le déplacement des poids depuis la mémoire. Lisez cette colonne comme une échelle de taille de téléchargement, pas de vitesse. int8 reste la recommandation, et le dit maintenant en gras.
+
+Écrit avec Claude Code.
+
 ### Conserver l'audio d'une transcription
 
 Chaque entrée de l'historique contient déjà l'audio à partir duquel elle a été transcrite : c'est ce que joue le lecteur intégré et ce que « Retranscrire » réexécute. Il n'y avait simplement aucun moyen de le récupérer hors du navigateur. Le menu ⋮ de l'entrée le propose désormais, à côté des autres actions qui ont besoin de cet audio, et disparaît sur les entrées restaurées après un rechargement pour la même raison qu'elles : l'audio ne vit que dans l'onglet, jamais sur le disque.

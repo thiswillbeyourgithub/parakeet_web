@@ -10,6 +10,14 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.0 (2026-09-10)
 
+### The encoder precision list says less, and says it right
+
+The five entries in the sidebar's encoder precision picker still described themselves in the vocabulary of the two-option era, when the choice was int8 or fp32 and smaller really did mean faster. With five precisions on the list that reading is now wrong, and the labels had drifted besides: fp32 announced itself as "2x slower" where the measurement on the reference machine is about 35 % on the CPU path.
+
+Each label is now the same short shape, a size and one distinguishing note, and the ordering is stated once above them rather than re-argued in every row: smallest download first, and size does not predict speed. That last clause is the point of the line. The smallest entry, w4a8, is also the slowest to run and the weakest on long audio, because a speech encoder reuses each weight across a thousand frames and is limited by arithmetic rather than by moving weights from memory. Read the column as a download ladder, not a speed one. int8 stays the recommendation and now says so in bold.
+
+Written with Claude Code.
+
 ### Keeping the audio a transcription was made from
 
 Every entry in the history already holds the audio it was transcribed from: that is what the inline player plays and what "Transcribe again" re-runs. There was simply no way to get it back out of the browser. The entry's ⋮ menu now offers it, alongside the other actions that need that audio, and disappears on entries restored after a reload for the same reason those do: the audio only ever lives in the tab, never on disk.
