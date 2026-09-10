@@ -8822,6 +8822,7 @@ export default function App() {
             flex: 1
           }}
           data-umami-event="upload_file_button"
+          title={t('sendMp3Hint')}
         >
           {t('sendMp3')}
         </label>

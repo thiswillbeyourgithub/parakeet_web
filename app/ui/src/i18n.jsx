@@ -24,6 +24,7 @@ const translations = {
     // Buttons
     loadModel: 'Load Model',
     sendMp3: '\ud83d\udcc1 Send audio file',
+    sendMp3Hint: 'Pick an audio file to transcribe (mp3, m4a, wav, ...)',
     recordAudio: '\ud83c\udfa4 Record Audio',
     getReady: '\u23f1 Get Ready',
     stop: '\u23f9 Stop',
@@ -506,7 +507,8 @@ const translations = {
 
     // Buttons
     loadModel: 'Charger le mod\u00e8le',
-    sendMp3: '\ud83d\udcc1 Envoyer un fichier audio',
+    sendMp3: '\ud83d\udcc1 Fichier audio',
+    sendMp3Hint: 'Choisir un fichier audio \u00e0 transcrire (mp3, m4a, wav, ...)',
     recordAudio: '\ud83c\udfa4 Enregistrer',
     getReady: '\u23f1 Pr\u00e9parez-vous',
     stop: '\u23f9 Stop',
