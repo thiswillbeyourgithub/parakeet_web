@@ -117,10 +117,15 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
   });
 
   test('pins one precision per backend, each runnable on that backend', () => {
-    // int8 has no WebGPU kernel and fp16 has no WASM one, so these two cannot
-    // be swapped: this is the pairing, not a preference.
+    // int8 has no WebGPU kernel, so the two cannot be unified: this is a
+    // pairing, not a preference.
     assert.equal(MED_MODE_PRESET.wasmEncoderQuant, 'int8');
-    assert.equal(MED_MODE_PRESET.webgpuEncoderQuant, 'fp16');
+    // fp32 rather than the smaller fp16 because fp16 needs BOTH a `shader-f16`
+    // adapter and a source hosting the fp16 file; missing either one makes the
+    // load fail over to WASM and PERSIST that flip, so the station silently
+    // stops using its GPU. Regressing this to fp16 to save a download is the
+    // exact mistake this assertion exists to catch.
+    assert.equal(MED_MODE_PRESET.webgpuEncoderQuant, 'fp32');
   });
 
   test('carries no phrase-boost tuning knobs', () => {

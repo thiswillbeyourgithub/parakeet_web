@@ -97,7 +97,7 @@ async function expectMedModeApplied(page) {
   // to the GPU backend.
   await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeChecked();
   await expect.poll(() => readSetting(page, 'webgpuEncoderQuant'), { timeout: 15 * 1000 })
-    .toBe('fp16');
+    .toBe('fp32');
 
   // The French medical lexicon, with its text actually loaded (not merely selected).
   await expandSection(page, BOOSTING_SECTION);

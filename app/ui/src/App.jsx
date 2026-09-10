@@ -861,6 +861,15 @@ export default function App() {
   // source, so the load fell back to WASM. Separate from modelLoadError
   // because the load then SUCCEEDS, and loadModel clears that on entry.
   const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
+  // The repo+precision combination this source was PROVEN unable to serve to
+  // the GPU (`<repoId>|<webgpuEncoderQuant>`), or null. Written when the
+  // QuantUnavailableError fallback below flips a visitor to WASM, and read by
+  // the medical-mode autoconfigure so re-applying a stored WebGPU verdict
+  // cannot fight that flip on every visit. Persisted because the flip itself is
+  // persisted, so a session-only memory would forget one and not the other. It
+  // needs no explicit invalidation: the signature stops matching the moment
+  // either half changes, which is exactly when the GPU deserves another try.
+  const [gpuWeightsUnservableSig, setGpuWeightsUnservableSig] = useState(null);
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~900 MB, fast,
   // good quality on long audio: since 2026-09-03 both repos ship it as a
@@ -1706,6 +1715,7 @@ export default function App() {
           savedBackend,
           savedBackendUserPicked,
           savedPerfProbeVerdict,
+          savedGpuWeightsUnservableSig,
           savedWasmEncoderQuant,
           savedWebgpuEncoderQuant,
           savedPreprocessor,
@@ -1749,6 +1759,7 @@ export default function App() {
           loadSetting('backend', null),
           loadSetting('backendUserPicked', false),
           loadSetting('perfProbeVerdict', null),
+          loadSetting('gpuWeightsUnservableSig', null),
           loadSetting('wasmEncoderQuant', 'int8'),
           loadSetting('webgpuEncoderQuant', 'fp32'),
           loadSetting('preprocessor', 'nemo128'),
@@ -1827,6 +1838,9 @@ export default function App() {
         setBackendUserPicked(!!savedBackendUserPicked);
         if (savedPerfProbeVerdict && typeof savedPerfProbeVerdict === 'object') {
           setProbeVerdict(savedPerfProbeVerdict);
+        }
+        if (typeof savedGpuWeightsUnservableSig === 'string') {
+          setGpuWeightsUnservableSig(savedGpuWeightsUnservableSig);
         }
         if (savedBackend !== null) {
           backendChosenByUserRef.current = true;
@@ -2364,6 +2378,7 @@ export default function App() {
   // verdict. Both gate whether the probe may run and act on its own.
   usePersistedSetting('backendUserPicked', backendUserPicked, settingsLoaded);
   usePersistedSetting('perfProbeVerdict', probeVerdict, settingsLoaded);
+  usePersistedSetting('gpuWeightsUnservableSig', gpuWeightsUnservableSig, settingsLoaded);
   // Persist the WASM encoder-precision choice (int8 / fp32).
   // Not usePersistedSetting: a repo that came from ?model= must NOT be written
   // back, or following a link once would silently redefine the visitor's
@@ -2708,25 +2723,54 @@ export default function App() {
    * Medical mode runs this on PAGE LOAD rather than at the Load-model click the
    * ordinary path uses: a dictation station should already know which backend it
    * is on before the clinician touches anything, and the verdict is what decides
-   * which encoder weights the Load button will then fetch (int8 vs fp16).
+   * which encoder weights the Load button will then fetch.
    *
-   * The gates are the ordinary ones (shouldAutoProbe): it never overrides a
-   * hand-picked backend, never re-measures a machine that already has a valid
-   * stored verdict, and does nothing at all without a WebGPU adapter. So a
-   * repeat visit costs nothing and a CPU-only machine never pays for the probe.
+   * Two cases, and the SECOND one is the one that bites. Measuring is gated by
+   * the ordinary `shouldAutoProbe` rules (never over a hand-picked backend,
+   * never a machine already measured, nothing at all without an adapter). But
+   * "already measured" must not mean "do nothing": a stored verdict is an answer
+   * we own and have to APPLY, because the live backend can have drifted away
+   * from it since. It really does drift, by exactly one route: a GPU load that
+   * cannot be served falls back to WASM and PERSISTS that flip, so the next
+   * visit boots on WASM while the stored verdict still says WebGPU, and nothing
+   * puts the two back in agreement. That is the "medical mode shows WASM but
+   * Autoconfigure picks WebGPU" report.
+   *
+   * Re-applying that verdict must not turn into a per-visit ping-pong against
+   * the very fallback that caused the drift, so `gpuWeightsUnservableSig`
+   * records the repo+precision combination that was proven unservable and this
+   * skips a GPU verdict while it still matches. The signature invalidates
+   * itself when either half changes, so hosting the missing files (or picking
+   * another precision) puts the GPU back in play with no reset needed.
    */
   async function autoconfigureBackendForMedMode() {
-    if (!shouldAutoProbe({
+    const storedVerdictValid = verdictStillValid(probeVerdict, {
+      appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
+    });
+    if (shouldAutoProbe({
       settingsLoaded,
       userPickedBackend: backendUserPicked,
       webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
-      hasValidVerdict: verdictStillValid(probeVerdict, {
-        appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
-      }),
+      hasValidVerdict: storedVerdictValid,
       running: probeRunningRef.current,
-    })) return;
-    const verdict = await runPerfProbe({ trigger: 'medmode' });
-    if (verdict) await applyProbeVerdict(verdict);
+    })) {
+      const verdict = await runPerfProbe({ trigger: 'medmode' });
+      if (verdict) await applyProbeVerdict(verdict);
+      return;
+    }
+    // Not measuring. Honour an answer already on disk, unless the visitor has
+    // since picked a backend by hand (theirs wins over any measurement).
+    if (!storedVerdictValid || backendUserPicked) return;
+    const want = coerceBackend(probeVerdict.backend);
+    if (want === liveSettingsRef.current.backend) return;
+    if (want.startsWith('webgpu') && gpuWeightsUnservableSig === `${repoId}|${webgpuEncoderQuant}`) {
+      console.log(`[MedMode] stored verdict says ${want}, but this source could not serve `
+        + `${webgpuEncoderQuant} weights for the GPU; staying on ${liveSettingsRef.current.backend}.`);
+      return;
+    }
+    console.log(`[MedMode] applying the stored ${want} verdict (backend had drifted to `
+      + `${liveSettingsRef.current.backend}).`);
+    await applyProbeVerdict(probeVerdict);
   }
 
   // ?mode= entry point, part 1: the settings. Waits for the boost manifest as
@@ -3692,6 +3736,11 @@ export default function App() {
         if (backend.startsWith('webgpu') && !gpuQuantFallbackTried) {
           console.warn('[App] no GPU-capable encoder from this source; falling back to WASM');
           setGpuFallbackWarning(t('gpuQuantFallback'));
+          // Remember WHICH repo+precision could not be served, so the flip to
+          // WASM below is not undone on the next visit by a stored WebGPU
+          // verdict (medical mode re-applies those). Recorded before the flip,
+          // because `backend` becomes 'wasm' a line from here.
+          setGpuWeightsUnservableSig(`${repoId}|${webgpuEncoderQuant}`);
           await applyBackend('wasm');
           return loadModelRef.current({ useLocalFallback, gpuQuantFallbackTried: true });
         }
