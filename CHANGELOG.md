@@ -38,6 +38,14 @@ Written with [Claude Code](https://claude.com/claude-code).
 
 ---
 
+### No more phantom 404 for phrase lists
+
+An instance serving its own phrase lists can also ship a pre-encoded copy of each one, so visitors' browsers skip the tokenisation work. That copy is only built when the container has the model vocabulary on hand, but the app asked for it unconditionally and every visitor's console collected a 404 for a file that was never going to exist. The list of available lists is now the single source of truth on both counts, so the request is only made when there is something to fetch. Nothing about which lists you see, or how they are applied, changes; the console is just honest again, which matters because a console full of expected errors is a console nobody reads the real errors out of.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### One click sets up French medical dictation
 
 A new **Mode Dictée Médical** button sits at the top of the settings panel, above everything else. One click configures the whole station: the UltiMed model, the French medical phrase list at its default settings, 30-second chunks instead of 60, the dictation view, auto-copy to the clipboard, a French interface, and the encoder precision that suits each backend (int8 on the processor, fp32 on the GPU, so the choice is already right whichever one this machine ends up on).
