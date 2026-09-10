@@ -858,6 +858,47 @@ export function packEncoded(encoded) {
 }
 
 /**
+ * Parse a server-prebuilt boost artifact (the `<list>.json` the container's
+ * prebuild step writes next to `<list>.txt`) into the packed shape the trie
+ * build consumes.
+ *
+ * Both halves of this are expensive on a real clinical list: the JSON is tens
+ * of megabytes and parses to one small object per surface form (~330k of them),
+ * and {@link packEncoded} then walks all of them. Doing it on the main thread
+ * froze the tab for over a second on a slow device at page load, so this lives
+ * here as a pure function that the phrase-boost worker calls off-thread; the
+ * main thread only keeps it as the fallback for when no worker can be created.
+ *
+ * A `string` `augmentDefault` is the v2 marker: a legacy (v1 `caseDefault`)
+ * artifact is rejected here and re-encoded in the browser rather than reused
+ * with stale, differently-expanded ids. Anything else malformed is rejected the
+ * same way, so a bad artifact only ever costs a browser-side encode.
+ *
+ * @param {string} jsonText The raw artifact text.
+ * @returns {{vocabSig: string, augmentDefault: string, encoded: object, skipped: string[]}|null}
+ *   null when the artifact is unparseable or not a usable v2 encoding.
+ */
+export function parsePrebuiltBoost(jsonText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (_) {
+    return null;
+  }
+  if (!parsed || !Array.isArray(parsed.encoded) || typeof parsed.vocabSig !== 'string'
+      || typeof parsed.augmentDefault !== 'string') {
+    return null;
+  }
+  return {
+    vocabSig: parsed.vocabSig,
+    // The global augmentation-default the prebuild expanded at.
+    augmentDefault: parsed.augmentDefault,
+    encoded: packEncoded(parsed.encoded),
+    skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
+  };
+}
+
+/**
  * Whether a value is the packed encoding produced by {@link packEncoded} (as
  * opposed to the plain array of entry objects). Both are accepted everywhere an
  * "encoding" is taken, since a server-prebuilt artifact arrives as JSON.
