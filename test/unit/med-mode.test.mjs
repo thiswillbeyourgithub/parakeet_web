@@ -61,7 +61,7 @@ describe('medModeRequested: which ?mode= values ask for medical dictation mode',
 
   test('an unrelated or unknown mode is NOT medical mode', () => {
     // The whole point: no opinion means the visitor keeps their own settings.
-    for (const v of ['', 'kiosk', 'dark', 'medical', 'med2', 'x-med', 'medic']) {
+    for (const v of ['', 'kiosk', 'dark', 'med2', 'x-med', 'medic', 'medicine']) {
       assert.equal(medModeRequested(`?mode=${v}`), false, v);
     }
   });

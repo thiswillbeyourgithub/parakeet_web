@@ -438,8 +438,8 @@ Built with [Claude Code](https://claude.com/claude-code).
 
 There is a one-click setup for French medical dictation, reachable two ways:
 the **Mode Dictée Médical** button at the top of the settings sidebar, or a
-`?mode=med` link (`medecin`, `médecin`, `doc`, `doctor` and `ultimed` all work
-too, in any capitalisation). Both apply the same preset:
+`?mode=med` link (`medecin`, `médecin`, `medical`, `doc`, `doctor` and
+`ultimed` all work too, in any capitalisation). Both apply the same preset:
 
 - the **UltiMed** model, if this instance offers it;
 - the **French medical phrase list** (`french_medical.txt`) at its default
