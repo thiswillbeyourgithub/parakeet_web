@@ -8,6 +8,38 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.3.0 (2026-09-10)
+
+### Keeping the audio a transcription was made from
+
+Every entry in the history already holds the audio it was transcribed from: that is what the inline player plays and what "Transcribe again" re-runs. There was simply no way to get it back out of the browser. The entry's ⋮ menu now offers it, alongside the other actions that need that audio, and disappears on entries restored after a reload for the same reason those do: the audio only ever lives in the tab, never on disk.
+
+What you get is the 16 kHz mono WAV the model actually heard, not the file you uploaded, so `notes.mp3` saves as `notes.wav`. That is the useful copy when you want to hear what the model heard, or feed the same audio somewhere else, and the menu says so before you click.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
+### A dictation link stops freezing the page while it opens
+
+Opening the app with the medical dictation link put the whole page to sleep for a moment, and the first thing anyone clicks (the settings panel) did nothing until it woke up. On a phone it lasted long enough to look broken.
+
+The medical lexicon is 77,000 phrases, and deployments that pre-encode it ship a 37 MB companion file so no visitor's browser has to do that work. Reading that file was the freeze: it was being unpacked on the same thread that draws the page and answers clicks. It now happens on a background thread, which is where the rest of the phrase-list work already ran.
+
+Measured on the real lexicon, on a machine slowed six-fold to stand in for a phone: the single frozen stretch went from 2.7 seconds to 0.2, and total time the page spent unable to answer a click during the first twenty seconds went from 3.3 seconds to 0.8.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
+### The upload button fits on one line in French
+
+"Envoyer un fichier audio" was wider than the space the three capture buttons share, so in French it alone wrapped onto a second line and made the row taller than it needed to be. The folder icon already says "file", so the label is now just "Fichier audio", and the verb it dropped moved to the tooltip.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ## 11.2.0 (2026-09-10)
 
 ### The benchmark table fills in as it measures
