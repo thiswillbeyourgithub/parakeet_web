@@ -52,6 +52,13 @@ export const MED_MODE_ALIASES = Object.freeze([
  *    move the visitor between the two after this preset has been applied.
  *  - lang is forced to French: the lexicon, the dictation regexes and the model
  *    are all French, so an English UI would misdescribe the station.
+ *  - autoCopyToClipboard is the one preset value that turns a default OFF into
+ *    an ON, and it is a deliberate trade rather than an oversight. It is off by
+ *    default because the system clipboard is readable by other apps and
+ *    extensions; on a dictation station the whole workflow is dictate-then-paste
+ *    into a record, so paying that cost once buys back a click per utterance.
+ *    Note it copies the DICTATED text (regexes applied) when the dictation view
+ *    is on, which this preset also switches on.
  */
 export const MED_MODE_PRESET = Object.freeze({
   modelQuery: 'ultimed',
@@ -59,6 +66,7 @@ export const MED_MODE_PRESET = Object.freeze({
   enableChunking: true,
   chunkDurationSec: 30,
   transcriptDisplayMode: 'dictation',
+  autoCopyToClipboard: true,
   wasmEncoderQuant: 'int8',
   webgpuEncoderQuant: 'fp16',
   lang: 'fr',
