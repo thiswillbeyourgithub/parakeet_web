@@ -1,9 +1,12 @@
-// Pure policy for the model-repo picker: parsing the operator's repo list,
-// labelling each entry for the sidebar, and resolving a `?model=` link to one
-// of them. Kept out of App.jsx (and free of any DOM/CONFIG access) so every
+// Pure policy for reading the operator's model configuration: parsing the repo
+// list for the picker, labelling each entry for the sidebar, resolving a
+// `?model=` link to one of them, and normalising the diarization filename
+// settings. Kept out of App.jsx (and free of any DOM/CONFIG access) so every
 // rule below is unit-testable, which matters because the failure mode of a
 // wrong answer here is silent: the app loads a real model and transcribes
-// happily, just not the one the visitor asked for.
+// happily, just not the one the visitor asked for, or it quietly abandons the
+// local mirror and goes back to HuggingFace for weights it was told to
+// self-host.
 
 /** Repo used when the operator configured nothing at all. */
 export const DEFAULT_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
@@ -99,4 +102,30 @@ export function matchModelRepo(query, repos) {
     || only(repos.filter(r => r.toLowerCase().includes(q)))
     || null
   );
+}
+
+/**
+ * Reduce an operator-supplied VITE_DIARIZATION_*_FILE to the bare filename it
+ * is contractually supposed to be (docker/env.example documents it as
+ * `model.onnx`, not a path).
+ *
+ * This exists because the value is JOINED under the repo, both on the hub and
+ * on a local mirror. A well-meant absolute path such as
+ * `/fallback_models/csukuangfj/speaker-embedding-models/model.onnx` was
+ * therefore appended WHOLE to the repo prefix, producing a URL that can only
+ * ever 404. Nothing then failed loudly: the mirror answered the SPA's index
+ * page, the local attempt was written off as "this mirror does not carry the
+ * diarization models", and the loader quietly went to huggingface.co instead,
+ * which on a network that blocks it means diarization just stops working. A
+ * self-hoster reading their own env file sees a path that looks exactly right.
+ *
+ * So take the basename rather than rejecting: the operator's intent is never
+ * ambiguous (they named a real file), and the only reachable place for it is
+ * under the repo prefix anyway. A blank or path-only value falls back.
+ */
+export function diarizationFileName(value, fallback) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return fallback;
+  const base = raw.split(/[\\/]/).pop();
+  return base || fallback;
 }

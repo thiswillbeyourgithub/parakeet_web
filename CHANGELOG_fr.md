@@ -96,6 +96,18 @@ Rédigé avec [Claude Code](https://claude.com/claude-code).
 
 ---
 
+### Un modèle de diarisation auto-hébergé est trouvé là où il a été mis
+
+Les deux modèles de diarisation sont désignés dans la configuration de l'instance par un nom de fichier, et ce nom est cherché à l'intérieur du dépôt indiqué juste à côté. Écrit sous forme de chemin complet (`/fallback_models/csukuangfj/.../model.onnx`), il était accolé tel quel au préfixe du dépôt : la requête ne pouvait que tomber à côté.
+
+Rien n'échouait bruyamment. Un chemin qu'un miroir ne reconnaît pas reçoit en réponse la page de l'application elle-même plutôt qu'un refus, si bien que l'échec se lisait comme « ce miroir ne contient pas les modèles de diarisation » et que le téléchargement repartait discrètement vers HuggingFace. Sur un réseau qui bloque HuggingFace, ce qui est précisément la raison d'auto-héberger ces fichiers, la fonction locuteurs cessait tout simplement de fonctionner, et le fichier de configuration affichait quelque chose qui semblait parfaitement correct.
+
+Le réglage extrait désormais le nom de fichier de ce qui a été écrit : un chemin, un chemin Windows ou une espace en trop mènent tous au fichier voulu, et une valeur qui ne nomme aucun fichier retombe sur la valeur par défaut au lieu de demander un dossier.
+
+Rédigé avec [Claude Code](https://claude.com/claude-code).
+
+---
+
 ## 11.1.0 (2026-09-09)
 
 ### Les nombres dictés en toutes lettres s'écrivent en chiffres

@@ -1,6 +1,8 @@
-// Tier-1 unit test for the model-repo picker policy (app/ui/src/lib/modelRepos.js):
-// parsing the operator's comma-separated VITE_MODEL_REPO, labelling entries for
-// the sidebar, and resolving a `?model=` link to one of them by closest match.
+// Tier-1 unit test for the operator model-configuration policy
+// (app/ui/src/lib/modelRepos.js): parsing the operator's comma-separated
+// VITE_MODEL_REPO, labelling entries for the sidebar, resolving a `?model=`
+// link to one of them by closest match, and normalising the two
+// VITE_DIARIZATION_*_FILE settings.
 //
 // Worth pinning tightly because every failure here is SILENT: picking the wrong
 // repo still produces a fluent transcript from a real model, so nothing in the
@@ -14,6 +16,7 @@ import {
   parseModelRepos,
   shortRepoLabel,
   matchModelRepo,
+  diarizationFileName,
 } from '../../app/ui/src/lib/modelRepos.js';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
@@ -141,5 +144,49 @@ describe('matchModelRepo', () => {
   test('an empty repo list matches nothing', () => {
     assert.equal(matchModelRepo('ultimed', []), null);
     assert.equal(matchModelRepo('ultimed', null), null);
+  });
+});
+
+describe('diarizationFileName', () => {
+  const SEG = 'model.onnx';
+  const EMB = '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
+
+  test('a plain filename, the documented form, is passed through untouched', () => {
+    assert.equal(diarizationFileName(SEG, SEG), SEG);
+    assert.equal(diarizationFileName(EMB, SEG), EMB);
+  });
+
+  test('a full mirror path is reduced to its filename', () => {
+    // The bug this guards: docker/.env carried
+    // VITE_DIARIZATION_SEG_FILE=/fallback_models/csukuangfj/speaker-embedding-models/model.onnx
+    // because the value LOOKS like a path. It is joined under the repo prefix,
+    // so the whole string was appended and every request 404'd. The mirror
+    // answers the SPA index page for an unknown path, so nothing raised: the
+    // loader concluded the mirror did not carry these models and went to
+    // huggingface.co, which is exactly what self-hosting was meant to avoid.
+    assert.equal(
+      diarizationFileName('/fallback_models/csukuangfj/speaker-embedding-models/model.onnx', 'FALLBACK'),
+      SEG,
+    );
+    assert.equal(diarizationFileName('csukuangfj/speaker-embedding-models/' + EMB, 'FALLBACK'), EMB);
+    // A Windows-style path an operator might paste from a local checkout.
+    assert.equal(diarizationFileName('C:\\models\\csukuangfj\\model.onnx', 'FALLBACK'), SEG);
+  });
+
+  test('surrounding whitespace, which an env file makes easy to leave, is stripped', () => {
+    assert.equal(diarizationFileName('  model.onnx  ', 'FALLBACK'), SEG);
+  });
+
+  test('a value that names no file at all falls back to the built-in default', () => {
+    // Unset, blank, and directory-only all mean "the operator said nothing
+    // usable", and the default is the only answer that keeps diarization
+    // working rather than requesting a URL ending in a slash.
+    assert.equal(diarizationFileName(undefined, SEG), SEG);
+    assert.equal(diarizationFileName(null, SEG), SEG);
+    assert.equal(diarizationFileName('', SEG), SEG);
+    assert.equal(diarizationFileName('   ', SEG), SEG);
+    assert.equal(diarizationFileName('csukuangfj/speaker-embedding-models/', SEG), SEG);
+    // Not a string at all: config plumbing hands over whatever it was given.
+    assert.equal(diarizationFileName(42, SEG), SEG);
   });
 });
