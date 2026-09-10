@@ -3567,7 +3567,13 @@ export default function App() {
    *   from this instance (/models/) instead of HuggingFace.
    */
   async function loadModel({ useLocalFallback = forceLocalFallback || localFirstRef.current, corruptionRetried = false,
-                             gpuQuantFallbackTried = false, hubRetryTried = false } = {}) {
+                             gpuQuantFallbackTried = false, hubRetryTried = false,
+                             gpuQuantsTried = [],
+                             // Whether a precision this source cannot serve may be silently
+                             // replaced. The app wants that; the BENCHMARK must not have it,
+                             // because a row labelled fp16 carrying w4a8's numbers is worse
+                             // than a row that says the combination is not served here.
+                             allowQuantSubstitution = true } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');
@@ -3943,7 +3949,44 @@ export default function App() {
         // deployment and is known before a single weight byte is fetched. A
         // GPU that fails later (OOM, device lost) is a different problem and
         // must stay visible rather than be silently absorbed here.
-        if (backend.startsWith('webgpu') && !gpuQuantFallbackTried) {
+        if (backend.startsWith('webgpu') && allowQuantSubstitution) {
+          // FIRST try another precision on the SAME backend. Dropping straight
+          // to WASM was the old behaviour and it changed two things at once for
+          // a reason that justifies changing only one: the missing file is a
+          // property of the deployment, and says nothing about whether this
+          // machine's GPU is the right place to run. A station whose mirror
+          // serves w4a8 and sharded fp32 but no fp16 was being moved off the
+          // GPU it had just been measured onto, over a 610 MB file that was
+          // sitting right there.
+          //
+          // Cheapest-first (lib/encoderQuants.js), because this substitution is
+          // one nobody asked for: it must not be able to turn a 1.2 GB choice
+          // into a 2.35 GB download by surprise. `sourceQuants` narrows the
+          // candidates when the source published a listing and is null
+          // otherwise, in which case they are simply tried in turn.
+          const nextQuant = nextGpuEncoderQuant({
+            current: webgpuEncoderQuant,
+            tried: gpuQuantsTried,
+            servable: sourceQuants?.webgpu ?? null,
+            shaderF16: webgpuShaderF16 === true,
+          });
+          if (nextQuant) {
+            console.warn(`[App] this source has no ${webgpuEncoderQuant} encoder for the GPU; `
+              + `staying on ${backend} and loading ${nextQuant} instead`);
+            setGpuFallbackWarning(t('gpuQuantSwitched', {
+              asked: webgpuEncoderQuant, loaded: nextQuant, mb: QUANT_DOWNLOAD_MB[nextQuant] ?? '?',
+            }));
+            await applyLiveSetting('webgpuEncoderQuant', nextQuant, setWebgpuEncoderQuant);
+            return loadModelRef.current({
+              useLocalFallback,
+              gpuQuantsTried: [...gpuQuantsTried, webgpuEncoderQuant],
+              gpuQuantFallbackTried,
+            });
+          }
+        }
+        if (backend.startsWith('webgpu') && allowQuantSubstitution && !gpuQuantFallbackTried) {
+          // Nothing this GPU can run is hosted here, so the backend really is
+          // what has to change. Only now.
           console.warn('[App] no GPU-capable encoder from this source; falling back to WASM');
           setGpuFallbackWarning(t('gpuQuantFallback'));
           // Remember WHICH repo+precision could not be served, so the flip to
@@ -7014,17 +7057,33 @@ export default function App() {
   // answer; for the GPU-weights fallback it would mean retrying the very load
   // that just failed. Never marks the backend as user-picked: nothing that
   // comes through here is a human decision.
-  async function applyBackend(want, { label = 'App', capMs = 5000 } = {}) {
-    if (want === liveSettingsRef.current.backend) return;
-    setBackend(want);
+  /**
+   * Push a model-defining setting into React state and WAIT for it to be live.
+   *
+   * loadModel reads backend and precision from its closure, so a bare setState
+   * followed by a reload re-enters with the OLD value and loads exactly the
+   * model that just failed. liveSettingsRef is refreshed on every render, so
+   * polling it is the only way to know the change has actually landed.
+   *
+   * Written once and shared by the backend flip and the GPU precision
+   * substitution: a second copy of this poll is how the two would end up with
+   * different timeout behaviour on the path where both fire.
+   */
+  async function applyLiveSetting(key, want, setter, { label = 'App', capMs = 5000 } = {}) {
+    if (want === liveSettingsRef.current[key]) return;
+    setter(want);
     const t0 = performance.now();
-    while (liveSettingsRef.current.backend !== want) {
+    while (liveSettingsRef.current[key] !== want) {
       if (performance.now() - t0 > capMs) {
-        console.warn(`[${label}] backend still ${liveSettingsRef.current.backend}, wanted ${want}`);
+        console.warn(`[${label}] ${key} still ${liveSettingsRef.current[key]}, wanted ${want}`);
         return;
       }
       await new Promise((r) => setTimeout(r, 20));
     }
+  }
+
+  async function applyBackend(want, opts = {}) {
+    return applyLiveSetting('backend', want, setBackend, opts);
   }
 
   async function applyProbeVerdict(verdict, capMs = 5000) {

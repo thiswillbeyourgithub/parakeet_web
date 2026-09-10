@@ -10,6 +10,16 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.2.0 (2026-09-10)
 
+### A precision your source lacks now changes the file, not the backend
+
+When the GPU precision you asked for turned out not to be hosted anywhere, the app moved you to the processor. That fallback exists for a good reason (the automatic measurement can put a visitor on the GPU without them ever choosing it, and stranding those visitors on a failed load would be worse), but it answered a missing file by giving up the graphics card, which is rarely what someone who picked the GPU wants.
+
+Now it looks for another precision the GPU can run and this source does host, cheapest download first, and loads that instead. The backend you are on stays the backend you are on, and the notice says which precision was asked for, which one was loaded and roughly how large it is, so a surprise download is a stated one. Only when no GPU precision can be served at all does the old move to the processor happen, with the same notice it always had.
+
+Written with [Claude Code](https://claude.com/claude-code).
+
+---
+
 ### Precisions this instance cannot serve are greyed out before you pick them
 
 The encoder precision buttons used to describe what the app knows how to run, not what your instance can actually hand it. On a deployment whose model copy carries fp32, int8 and w4a8 but no fp16, picking fp16 looked perfectly normal, started a load, and ended a minute later on a message explaining that the file was not there and a processor model had been loaded instead. Everything in that message was true and all of it arrived too late.
