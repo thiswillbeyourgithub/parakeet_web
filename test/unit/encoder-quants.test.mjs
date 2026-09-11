@@ -28,6 +28,9 @@ import {
   QUANT_DOWNLOAD_MB,
   WASM_ENCODER_QUANTS,
   WEBGPU_ENCODER_QUANTS,
+  DEFAULT_WASM_ENCODER_QUANT,
+  DEFAULT_WEBGPU_ENCODER_QUANT,
+  effectiveEncoderQuant,
   encoderQuantRows,
   encoderQuantsFor,
   nextGpuEncoderQuant,
@@ -299,5 +302,112 @@ describe('encoderQuantRows: what the sidebar actually renders', () => {
     const rows = encoderQuantRows({ backend: 'webgpu-hybrid', repoFiles: null, shaderF16: true, order });
     assert.deepEqual(values(rows), ['w4a8', 'fp16', 'fp32']);
     for (const r of rows) assert.ok(WEBGPU_ENCODER_QUANTS.includes(r.value), r.value);
+  });
+});
+
+describe('the precision a visitor gets before choosing one', () => {
+  // The rule the owner asked for on 2026-09-11, in one sentence: fp16 on the
+  // GPU, int8 on the processor. Both halves are load-bearing and neither is a
+  // preference. fp16 is half of fp32's bytes at the same accuracy and is the
+  // reason the model repos publish an fp16 encoder at all; on WASM it has no
+  // usable kernel and ORT upcasts it to fp32 at session build, so int8 is not
+  // merely cheaper there, it is the only sensible answer.
+  test('WebGPU defaults to fp16, WASM to int8', () => {
+    assert.equal(DEFAULT_WEBGPU_ENCODER_QUANT, 'fp16');
+    assert.equal(DEFAULT_WASM_ENCODER_QUANT, 'int8');
+  });
+
+  test('each default is a precision its own backend actually offers', () => {
+    // A default outside the whitelist would be coerced away on the very next
+    // boot by the restore path, which is a bug that looks like "the setting
+    // does not stick" rather than like a typo here.
+    assert.ok(WEBGPU_ENCODER_QUANTS.includes(DEFAULT_WEBGPU_ENCODER_QUANT));
+    assert.ok(WASM_ENCODER_QUANTS.includes(DEFAULT_WASM_ENCODER_QUANT));
+  });
+
+  test('the default sits first in its backend preference order', () => {
+    // The lists are walked in order by the fallback below, so "the default" and
+    // "what is tried first" have to be the same value. They were two separate
+    // literals until this was made explicit, and the pair is exactly the kind
+    // that drifts silently: nothing fails, the app just stops defaulting to
+    // what the constant says.
+    assert.equal(WEBGPU_ENCODER_QUANTS[0], DEFAULT_WEBGPU_ENCODER_QUANT);
+    assert.equal(WASM_ENCODER_QUANTS.indexOf(DEFAULT_WASM_ENCODER_QUANT) >= 0, true);
+    // And fp32 immediately behind fp16, because that is the degradation a
+    // machine without shader-f16 takes. w4a8 ahead of it would quietly hand a
+    // visitor who asked for nothing a 4-bit encoder.
+    assert.deepEqual(WEBGPU_ENCODER_QUANTS.slice(0, 2), ['fp16', 'fp32']);
+  });
+});
+
+describe('effectiveEncoderQuant: what a load would really use', () => {
+  const gpu = (over = {}) => effectiveEncoderQuant({
+    backend: 'webgpu-hybrid', selected: DEFAULT_WEBGPU_ENCODER_QUANT, ...over,
+  });
+
+  test('the fp16 default loads as fp16 on a machine and source that can', () => {
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: true });
+    assert.equal(gpu({ servable, shaderF16: true }), 'fp16');
+  });
+
+  test('no shader-f16 degrades the default to fp32, never to w4a8', () => {
+    // The adapter feature is the common case, not the exotic one: this repo's
+    // own GPU box (RTX 3090 Ti) does not expose it. Degrading to w4a8 would
+    // hand a 4-bit encoder to somebody who picked nothing, so the fallback has
+    // to land on the full-precision file instead.
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false });
+    assert.equal(gpu({ servable, shaderF16: false }), 'fp32');
+  });
+
+  test('a source with no fp16 file degrades the default to fp32 too', () => {
+    // Which is the deployment as it stood before the fp16 encoder was
+    // published. The visitor never sees fp16 offered, and what loads is what
+    // used to be the default, so making fp16 the default costs nothing there.
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR, shaderF16: true });
+    assert.equal(gpu({ servable, shaderF16: true }), 'fp32');
+  });
+
+  test('an unknown listing is no reason to refuse the default', () => {
+    // null means "no manifest, no answer yet, offline": refusing fp16 on the
+    // strength of an unanswered question is how a loadable model becomes
+    // unreachable. The shader-f16 question fails the other way on purpose.
+    assert.equal(gpu({ servable: null, shaderF16: true }), 'fp16');
+    assert.equal(gpu({ servable: null, shaderF16: false }), 'fp32');
+  });
+
+  test('a deliberate choice survives, and is not quietly upgraded to the default', () => {
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: true });
+    assert.equal(gpu({ selected: 'w4a8', servable, shaderF16: true }), 'w4a8');
+    assert.equal(
+      effectiveEncoderQuant({ backend: 'wasm', selected: 'w4a8', servable, shaderF16: true }),
+      'w4a8',
+    );
+  });
+
+  test('WASM keeps int8 and is never handed a GPU-only precision', () => {
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: true });
+    assert.equal(
+      effectiveEncoderQuant({ backend: 'wasm', selected: DEFAULT_WASM_ENCODER_QUANT, servable }),
+      'int8',
+    );
+    // A preference carried over from the GPU side must not survive the switch:
+    // fp16 has no usable WASM kernel, so this is the backend question, not the
+    // machine one, and it falls to the first WASM precision this source serves.
+    const onWasm = effectiveEncoderQuant({ backend: 'wasm', selected: 'fp16', servable, shaderF16: true });
+    assert.ok(WASM_ENCODER_QUANTS.includes(onWasm));
+    assert.notEqual(onWasm, 'fp16');
+  });
+
+  test('a source that can serve nothing at all still names a runnable precision', () => {
+    // The load fails either way here (QuantUnavailableError, then the
+    // GPU-to-WASM fallback), so the only thing that matters is that this never
+    // answers fp16 on an adapter that cannot run it: that combination builds a
+    // session and transcribes silence instead of failing.
+    const none = { wasm: [], webgpu: [] };
+    assert.equal(gpu({ servable: none, shaderF16: false }), 'fp32');
+    assert.equal(
+      effectiveEncoderQuant({ backend: 'wasm', selected: 'int8', servable: none }),
+      DEFAULT_WASM_ENCODER_QUANT,
+    );
   });
 });
