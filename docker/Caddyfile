@@ -236,6 +236,19 @@
 	#  - /models/*: large (hundreds of MB) and the JS layer content-hashes
 	#    them on use, so they can be heuristically cached for a day, but
 	#    pin the rule so the intent is reviewable.
+	#  - /models/**/model-manifest.json: the ONE file under /models that
+	#    changes when the operator publishes weights, so it must NOT inherit
+	#    the day-long rule above. `must-revalidate` does not mean "ask every
+	#    time", it means "do not serve it once stale", so a manifest with
+	#    max-age=86400 is served from cache for a whole day without the
+	#    server being contacted at all. That is a shipped bug, not a
+	#    theoretical one: after the fp16 encoder was published, returning
+	#    visitors kept a manifest that did not list it, the sidebar greyed
+	#    the fp16 radio as "not hosted by this model source", and a GPU load
+	#    asking for fp16 hit QuantUnavailableError and PERSISTED a fall back
+	#    to WASM. A private window, with an empty cache, showed the same
+	#    deployment working perfectly. The file is ~1 KB: revalidate it every
+	#    time. Listed after @local_models so this rule wins.
 	@stable_static path /js/* /favicon.svg
 	header @stable_static Cache-Control "public, max-age=300, must-revalidate"
 	@dictation_regex path /dictation-regex/*
@@ -244,6 +257,8 @@
 	header @boost_phrases Cache-Control "no-cache, must-revalidate"
 	@local_models path /models/*
 	header @local_models Cache-Control "public, max-age=86400, must-revalidate"
+	@model_manifest_cache path /models/model-manifest.json /models/*/model-manifest.json /models/*/*/model-manifest.json
+	header @model_manifest_cache Cache-Control "no-cache, must-revalidate"
 
 	# Signaling: strip /api/signal prefix → /api on the local Node sidecar.
 	#
