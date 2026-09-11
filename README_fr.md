@@ -470,9 +470,12 @@ deux appliquent le même préréglage :
   car le presse-papiers système est lisible par d'autres applications et
   extensions, et un poste de dictée échange cela contre le clic économisé à
   chaque énoncé. Décochez-le dans la section Général si vous préférez ;
-- la précision **int8** sur le processeur et **fp32** sur le GPU, pour que le
-  choix soit déjà le bon quel que soit le moteur sur lequel la machine
-  atterrira ;
+- la précision **int8** sur le processeur et **fp16** sur la carte graphique,
+  pour que le choix soit déjà le bon quel que soit le moteur sur lequel la
+  machine atterrira. Les deux sont écrites, et les deux REMPLACENT une
+  précision choisie à la main auparavant : un lien mode médical configure
+  tout le poste, donc un poste un jour basculé à la main sur l'encodeur de
+  2,4 Go cesse de le télécharger ;
 - une **interface en français** ;
 - un **autoconfigure lancé au chargement de la page** plutôt qu'au clic sur
   Charger le modèle, afin que la question processeur-ou-GPU soit tranchée avant

@@ -20,6 +20,14 @@ Nothing changes on the processor engine, which stays on int8: half precision has
 
 Written with Claude Code.
 
+### Medical dictation mode follows the same default
+
+The medical dictation preset pinned the full-precision encoder on a graphics card, deliberately, back when asking for the half-precision one could fail a load and move a station to its processor for good. Neither of those failures can happen any more: an adapter that cannot run it falls back before anything is downloaded, and a model server that does not host it is forgiven the moment it does. So the preset now asks for the same half-precision encoder as everywhere else, which is the setting it should have had: a dictation station reloads all day, often on a network chosen for being locked down, and this halves what it fetches.
+
+Worth knowing if you have ever changed the precision by hand on such a machine: a medical mode link replaces it. That is the intent, not a side effect. The link sets up the whole station, and a station switched to the 2.4 GB encoder by hand months ago was still fetching it on every visit while every other part of the preset looked correctly applied.
+
+Written with Claude Code.
+
 ---
 
 ## 11.3.1 (2026-09-11)

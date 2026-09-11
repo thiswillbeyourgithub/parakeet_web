@@ -20,6 +20,14 @@ Rien ne change sur le moteur processeur, qui reste en int8 : la demi-précision 
 
 Écrit avec Claude Code.
 
+### Le mode dictée médicale suit le même défaut
+
+Le préréglage de dictée médicale imposait l'encodeur pleine précision sur une carte graphique, délibérément, à l'époque où demander celui en demi-précision pouvait faire échouer un chargement et basculer un poste sur son processeur définitivement. Aucun de ces échecs n'est plus possible : un adaptateur incapable de l'exécuter se replie avant le moindre téléchargement, et un serveur de modèles qui ne l'héberge pas est pardonné dès qu'il le fait. Le préréglage demande donc désormais le même encodeur en demi-précision que partout ailleurs, ce qui est le réglage qu'il aurait dû avoir : un poste de dictée recharge la page toute la journée, souvent sur un réseau choisi pour être verrouillé, et cela divise par deux ce qu'il récupère.
+
+Bon à savoir si vous avez déjà changé la précision à la main sur une telle machine : un lien mode médical la remplace. C'est l'intention, pas un effet de bord. Le lien configure tout le poste, et un poste basculé à la main sur l'encodeur de 2,4 Go il y a des mois le récupérait encore à chaque visite alors que tout le reste du préréglage semblait correctement appliqué.
+
+Écrit avec Claude Code.
+
 ---
 
 ## 11.3.1 (2026-09-11)
