@@ -135,4 +135,64 @@ test('transcribes JFK English (MP3) with the WASM sharded fp32 encoder', async (
   // resolved) still fails the test.
   const realErrors = errors.filter((e) => !/Failed to load resource.*404/.test(e));
   expect(realErrors, `page console errors: ${realErrors.join('\n')}`).toHaveLength(0);
+
+  // ---------------------------------------------------------------------------
+  // Second load: the prefix cache
+  // ---------------------------------------------------------------------------
+  // The shard set is too big to cache whole (reading a value back throws once
+  // the origin holds more than ~2^31 aggregate bytes of large values, whatever
+  // the record size), so hub.js keeps the first MAX_PREFIX_CACHE_BYTES of it as
+  // resume state and Range-fetches the rest. This is the only place that claim
+  // gets tested against a real Chromium and real 1.4 GB records: the unit test
+  // proves the byte arithmetic, but it cannot reproduce the readback ceiling
+  // that made three previous attempts at this fail after they looked fine.
+  //
+  // Two things have to hold, and the second is the one that matters. The
+  // transfer has to actually drop, and the model stitched together from a
+  // cached prefix plus a fetched tail has to still be the model: a prefix that
+  // is read back short or misordered produces a session that builds and
+  // transcribes garbage, not a failed load.
+  const shardGets = [];
+  page.on('request', (r) => {
+    const url = r.url();
+    if (r.method() === 'GET' && /encoder-model\.onnx\.data\.\d+$/.test(url)) {
+      shardGets.push({ name: url.split('/').pop(), range: r.headers()['range'] || null });
+    }
+  });
+
+  await page.reload();
+
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Model and performance');
+  // Waiting for the restored value, rather than re-checking it, is what keeps
+  // the async settings restore from racing the Load click (see above).
+  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked({ timeout: 30 * 1000 });
+  await page.locator('.settings-sidebar-close').click();
+  await page.locator('[data-umami-event="load_model_button"]').click();
+  await expect(page.locator('body')).toContainText('✔', { timeout: 7 * 60 * 1000 });
+
+  // .000 (1.483 GB) fits inside the budget, so the second load must not fetch a
+  // byte of it. .001 does not, so it still comes over the wire, and if it kept
+  // a prefix of its own it must resume past it rather than start over.
+  const got000 = shardGets.filter((r) => r.name.endsWith('.000'));
+  const got001 = shardGets.filter((r) => r.name.endsWith('.001'));
+  expect(got000, `the first shard must come from the cache, not the network: ${JSON.stringify(shardGets)}`).toHaveLength(0);
+  expect(got001.length, 'the shard past the budget is still fetched').toBeGreaterThan(0);
+  expect(logs.some((l) => /Read \d+ cached bytes of \S*encoder-model\.onnx\.data\.000/.test(l)),
+    `expected the cached prefix to be read back; saw logs:\n${logs.slice(-40).join('\n')}`).toBe(true);
+
+  // And the stitched weights are the real weights. Same clip, same bar.
+  const runsBefore = transcribeRuns;
+  await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
+  const cachedText = page.locator('.history-text').first();
+  await expect(cachedText).not.toBeEmpty({ timeout: 7 * 60 * 1000 });
+  await expect.poll(() => transcribeRuns, { timeout: 7 * 60 * 1000 }).toBeGreaterThan(runsBefore);
+  await expect(async () => {
+    const got = (await cachedText.innerText()).trim();
+    const o = overlap(words(GOLDEN), words(got));
+    expect(o, `transcript from the cached prefix "${got}" vs golden "${GOLDEN}" overlap ${o.toFixed(2)}`).toBeGreaterThanOrEqual(0.7);
+  }).toPass({ timeout: 60 * 1000 });
+
+  const realErrorsCached = errors.filter((e) => !/Failed to load resource.*404/.test(e));
+  expect(realErrorsCached, `page console errors: ${realErrorsCached.join('\n')}`).toHaveLength(0);
 });
