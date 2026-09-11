@@ -33,121 +33,13 @@
 import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { getLocalModelFile } from '../../app/src/hub.js';
+import { fakeIdb, fakeIndexedDBOpen } from '../support/fake-indexeddb.mjs';
 
 // ---------------------------------------------------------------------------
 // Minimal fake IndexedDB
 // ---------------------------------------------------------------------------
-// One module-level instance: openIdb memoises its DB promise per
-// (dbName, storeName, version) for the lifetime of the process, so the fake has
-// to outlive individual tests. reset() clears the backing store and the
-// instrumentation between tests instead.
-
-const fakeIdb = {
-  data: new Map(),            // key -> stored value (blobs are clones)
-  lastGetReturned: new Map(), // key -> the exact value the last get() handed back
-  putValueTypes: new Map(),   // key -> constructor name of the value handed to put()
-  failPuts: false,
-  reset() {
-    this.data.clear();
-    this.lastGetReturned.clear();
-    this.putValueTypes.clear();
-    this.failPuts = false;
-  },
-};
-
-// Fire a request callback on a later turn, so the caller has had time to assign
-// its onsuccess/onerror handlers synchronously after the call returns.
-function later(fn) { queueMicrotask(fn); }
-
-function makeRequest() {
-  return { onsuccess: null, onerror: null, result: undefined, error: null };
-}
-
-function makeStoreApi() {
-  return {
-    get(key) {
-      const request = makeRequest();
-      later(() => {
-        request.result = fakeIdb.data.get(key);
-        fakeIdb.lastGetReturned.set(key, request.result);
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    },
-    put(value, key) {
-      const request = makeRequest();
-      fakeIdb.putValueTypes.set(key, value && value.constructor ? value.constructor.name : typeof value);
-      later(() => {
-        if (fakeIdb.failPuts) {
-          request.error = new Error('put failed');
-          if (request.onerror) request.onerror();
-          return;
-        }
-        // Real IDB structured-clones on write: the stored record is a different
-        // object from the one the caller handed in. That difference is the whole
-        // point of this test, so the fake reproduces it for Blob values.
-        const stored = value instanceof Blob ? new Blob([value], { type: value.type }) : value;
-        fakeIdb.data.set(key, stored);
-        request.result = key;
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    },
-    delete(key) {
-      const request = makeRequest();
-      later(() => {
-        fakeIdb.data.delete(key);
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    },
-    getAllKeys() {
-      const request = makeRequest();
-      later(() => {
-        request.result = [...fakeIdb.data.keys()];
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    },
-    clear() {
-      const request = makeRequest();
-      later(() => {
-        fakeIdb.data.clear();
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    },
-  };
-}
-
-function makeFakeDb(version) {
-  const storeNames = new Set();
-  const storeApi = makeStoreApi();
-  return {
-    version,
-    objectStoreNames: { contains: (name) => storeNames.has(name) },
-    createObjectStore(name) { storeNames.add(name); return storeApi; },
-    close() {},
-    transaction(_names, _mode) { return { objectStore: () => storeApi }; },
-  };
-}
-
-const fakeDbs = new Map(); // dbName -> fake db object
-
-function fakeIndexedDBOpen(name, version = 1) {
-  const request = makeRequest();
-  later(() => {
-    const isNew = !fakeDbs.has(name);
-    if (isNew) fakeDbs.set(name, makeFakeDb(version));
-    const db = fakeDbs.get(name);
-    request.result = db;
-    // A brand-new DB gets the upgrade callback first (that is where idb.js
-    // creates the object store), then success.
-    if (isNew && request.onupgradeneeded) request.onupgradeneeded({ target: { result: db } });
-    if (request.onsuccess) request.onsuccess();
-  });
-  return request;
-}
+// The fake itself lives in test/support/fake-indexeddb.mjs: three tier-1
+// tests need it, and three hand-rolled copies of a fake IDB would drift.
 
 // ---------------------------------------------------------------------------
 // Test payload + fetch stub (same house style as stream-to-memory.test.mjs)
