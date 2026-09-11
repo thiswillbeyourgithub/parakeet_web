@@ -120,12 +120,24 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
     // int8 has no WebGPU kernel, so the two cannot be unified: this is a
     // pairing, not a preference.
     assert.equal(MED_MODE_PRESET.wasmEncoderQuant, 'int8');
-    // fp32 rather than the smaller fp16 because fp16 needs BOTH a `shader-f16`
-    // adapter and a source hosting the fp16 file; missing either one makes the
-    // load fail over to WASM and PERSIST that flip, so the station silently
-    // stops using its GPU. Regressing this to fp16 to save a download is the
-    // exact mistake this assertion exists to catch.
-    assert.equal(MED_MODE_PRESET.webgpuEncoderQuant, 'fp32');
+    // fp16, the same default the app uses everywhere else since 2026-09-11.
+    // This assertion used to pin fp32 and to say that regressing it to fp16
+    // was the mistake it existed to catch, on the grounds that fp16 needs BOTH
+    // a `shader-f16` adapter and a source hosting the file, and that missing
+    // either one failed the load over to WASM and PERSISTED the flip. That
+    // reasoning was retired on evidence, not waved away: the adapter half now
+    // degrades to fp32 in effectiveEncoderQuant before hub.js is asked (pinned
+    // in test/unit/encoder-quants.test.mjs), and the source half clears its own
+    // gpuWeightsUnservableSig once the file is published. What the assertion
+    // pins now is the other direction: a dictation station reloads all day on
+    // a deliberately locked-down network, so quietly putting it back on a
+    // 2.35 GB encoder when a 1.2 GB one of equal accuracy is being served is
+    // the mistake worth catching here.
+    assert.equal(MED_MODE_PRESET.webgpuEncoderQuant, 'fp16');
+    // And still one precision PER BACKEND rather than one value: fp16 has no
+    // usable WASM kernel and int8 has no WebGPU one, so neither side can stand
+    // in for the other when the probe later moves the station between them.
+    assert.notEqual(MED_MODE_PRESET.wasmEncoderQuant, MED_MODE_PRESET.webgpuEncoderQuant);
   });
 
   test('carries no phrase-boost tuning knobs', () => {
