@@ -71,7 +71,12 @@ test('with a GPU present, WebGPU is selectable and a persisted choice survives a
   // fp32 is the GPU default (w4a8 is the only other precision the GPU path
   // offers, and it is opt-in), so it is what is selected.
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeDisabled();
+  // There is no GPU int8 encoder kernel, so int8 is not a precision this
+  // backend offers and gets no row at all. Asserting absence rather than a
+  // disabled row is the stronger claim: a greyed int8 under WebGPU described a
+  // precision that was unavailable today rather than one that does not exist
+  // here, which is how a greyed fp16 under WASM got read as a missing file.
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
 });
 
 test('on WebGPU without shader-f16, fp16 is greyed out and fp32 is what loads', async ({ page }) => {
@@ -93,7 +98,7 @@ test('on WebGPU without shader-f16, fp16 is greyed out and fp32 is what loads', 
   await expect(fp16).not.toBeChecked();
   // The precision that will actually load is the one shown as selected.
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeDisabled();
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
 });
 
 test('on WebGPU with shader-f16, fp16 is selectable and a saved choice is restored', async ({ page }) => {
@@ -107,8 +112,8 @@ test('on WebGPU with shader-f16, fp16 is selectable and a saved choice is restor
   const fp16 = page.locator('input[name="encoderQuant"][value="fp16"]');
   await expect(fp16).toBeEnabled();
   await expect(fp16).toBeChecked();
-  // fp16 is a GPU-only build; the CPU EP has no fp16 kernels at all.
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeDisabled();
+  // int8 has no GPU encoder kernel, so it is not offered on this backend.
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
 });
 
 test('with no adapter, WebGPU is greyed out and WASM int8 stays the default', async ({ page }) => {
@@ -127,8 +132,11 @@ test('with no adapter, WebGPU is greyed out and WASM int8 stays the default', as
   await expect(int8).toBeChecked();
   // The opt-in sharded fp32 stays selectable on WASM.
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeEnabled();
-  // fp16 has a row on every backend but is only ever runnable on WebGPU.
-  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeDisabled();
+  // fp16 is a GPU-only build: the CPU EP has no fp16 kernels, so it is not a
+  // choice this backend has and it is not rendered. It used to sit here greyed,
+  // which read as "the fp16 file is missing from the server" rather than as an
+  // engine with no use for it, and that misreading is what this pins.
+  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toHaveCount(0);
 });
 
 test('?webgpu=0 forces WASM even on a GPU machine, and coerces a persisted choice', async ({ page }) => {
