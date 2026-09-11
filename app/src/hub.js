@@ -1886,8 +1886,24 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // not choose. So a shard small enough to survive a cache round-trip is now
   // written to IndexedDB after streaming (cacheIfUnder), while one over the
   // limit keeps exactly the old behaviour. The current 1.4 GB shards are over
-  // it, so nothing changes until the model repo re-shards smaller:
-  //   uv run .../scripts/shard-fp32.py --max-shard-bytes 500000000
+  // it, so in practice this gate refuses both of them on every load.
+  //
+  // This comment used to advise re-sharding smaller (--max-shard-bytes
+  // 500000000) to get under the gate. DO NOT: that advice assumed the limit was
+  // PER RECORD, and it is not. Measured 2026-09-11 with a standalone probe:
+  // writing 2.42 GB as 72 x 32 MB IndexedDB records succeeds completely, and
+  // `navigator.storage.estimate()` confirms 2.42 GB used against a 10.74 GB
+  // quota, but after a reload everything past ~2,113,929,216 bytes throws
+  // `UnknownError: Failed to read large IndexedDB value`. That is 2^31, the same
+  // wall as the blob-URL fetch cap, applied to the AGGREGATE of large IDB values
+  // in one origin. Five 500 MB shards are still 2.5 GB, so re-sharding would
+  // change nothing except making the failure look like it worked for the first
+  // four. The ~2.4 GB fp32 encoder cannot be cached in any record shape; only a
+  // deliberately PARTIAL cache (keep ~1.5 GB, Range-fetch the rest) could help,
+  // and that is unbuilt. Sharding itself is unaffected: shards exist so no
+  // single file trips the ~2 GB load-time walls, which has nothing to do with
+  // caching.
+  //
   // The streaming itself is untouched either way: the multi-GB Blob assembly
   // that commit 88a39df died on is still never performed.
   if (useShards) {
