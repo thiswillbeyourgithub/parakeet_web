@@ -10,9 +10,23 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.0 (2026-09-10)
 
+### The fp32 encoder stops downloading itself in full every time
+
+The full precision encoder is about 2.4 GB, shipped as two files, and until now every page load fetched all of it again. Nothing was kept, because three attempts at keeping it had each failed in a way that looked like a different problem: one large record per file, then a size limit that turned out to exclude both files, then many small records.
+
+They were one problem. A browser will accept far more than 2.4 GB into its storage, report it as stored, and then refuse to read it back once what it holds passes about 2.1 GB. Measured here: 2.42 GB written as 72 records of 32 MB was reported as 2.42 GB against a 10.74 GB allowance, and after a reload the first 63 records read while the last 9 threw. 63 records of 32 MB is 2,147,483,648 bytes, or 2 to the 31st, and the record size makes no difference to where the line falls.
+
+So the file cannot be kept, but part of it can. A load now keeps 1.5 GB of the set and asks the server only for the rest, resuming from the cached part exactly the way a download interrupted halfway already did. Against the two files the model repo ships that means the first (1.48 GB) comes out of storage and the second (952 MB) comes over the network. Measured end to end in a browser: 2454 MB transferred on the first load, 952 MB on every load after it.
+
+Reading 1.5 GB back out of browser storage was measured at 344 MB/s, about 4.4 seconds. That is a little slower than re-fetching the same bytes from a server on the same machine, and far faster than any real connection, which is the case this is for.
+
+fp16 (1.2 GB) was never affected and is unchanged: it fits under the ceiling and has always been cached whole.
+
+Written with Claude Code.
+
 ### The status line says whether it is downloading or loading
 
-"Loading model" was shown for all three phases of a model load: looking in the cache, pulling whatever is missing over the network, and building the inference sessions. That is fine for a warm start measured in seconds and useless for the case it actually matters in. The fp32 encoder is re-downloaded in full on every load (its two pieces are each larger than the size a browser will reliably hand back out of its own cache, so nothing is kept), and a status line reading "Loading model" for nine minutes gives no way to tell a slow connection from a slow machine.
+"Loading model" was shown for all three phases of a model load: looking in the cache, pulling whatever is missing over the network, and building the inference sessions. That is fine for a warm start measured in seconds and useless for the case it actually matters in. At the time, the fp32 encoder was re-downloaded in full on every load (the entry above explains why, and stops it), and a status line reading "Loading model" for nine minutes gives no way to tell a slow connection from a slow machine.
 
 There is now a separate "Downloading model" phase. It appears on the first byte that actually crosses the network, not at the start of the load, so a start answered entirely from cache never claims a download it did not make.
 
