@@ -49,6 +49,7 @@ import {
   QUANT_DOWNLOAD_MB,
   WASM_ENCODER_QUANTS,
   WEBGPU_ENCODER_QUANTS,
+  encoderQuantRows,
   nextGpuEncoderQuant,
   servableEncoderQuants,
 } from './lib/encoderQuants.js';
@@ -71,7 +72,7 @@ import {
 import {
   PROBE_MODEL_PATHS, PROBE_SEQ, PROBE_DIM, PROBE_INPUT_NAME,
   PROBE_WARMUP_RUNS, PROBE_INIT_TIMEOUT_MS, PROBE_RUN_TIMEOUT_MS,
-  pickBackendFromProbe, verdictStillValid, shouldAutoProbe,
+  pickBackendFromProbe, verdictStillValid, shouldAutoProbe, sourceQuantSignature,
   buildVerdict, planTimedRuns, median as probeMedian,
 } from './lib/perfProbe.js';
 import { isChromiumFamily } from './lib/browserFamily.js';
@@ -876,6 +877,11 @@ export default function App() {
   // needs no explicit invalidation: the signature stops matching the moment
   // either half changes, which is exactly when the GPU deserves another try.
   const [gpuWeightsUnservableSig, setGpuWeightsUnservableSig] = useState(null);
+  // Signatures written by a load in THIS session. The self-healing effect below
+  // clears an inherited mark when the source starts offering the precision
+  // again, and this is what stops it from clearing one that a load just earned
+  // the hard way against the real files.
+  const gpuUnservableSetThisSessionRef = useRef(new Set());
   const [backend, setBackend] = useState('wasm');
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~900 MB, fast,
   // good quality on long audio: since 2026-09-03 both repos ship it as a
@@ -1667,6 +1673,32 @@ export default function App() {
     () => servableEncoderQuants({ repoFiles: sourceRepoFiles, shaderF16: webgpuShaderF16 === true }),
     [sourceRepoFiles, webgpuShaderF16],
   );
+
+  // Let the "this source cannot feed the GPU" memory heal itself once the source
+  // can. The signature was written on the assumption that it needs no explicit
+  // invalidation, because it stops matching as soon as the repo or the precision
+  // changes. That reasoning missed the case that actually happened: NEITHER half
+  // changes when the operator publishes the missing encoder, so a visitor pinned
+  // to WASM over a file that is now sitting on the server stays pinned to WASM
+  // for good. It is worse than a slow deployment reaching them late, because the
+  // flip is persisted and medical mode reads this signature specifically to
+  // avoid re-applying its WebGPU verdict. A listing that now offers the
+  // precision is exactly the evidence that the pin is spent, so drop it.
+  //
+  // Only a mark inherited from an EARLIER session is cleared. One written by a
+  // load in this session stays: that load just proved, against the real files,
+  // that the listing is wrong, and clearing it on the listing's say-so would put
+  // the visitor back on a GPU whose weights 404 on every visit.
+  useEffect(() => {
+    if (!settingsLoaded || !gpuWeightsUnservableSig) return;
+    if (gpuUnservableSetThisSessionRef.current.has(gpuWeightsUnservableSig)) return;
+    const servable = sourceQuants?.webgpu;
+    if (!servable) return;
+    const [sigRepo, sigQuant] = String(gpuWeightsUnservableSig).split('|');
+    if (sigRepo !== repoId || !servable.includes(sigQuant)) return;
+    console.log(`[App] ${repoId} now serves ${sigQuant} for the GPU; clearing the unservable mark.`);
+    setGpuWeightsUnservableSig(null);
+  }, [settingsLoaded, gpuWeightsUnservableSig, sourceQuants, repoId]);
 
   // True once the (potentially large/slow) transcript history has actually been
   // read back into state. The history loads *after* settingsLoaded flips, so the
@@ -2827,6 +2859,7 @@ export default function App() {
   async function autoconfigureBackendForMedMode() {
     const storedVerdictValid = verdictStillValid(probeVerdict, {
       appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
+      sourceSig: sourceQuantSignature(sourceQuants),
     });
     if (shouldAutoProbe({
       settingsLoaded,
@@ -4011,6 +4044,7 @@ export default function App() {
           // WASM below is not undone on the next visit by a stored WebGPU
           // verdict (medical mode re-applies those). Recorded before the flip,
           // because `backend` becomes 'wasm' a line from here.
+          gpuUnservableSetThisSessionRef.current.add(`${repoId}|${webgpuEncoderQuant}`);
           setGpuWeightsUnservableSig(`${repoId}|${webgpuEncoderQuant}`);
           await applyBackend('wasm');
           return loadModelRef.current({ useLocalFallback, gpuQuantFallbackTried: true });
@@ -7100,6 +7134,7 @@ export default function App() {
       const verdict = buildVerdict({
         pick, wasmMs, gpuMs, appVersion: VERSION,
         adapter: webgpuAdapterSigRef.current, at: Date.now(), trigger,
+        sourceSig: sourceQuantSignature(sourceQuants),
       });
       console.log(`[Probe] ${verdict.backend} wins: wasm ${wasmMs.toFixed(1)} ms vs gpu `
         + `${Number.isFinite(gpuMs) ? gpuMs.toFixed(1) + ' ms' : 'n/a'}`
@@ -7175,6 +7210,7 @@ export default function App() {
       webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
       hasValidVerdict: verdictStillValid(probeVerdict, {
         appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
+        sourceSig: sourceQuantSignature(sourceQuants),
       }),
       running: probeRunningRef.current,
     })) {
@@ -8109,7 +8145,6 @@ export default function App() {
               // local copy here is how the two would drift apart.
               const isWebgpu = isWebgpuSelected;
               const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
-              const quantRunnable = encoderQuantRunnable;
               const effectiveQuant = effectiveEncoderQuant;
               // int8 is the default on WASM. int8 lite is the same recipe with
               // fewer MatMuls quantised: ~88 MB smaller and lighter on RAM, at
@@ -8136,29 +8171,25 @@ export default function App() {
                 fp16: () => t('precisionFp16'),
                 fp32: () => t('precisionFp32'),
               };
-              const rows = ENCODER_QUANT_ROWS.map((value) => {
-                const available = quantRunnable(value);
-                const label = PRECISION_ROW[value]();
-                // Why it is greyed out, so a missing fp16 never reads as an
-                // app bug. Three different reasons, and they must not be
-                // collapsed: the wrong backend for this build (permanent), the
-                // right backend on a GPU whose adapter does not report
-                // shader-f16 (a property of the machine, unfixable here), or a
-                // model source that does not host the file (a property of the
-                // deployment, which the operator CAN fix, and which a visitor
-                // would otherwise read as their own hardware being at fault).
-                // Checked in that order because the later reasons only make
-                // sense once the earlier ones have been ruled out.
-                let note = '';
-                if (!available) {
-                  const offeredHere = (isWebgpu ? WEBGPU_ENCODER_QUANTS : WASM_ENCODER_QUANTS)
-                    .includes(value);
-                  if (!offeredHere) note = isWebgpu ? t('precisionUnavailableWebgpu') : t('precisionUnavailableWasm');
-                  else if (isWebgpu && value === 'fp16' && webgpuShaderF16 !== true) note = t('precisionUnavailableNoF16');
-                  else note = t('precisionUnavailableSource');
-                }
-                return { value, label, available, note };
-              });
+              // Which rows exist at all is policy, not rendering, so it lives in
+              // lib/encoderQuants.js with the rest of the three-question
+              // taxonomy: a precision this BACKEND has no kernel for, or one
+              // this SOURCE does not host, is not rendered, and only a
+              // precision the MACHINE cannot run gets a greyed row with a
+              // reason. The greyed row is worth keeping for exactly that case
+              // because the visitor's own adapter is the thing that decided it.
+              const rows = encoderQuantRows({
+                backend,
+                repoFiles: sourceRepoFiles,
+                shaderF16: webgpuShaderF16 === true,
+                order: ENCODER_QUANT_ROWS,
+              }).map((r) => ({
+                ...r,
+                label: PRECISION_ROW[r.value](),
+                note: r.reason === 'no-shader-f16' ? t('precisionUnavailableNoF16')
+                  : r.reason === 'source' ? t('precisionUnavailableSource')
+                    : '',
+              }));
               return (
                 <div className="setting-row">
                   <span className="setting-label">
