@@ -7019,8 +7019,13 @@ export default function App() {
     if (WEBGPU_DISABLED) return;             // nothing the probe could change
     // Wait for the adapter check, then only spend the ~5 MB where there is
     // genuinely something to decide: a machine with no adapter is staying on
-    // WASM whatever a measurement would say.
+    // WASM whatever a measurement would say, and so is one whose adapter or
+    // whose model source cannot do fp16, because that is the only precision
+    // the app will put a visitor on a GPU backend at unasked. Same gate as the
+    // run below, deliberately: prefetching for a probe that is never going to
+    // run is the pure-waste half of guessing.
     if (webgpuAvailable !== true) return;
+    if (!gpuBackendAutoUsable({ servable: sourceQuants, shaderF16: webgpuShaderF16 === true })) return;
     let cancelled = false;
     const prefetch = () => {
       if (cancelled || probeAssetsRef.current) return;
@@ -7047,7 +7052,7 @@ export default function App() {
       if (typeof cancelIdleCallback === 'function' && typeof idle === 'number') cancelIdleCallback(idle);
       else clearTimeout(idle);
     };
-  }, [webgpuAvailable]);
+  }, [webgpuAvailable, webgpuShaderF16, sourceQuants]);
 
   // Run ONE arm end to end in its own worker. Resolves to null (never throws)
   // so a broken arm degrades into "stay on WASM" instead of a failed load.

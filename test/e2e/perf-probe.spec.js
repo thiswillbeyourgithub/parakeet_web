@@ -31,7 +31,30 @@ import { expandSettingsSection } from './seed.mjs';
 // realistic shape of a broken/blocklisted GPU and the case the probe must fail
 // safely on. Test 1 only ever uses it to prove the app-wide kill switch wins
 // even when a GPU is present.
+// It reports shader-f16 because since 2026-09-11 the app will only ever select
+// a GPU backend unasked at fp16, so an adapter without it is one the probe
+// deliberately does not measure (see NO_F16_ADAPTER below). To keep this stub
+// on the case it is about (an adapter that enumerates but cannot run), it has
+// to clear that gate first.
 const FAKE_ADAPTER = () => {
+  Object.defineProperty(navigator, 'gpu', {
+    configurable: true,
+    value: {
+      requestAdapter: async () => ({
+        features: new Set(['shader-f16']),
+        limits: {},
+        info: { vendor: 'test', architecture: 'stub', device: '' },
+      }),
+      getPreferredCanvasFormat: () => 'bgra8unorm',
+    },
+  });
+};
+
+// A machine with a working-looking adapter that cannot do fp16. The app will
+// not put a visitor on a GPU backend unasked at any other precision, so a
+// verdict here could never be acted on: nothing may be fetched and nothing may
+// be timed.
+const NO_F16_ADAPTER = () => {
   Object.defineProperty(navigator, 'gpu', {
     configurable: true,
     value: {
@@ -39,6 +62,7 @@ const FAKE_ADAPTER = () => {
         features: new Set(),
         limits: {},
         info: { vendor: 'test', architecture: 'stub', device: '' },
+        requestDevice: async () => { throw new Error('stub'); },
       }),
       getPreferredCanvasFormat: () => 'bgra8unorm',
     },
@@ -113,6 +137,29 @@ test('with no adapter, the probe stays silent on a normal load', async ({ page }
   await loadBtn.click();
   await expect(page.locator('.controls')).toHaveCount(1, { timeout: 15000 });
   expect(seen.logs, 'probe ran with no adapter present').toEqual([]);
+});
+
+test('an adapter that cannot do fp16 is neither prefetched for nor measured', async ({ page }) => {
+  // The app will only ever put a visitor on a GPU backend unasked at fp16, so
+  // on a machine without shader-f16 a probe win could not be acted on: the very
+  // next load would fall back to WASM anyway. Nothing may be spent on it, and
+  // that includes the ~5 MB of probe artifacts, which is the half a broken gate
+  // would leak silently (the visitor would still end up on WASM, just poorer).
+  await page.addInitScript(NO_F16_ADAPTER);
+  await stallWeights(page);
+  const seen = watchProbe(page);
+
+  await page.goto('/');
+  const loadBtn = page.locator('[data-umami-event="load_model_button"]');
+  await expect(loadBtn).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(6500);
+  expect(seen.assets, 'probe artifacts prefetched for a GPU the app would never pick').toEqual([]);
+
+  await loadBtn.click();
+  // The load must start immediately: no measurement in front of it.
+  await expect(page.locator('.controls')).toHaveCount(1, { timeout: 15000 });
+  expect(seen.logs, 'probe ran for a GPU the app would never pick').toEqual([]);
+  expect(seen.assets, 'probe artifacts fetched on the load click').toEqual([]);
 });
 
 test('an adapter that cannot run the graph keeps the visitor on WASM', async ({ page }) => {
