@@ -31,10 +31,11 @@
 // be unit-tested against real repo listings instead of only through the app.
 import { quantSatisfiable } from '../../../src/hub.js';
 
-// Encoder precisions offered per backend, in PREFERENCE order: the radios have
-// their own display order (ENCODER_QUANT_ROWS in App.jsx, ascending download
-// size), and this order is the one a fallback walks when the chosen precision
-// turns out not to be runnable here.
+// Encoder precisions offered per backend, default first. The radios have their
+// own display order (ENCODER_QUANT_ROWS in App.jsx, ascending download size),
+// and nothing walks these lists looking for a substitute: since 2026-09-11 the
+// only precision the app may reach for unasked is the backend's default, so the
+// order below documents which one that is rather than driving a search.
 //
 // WASM: int8 is the default; int8lite trades ~88 MB and ~164 MiB RSS for
 // slightly higher WER; w4a8 is the smallest by a wide margin; fp32 is opt-in and
@@ -42,12 +43,11 @@ import { quantSatisfiable } from '../../../src/hub.js';
 // overflows both the 32-bit WASM heap and Chromium's blob wall).
 export const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'fp32'];
 // WebGPU: fp16 is the default (~1.2 GB, near-lossless, and a single file that
-// stays under every wall), with fp32 immediately behind it because that is what
-// a machine without `shader-f16` degrades to; fp32 needs shards, like WASM, for
-// Chromium's ~2 GB IndexedDB readback wall rather than the 32-bit one. w4a8's
-// MatMulNBits dequantizes to fp16 in the shader, so its win is download and
-// VRAM, not arithmetic. int8 is absent on purpose: there is no GPU int8 encoder
-// kernel.
+// stays under every wall). fp32 and w4a8 are opt-in and are NEVER selected for
+// anyone: fp32 needs shards, like WASM, for Chromium's ~2 GB IndexedDB readback
+// wall rather than the 32-bit one, and w4a8's MatMulNBits dequantizes to fp16 in
+// the shader, so its win is download and VRAM, not arithmetic. int8 is absent on
+// purpose: there is no GPU int8 encoder kernel.
 export const WEBGPU_ENCODER_QUANTS = ['fp16', 'fp32', 'w4a8'];
 
 // What a visitor gets before they have ever picked anything, and what a
@@ -58,16 +58,14 @@ export const WEBGPU_ENCODER_QUANTS = ['fp16', 'fp32', 'w4a8'];
 // repos publish an fp16 encoder at all), WASM wants int8 (fp16 has no usable
 // WASM kernel and ORT upcasts it to fp32 at session build, doubling the
 // memory). A machine whose adapter reports no `shader-f16`, or a source that
-// hosts no fp16 file, degrades to fp32 through the preference order above
-// rather than by naming a different default here.
+// hosts no fp16 file, does NOT quietly get fp32 instead: it gets WASM int8, and
+// fp32 stays one deliberate click away. See effectiveEncoderQuant.
 export const DEFAULT_WASM_ENCODER_QUANT = 'int8';
 export const DEFAULT_WEBGPU_ENCODER_QUANT = 'fp16';
 
 // Approximate download per encoder precision, in MB. Used to warn about
-// bandwidth before a benchmark run, and to ORDER the automatic GPU substitution
-// below, so a fallback nobody asked for reaches for the cheapest file that
-// works rather than the largest. The real sizes come from the repo being
-// served; these are measured on the shipped
+// bandwidth before a benchmark run and to price a selection in the sidebar. The
+// real sizes come from the repo being served; these are measured on the shipped
 // Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx weights, with the decoder
 // (~18 MB) and preprocessor (~1 MB) folded in.
 export const QUANT_DOWNLOAD_MB = {
@@ -197,11 +195,18 @@ export function encoderQuantRows({ backend, repoFiles = null, shaderF16 = false,
  *     everything, because refusing a precision because a mirror published no
  *     manifest would make a perfectly loadable model unreachable.
  *
- * The answer is the selection when it survives all three, else the first
- * precision in the backend's preference order that does. That is what turns the
- * fp16 default into fp32 on a machine with no shader-f16, or on a source that
- * hosts no fp16 file, without rewriting the preference itself: the visitor who
- * moves to a machine that CAN run fp16 gets it back.
+ * When the selection survives all three it is the answer, and that INCLUDES a
+ * hand-picked fp32 or w4a8: those are deliberate choices and are honoured.
+ *
+ * When it does not, the only substitution allowed is the backend's own default
+ * (owner rule, 2026-09-11). Nothing here may ever answer fp32 or w4a8, because
+ * an automatic answer of fp32 hands a visitor who asked for 1.2 GB a 2.35 GB
+ * download, and an automatic answer of w4a8 quietly swaps in the weakest
+ * encoder on long passes. On WASM the default is int8, which is the documented
+ * fallback for everything. On WebGPU the default IS fp16, so if that is what
+ * failed there is nothing left to offer and the answer is **null**: the load
+ * belongs on WASM int8, and the caller changes the BACKEND rather than reaching
+ * for a heavier file on this one.
  *
  * @param {object} args
  * @param {string} args.backend 'wasm' | 'webgpu-hybrid' | ...
@@ -209,7 +214,8 @@ export function encoderQuantRows({ backend, repoFiles = null, shaderF16 = false,
  * @param {{wasm: string[], webgpu: string[]}|null} [args.servable] From
  *   servableEncoderQuants, or null when the listing is unknown.
  * @param {boolean} [args.shaderF16] Whether the adapter exposes shader-f16.
- * @returns {string}
+ * @returns {string|null} The precision, or null when this backend has none it
+ *   may use without being asked.
  */
 export function effectiveEncoderQuant({ backend, selected, servable = null, shaderF16 = false } = {}) {
   const isWebgpu = String(backend || '').startsWith('webgpu');
@@ -221,51 +227,32 @@ export function effectiveEncoderQuant({ backend, selected, servable = null, shad
     return !hosted || hosted.includes(q);
   };
   if (runnable(selected)) return selected;
-  const next = offered.find(runnable);
-  if (next) return next;
-  // The source can serve nothing this backend runs, so the load is going to
-  // fail whatever is named here and the GPU-to-WASM fallback takes it from
-  // there. fp32 rather than the fp16 default because fp16 without the adapter
-  // feature builds a session that transcribes silence, which is the one failure
-  // worth never walking into blind.
-  return isWebgpu ? 'fp32' : DEFAULT_WASM_ENCODER_QUANT;
+  const fallback = isWebgpu ? DEFAULT_WEBGPU_ENCODER_QUANT : DEFAULT_WASM_ENCODER_QUANT;
+  return runnable(fallback) ? fallback : null;
 }
 
 /**
- * The precision to substitute when a GPU load finds its own precision
- * unservable, staying ON the GPU.
+ * Whether the GPU may be chosen for a visitor who has not asked for it.
  *
- * The rule is cheapest-first, which is not an aesthetic preference: this
- * substitution is one the visitor did not ask for, so it must not be able to
- * turn a 1.2 GB choice into a 2.35 GB download by surprise. w4a8 is a quarter
- * of fp32's bytes at the same accuracy (slower kernels, which is a trade the
- * visitor can then reverse deliberately from the sidebar), so it goes first
- * wherever a source serves it.
+ * The answer is simply "can this machine and this source do fp16", because
+ * that is the only GPU precision the app will ever select on its own. It is NOT
+ * a claim that the GPU is unusable: a visitor can still pick WebGPU and fp32 or
+ * w4a8 by hand, and those loads work exactly as before.
  *
- * Returns null when nothing else on this GPU can be served, which is the only
- * case that justifies changing the BACKEND as well. Changing both at once was
- * the old behaviour and it is the wrong answer twice over: it moves a visitor
- * off the GPU they were measured onto, and it does it for a reason (a file the
- * deployment does not host) that says nothing about their hardware.
+ * It gates the performance probe. Without it, a machine with no `shader-f16`
+ * would spend two timed runs proving its GPU is faster and then be moved to
+ * WASM anyway on the first load, once a fortnight, forever: there is nothing to
+ * decide when only one of the two answers can be acted on.
+ *
+ * A null listing means no opinion, so it does not withhold the GPU.
  *
  * @param {object} args
- * @param {string} args.current The precision that could not be served.
- * @param {string[]} [args.tried] Precisions already refused this load.
- * @param {string[]|null} [args.servable] Known-servable GPU precisions, or null
- *   when unknown; unknown means "try them all and let the load decide".
+ * @param {{wasm: string[], webgpu: string[]}|null} [args.servable]
  * @param {boolean} [args.shaderF16]
- * @returns {string|null}
+ * @returns {boolean}
  */
-export function nextGpuEncoderQuant({ current, tried = [], servable = null, shaderF16 = false } = {}) {
-  const seen = new Set([current, ...tried]);
-  const allowed = servable ? new Set(servable) : null;
-  const candidates = WEBGPU_ENCODER_QUANTS
-    .filter((q) => !seen.has(q))
-    // A precision the machine cannot run is not a fallback, it is the next
-    // failure: fp16 without shader-f16 builds a session and transcribes
-    // nothing.
-    .filter((q) => q !== 'fp16' || shaderF16)
-    .filter((q) => !allowed || allowed.has(q))
-    .sort((a, b) => (QUANT_DOWNLOAD_MB[a] ?? Infinity) - (QUANT_DOWNLOAD_MB[b] ?? Infinity));
-  return candidates[0] ?? null;
+export function gpuBackendAutoUsable({ servable = null, shaderF16 = false } = {}) {
+  if (!shaderF16) return false;
+  const hosted = servable?.webgpu;
+  return !hosted || hosted.includes(DEFAULT_WEBGPU_ENCODER_QUANT);
 }

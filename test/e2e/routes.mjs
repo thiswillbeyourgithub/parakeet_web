@@ -28,14 +28,13 @@ const LOCAL_MODELS_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/models
 // the directory), because both spellings of the same file have to disappear
 // together for routeLocalMirrorWithoutGpuEncoders to be honest.
 //
-// EVERY GPU-runnable precision has to be in here, not just fp32. The app now
-// answers a precision this source cannot serve by trying the next precision on
-// the SAME backend before it considers changing backend (App.jsx's
-// QuantUnavailableError catch, via nextGpuEncoderQuant), which is what a
-// visitor wants: keep the GPU, change the file. That behaviour also means a
-// mirror still serving w4a8 or fp16 is NOT a source that cannot serve WebGPU,
-// so hiding fp32 alone would leave the fallback spec passing while testing a
-// GPU-to-GPU substitution instead of the GPU-to-WASM fallback it is named for.
+// EVERY GPU-runnable precision has to be in here, not just the default. The app
+// makes exactly one substitution of its own, WASM int8, and never swaps one GPU
+// precision for another: fp32 and w4a8 are hand picks only. So a mirror that
+// still serves w4a8 or fp16 is a source the app will still not take to the GPU
+// unasked, but it is not the condition this helper is meant to build, and
+// hiding the default alone would leave the fallback spec green while the
+// premise (a source with nothing for the GPU) had quietly evaporated.
 const GPU_ENCODER_RE =
   /(?:^|\/)(?:fp32|sharded|w4a8|fp16)\/|encoder-model\.onnx\.data\.\d+|encoder-model\.(?:w4a8|fp16)\.onnx/;
 const isGpuEncoderPath = (path) => GPU_ENCODER_RE.test(path);

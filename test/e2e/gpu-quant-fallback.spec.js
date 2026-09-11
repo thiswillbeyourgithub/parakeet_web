@@ -1,5 +1,5 @@
 // Tier-3 E2E for the GPU-to-WASM fallback when a model source ships no encoder
-// the GPU can run (no fp32 shards).
+// the GPU may use unasked (no fp16 file here).
 //
 // Why this matters enough to have its own spec: since WebGPU was re-enabled,
 // the performance probe can put a visitor on the GPU backend without them ever
@@ -13,6 +13,14 @@
 // The fallback is deliberately narrow, and this spec pins that too: it fires
 // for a quant that cannot be SERVED, which is a property of the deployment
 // known before any weight byte is fetched, and it fires at most once per load.
+//
+// It is also the ONLY substitution the app makes. WASM int8 is where it lands,
+// never another GPU precision: fp32 would hand somebody who was never asked a
+// 2.35 GB download, and w4a8 would quietly swap in the weakest encoder on long
+// audio. Both stay one deliberate click away and nothing else. That is why the
+// mirror here hides EVERY GPU encoder rather than only the default one: if the
+// app ever grew a GPU-to-GPU substitution again, this spec would still pass
+// while the contract was gone, so the source has to be unable to offer any.
 //
 // The machine is stubbed with a WebGPU adapter so the backend is selectable
 // without a GPU, and weights come from the local mirror with only the GPU
@@ -32,10 +40,12 @@ const ADAPTER = () => {
     configurable: true,
     value: {
       requestAdapter: async () => ({
-        // shader-f16 is reported so the adapter looks fully capable (it is what
-        // gates the fp16 precision). The precision under test here is the GPU
-        // default, fp32, and it has to come back unavailable for the fallback
-        // to be reached.
+        // shader-f16 is reported so the adapter looks fully capable, which is
+        // what makes this spec about the SOURCE: the precision under test is
+        // the GPU default, fp16, this machine can run it, and it has to come
+        // back unhosted for the fallback to be the thing being measured. The
+        // other direction (a hosted fp16 no adapter can run) reaches the same
+        // fallback through the same catch.
         features: new Set(['shader-f16']),
         limits: {},
         info: { vendor: 'test', architecture: 'stub', device: '' },
@@ -85,8 +95,9 @@ test('a source with no GPU encoder falls back to WASM instead of failing the loa
   // so a failure here is fast and points at the fallback rather than timing
   // out minutes later on a downstream symptom. Exactly once, because a retry
   // loop would re-download the model on every attempt.
+  const FALLBACK_MARKER = 'falling back to WASM int8';
   await expect.poll(
-    () => logs.filter((l) => l.includes('no GPU-capable encoder from this source')).length,
+    () => logs.filter((l) => l.includes(FALLBACK_MARKER)).length,
     { timeout: 90 * 1000, message: 'the GPU-to-WASM fallback never fired' },
   ).toBe(1);
 
@@ -124,6 +135,20 @@ test('a source with no GPU encoder falls back to WASM instead of failing the loa
   await expect(page.locator('.setting-row--loaded.setting-row--mismatch')).toHaveCount(0);
 
   // Still exactly one after the whole load: the WASM retry must not re-enter.
-  const attempts = logs.filter((l) => l.includes('no GPU-capable encoder from this source'));
-  expect(attempts).toHaveLength(1);
+  expect(logs.filter((l) => l.includes(FALLBACK_MARKER))).toHaveLength(1);
+
+  // And the load that recovered is the one the fallback is allowed to make:
+  // int8 on the CPU. A GPU precision appearing here would mean the app had
+  // substituted a download nobody asked for, which the `int8` assertion on the
+  // loaded row above only half covers (that row reports the encoder, this
+  // covers the whole attempt sequence).
+  // fp16 is deliberately NOT in this pattern: it is the precision that was
+  // asked for and refused, so hub.js names it in the QuantUnavailableError it
+  // throws, and that thrown message is the fallback working rather than a
+  // second attempt. The fp32 shards and the w4a8 file are the ones no code path
+  // may reach for on its own, and either one appearing in a log at all means
+  // something tried to fetch it.
+  const gpuEncoderMentions = logs.filter((l) => /encoder-model\.w4a8\.onnx|encoder-model\.onnx\.data/.test(l));
+  expect(gpuEncoderMentions,
+    'no fp32 or w4a8 encoder may be attempted on the way to the fallback').toEqual([]);
 });

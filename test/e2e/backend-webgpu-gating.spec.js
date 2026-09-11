@@ -84,12 +84,19 @@ test('with a GPU present, WebGPU is selectable and a persisted choice survives a
   await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
 });
 
-test('on WebGPU without shader-f16, fp16 is greyed out and fp32 is what loads', async ({ page }) => {
+test('on WebGPU without shader-f16, fp16 is greyed out and nothing is picked in its place', async ({ page }) => {
   // The failure this prevents is the nastiest one in the app: on an adapter
   // without shader-f16, ORT builds the fp16 session, runs it, and returns an
   // EMPTY transcript with no error anywhere. So the radio must be disabled, and
-  // a preference of 'fp16' carried over from another machine must resolve to
-  // fp32 rather than silently transcribing nothing.
+  // a preference of 'fp16' carried over from another machine must NOT silently
+  // transcribe nothing.
+  //
+  // What it resolves to instead changed on 2026-09-11 (owner rule). It used to
+  // be fp32, and that was a 2.35 GB download handed to somebody who had asked
+  // for 1.2 GB; w4a8 would have been worse, the weakest encoder on long audio.
+  // Neither is a decision to make on a visitor's behalf, so the app now picks
+  // NOTHING on this backend and the load moves to the processor at int8. The
+  // radios have to show that rather than quietly checking the biggest file.
   await page.addInitScript(adapterStub([]));
   await page.goto('/');
   await seedSettings(page, { backend: 'webgpu-hybrid', webgpuEncoderQuant: 'fp16' });
@@ -101,9 +108,19 @@ test('on WebGPU without shader-f16, fp16 is greyed out and fp32 is what loads', 
   const fp16 = page.locator('input[name="encoderQuant"][value="fp16"]');
   await expect(fp16).toBeDisabled();
   await expect(fp16).not.toBeChecked();
-  // The precision that will actually load is the one shown as selected.
-  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
+  // Not fp32, and not w4a8: no GPU precision may be selected for someone who
+  // did not ask for it. Both rows stay ON SCREEN and pickable, which is the
+  // other half of the rule: they are hand picks, not forbidden.
+  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).not.toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeEnabled();
+  await expect(page.locator('input[name="encoderQuant"][value="w4a8"]')).not.toBeChecked();
   await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
+
+  // A radio group with nothing checked reads as undecided, so the app has to
+  // say what a load would really do. Without this the visitor would find out
+  // only from the fallback banner, after pressing the button.
+  await expect(page.locator('.setting-options', { has: page.locator('input[name="encoderQuant"]') }))
+    .toContainText('run on the processor at int8');
 });
 
 test('on WebGPU with shader-f16, fp16 is selectable and a saved choice is restored', async ({ page }) => {

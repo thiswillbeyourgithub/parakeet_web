@@ -53,7 +53,7 @@ import {
   DEFAULT_WEBGPU_ENCODER_QUANT,
   encoderQuantRows,
   effectiveEncoderQuant as resolveEffectiveEncoderQuant,
-  nextGpuEncoderQuant,
+  gpuBackendAutoUsable,
   servableEncoderQuants,
 } from './lib/encoderQuants.js';
 import { restoreBeamWidthAuto, resolveAutoBeamWidth } from './lib/beamWidth.js';
@@ -857,6 +857,11 @@ export default function App() {
   // status so the user can tell WHY (e.g. fp32 requested on WASM but no shards
   // are hosted) instead of being silently downgraded to a different quant.
   const [modelLoadError, setModelLoadError] = useState(null);
+  // The one model failure a visitor can do nothing about: this deployment does
+  // not serve the default encoder, so no setting they could change would help.
+  // A banner would sit above a page that still looks usable, so it gets the
+  // blocking popup instead, the same one a phone gets.
+  const [fatalModelError, setFatalModelError] = useState(null);
   // Non-fatal notice: the GPU backend could not be served by this model
   // source, so the load fell back to WASM. Separate from modelLoadError
   // because the load then SUCCEEDS, and loadModel clears that on entry.
@@ -2890,7 +2895,11 @@ export default function App() {
       // measures rather than assumes, and the unservable-weights guard below
       // keeps it from re-selecting a GPU this source cannot feed.
       userPickedBackend: false,
-      webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
+      // Same fp16 condition as the ordinary gate below: a station whose adapter
+      // or mirror cannot do fp16 has nothing to measure, because the answer
+      // could only be acted on in one direction.
+      webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true
+        && gpuBackendAutoUsable({ servable: sourceQuants, shaderF16: webgpuShaderF16 === true }),
       hasValidVerdict: storedVerdictValid,
       running: probeRunningRef.current,
     })) {
@@ -3587,11 +3596,10 @@ export default function App() {
    */
   async function loadModel({ useLocalFallback = forceLocalFallback || localFirstRef.current, corruptionRetried = false,
                              gpuQuantFallbackTried = false, hubRetryTried = false,
-                             gpuQuantsTried = [],
-                             // Whether a precision this source cannot serve may be silently
-                             // replaced. The app wants that; the BENCHMARK must not have it,
-                             // because a row labelled fp16 carrying w4a8's numbers is worse
-                             // than a row that says the combination is not served here.
+                             // Whether a precision this source cannot serve may be answered
+                             // with WASM int8. The app wants that; the BENCHMARK must not have
+                             // it, because a row labelled fp16 carrying int8's numbers is
+                             // worse than a row that says the combination is not served here.
                              allowQuantSubstitution = true } = {}) {
     // Clean up existing model first
     if (modelRef.current) {
@@ -3630,6 +3638,7 @@ export default function App() {
     // re-downloaded bytes belong to the same load the caller is timing.
     if (!corruptionRetried) loadTransferRef.current = new Map();
     setModelLoadError(null);
+    setFatalModelError(null);
     // Clear the GPU-fallback notice only on a FRESH attempt. Both retry paths
     // re-enter loadModel, and the GPU fallback sets this banner immediately
     // before its own retry, so clearing unconditionally here would wipe the
@@ -3713,16 +3722,17 @@ export default function App() {
       const wasmEncoderRequest = wasmWantsFp32
         ? 'fp32'
         : (wasmEncoderQuant === 'int8lite' || wasmEncoderQuant === 'w4a8' ? wasmEncoderQuant : 'int8');
-      // The GPU precision that will ACTUALLY load: the user's choice when the
-      // GPU can run it, else fp32. fp16 needs the adapter's shader-f16 feature
-      // (without it ORT builds the session and returns an empty transcript), so
-      // a preference carried over from another machine degrades here rather
-      // than reaching hub.js, which would refuse it outright.
-      const webgpuEncoderRequest = webgpuEncoderQuant === 'w4a8'
-        ? 'w4a8'
-        : (webgpuEncoderQuant === 'fp16' && webgpuShaderF16 === true ? 'fp16' : 'fp32');
+      // The GPU precision to ASK FOR: exactly what is selected, with no local
+      // rewriting. This used to degrade fp16 to fp32 whenever the adapter had no
+      // `shader-f16`, which is a 2.35 GB download nobody requested; since
+      // 2026-09-11 the only substitution the app makes on its own is WASM int8,
+      // so an fp16 request that this machine or this source cannot honour is
+      // sent as fp16, refused by hub.js with QuantUnavailableError (it re-checks
+      // the adapter feature itself, see `shaderF16` below) and caught into the
+      // GPU-to-WASM fallback. A hand-picked fp32 or w4a8 passes through
+      // untouched, which is the only way either one is ever loaded.
       const downloadOpts = {
-        encoderQuant: wantWebgpu ? webgpuEncoderRequest : wasmEncoderRequest,
+        encoderQuant: wantWebgpu ? webgpuEncoderQuant : wasmEncoderRequest,
         decoderQuant: 'int8',
         allowWasmFp32: wasmWantsFp32,
         // hub.js re-checks fp16 against this rather than trusting the caller:
@@ -3997,57 +4007,27 @@ export default function App() {
       // with no shards hosted). hub.js refuses to silently downgrade to int8, so
       // tell the user exactly why rather than leaving a bare "Failed".
       if (e instanceof QuantUnavailableError) {
-        // On a GPU backend that means this source cannot serve the precision the
-        // visitor is on (no fp32 shards, or no w4a8 encoder file). Retry on WASM
-        // instead of stranding them on Failed: they may never have chosen
-        // WebGPU at all, since the performance probe can select it for them, and
-        // a deployment pointed at a repo without GPU weights would otherwise
-        // break for every visitor whose machine wins the probe.
+        // On a GPU backend it means this machine cannot RUN the precision the
+        // visitor is on (fp16 with no `shader-f16`) or this source does not HOST
+        // it. Either way the answer is WASM int8, never another GPU precision:
+        // substituting fp32 would hand someone who asked for 1.2 GB a 2.35 GB
+        // download, and substituting w4a8 would quietly swap in the weakest
+        // encoder on long audio. Both are reachable by hand and only by hand.
+        //
+        // Retrying on WASM rather than stranding them on Failed matters because
+        // they may never have chosen WebGPU: the performance probe can select it
+        // for them, and a deployment pointed at a repo without GPU weights would
+        // otherwise break for every visitor whose machine wins that probe.
         //
         // Deliberately NOT a general "GPU failed, use the CPU" net: this fires
         // only for a quant that cannot be SERVED, which is a property of the
         // deployment and is known before a single weight byte is fetched. A
         // GPU that fails later (OOM, device lost) is a different problem and
         // must stay visible rather than be silently absorbed here.
-        if (backend.startsWith('webgpu') && allowQuantSubstitution) {
-          // FIRST try another precision on the SAME backend. Dropping straight
-          // to WASM was the old behaviour and it changed two things at once for
-          // a reason that justifies changing only one: the missing file is a
-          // property of the deployment, and says nothing about whether this
-          // machine's GPU is the right place to run. A station whose mirror
-          // serves w4a8 and sharded fp32 but no fp16 was being moved off the
-          // GPU it had just been measured onto, over a 610 MB file that was
-          // sitting right there.
-          //
-          // Cheapest-first (lib/encoderQuants.js), because this substitution is
-          // one nobody asked for: it must not be able to turn a 1.2 GB choice
-          // into a 2.35 GB download by surprise. `sourceQuants` narrows the
-          // candidates when the source published a listing and is null
-          // otherwise, in which case they are simply tried in turn.
-          const nextQuant = nextGpuEncoderQuant({
-            current: webgpuEncoderQuant,
-            tried: gpuQuantsTried,
-            servable: sourceQuants?.webgpu ?? null,
-            shaderF16: webgpuShaderF16 === true,
-          });
-          if (nextQuant) {
-            console.warn(`[App] this source has no ${webgpuEncoderQuant} encoder for the GPU; `
-              + `staying on ${backend} and loading ${nextQuant} instead`);
-            setGpuFallbackWarning(t('gpuQuantSwitched', {
-              asked: webgpuEncoderQuant, loaded: nextQuant, mb: QUANT_DOWNLOAD_MB[nextQuant] ?? '?',
-            }));
-            await applyLiveSetting('webgpuEncoderQuant', nextQuant, setWebgpuEncoderQuant);
-            return loadModelRef.current({
-              useLocalFallback,
-              gpuQuantsTried: [...gpuQuantsTried, webgpuEncoderQuant],
-              gpuQuantFallbackTried,
-            });
-          }
-        }
         if (backend.startsWith('webgpu') && allowQuantSubstitution && !gpuQuantFallbackTried) {
           // Nothing this GPU can run is hosted here, so the backend really is
           // what has to change. Only now.
-          console.warn('[App] no GPU-capable encoder from this source; falling back to WASM');
+          console.warn(`[App] ${webgpuEncoderQuant} cannot be run here or is not hosted; falling back to WASM int8`);
           setGpuFallbackWarning(t('gpuQuantFallback'));
           // Remember WHICH repo+precision could not be served, so the flip to
           // WASM below is not undone on the next visit by a stored WebGPU
@@ -4058,7 +4038,25 @@ export default function App() {
           await applyBackend('wasm');
           return loadModelRef.current({ useLocalFallback, gpuQuantFallbackTried: true });
         }
-        setModelLoadError(t('quantUnavailable'));
+        // Any other precision reaching here was picked by hand and CAN be
+        // changed, so it gets the banner naming it. The default-int8 case falls
+        // through to the popup below instead.
+        if (backend.startsWith('webgpu') || wasmEncoderQuant !== DEFAULT_WASM_ENCODER_QUANT) {
+          setModelLoadError(t('quantUnavailable'));
+        }
+      }
+      // Nowhere left to go, on the one configuration the app picks for itself.
+      // Every retry above has either not applied or been spent, and the visitor
+      // is on WASM asking for the default int8: the backend every fallback ends
+      // on, at the precision nothing is allowed to substitute for. So there is
+      // no other precision, backend or source left to try and nothing in the
+      // settings to revisit, which is what separates this from every other load
+      // failure. It gets the blocking popup, like the handheld notice, rather
+      // than a `Failed` status under a page that still looks usable. Any
+      // hand-picked precision keeps the old quiet failure: that one IS a choice
+      // the visitor can go back and change.
+      if (!backend.startsWith('webgpu') && wasmEncoderQuant === DEFAULT_WASM_ENCODER_QUANT) {
+        setFatalModelError(true);
       }
       setStatus('failed');
       setProgress('');
@@ -7216,7 +7214,13 @@ export default function App() {
     if (shouldAutoProbe({
       settingsLoaded,
       userPickedBackend: backendUserPicked,
-      webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true,
+      // The GPU is only worth MEASURING when the app would be willing to select
+      // it, and since 2026-09-11 that means fp16 specifically: on a machine or a
+      // source that cannot do fp16, a probe win would be followed by the
+      // GPU-to-WASM fallback on the very next load, so there is nothing to
+      // decide and two timed runs to skip.
+      webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true
+        && gpuBackendAutoUsable({ servable: sourceQuants, shaderF16: webgpuShaderF16 === true }),
       hasValidVerdict: verdictStillValid(probeVerdict, {
         appVersion: VERSION, adapter: webgpuAdapterSigRef.current, at: Date.now(),
         sourceSig: sourceQuantSignature(sourceQuants),
@@ -7370,6 +7374,28 @@ export default function App() {
             <div style={{ textAlign: 'center', marginTop: '1rem' }}>
               <button className="btn" onClick={() => setSlowBrowserDismissed(true)}>
                 {t('slowBrowserDismiss')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* This deployment cannot serve the model. Not a warning like the two
+          above and not dismissable-and-forgotten like them either: there is
+          nothing the visitor can change, so it says who can. Same popup shape as
+          the phone and slow-browser notices on purpose, because it is the same
+          kind of message (something about where you are, not about what you
+          did). Only reachable once WASM int8 itself has failed, which is where
+          the GPU-to-WASM fallback and every source retry already lead. */}
+      {fatalModelError && (
+        <Modal onClose={() => setFatalModelError(null)}>
+          <div data-testid="model-unservable-modal">
+            <h3 style={{ marginTop: 0 }}>🚫 {t('modelUnservableTitle')}</h3>
+            <p>{t('modelUnservableBody1')}</p>
+            <p>{t('modelUnservableBody2')}</p>
+            <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+              <button className="btn" onClick={() => setFatalModelError(null)}>
+                {t('modelUnservableDismiss')}
               </button>
             </div>
           </div>
@@ -8207,6 +8233,16 @@ export default function App() {
                         </label>
                       );
                     })}
+                    {/* Nothing here is checked, which needs saying rather than
+                        leaving a group of radios looking undecided: the visitor
+                        is on a GPU backend whose default (fp16) this machine or
+                        this source cannot deliver, and the app will not pick
+                        fp32 or w4a8 for them. So a load started now moves to
+                        the processor at int8, and the note says so before they
+                        press the button rather than as a banner after it. */}
+                    {effectiveQuant === null && isWebgpu && (
+                      <span className="setting-hint">{t('precisionNoneAutoUsable')}</span>
+                    )}
                   </div>
                 </div>
               );

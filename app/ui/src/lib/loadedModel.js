@@ -54,6 +54,12 @@ export function loadedModelDiverges(loaded, selected) {
   // A load that could not report its precision says nothing about it, rather
   // than claiming a mismatch it has no evidence for.
   if (!loaded.encoderQuant) return false;
+  // Neither does a SELECTION with no runnable precision on its backend, which
+  // is what effectiveEncoderQuant answers when a GPU can neither run nor be
+  // served fp16 and the app is on its way to WASM int8. Comparing against a
+  // value that is about to change would report a mismatch for the duration of
+  // a fallback that is working correctly.
+  if (!selected.encoderQuant) return false;
   return loaded.encoderQuant !== selected.encoderQuant;
 }
 
