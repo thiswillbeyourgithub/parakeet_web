@@ -890,6 +890,13 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   // still only in memory. Write it before returning, or the next load resumes
   // from a needlessly early offset.
   if (noCache && memBuf && persisted < prefixBudget) await flushTail();
+  if (prefixBudget > 0) {
+    // What the next load will not have to fetch. Worth a line: this is the only
+    // externally visible sign that the partial cache did anything, and a silent
+    // zero here is what three previous attempts at caching these files looked
+    // like from the outside.
+    console.log(`${logTag} Prefix cache for ${filename}: kept ${persisted} of ${received} bytes in ${segCount} record(s)`);
+  }
 
   // noCache: return the bytes straight from memory, no Blob, no IDB. memBuf is
   // exactly `received` bytes when the length was known; otherwise concatenate
