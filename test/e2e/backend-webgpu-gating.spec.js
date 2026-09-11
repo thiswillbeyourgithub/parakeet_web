@@ -8,11 +8,11 @@
 //      webgpu-hybrid backend SURVIVES a reload. It used to be coerced to WASM
 //      on every boot, so this is the assertion that would catch the app-wide
 //      pin coming back by accident,
-//   2. on WebGPU the int8 precision is greyed out and fp32 is the default (the
-//      GPU EP has no int8 encoder kernel), while fp16 is offered only on an
-//      adapter that reports the `shader-f16` feature: without it ORT builds an
-//      fp16 session and then returns an EMPTY transcript, so the radio has to
-//      be greyed out rather than merely discouraged,
+//   2. on WebGPU the int8 precision is not offered at all (the GPU EP has no
+//      int8 encoder kernel) and fp16 is the default, but only on an adapter
+//      that reports the `shader-f16` feature: without it ORT builds an fp16
+//      session and then returns an EMPTY transcript, so the radio has to be
+//      greyed out and the load has to degrade to fp32,
 //   3. with NO adapter, WebGPU is greyed out and WASM stays the default, which
 //      is what most CI machines and many visitors actually are,
 //   4. `?webgpu=0` forces WASM for that page load and coerces a persisted
@@ -68,9 +68,14 @@ test('with a GPU present, WebGPU is selectable and a persisted choice survives a
   await expect(webgpuRadio).toBeChecked();
   await expect(page.locator('input[name="backend"][value="wasm"]')).not.toBeChecked();
 
-  // fp32 is the GPU default (w4a8 is the only other precision the GPU path
-  // offers, and it is opt-in), so it is what is selected.
-  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeChecked();
+  // fp16 is the GPU default since 2026-09-11: half of fp32's bytes at the same
+  // accuracy, which is why the model repos publish the file. This adapter
+  // reports shader-f16 and the local mirror serves the fp16 encoder, so nothing
+  // stands in the way and it is what a load would use. The two ways it can be
+  // refused (no adapter feature, no file on the source) each degrade to fp32,
+  // and the test below pins the first of them from the other side.
+  await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).not.toBeChecked();
   // There is no GPU int8 encoder kernel, so int8 is not a precision this
   // backend offers and gets no row at all. Asserting absence rather than a
   // disabled row is the stronger claim: a greyed int8 under WebGPU described a
