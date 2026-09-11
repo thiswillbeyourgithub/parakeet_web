@@ -8,6 +8,20 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.3.2 (2026-09-11)
+
+### A graphics card now downloads half as much by default
+
+A visitor whose machine is measured onto its graphics card used to be given the full-precision encoder, around 2.4 GB, delivered in pieces because no single file that size can be held. The half-precision encoder is around 1.2 GB, arrives as one file, and is near-lossless next to it. It exists in the model repositories precisely so it can be used, and it is now what a visitor gets before they have chosen anything.
+
+Two things can rule it out, and each one quietly falls back to the full-precision encoder exactly as before: a graphics adapter that does not report the half-precision shader feature (most do not, including the one this project is developed on), and a model server that does not host the file. Neither costs a failed load, because both are known before any weight is fetched, and neither rewrites the preference: the same browser moved to a machine that can run it gets it back.
+
+Nothing changes on the processor engine, which stays on int8: half precision has no usable engine there and is expanded back to full precision when the model is built, so it would cost memory and buy nothing.
+
+Written with Claude Code.
+
+---
+
 ## 11.3.1 (2026-09-11)
 
 ### A newly published model precision now actually shows up

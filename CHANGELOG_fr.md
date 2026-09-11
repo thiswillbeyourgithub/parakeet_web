@@ -8,6 +8,20 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.3.2 (2026-09-11)
+
+### Une carte graphique télécharge désormais deux fois moins par défaut
+
+Un visiteur dont la machine est orientée vers sa carte graphique recevait jusqu'ici l'encodeur en pleine précision, environ 2,4 Go, livré en morceaux parce qu'aucun fichier de cette taille ne peut être conservé d'un bloc. L'encodeur en demi-précision pèse environ 1,2 Go, arrive en un seul fichier, et lui est quasiment équivalent en qualité. Il existe dans les dépôts de modèles précisément pour servir, et c'est désormais ce qu'un visiteur obtient avant d'avoir choisi quoi que ce soit.
+
+Deux choses peuvent l'écarter, et chacune revient discrètement à l'encodeur pleine précision exactement comme avant : un adaptateur graphique qui n'annonce pas la fonctionnalité de nuanceur en demi-précision (la plupart ne l'annoncent pas, y compris celui sur lequel ce projet est développé), et un serveur de modèles qui n'héberge pas le fichier. Aucune des deux ne coute un chargement raté, car toutes deux sont connues avant le moindre octet de poids, et aucune ne réécrit la préférence : le même navigateur, sur une machine capable de l'exécuter, le retrouve.
+
+Rien ne change sur le moteur processeur, qui reste en int8 : la demi-précision n'y dispose d'aucun noyau utilisable et est redéployée en pleine précision à la construction du modèle, ce qui couterait de la mémoire sans rien apporter.
+
+Écrit avec Claude Code.
+
+---
+
 ## 11.3.1 (2026-09-11)
 
 ### Une précision de modèle nouvellement publiée apparaît enfin
