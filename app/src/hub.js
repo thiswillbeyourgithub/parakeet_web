@@ -185,7 +185,14 @@ export async function listRepoFiles(repoId, revision = 'main') {
   };
 
   try {
-    const resp = await fetch(treeUrl);
+    // Same freshness reasoning as readLocalManifest: this listing decides which
+    // precisions the app believes exist, so a cached copy from before the
+    // operator pushed a new encoder is a wrong answer, not a stale nicety. The
+    // HF API sends an ETag and no Cache-Control, which leaves the decision to
+    // heuristic freshness; ask for revalidation explicitly instead. In-page
+    // repetition is already handled by repoFileCache above, so this costs one
+    // conditional request per load.
+    const resp = await fetch(treeUrl, { cache: 'no-cache' });
     if (resp.ok) {
       const json = await resp.json();
       let raw = [];
@@ -212,7 +219,7 @@ export async function listRepoFiles(repoId, revision = 'main') {
   }
 
   try {
-    const resp = await fetch(modelUrl);
+    const resp = await fetch(modelUrl, { cache: 'no-cache' });
     if (resp.ok) {
       const json = await resp.json();
       const raw = json.siblings?.map(s => s.rfilename) || [];
@@ -1286,7 +1293,21 @@ export const LOCAL_MANIFEST_FILE = 'model-manifest.json';
 const MAX_MANIFEST_ENTRIES = 20000;
 async function readLocalManifest(baseUrl) {
   try {
-    const res = await fetch(`${baseUrl}/${LOCAL_MANIFEST_FILE}`);
+    // `cache: 'no-cache'` = revalidate with the server every time (a conditional
+    // request that a 304 answers for free), NOT no-store. It is load-bearing.
+    // This file is the one thing under /models that changes when an operator
+    // publishes weights, and a mirror that serves it under the same long
+    // max-age as the weight files hands returning visitors a manifest that
+    // predates the publish, for as long as that max-age lasts. The symptom is
+    // not a missing file, it is a WRONG ANSWER that everything downstream then
+    // trusts: the precision is judged unservable, its radio greys as "not
+    // hosted by this model source", and a load that asks for it raises
+    // QuantUnavailableError and persists a fall back to WASM. Diagnosing it is
+    // worse still, because a private window has no cache and shows the
+    // deployment working. docker/Caddyfile now sends no-cache for this path
+    // too, but that only helps deployments running a rebuilt container: this
+    // line is what makes an app served by ANY mirror see the current manifest.
+    const res = await fetch(`${baseUrl}/${LOCAL_MANIFEST_FILE}`, { cache: 'no-cache' });
     if (!res.ok) return null;
     const json = await res.json();
     if (!Array.isArray(json) || json.length === 0 || json.length > MAX_MANIFEST_ENTRIES) return null;
