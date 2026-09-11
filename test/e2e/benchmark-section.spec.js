@@ -146,11 +146,19 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   await expect(page.locator('.settings-sidebar')).toBeVisible();
   await expect(page.locator('.benchmark-complete')).toBeVisible();
   await expect(page.locator('.benchmark-complete')).toContainText('complete');
-  const inView = await textarea.evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return r.top < window.innerHeight && r.bottom > 0;
-  });
-  expect(inView, 'the finished report must be scrolled into view').toBe(true);
+  // Polled, not sampled once: the scroll is a smooth one (App.jsx schedules
+  // scrollIntoView({ behavior: 'smooth' }) in a rAF once the sidebar has
+  // reopened), so it is still animating at the instant the textarea first
+  // carries its value. Reading the rect right then measures the animation's
+  // first frame rather than where the report ends up, which on a loaded box
+  // fails while the feature works. The assertion is unchanged: the report must
+  // come into view, and if the scroll never happens this still fails.
+  await expect
+    .poll(async () => textarea.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return r.top < window.innerHeight && r.bottom > 0;
+    }), { timeout: 15_000, message: 'the finished report must be scrolled into view' })
+    .toBe(true);
 
   // No model was loaded before the run, so none is left loaded after it: the
   // weights in memory are whichever combination the plan ended on, not the
