@@ -51,17 +51,24 @@ export const MED_MODE_ALIASES = Object.freeze([
  *  - wasmEncoderQuant / webgpuEncoderQuant are set as a PAIR, not as one value
  *    for the current backend, because the on-load autoconfigure probe may still
  *    move the visitor between the two after this preset has been applied.
- *  - webgpuEncoderQuant is fp32, NOT the smaller fp16, on purpose. fp16 needs
- *    two things at once that a medical deployment often cannot promise: an
- *    adapter exposing `shader-f16`, and a model source hosting
- *    `encoder-model.fp16.onnx`. When either is missing the load raises
- *    QuantUnavailableError, App.jsx falls the visitor back to WASM and PERSISTS
- *    that flip, so the station quietly stops using its GPU. fp32 needs no
- *    adapter feature and every repo that ships the <2 GB shards can serve it,
- *    so it is the precision that actually works on a locked-down box. int8 is
- *    NOT an option here despite being the WASM choice: ORT has no WebGPU kernel
- *    for it (see WEBGPU_ENCODER_QUANTS in App.jsx), so asking for it on the GPU
- *    would either be refused or silently execute on the CPU.
+ *  - webgpuEncoderQuant is fp16 (changed 2026-09-11, owner instruction), the
+ *    same default the app now uses everywhere else. It was fp32 because fp16
+ *    needs two things at once that a medical deployment cannot always promise,
+ *    an adapter exposing `shader-f16` and a model source hosting
+ *    `encoder-model.fp16.onnx`, and missing either one used to fail the load
+ *    over to WASM and PERSIST that flip, so the station quietly stopped using
+ *    its GPU. Neither half of that survives: a missing adapter feature now
+ *    degrades to fp32 in effectiveEncoderQuant before hub.js is ever asked, and
+ *    a source that does not host the file clears its own
+ *    `gpuWeightsUnservableSig` as soon as it starts serving it. What is left is
+ *    a reason to prefer fp16 here more than anywhere else, not less: the
+ *    station reloads all day on a network chosen for being locked down, and
+ *    fp16 is half of fp32's bytes at the same accuracy. fp32 stays reachable by
+ *    hand, and a later `?mode=med` deliberately resets such a pick, because the
+ *    link is a setup instruction for the whole station. int8 is NOT an option
+ *    here despite being the WASM choice: ORT has no WebGPU kernel for it (see
+ *    WEBGPU_ENCODER_QUANTS in lib/encoderQuants.js), so asking for it on the
+ *    GPU would either be refused or silently execute on the CPU.
  *  - lang is forced to French: the lexicon, the dictation regexes and the model
  *    are all French, so an English UI would misdescribe the station.
  *  - autoCopyToClipboard is the one preset value that turns a default OFF into
@@ -80,7 +87,7 @@ export const MED_MODE_PRESET = Object.freeze({
   transcriptDisplayMode: 'dictation',
   autoCopyToClipboard: true,
   wasmEncoderQuant: 'int8',
-  webgpuEncoderQuant: 'fp32',
+  webgpuEncoderQuant: 'fp16',
   lang: 'fr',
 });
 

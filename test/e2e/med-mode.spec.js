@@ -94,10 +94,14 @@ async function expectMedModeApplied(page) {
   // One precision per backend. Headless Chromium has no adapter, so the visible
   // radio is the WASM one (int8); the WebGPU choice is only checkable on disk,
   // and it matters just as much because the preset has to survive a later move
-  // to the GPU backend.
+  // to the GPU backend. fp16 there since 2026-09-11: the station reloads all
+  // day on a locked-down network, and it is half of fp32's bytes at the same
+  // accuracy. Writing BOTH is the point, since a `?mode=med` link is a setup
+  // instruction for the whole station and must reset an earlier hand-picked
+  // fp32, not inherit it.
   await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeChecked();
   await expect.poll(() => readSetting(page, 'webgpuEncoderQuant'), { timeout: 15 * 1000 })
-    .toBe('fp32');
+    .toBe('fp16');
 
   // The French medical lexicon, with its text actually loaded (not merely selected).
   await expandSection(page, BOOSTING_SECTION);
@@ -158,6 +162,30 @@ test('the preset is sticky: it survives a reload without the param', async ({ pa
   await page.goto('/');
   await openSidebar(page);
   await expectMedModeApplied(page);
+});
+
+test('a hand-picked fp32 does not survive a ?mode=med link', async ({ page }) => {
+  // The rule the owner stated on 2026-09-11: the heavy precisions are used only
+  // when somebody asked for them, now or in the past, with no ?mode=med in
+  // between. The link is the reset, and this is the half of it that is easy to
+  // get wrong, because it is invisible: a station whose radios were fiddled with
+  // months ago keeps downloading 2.35 GB per visit while every OTHER preset
+  // value looks correctly applied, and neither the UI nor the transcript says
+  // so. Both backends are seeded, since the preset writes the pair and the probe
+  // may move the station between them afterwards.
+  await configureTwoRepos(page);
+  await page.goto('/');
+  await seedSettings(page, { webgpuEncoderQuant: 'fp32', wasmEncoderQuant: 'fp32' });
+  await page.reload();
+  await expect.poll(() => readSetting(page, 'webgpuEncoderQuant'), { timeout: 15 * 1000 })
+    .toBe('fp32');
+
+  await page.goto('/?mode=med');
+  await openSidebar(page);
+  await expect.poll(() => readSetting(page, 'webgpuEncoderQuant'), { timeout: 15 * 1000 })
+    .toBe('fp16');
+  await expect.poll(() => readSetting(page, 'wasmEncoderQuant'), { timeout: 15 * 1000 })
+    .toBe('int8');
 });
 
 test('the sidebar button applies the same preset with no link involved', async ({ page }) => {
