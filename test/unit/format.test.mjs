@@ -3,7 +3,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor } from '../../app/ui/src/lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor } from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
   test('zero', () => assert.equal(formatTime(0), '0:00'));
@@ -185,6 +185,36 @@ describe('updateDownloadRate (windowed speed + ETA)', () => {
     let s = updateDownloadRate(null, { file: 'a', loaded: 0, total: 10 * MB, now: 0 }).state;
     const r = updateDownloadRate(s, { file: 'a', loaded: 10 * MB, total: 10 * MB, now: 1000 });
     assert.equal(r.eta, null);
+  });
+});
+
+describe('isFresherThanDays (does the dev banner still apply?)', () => {
+  const now = Date.parse('2026-09-12T12:00:00Z');
+  const daysAgo = (d) => new Date(now - d * 86400 * 1000).toISOString();
+
+  test('a fresh restart is within the window', () => {
+    assert.equal(isFresherThanDays(daysAgo(0), 5, now), true);
+    assert.equal(isFresherThanDays(daysAgo(1), 5, now), true);
+    assert.equal(isFresherThanDays(daysAgo(4.9), 5, now), true);
+  });
+
+  test('the boundary itself is already stale, so the banner cannot linger', () => {
+    assert.equal(isFresherThanDays(daysAgo(5), 5, now), false);
+    assert.equal(isFresherThanDays(daysAgo(30), 5, now), false);
+  });
+
+  // The permissive half, and the one worth pinning: an instance that never
+  // stamped a start time (the dev server, which has no /config.js) must keep
+  // its warning rather than lose it to a missing value.
+  test('an unknown or unparseable start time stays fresh', () => {
+    assert.equal(isFresherThanDays(undefined, 5, now), true);
+    assert.equal(isFresherThanDays(null, 5, now), true);
+    assert.equal(isFresherThanDays('', 5, now), true);
+    assert.equal(isFresherThanDays('not a date', 5, now), true);
+  });
+
+  test('a clock skewed into the future is fresh, not stale', () => {
+    assert.equal(isFresherThanDays(daysAgo(-2), 5, now), true);
   });
 });
 

@@ -29,7 +29,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, compileBoostList, parsePrebuiltBoost, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, formatMetricsTooltip, wavNameFor, boldRuns } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
@@ -90,6 +90,15 @@ import { requestPersistentStorage } from './lib/persistStorage.js';
 // Dictation device support (Philips SpeechMike etc.) via WebHID.
 // Conditionally imported so the feature can be fully disabled via env var.
 const devMode = CONFIG.VITE_DEV_MODE === 'true';
+// How long the development warning stays up after a restart. The banner's whole
+// claim is that this instance was touched recently enough to be mid-change, so
+// it expires: an instance left running for longer than this is not "under
+// active development" in any sense a visitor can act on, and a permanent scary
+// banner is one nobody reads. An instance with no stamped start time (the dev
+// server) keeps the banner, see isFresherThanDays.
+const DEV_BANNER_MAX_AGE_DAYS = 5;
+const devBannerVisible = devMode
+  && isFresherThanDays(CONFIG.CONTAINER_STARTED_AT, DEV_BANNER_MAX_AGE_DAYS);
 
 // Localize relativeAge()'s { value, unit } into a phrase like "3 hours ago".
 // Returns null when there is no parseable container start time so the dev
@@ -7325,7 +7334,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {devMode && (
+      {devBannerVisible && (
         <Banner tone="danger" style={{ fontWeight: 'bold', textAlign: 'center', marginBottom: '1rem' }}>
           {(() => {
             const age = relativeAgePhrase(t, CONFIG.CONTAINER_STARTED_AT);
