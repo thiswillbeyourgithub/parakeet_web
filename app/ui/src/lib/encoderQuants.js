@@ -106,6 +106,65 @@ export function servableEncoderQuants({ repoFiles, shaderF16 = false } = {}) {
 }
 
 /**
+ * The precision radios to render for a backend: which ones appear at all, and
+ * which of those appear greyed out with a reason.
+ *
+ * The three questions at the top of this file get three different answers here,
+ * and the split is the whole point:
+ *
+ *   (1) BACKEND has no kernel -> the row is not rendered. There is nothing for a
+ *       visitor to do about it and nothing to learn from it: int8 on WebGPU is
+ *       not a precision that is unavailable today, it is one that does not exist
+ *       on that backend, and a greyed row claiming otherwise reads as breakage.
+ *       This is also what stopped fp16 from showing up greyed under WASM, which
+ *       is exactly how it got misread as "the fp16 file is missing".
+ *   (2) SOURCE does not host the file -> the row is not rendered either. Same
+ *       reasoning, one level out: a deployment serving int8 + fp32 + w4a8 has a
+ *       three-precision model, and listing two more that it cannot serve
+ *       describes a different deployment. Hiding them is what lets the list
+ *       track any ONNX repo instead of this project's own file set.
+ *   (3) MACHINE cannot run it -> the row IS rendered, greyed, with the reason.
+ *       This one is worth a row precisely because it is the only one the
+ *       visitor's own hardware decides: fp16 exists, this source serves it, and
+ *       the answer to "why can't I pick it" lives in their adapter. Hiding it
+ *       would make two machines against the same deployment show different
+ *       lists with nothing to explain the difference.
+ *
+ * A `null` listing keeps meaning "no opinion", so (2) drops out entirely and
+ * everything the backend offers is shown; see servableEncoderQuants.
+ *
+ * @param {object} args
+ * @param {string} args.backend 'wasm' | 'webgpu-hybrid' | ...
+ * @param {string[]|null} [args.repoFiles] Listing as hub.js reads it, or null.
+ * @param {boolean} [args.shaderF16] Whether the adapter exposes shader-f16.
+ * @param {string[]} [args.order] Display order (ascending download size).
+ * @returns {Array<{value: string, available: boolean, reason: (string|null)}>}
+ *   `reason` is null when available, else 'no-shader-f16' or 'source'.
+ */
+export function encoderQuantRows({ backend, repoFiles = null, shaderF16 = false, order = null } = {}) {
+  const isWebgpu = String(backend || '').startsWith('webgpu');
+  const offered = encoderQuantsFor(backend);
+  const sorted = order ? order.filter((q) => offered.includes(q)) : offered;
+  // Ask the FILE question as though the machine could run anything. Passing the
+  // real shaderF16 here would fold the machine's answer into the source's, and
+  // an adapter without shader-f16 would make the fp16 file look absent from a
+  // mirror that serves it, hiding the one row that has something to say.
+  const hosted = servableEncoderQuants({ repoFiles, shaderF16: true });
+  const hostedHere = hosted ? (isWebgpu ? hosted.webgpu : hosted.wasm) : null;
+  const rows = sorted
+    .filter((q) => !hostedHere || hostedHere.includes(q))
+    .map((q) => (isWebgpu && q === 'fp16' && !shaderF16
+      ? { value: q, available: false, reason: 'no-shader-f16' }
+      : { value: q, available: true, reason: null }));
+  // A source that hosts nothing this backend can run would otherwise render an
+  // empty control: no radios, no explanation, no way to tell a broken listing
+  // from a deliberate one. Fall back to the backend's own list, greyed, so the
+  // reason is at least on screen. The load would fail with the same diagnosis.
+  if (!rows.length) return sorted.map((q) => ({ value: q, available: false, reason: 'source' }));
+  return rows;
+}
+
+/**
  * The precision to substitute when a GPU load finds its own precision
  * unservable, staying ON the GPU.
  *

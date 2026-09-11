@@ -28,6 +28,7 @@ import {
   QUANT_DOWNLOAD_MB,
   WASM_ENCODER_QUANTS,
   WEBGPU_ENCODER_QUANTS,
+  encoderQuantRows,
   encoderQuantsFor,
   nextGpuEncoderQuant,
   servableEncoderQuants,
@@ -194,5 +195,109 @@ describe('nextGpuEncoderQuant: staying on the GPU when a precision is unservable
     for (const q of WASM_ENCODER_QUANTS) {
       assert.equal(typeof QUANT_DOWNLOAD_MB[q], 'number', q);
     }
+  });
+});
+
+// The same mirror on 2026-09-11, after the fp16 encoder was regenerated and
+// published. Kept beside the older capture on purpose: the pair is what proves
+// the list TRACKS a deployment rather than describing this project's file set,
+// and fp16 appearing is the exact change an operator makes and then expects to
+// see in the sidebar.
+const DEPLOYED_MIRROR_WITH_FP16 = [
+  'config.json',
+  'fp16/encoder-model.fp16.onnx',
+  'fp32/decoder_joint-model.onnx',
+  'fp32/decoder_joint-model.onnx.data',
+  'fp32/encoder-model.onnx',
+  'fp32/encoder-model.onnx.data.000',
+  'fp32/encoder-model.onnx.data.001',
+  'int8/decoder_joint-model.int8.onnx',
+  'int8/encoder-model.int8.onnx',
+  'nemo128.onnx',
+  'vocab.txt',
+  'w4a8/encoder-model.w4a8.onnx',
+];
+
+describe('encoderQuantRows: what the sidebar actually renders', () => {
+  const values = (rows) => rows.map((r) => r.value);
+  const rowFor = (rows, v) => rows.find((r) => r.value === v) ?? null;
+
+  test('a precision the backend has no kernel for is not rendered at all', () => {
+    // The report this answers: fp16 sat greyed out under WASM saying nothing
+    // useful, and got read as "the fp16 file is missing from the server". It is
+    // not missing; fp16 has no usable WASM kernel and never appears there.
+    const wasm = encoderQuantRows({ backend: 'wasm', repoFiles: null });
+    assert.equal(rowFor(wasm, 'fp16'), null);
+    const gpu = encoderQuantRows({ backend: 'webgpu-hybrid', repoFiles: null });
+    assert.equal(rowFor(gpu, 'int8'), null, 'no GPU int8 encoder kernel exists');
+    assert.equal(rowFor(gpu, 'int8lite'), null);
+  });
+
+  test('a precision the source does not host is not rendered either', () => {
+    // int8-lite is the live case: neither repo ships it any more, so offering
+    // it describes a deployment that does not exist.
+    const rows = encoderQuantRows({ backend: 'wasm', repoFiles: DEPLOYED_MIRROR_WITH_FP16 });
+    assert.equal(rowFor(rows, 'int8lite'), null);
+    assert.deepEqual(values(rows), ['int8', 'w4a8', 'fp32']);
+    assert.ok(rows.every((r) => r.available), 'everything left is selectable');
+  });
+
+  test('publishing a file makes its row appear, with no app change', () => {
+    const before = encoderQuantRows({
+      backend: 'webgpu-hybrid', repoFiles: DEPLOYED_MIRROR, shaderF16: true,
+    });
+    const after = encoderQuantRows({
+      backend: 'webgpu-hybrid', repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: true,
+    });
+    assert.equal(rowFor(before, 'fp16'), null, 'the older capture has no fp16 file');
+    assert.deepEqual(rowFor(after, 'fp16'), { value: 'fp16', available: true, reason: null });
+  });
+
+  test('a machine that cannot run fp16 KEEPS the row, greyed, with the reason', () => {
+    // The one case worth a row: the source serves the file and the backend has
+    // the kernel, so the only thing standing in the way is this adapter. Hiding
+    // it would make two machines against one deployment show different lists
+    // with nothing on screen to explain why.
+    const rows = encoderQuantRows({
+      backend: 'webgpu-hybrid', repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false,
+    });
+    assert.deepEqual(rowFor(rows, 'fp16'), { value: 'fp16', available: false, reason: 'no-shader-f16' });
+  });
+
+  test('the missing shader-f16 feature never makes the fp16 FILE look absent', () => {
+    // The trap in wiring this up: servableEncoderQuants folds shaderF16 into
+    // its answer, so asking it the file question with the real flag would drop
+    // fp16 as "not hosted" on every adapter without the feature, hiding the row
+    // whose whole job is to name that adapter as the reason.
+    const rows = encoderQuantRows({
+      backend: 'webgpu-hybrid', repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false,
+    });
+    assert.notEqual(rowFor(rows, 'fp16'), null);
+    assert.notEqual(rowFor(rows, 'fp16').reason, 'source');
+  });
+
+  test('an unknown listing offers everything the backend can run', () => {
+    // null is "no opinion", not "hosts nothing": a mirror without a manifest,
+    // a listing request that failed, a probe still in flight. Greying or hiding
+    // on an unanswered question is how a loadable precision becomes unreachable.
+    for (const repoFiles of [null, []]) {
+      const rows = encoderQuantRows({ backend: 'wasm', repoFiles });
+      assert.deepEqual(values(rows), ['int8lite', 'int8', 'w4a8', 'fp32']);
+    }
+  });
+
+  test('a source that hosts nothing runnable renders greyed rows, never an empty control', () => {
+    // No radios, no explanation, no way to tell a broken listing from a
+    // deliberate one. The load would fail with the same diagnosis, so say it.
+    const rows = encoderQuantRows({ backend: 'webgpu-hybrid', repoFiles: ['vocab.txt', 'config.json'] });
+    assert.ok(rows.length > 0);
+    assert.ok(rows.every((r) => !r.available && r.reason === 'source'));
+  });
+
+  test('the display order is honoured and never invents a row', () => {
+    const order = ['w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
+    const rows = encoderQuantRows({ backend: 'webgpu-hybrid', repoFiles: null, shaderF16: true, order });
+    assert.deepEqual(values(rows), ['w4a8', 'fp16', 'fp32']);
+    for (const r of rows) assert.ok(WEBGPU_ENCODER_QUANTS.includes(r.value), r.value);
   });
 });
