@@ -3599,7 +3599,7 @@ export default function App() {
     if (!corruptionRetried) console.time('LoadModel');
 
     try {
-      const progressCallback = ({ loaded, total, file, resumed, attempt, maxAttempts }) => {
+      const progressCallback = ({ loaded, total, file, resumed, resumedFrom, attempt, maxAttempts }) => {
         // Attempt-tracking events fire before any bytes flow so the user sees
         // "Retry N/M" even on a stalled connection. Distinct from byte events.
         if (attempt !== undefined) {
@@ -3614,8 +3614,13 @@ export default function App() {
           return;
         }
         // Byte events only ever fire for a file being streamed, so this map
-        // counts network bytes and nothing else.
-        loadTransferRef.current.set(file, Math.max(loadTransferRef.current.get(file) || 0, loaded || 0));
+        // counts network bytes and nothing else. `loaded` is how much of the
+        // FILE is in hand, which on a resumed download starts at whatever was
+        // already cached, so the resumed part has to come back off: the point
+        // of the number is what the connection was asked for. It is the
+        // progress BAR that wants the total, and that reads `loaded` directly.
+        const transferred = Math.max(0, (loaded || 0) - (resumedFrom || 0));
+        loadTransferRef.current.set(file, Math.max(loadTransferRef.current.get(file) || 0, transferred));
         // ...which is also what makes this the honest moment to say
         // "downloading". The phase cannot be announced up front, because a load
         // answered entirely from IndexedDB never streams anything and would
