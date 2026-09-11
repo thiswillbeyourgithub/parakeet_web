@@ -467,6 +467,26 @@ async function blobToBytes(blob) {
 // the proven-good mark with room to spare.
 export const MAX_CACHEABLE_STREAM_BYTES = 700e6;
 
+// How many bytes of the fp32 encoder shard set may be kept in IndexedDB as a
+// deliberately PARTIAL cache, to be completed by a Range request on the next
+// load. The ~2.4 GB shard set cannot be cached whole in any record shape (see
+// the shard note in downloadModelFiles: reads past ~2^31 aggregate bytes throw
+// `Failed to read large IndexedDB value`), so the choice is not "cache it or
+// not" but "how much of it". 1.5 GB was measured to round-trip with 0 failures
+// on the box where 2.42 GB fails, and leaves ~570 MB of headroom under the 2^31
+// wall for the decoder sidecar (~72 MB on fp32) and for another model's records
+// still waiting for the generational sweep.
+//
+// Against the current shards this caches all of `.000` (1.483 GB) and none of
+// `.001`, taking the per-load transfer from ~2.4 GB to ~0.95 GB.
+export const MAX_PREFIX_CACHE_BYTES = 1.5e9;
+
+// Segment size for the prefix cache, deliberately larger than FLUSH_INTERVAL:
+// the 2^31 readback ceiling was probed with 32 MB records, so staying at that
+// size keeps the shipped record shape the one that was actually measured, and
+// keeps the record count for a 1.5 GB prefix around 47 rather than ~190.
+export const PREFIX_SEGMENT_BYTES = 32e6;
+
 /**
  * Download a URL into a Blob with resume + retry, reporting progress,
  * then persist it to IndexedDB and return a blob URL. Shared between the
@@ -498,9 +518,27 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   // to no more than this many bytes. Zero (the default) keeps the strict
   // never-touch-IDB behaviour. See MAX_CACHEABLE_STREAM_BYTES.
   cacheIfUnder = 0,
+  // Under noCache, KEEP the first N bytes of the file on disk as resume state
+  // once the download succeeds, instead of deleting it, so the next load can
+  // read that prefix back and Range-fetch only the remainder. For files too big
+  // to cache whole (the fp32 encoder shards), a partial cache is the only kind
+  // available. Zero (the default) keeps the strict never-touch-IDB behaviour.
+  // See MAX_PREFIX_CACHE_BYTES.
+  prefixCacheBytes = 0,
+  // Record size for that prefix. Pairs with prefixCacheBytes: the budget says
+  // how much is kept, this says in how many pieces. See PREFIX_SEGMENT_BYTES.
+  prefixSegmentBytes = PREFIX_SEGMENT_BYTES,
 } = {}) {
   const partialKey = PARTIAL_PREFIX + cacheKey;
   const segKey = (i) => `${partialKey}${SEGMENT_INFIX}${i}`;
+
+  // A prefix cache only makes sense for the stream-to-memory path: the normal
+  // path caches the whole file and deletes its partial state on success.
+  const prefixBudget = noCache ? Math.max(0, prefixCacheBytes) : 0;
+  // Whether this call touches the partial-/-seg- records at all. The normal
+  // path always does (that is its crash resumption); noCache does only when it
+  // has been given a prefix budget to fill.
+  const usePartial = !noCache || prefixBudget > 0;
 
   // Stream-to-memory mode (noCache): used for the multi-hundred-MB fp32 encoder
   // shards. The normal path offloads streamed bytes to IndexedDB segment Blobs
@@ -517,7 +555,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   // so each flush only writes the new bytes since the last flush. This
   // keeps total IDB write cost linear in the file size.
   let meta = null;
-  if (!noCache && typeof indexedDB !== 'undefined') {
+  if (usePartial && typeof indexedDB !== 'undefined') {
     try { meta = await getFileFromDb(partialKey); } catch (_) {}
   }
   // Backwards-compat: an old-format partial record had a `chunks` field.
@@ -533,18 +571,45 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   let etag = meta?.etag || null;
   let contentType = meta?.contentType || 'application/octet-stream';
 
+  // Bytes of this file already written to segment records. Tracked apart from
+  // `received` because under a prefix cache the two diverge: `received` counts
+  // every byte held (most of them only in memBuf), `persisted` counts the ones
+  // on disk, and it is `persisted` that the next load resumes from.
+  let persisted = received;
+
   if (segCount > 0 && typeof indexedDB !== 'undefined') {
     try {
-      for (let i = 0; i < segCount; i++) {
-        const seg = await getFileFromDb(segKey(i));
-        // Segments are stored as plain ArrayBuffers (BY VALUE); wrap each into
-        // a fresh Blob so the bytes move to spillable blob storage instead of
-        // sitting in the JS heap. A legacy Blob segment (written before the
-        // by-value change) is treated as unreadable: its backing can alias the
-        // IDB record's file, which is the exact breakage the by-value store
-        // exists to prevent, so restarting the download is the safe path.
-        if (!(seg instanceof ArrayBuffer)) throw new Error(`segment ${i} missing or wrong type`);
-        segments.push(new Blob([seg]));
+      if (noCache) {
+        // Prefix cache: the file length is already known from the partial meta,
+        // so allocate the output buffer now and read the cached prefix straight
+        // into it. Wrapping the segments in Blobs the way the path below does
+        // would mean holding a multi-hundred-MB prefix twice, once in blob
+        // storage and once in memBuf, to save nothing.
+        if (!(total > 0 && received <= total)) throw new Error('partial meta has no usable total');
+        memBuf = new Uint8Array(total);
+        let off = 0;
+        for (let i = 0; i < segCount; i++) {
+          const seg = await getFileFromDb(segKey(i));
+          if (!(seg instanceof ArrayBuffer)) throw new Error(`segment ${i} missing or wrong type`);
+          memBuf.set(new Uint8Array(seg), off);
+          off += seg.byteLength;
+        }
+        // A short prefix would silently shift every byte the Range request
+        // appends, producing a corrupt model instead of a failed download.
+        if (off !== received) throw new Error(`prefix is ${off} bytes, meta says ${received}`);
+        console.log(`${logTag} Read ${off} cached bytes of ${filename} (${total} total)`);
+      } else {
+        for (let i = 0; i < segCount; i++) {
+          const seg = await getFileFromDb(segKey(i));
+          // Segments are stored as plain ArrayBuffers (BY VALUE); wrap each into
+          // a fresh Blob so the bytes move to spillable blob storage instead of
+          // sitting in the JS heap. A legacy Blob segment (written before the
+          // by-value change) is treated as unreadable: its backing can alias the
+          // IDB record's file, which is the exact breakage the by-value store
+          // exists to prevent, so restarting the download is the safe path.
+          if (!(seg instanceof ArrayBuffer)) throw new Error(`segment ${i} missing or wrong type`);
+          segments.push(new Blob([seg]));
+        }
       }
     } catch (e) {
       console.warn(`${logTag} Partial segments unreadable for ${filename}, restarting:`, e);
@@ -552,6 +617,8 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
       segments.length = 0;
       segCount = 0;
       received = 0;
+      persisted = 0;
+      memBuf = null;
       total = 0;
       etag = null;
       contentType = 'application/octet-stream';
@@ -570,7 +637,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   }
 
   async function deleteAllPartial() {
-    if (noCache || typeof indexedDB === 'undefined') return;
+    if (!usePartial || typeof indexedDB === 'undefined') return;
     try {
       const db = await getDb();
       await idbDelete(db, STORE_NAME, partialKey);
@@ -583,14 +650,21 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   async function writeMeta() {
     if (typeof indexedDB === 'undefined') return;
     try {
-      await saveFileToDb(partialKey, { received, total, etag, contentType, segCount });
+      // `persisted`, not `received`: the record must describe the bytes that
+      // are actually on disk, since that is the offset the next load resumes
+      // from. On the normal path the tail is always flushed first so the two
+      // are equal here; under a prefix cache they are not.
+      await saveFileToDb(partialKey, { received: persisted, total, etag, contentType, segCount });
     } catch (e) {
       console.warn(`${logTag} Failed to persist partial meta for ${filename}:`, e);
     }
   }
 
   // Flush the in-memory tail to a new segment record, then drop it from heap.
-  // No-op under noCache: there the bytes stay in `memBuf` and are never offloaded.
+  // Under a prefix cache the source is `memBuf` instead of the tail chunks (the
+  // stream-to-memory path never fills a tail), and flushing stops once
+  // `prefixBudget` bytes are on disk; the rest of the file is re-fetched by
+  // Range on the next load. Still a no-op under plain noCache.
   //
   // The record value is a plain ArrayBuffer (BY VALUE), deliberately NOT a
   // Blob: Chromium can swap an IDB-written Blob's backing over to the
@@ -604,15 +678,32 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
   // cannot alias anything, and the in-memory segment Blob below lives in
   // ordinary spillable blob storage, independent of IndexedDB.
   async function flushTail() {
-    if (noCache || typeof indexedDB === 'undefined' || tailBytes === 0) return;
-    const buf = new Uint8Array(tailBytes);
-    let off = 0;
-    for (const c of tailChunks) { buf.set(c, off); off += c.length; }
+    if (!usePartial || typeof indexedDB === 'undefined') return;
+    let buf;
+    if (noCache) {
+      // Prefix cache. Without a known total there is no memBuf (the response
+      // was content-encoded, so its length is not known up front) and no
+      // prefix is kept: that is the honest outcome, since a compressed
+      // transfer is already far smaller than the thing the prefix cache
+      // exists to shrink.
+      if (!memBuf) return;
+      const end = Math.min(received, prefixBudget);
+      if (end <= persisted) return;
+      // slice(), not subarray(): the record must own its bytes rather than
+      // view a buffer that keeps being written.
+      buf = memBuf.slice(persisted, end);
+    } else {
+      if (tailBytes === 0) return;
+      buf = new Uint8Array(tailBytes);
+      let off = 0;
+      for (const c of tailChunks) { buf.set(c, off); off += c.length; }
+    }
     const segBlob = new Blob([buf], { type: contentType });
     try {
       await saveFileToDb(segKey(segCount), buf.buffer);
-      segments.push(segBlob);
+      if (!noCache) segments.push(segBlob);
       segCount += 1;
+      persisted += buf.length;
       tailChunks = [];
       tailBytes = 0;
       await writeMeta();
@@ -655,19 +746,6 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
         throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
       }
 
-      // We asked for a range but got a full body: server doesn't support
-      // ranges, or If-Range invalidated the partial. Restart from 0,
-      // dropping every segment we had on disk first.
-      if (received > 0 && resp.status === 200) {
-        console.warn(`${logTag} Server returned full body for ${filename}, restarting from 0`);
-        await deleteAllPartial();
-        segments.length = 0;
-        segCount = 0;
-        received = 0;
-        tailChunks = [];
-        tailBytes = 0;
-      }
-
       // A content-encoded response describes the ENCODED entity in its headers
       // while `resp.body` hands us the DECODED bytes. Caddy's `precompressed`
       // serves an `encoder-model.int8.onnx.zst` sidecar exactly this way
@@ -685,8 +763,9 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
         const m = cr && cr.match(/\/(\d+)$/);
         if (m) total = parseInt(m[1], 10);
       } else {
-        // 200 path: at this point received is guaranteed 0 (either fresh
-        // download, or just reset above), so total = content-length.
+        // 200 path: the body is the whole entity whatever we asked for, so
+        // total = content-length. (`received` may still be non-zero here; the
+        // restart below resets it once `total` is known.)
         const cl = resp.headers.get('content-length');
         if (cl) total = parseInt(cl, 10);
       }
@@ -704,6 +783,48 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
         etag = resp.headers.get('etag') || resp.headers.get('last-modified') || etag;
       }
       contentType = resp.headers.get('content-type') || contentType;
+
+      // Two ways a resumed download has to start over. Both drop the state on
+      // disk first; they differ only in what can be done with the body in hand.
+      //
+      // A 206 whose total no longer matches the buffer sized from the partial
+      // meta means the file changed under an etag that did not (or under a
+      // server that sends none). Appending that range to the prefix would hand
+      // ORT a silently corrupt model rather than fail the download, and the
+      // body is a RANGE of the new file, so it is useless here: drop it and go
+      // round again, which now asks for the whole thing.
+      if (received > 0 && memBuf && total > 0 && memBuf.length !== total) {
+        console.warn(`${logTag} Length of ${filename} changed to ${total}, restarting from 0`);
+        clearWatchdog();
+        try { await resp.body.cancel(); } catch (_) {}
+        await deleteAllPartial();
+        segments.length = 0;
+        segCount = 0;
+        received = 0;
+        persisted = 0;
+        memBuf = null;
+        tailChunks = [];
+        tailBytes = 0;
+        // Not a failed attempt, so `attempt` is left alone. This cannot loop:
+        // the next pass sends no Range header, and memBuf is null until it is
+        // allocated below, so the condition above cannot hold again.
+        continue;
+      }
+
+      // We asked for a range but got a full body: the server doesn't support
+      // ranges, or If-Range invalidated the partial. Here the body IS the whole
+      // entity, so the reset costs nothing beyond the bytes already spent.
+      if (received > 0 && resp.status === 200) {
+        console.warn(`${logTag} Server returned full body for ${filename}, restarting from 0`);
+        await deleteAllPartial();
+        segments.length = 0;
+        segCount = 0;
+        received = 0;
+        persisted = 0;
+        memBuf = null;
+        tailChunks = [];
+        tailBytes = 0;
+      }
 
       // noCache + known length: stream straight into one preallocated buffer so
       // we never hold the bytes twice (chunks + concat). A range-resume keeps
@@ -738,7 +859,15 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
           }
           received += value.length;
           if (progress && total > 0) progress({ loaded: received, total, file: filename, resumed: resumedFrom > 0, resumedFrom });
-          if (tailBytes >= FLUSH_INTERVAL) {
+          if (memBuf) {
+            // Prefix cache: nothing accumulates in the tail, so the trigger is
+            // how far memBuf has run ahead of what is on disk. Stops for good
+            // once the budget is full, which for the fp32 shards happens partway
+            // through the set and leaves the rest to be re-fetched every load.
+            if (persisted < prefixBudget && received - persisted >= prefixSegmentBytes) {
+              await flushTail();
+            }
+          } else if (tailBytes >= FLUSH_INTERVAL) {
             await flushTail();
           }
         }
@@ -755,6 +884,12 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
       attempt += 1;
     }
   }
+
+  // The read loop only flushes on whole prefixSegmentBytes boundaries, so the
+  // last stretch of the prefix (and all of a file smaller than one segment) is
+  // still only in memory. Write it before returning, or the next load resumes
+  // from a needlessly early offset.
+  if (noCache && memBuf && persisted < prefixBudget) await flushTail();
 
   // noCache: return the bytes straight from memory, no Blob, no IDB. memBuf is
   // exactly `received` bytes when the length was known; otherwise concatenate
@@ -783,6 +918,9 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
           console.warn(`${logTag} Failed to write cache metadata for ${filename}:`, e);
         }
         console.log(`${logTag} Cached ${filename} in IndexedDB (${received} bytes, streamed)`);
+        // The whole file is now a cache record, so a prefix of it is dead
+        // weight against the budget that the files too big to cache need.
+        await deleteAllPartial();
       } catch (e) {
         console.warn(`${logTag} Failed to cache ${filename} in IndexedDB:`, e);
       }
@@ -835,7 +973,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
 }
 
 export async function getModelFile(repoId, filename, options = {}) {
-  const { revision = 'main', subfolder = '', progress, asBytes = false, noCache = false, cacheIfUnder = 0 } = options;
+  const { revision = 'main', subfolder = '', progress, asBytes = false, noCache = false, cacheIfUnder = 0, prefixCacheBytes = 0, prefixSegmentBytes = undefined } = options;
 
   // Encode the path components so slash-containing branch names (e.g.
   // 'refs/pr/1') and any URL-reserved characters in subfolder/filename
@@ -891,7 +1029,7 @@ export async function getModelFile(repoId, filename, options = {}) {
   console.log(`[Hub] Downloading ${filename} from ${repoId}...`);
   try {
     return await _streamAndCache(url, cacheKey, filename, progress, '[Hub]',
-      { maxRetries: 1, asBytes, noCache, cacheIfUnder });
+      { maxRetries: 1, asBytes, noCache, cacheIfUnder, prefixCacheBytes, ...(prefixSegmentBytes ? { prefixSegmentBytes } : {}) });
   } catch (fetchErr) {
     // Wrap in HubDownloadError so the UI can detect HF-specific failures
     // (network errors, CORS blocks, firewalls, HTTP errors after all retries).
@@ -928,7 +1066,7 @@ export async function getModelText(repoId, filename, options = {}) {
  * @returns {Promise<string>} Blob URL to the downloaded file
  */
 export async function getLocalModelFile(baseUrl, repoId, filename, options = {}) {
-  const { progress, revision = 'main', subfolder = '', asBytes = false, noCache = false, cacheIfUnder = 0 } = options;
+  const { progress, revision = 'main', subfolder = '', asBytes = false, noCache = false, cacheIfUnder = 0, prefixCacheBytes = 0, prefixSegmentBytes = undefined } = options;
 
   // Reuse IndexedDB cache (same key scheme so a prior HF download is also matched)
   const cacheKey = makeCacheKey(repoId, revision, subfolder, filename);
@@ -948,7 +1086,7 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
   return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]',
-      { asBytes, noCache, cacheIfUnder });
+      { asBytes, noCache, cacheIfUnder, prefixCacheBytes, ...(prefixSegmentBytes ? { prefixSegmentBytes } : {}) });
 }
 
 /**
@@ -1837,9 +1975,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // One place that knows how to fetch a single file (HF or local fallback),
   // reused by both the main file loop and the shard loop below so the two can
   // never diverge in revision/progress handling.
-  const downloadFile = (name, asBytes = false, noCache = false, cacheIfUnder = 0) => {
+  const downloadFile = (name, fileOpts = {}) => {
     const wrappedProgress = progress ? (p) => progress({ ...p, file: name }) : undefined;
-    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, asBytes, noCache, cacheIfUnder };
+    const perFileOpts = { ...options, revision: effectiveRevision, progress: wrappedProgress, ...fileOpts };
     return effectiveLocalBase
       ? getLocalModelFile(effectiveLocalBase, repoId, name, perFileOpts)
       : getModelFile(repoId, name, perFileOpts);
@@ -1847,7 +1985,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
 
   for (const { key, name, asBytes } of filesToGet) {
     try {
-        results.urls[key] = await downloadFile(name, asBytes);
+        results.urls[key] = await downloadFile(name, { asBytes });
     } catch (e) {
         if (key.endsWith('DataUrl')) {
             console.warn(`[Hub] Optional external data file not found: ${name}. This is expected if the model is small.`);
@@ -1898,25 +2036,37 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // wall as the blob-URL fetch cap, applied to the AGGREGATE of large IDB values
   // in one origin. Five 500 MB shards are still 2.5 GB, so re-sharding would
   // change nothing except making the failure look like it worked for the first
-  // four. The ~2.4 GB fp32 encoder cannot be cached in any record shape; only a
-  // deliberately PARTIAL cache (keep ~1.5 GB, Range-fetch the rest) could help,
-  // and that is unbuilt. Sharding itself is unaffected: shards exist so no
-  // single file trips the ~2 GB load-time walls, which has nothing to do with
-  // caching.
+  // four. The ~2.4 GB fp32 encoder cannot be cached WHOLE in any record shape.
+  // What it can have is a deliberately PARTIAL cache, which is the second gate
+  // below: each shard is given what is left of a MAX_PREFIX_CACHE_BYTES budget,
+  // keeps that many of its leading bytes as resume state, and Range-fetches the
+  // remainder on the next load. Sharding itself is unaffected either way: shards
+  // exist so no single file trips the ~2 GB load-time walls, which has nothing
+  // to do with caching.
   //
-  // The streaming itself is untouched either way: the multi-GB Blob assembly
-  // that commit 88a39df died on is still never performed.
+  // The streaming itself is untouched: the multi-GB Blob assembly that commit
+  // 88a39df died on is still never performed, and a shard still arrives as one
+  // preallocated Uint8Array.
   if (useShards) {
     console.log(`[Hub] Encoder fp32 in ${encoderShards.length} shard(s); mounting as multi-file external data`);
     results.urls.encoderDataUrl = [];
+    // Spent in file order, so the earlier shards are the ones that end up
+    // cached. Which shards those are does not matter (every byte of the set has
+    // to be present before the session builds), and spending in order keeps the
+    // split stable across loads instead of depending on arrival times.
+    let prefixBudget = MAX_PREFIX_CACHE_BYTES;
     for (const name of encoderShards) {
       // Fetch from the directory the shards physically live in (fp32/, the flat
       // root, or sharded/), but mount under the bare basename the graph's
       // external_data location names.
-      results.urls.encoderDataUrl.push({
-        path: name,
-        data: await downloadFile(`${encoderSubdir}${name}`, true, true, MAX_CACHEABLE_STREAM_BYTES),
+      const data = await downloadFile(`${encoderSubdir}${name}`, {
+        asBytes: true,
+        noCache: true,
+        cacheIfUnder: MAX_CACHEABLE_STREAM_BYTES,
+        prefixCacheBytes: prefixBudget,
       });
+      prefixBudget = Math.max(0, prefixBudget - Math.min(data.length, prefixBudget));
+      results.urls.encoderDataUrl.push({ path: name, data });
     }
   }
 
