@@ -125,6 +125,20 @@ export function pickBackendFromProbe({ wasmMs, gpuMs, gpuReason = null, margin =
 }
 
 /**
+ * A stable string for "which precisions this source can serve", so a stored
+ * verdict can tell whether the deployment it was measured against is still the
+ * deployment in front of it.
+ *
+ * @param {{wasm: string[], webgpu: string[]}|null} servable From servableEncoderQuants.
+ * @returns {string|null} null when there is no listing to reason from.
+ */
+export function sourceQuantSignature(servable) {
+  if (!servable || typeof servable !== 'object') return null;
+  const side = (xs) => (Array.isArray(xs) ? [...xs].sort().join(',') : '');
+  return `wasm:${side(servable.wasm)}|webgpu:${side(servable.webgpu)}`;
+}
+
+/**
  * Is a stored verdict still worth trusting, or must the probe run again?
  *
  * @param {object|null} verdict Stored verdict (see buildVerdict).
@@ -133,9 +147,11 @@ export function pickBackendFromProbe({ wasmMs, gpuMs, gpuReason = null, margin =
  * @param {string|null} now.adapter Current GPU adapter signature (null when none).
  * @param {number} now.at Current epoch ms.
  * @param {number} [now.maxAgeMs]
+ * @param {string|null} [now.sourceSig] Current sourceQuantSignature(), or null
+ *   when no listing has been read yet.
  * @returns {boolean}
  */
-export function verdictStillValid(verdict, { appVersion, adapter, at, maxAgeMs = PROBE_VERDICT_MAX_AGE_MS } = {}) {
+export function verdictStillValid(verdict, { appVersion, adapter, at, maxAgeMs = PROBE_VERDICT_MAX_AGE_MS, sourceSig = null } = {}) {
   if (!verdict || typeof verdict !== 'object') return false;
   if (verdict.backend !== 'wasm' && verdict.backend !== 'webgpu-hybrid') return false;
   if (!Number.isFinite(verdict.at)) return false;
@@ -145,6 +161,17 @@ export function verdictStillValid(verdict, { appVersion, adapter, at, maxAgeMs =
   // A different GPU (docked eGPU, driver rename, switched integrated/discrete)
   // invalidates a GPU-vs-CPU comparison outright.
   if ((verdict.adapter ?? null) !== (adapter ?? null)) return false;
+  // The model source changing what it can serve invalidates the verdict too,
+  // and this is the half that was missing. The probe's arms do not depend on the
+  // repo, but everything the verdict is USED for does: a machine measured while
+  // the source could serve nothing to its GPU was flipped to WASM and persisted
+  // there, and publishing the missing encoder afterwards changed neither the app
+  // version nor the adapter, so the stale answer stayed authoritative until it
+  // aged out 90 days later. Compared only when BOTH sides are known: a null on
+  // either side means "no listing to reason from", and re-measuring on every
+  // load of an offline or manifest-less deployment would be worse than trusting
+  // the stored answer.
+  if (verdict.sourceSig && sourceSig && verdict.sourceSig !== sourceSig) return false;
   if (Number.isFinite(maxAgeMs) && at - verdict.at > maxAgeMs) return false;
   return true;
 }
@@ -184,7 +211,7 @@ export function shouldAutoProbe({ settingsLoaded, userPickedBackend, webgpuSelec
  * Assemble the record that gets persisted (and shown in the sidebar).
  * Kept pure so the unit tests can pin the shape the settings store holds.
  */
-export function buildVerdict({ pick, wasmMs, gpuMs, appVersion, adapter, at, trigger }) {
+export function buildVerdict({ pick, wasmMs, gpuMs, appVersion, adapter, at, trigger, sourceSig = null }) {
   return {
     backend: pick.backend,
     speedup: pick.speedup,
@@ -193,6 +220,10 @@ export function buildVerdict({ pick, wasmMs, gpuMs, appVersion, adapter, at, tri
     gpuMs: Number.isFinite(gpuMs) ? gpuMs : null,
     appVersion,
     adapter: adapter ?? null,
+    // What the source could serve when this was measured. A verdict stored
+    // before this field existed has it undefined, which reads as "unknown" and
+    // keeps the old behaviour rather than forcing one re-measure on upgrade.
+    sourceSig: sourceSig ?? null,
     at,
     trigger: trigger ?? null,
   };

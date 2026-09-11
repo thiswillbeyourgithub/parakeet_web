@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   pickBackendFromProbe,
   verdictStillValid,
+  sourceQuantSignature,
   shouldAutoProbe,
   buildVerdict,
   planTimedRuns,
@@ -147,6 +148,49 @@ describe('verdictStillValid: when a stored verdict must be re-measured', () => {
       assert.equal(verdictStillValid(bad, env), false);
     }
   });
+
+  // The reported failure, and the reason this field exists. A deployment that
+  // could serve nothing to the GPU measured WASM, persisted it, and then the
+  // operator published the missing encoder. Neither the app version nor the
+  // adapter changed, so the answer that was true of the old deployment stayed
+  // authoritative against the new one for the full 90 days.
+  test('the source changing what it serves re-probes', () => {
+    const measured = { ...base, sourceSig: 'wasm:int8|webgpu:' };
+    assert.equal(verdictStillValid(measured, { ...env, sourceSig: 'wasm:int8|webgpu:' }), true);
+    assert.equal(verdictStillValid(measured, { ...env, sourceSig: 'wasm:int8,fp32|webgpu:fp16,fp32' }), false);
+  });
+
+  test('an unknown listing on either side is no reason to re-probe', () => {
+    // null means "no listing to reason from": an offline visitor, a mirror with
+    // no manifest, a probe still in flight. Re-measuring every load of those is
+    // worse than trusting the stored answer, and a verdict stored before this
+    // field existed must not force one re-measure on upgrade.
+    const measured = { ...base, sourceSig: 'wasm:int8|webgpu:' };
+    assert.equal(verdictStillValid(measured, { ...env, sourceSig: null }), true);
+    assert.equal(verdictStillValid({ ...base }, { ...env, sourceSig: 'wasm:fp32|webgpu:fp32' }), true);
+  });
+});
+
+describe('sourceQuantSignature: comparing one deployment against another', () => {
+  test('the same servable set compares equal whatever order it arrives in', () => {
+    assert.equal(
+      sourceQuantSignature({ wasm: ['int8', 'fp32'], webgpu: ['fp32', 'w4a8'] }),
+      sourceQuantSignature({ wasm: ['fp32', 'int8'], webgpu: ['w4a8', 'fp32'] }),
+    );
+  });
+
+  test('publishing one encoder changes the signature', () => {
+    assert.notEqual(
+      sourceQuantSignature({ wasm: ['int8'], webgpu: ['fp32'] }),
+      sourceQuantSignature({ wasm: ['int8'], webgpu: ['fp32', 'fp16'] }),
+    );
+  });
+
+  test('no listing gives no signature, never an empty-looking one', () => {
+    // '' would compare unequal to a real signature and re-probe every load; the
+    // null has to survive all the way to verdictStillValid to mean "no opinion".
+    for (const x of [null, undefined, 'wasm']) assert.equal(sourceQuantSignature(x), null);
+  });
 });
 
 describe('shouldAutoProbe: when the probe runs by itself', () => {
@@ -184,11 +228,13 @@ describe('buildVerdict', () => {
     const v = buildVerdict({
       pick, wasmMs: 54, gpuMs: 10, appVersion: '9.9.0',
       adapter: 'nvidia ampere', at: 42, trigger: 'load',
+      sourceSig: 'wasm:fp32,int8|webgpu:fp32',
     });
     assert.deepEqual(v, {
       backend: 'webgpu-hybrid', speedup: 5.4, reason: null,
       wasmMs: 54, gpuMs: 10, appVersion: '9.9.0',
       adapter: 'nvidia ampere', at: 42, trigger: 'load',
+      sourceSig: 'wasm:fp32,int8|webgpu:fp32',
     });
     assert.equal(verdictStillValid(v, { appVersion: '9.9.0', adapter: 'nvidia ampere', at: 43 }), true);
   });
@@ -197,6 +243,7 @@ describe('buildVerdict', () => {
     const pick = pickBackendFromProbe({ wasmMs: 50, gpuMs: NaN, gpuReason: 'no-adapter' });
     const v = buildVerdict({ pick, wasmMs: 50, gpuMs: NaN, appVersion: '9.9.0', adapter: null, at: 7 });
     assert.equal(v.gpuMs, null);
+    assert.equal(v.sourceSig, null, 'an absent listing is null, never undefined, so it survives JSON');
     assert.equal(v.wasmMs, 50);
     assert.deepEqual(JSON.parse(JSON.stringify(v)), v);
   });
