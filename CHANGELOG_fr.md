@@ -10,9 +10,23 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.0 (2026-09-10)
 
+### L'encodeur fp32 ne se retélécharge plus intégralement à chaque fois
+
+L'encodeur pleine précision pèse environ 2,4 Go, livré en deux fichiers, et jusqu'ici chaque chargement de page les retéléchargeait entièrement. Rien n'était conservé, car trois tentatives de conservation avaient échoué chacune d'une manière qui ressemblait à un problème différent : un gros enregistrement par fichier, puis une limite de taille qui excluait en fait les deux fichiers, puis de nombreux petits enregistrements.
+
+C'était un seul et même problème. Un navigateur accepte bien plus de 2,4 Go dans son stockage, les déclare stockés, puis refuse de les relire dès que ce qu'il détient dépasse environ 2,1 Go. Mesuré ici : 2,42 Go écrits en 72 enregistrements de 32 Mo étaient annoncés comme 2,42 Go sur un quota de 10,74 Go, et après un rechargement les 63 premiers enregistrements se lisaient tandis que les 9 derniers levaient une erreur. 63 enregistrements de 32 Mo font 2 147 483 648 octets, soit 2 puissance 31, et la taille des enregistrements ne change rien à l'endroit où la limite tombe.
+
+Le fichier ne peut donc pas être conservé, mais une partie si. Un chargement conserve désormais 1,5 Go de l'ensemble et ne demande au serveur que le reste, en reprenant à partir de la portion en cache exactement comme le faisait déjà un téléchargement interrompu en cours de route. Sur les deux fichiers que fournit le dépôt du modèle, cela signifie que le premier (1,48 Go) sort du stockage et que le second (952 Mo) passe par le réseau. Mesuré de bout en bout dans un navigateur : 2454 Mo transférés au premier chargement, 952 Mo à chacun des suivants.
+
+Relire 1,5 Go depuis le stockage du navigateur a été mesuré à 344 Mo/s, soit environ 4,4 secondes. C'est un peu plus lent que de retélécharger les mêmes octets depuis un serveur situé sur la même machine, et bien plus rapide que n'importe quelle connexion réelle, ce qui est le cas visé.
+
+fp16 (1,2 Go) n'a jamais été concerné et ne change pas : il tient sous le plafond et a toujours été mis en cache en entier.
+
+Écrit avec Claude Code.
+
 ### La ligne d'état distingue le téléchargement du chargement
 
-« Chargement du modèle » s'affichait pendant les trois phases d'un chargement : la consultation du cache, le téléchargement de ce qui manque, et la construction des sessions d'inférence. C'est sans conséquence pour un démarrage à chaud de quelques secondes, et inutile précisément dans le cas où cela compte. L'encodeur fp32 est retéléchargé intégralement à chaque chargement (ses deux morceaux dépassent chacun la taille qu'un navigateur restitue de façon fiable depuis son propre cache, donc rien n'est conservé), et une ligne d'état affichant « Chargement du modèle » pendant neuf minutes ne permet pas de distinguer une connexion lente d'une machine lente.
+« Chargement du modèle » s'affichait pendant les trois phases d'un chargement : la consultation du cache, le téléchargement de ce qui manque, et la construction des sessions d'inférence. C'est sans conséquence pour un démarrage à chaud de quelques secondes, et inutile précisément dans le cas où cela compte. À l'époque, l'encodeur fp32 était retéléchargé intégralement à chaque chargement (l'entrée ci-dessus explique pourquoi, et y met fin), et une ligne d'état affichant « Chargement du modèle » pendant neuf minutes ne permet pas de distinguer une connexion lente d'une machine lente.
 
 Il existe désormais une phase « Téléchargement du modèle » distincte. Elle apparaît au premier octet qui traverse réellement le réseau, et non au début du chargement : un démarrage entièrement servi par le cache ne revendique donc jamais un téléchargement qu'il n'a pas fait.
 
