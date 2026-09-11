@@ -33,7 +33,7 @@ import {
   effectiveEncoderQuant,
   encoderQuantRows,
   encoderQuantsFor,
-  nextGpuEncoderQuant,
+  gpuBackendAutoUsable,
   servableEncoderQuants,
 } from '../../app/ui/src/lib/encoderQuants.js';
 
@@ -136,68 +136,43 @@ describe('servableEncoderQuants: what a source can really deliver', () => {
   });
 });
 
-describe('nextGpuEncoderQuant: staying on the GPU when a precision is unservable', () => {
-  test('the reported case: fp16 on that mirror becomes w4a8, not the CPU', () => {
-    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR, shaderF16: true }).webgpu;
-    assert.equal(nextGpuEncoderQuant({ current: 'fp16', servable, shaderF16: true }), 'w4a8');
+describe('gpuBackendAutoUsable: when the GPU may be chosen for somebody', () => {
+  // The rule the owner set on 2026-09-11: fp16 or nothing on the GPU. fp32 and
+  // w4a8 stay reachable by hand, so this is NOT "the GPU is broken", it is "the
+  // app will not put anyone there by itself". Gating the performance probe on
+  // it is the point: without it a machine with no shader-f16 spends two timed
+  // runs proving its GPU is faster and is then moved to WASM on the next load.
+  test('yes when this machine and this source can both do fp16', () => {
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: true });
+    assert.equal(gpuBackendAutoUsable({ servable, shaderF16: true }), true);
   });
 
-  test('cheapest first: an unrequested swap never costs more bytes than it must', () => {
-    // Both fp32 and w4a8 are servable here. Picking fp32 would turn a 1.2 GB
-    // choice into a 2.35 GB download the visitor never asked for; w4a8 is a
-    // quarter of it at the same accuracy, and the sidebar still lets them move
-    // to fp32 deliberately.
-    assert.ok(QUANT_DOWNLOAD_MB.w4a8 < QUANT_DOWNLOAD_MB.fp16);
-    assert.ok(QUANT_DOWNLOAD_MB.fp16 < QUANT_DOWNLOAD_MB.fp32);
-    assert.equal(nextGpuEncoderQuant({
-      current: 'fp16', servable: ['fp32', 'w4a8'], shaderF16: true,
-    }), 'w4a8');
+  test('no without the adapter feature, whatever the source serves', () => {
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false });
+    assert.equal(gpuBackendAutoUsable({ servable, shaderF16: false }), false);
+    assert.equal(gpuBackendAutoUsable({ servable: null, shaderF16: false }), false);
   });
 
-  test('a precision already refused this load is never offered again', () => {
-    // Otherwise the retry loop reoffers w4a8 forever instead of reaching fp32.
-    assert.equal(nextGpuEncoderQuant({
-      current: 'fp16', tried: ['w4a8'], servable: ['fp32', 'w4a8'], shaderF16: true,
-    }), 'fp32');
-    assert.equal(nextGpuEncoderQuant({
-      current: 'fp16', tried: ['w4a8', 'fp32'], servable: ['fp32', 'w4a8'], shaderF16: true,
-    }), null);
+  test('no when the source hosts no fp16, even on an adapter that could run it', () => {
+    // fp32 and w4a8 are both served by this mirror and neither counts: an
+    // automatic answer of fp32 is a 2.35 GB download nobody asked for, and w4a8
+    // is the weakest encoder on long audio.
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR, shaderF16: true });
+    assert.ok(servable.webgpu.includes('fp32') && servable.webgpu.includes('w4a8'));
+    assert.equal(gpuBackendAutoUsable({ servable, shaderF16: true }), false);
   });
 
-  test('fp16 is never the substitute on a GPU that cannot compile it', () => {
-    // It would build a session and return an empty transcript, so it is the
-    // next failure rather than a fallback.
-    assert.equal(nextGpuEncoderQuant({ current: 'fp32', servable: null, shaderF16: false }), 'w4a8');
-    assert.equal(nextGpuEncoderQuant({
-      current: 'fp32', tried: ['w4a8'], servable: null, shaderF16: false,
-    }), null);
+  test('an unknown listing does not withhold the GPU', () => {
+    // Same no-opinion rule as everywhere else: a mirror that publishes no
+    // manifest must not cost a visitor their GPU.
+    assert.equal(gpuBackendAutoUsable({ servable: null, shaderF16: true }), true);
   });
 
-  test('an unknown listing tries the others rather than giving up on the GPU', () => {
-    // `servable: null` is the no-opinion answer above. Refusing to substitute
-    // there would send every visitor whose source cannot be listed to the CPU,
-    // which is the behaviour being fixed.
-    assert.equal(nextGpuEncoderQuant({ current: 'fp16', servable: null, shaderF16: true }), 'w4a8');
-  });
-
-  test('nothing left on this GPU answers null, which is what may change backend', () => {
-    // The one case that still justifies moving to WASM. It has to be
-    // distinguishable from "have not looked yet".
-    assert.equal(nextGpuEncoderQuant({ current: 'fp32', servable: [], shaderF16: true }), null);
-    assert.equal(nextGpuEncoderQuant({
-      current: 'fp32', servable: ['fp32'], shaderF16: true,
-    }), null);
-  });
-
-  test('every offered GPU precision has a download estimate to sort by', () => {
-    // The ordering silently degenerates to declaration order for any precision
-    // missing from the table, which is how a 2.35 GB substitute would sneak in.
-    for (const q of WEBGPU_ENCODER_QUANTS) {
-      assert.equal(typeof QUANT_DOWNLOAD_MB[q], 'number', q);
-    }
-    for (const q of WASM_ENCODER_QUANTS) {
-      assert.equal(typeof QUANT_DOWNLOAD_MB[q], 'number', q);
-    }
+  test('every offered precision has a download estimate, on both backends', () => {
+    // The sidebar prices a selection from this table and the benchmark warns
+    // about bandwidth from it, so a precision missing from it shows "?".
+    for (const q of WEBGPU_ENCODER_QUANTS) assert.equal(typeof QUANT_DOWNLOAD_MB[q], 'number', q);
+    for (const q of WASM_ENCODER_QUANTS) assert.equal(typeof QUANT_DOWNLOAD_MB[q], 'number', q);
   });
 });
 
@@ -350,29 +325,33 @@ describe('effectiveEncoderQuant: what a load would really use', () => {
     assert.equal(gpu({ servable, shaderF16: true }), 'fp16');
   });
 
-  test('no shader-f16 degrades the default to fp32, never to w4a8', () => {
+  test('no shader-f16 answers null, NOT fp32 and not w4a8', () => {
     // The adapter feature is the common case, not the exotic one: this repo's
-    // own GPU box (RTX 3090 Ti) does not expose it. Degrading to w4a8 would
-    // hand a 4-bit encoder to somebody who picked nothing, so the fallback has
-    // to land on the full-precision file instead.
+    // own GPU box (RTX 3090 Ti) does not expose it. Answering fp32 here was the
+    // old behaviour and it handed a 2.35 GB download to somebody who picked
+    // nothing; answering w4a8 would hand them the weakest encoder on long
+    // audio. null means "this backend has nothing it may use unasked", and the
+    // caller takes that to WASM int8.
     const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false });
-    assert.equal(gpu({ servable, shaderF16: false }), 'fp32');
+    assert.equal(gpu({ servable, shaderF16: false }), null);
   });
 
-  test('a source with no fp16 file degrades the default to fp32 too', () => {
-    // Which is the deployment as it stood before the fp16 encoder was
-    // published. The visitor never sees fp16 offered, and what loads is what
-    // used to be the default, so making fp16 the default costs nothing there.
+  test('a source with no fp16 file answers null too', () => {
+    // The deployment as it stood before the fp16 encoder was published. It
+    // serves fp32 shards and w4a8, and neither is an acceptable automatic
+    // answer, so this machine belongs on WASM int8 until fp16 is published.
     const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR, shaderF16: true });
-    assert.equal(gpu({ servable, shaderF16: true }), 'fp32');
+    assert.ok(servable.webgpu.includes('fp32'));
+    assert.equal(gpu({ servable, shaderF16: true }), null);
   });
 
   test('an unknown listing is no reason to refuse the default', () => {
-    // null means "no manifest, no answer yet, offline": refusing fp16 on the
-    // strength of an unanswered question is how a loadable model becomes
-    // unreachable. The shader-f16 question fails the other way on purpose.
+    // null LISTING means "no manifest, no answer yet, offline": refusing fp16
+    // on the strength of an unanswered question is how a loadable model becomes
+    // unreachable. The shader-f16 question fails the other way on purpose, so
+    // the two nulls below mean different things and must not be conflated.
     assert.equal(gpu({ servable: null, shaderF16: true }), 'fp16');
-    assert.equal(gpu({ servable: null, shaderF16: false }), 'fp32');
+    assert.equal(gpu({ servable: null, shaderF16: false }), null);
   });
 
   test('a deliberate choice survives, and is not quietly upgraded to the default', () => {
@@ -393,21 +372,32 @@ describe('effectiveEncoderQuant: what a load would really use', () => {
     // A preference carried over from the GPU side must not survive the switch:
     // fp16 has no usable WASM kernel, so this is the backend question, not the
     // machine one, and it falls to the first WASM precision this source serves.
-    const onWasm = effectiveEncoderQuant({ backend: 'wasm', selected: 'fp16', servable, shaderF16: true });
-    assert.ok(WASM_ENCODER_QUANTS.includes(onWasm));
-    assert.notEqual(onWasm, 'fp16');
-  });
-
-  test('a source that can serve nothing at all still names a runnable precision', () => {
-    // The load fails either way here (QuantUnavailableError, then the
-    // GPU-to-WASM fallback), so the only thing that matters is that this never
-    // answers fp16 on an adapter that cannot run it: that combination builds a
-    // session and transcribes silence instead of failing.
-    const none = { wasm: [], webgpu: [] };
-    assert.equal(gpu({ servable: none, shaderF16: false }), 'fp32');
     assert.equal(
-      effectiveEncoderQuant({ backend: 'wasm', selected: 'int8', servable: none }),
+      effectiveEncoderQuant({ backend: 'wasm', selected: 'fp16', servable, shaderF16: true }),
       DEFAULT_WASM_ENCODER_QUANT,
     );
+  });
+
+  test('an unservable hand-picked precision falls to int8 on WASM, never to fp32', () => {
+    // int8lite is the case that exists in the wild: the app offers it, plenty
+    // of repos do not ship it. The answer is the default, not the next entry in
+    // some list, because fp32 and w4a8 are only ever loaded on request.
+    const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR, shaderF16: true });
+    assert.ok(!servable.wasm.includes('int8lite'));
+    assert.equal(
+      effectiveEncoderQuant({ backend: 'wasm', selected: 'int8lite', servable }),
+      DEFAULT_WASM_ENCODER_QUANT,
+    );
+  });
+
+  test('a source that can serve nothing at all answers null on both backends', () => {
+    // The end of the line: the GPU has nothing, and WASM cannot even serve its
+    // own default. App.jsx turns the second one into the blocking "this
+    // instance cannot serve the model" popup, which is only correct if this
+    // says null rather than naming int8 and letting the load fail vaguely.
+    const none = { wasm: [], webgpu: [] };
+    assert.equal(gpu({ servable: none, shaderF16: true }), null);
+    assert.equal(gpu({ servable: none, shaderF16: false }), null);
+    assert.equal(effectiveEncoderQuant({ backend: 'wasm', selected: 'int8', servable: none }), null);
   });
 });

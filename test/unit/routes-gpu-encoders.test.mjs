@@ -15,14 +15,13 @@
 //
 // The second invariant landed the same way, one behaviour change later. Hiding
 // fp32 alone used to mean "cannot serve WebGPU" because fp32 was the only GPU
-// precision the app would reach for. It stopped meaning that when App.jsx began
-// answering an unservable precision by trying the next precision on the SAME
-// backend (nextGpuEncoderQuant): a mirror still serving w4a8 satisfies the GPU
-// perfectly well, so the fallback spec would have gone on passing while
-// exercising a GPU-to-GPU substitution instead of the GPU-to-WASM fallback it
-// exists for. So the whitelist of GPU-runnable precisions is asked of the same
-// module the app asks (lib/encoderQuants.js) rather than restated here, and
-// every one of them has to come back unservable through the filtered listing.
+// precision the app would reach for. It stopped meaning that the moment the app
+// offered more than one: whichever precision a future App.jsx reaches for, a
+// mirror still serving it is not the deployment this helper claims to build, so
+// the fallback spec would go on passing over an evaporated premise. The
+// whitelist is therefore asked of the same module the app asks
+// (lib/encoderQuants.js) rather than restated here, and every precision in it
+// has to come back unservable through the filtered listing.
 //
 // Built with Claude Code.
 

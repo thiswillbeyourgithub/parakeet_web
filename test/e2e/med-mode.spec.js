@@ -215,16 +215,20 @@ test('?mode=med measures the machine even when a backend was once picked by hand
   // machine anyone had ever touched the radios on silently lost the mode's
   // headline promise.
   await configureTwoRepos(page);
-  // A machine that HAS a GPU, so the probe is a decision worth making. It
-  // enumerates but cannot build a device, which is fine here: this test is
-  // about the measurement RUNNING, not about which backend wins (headless
+  // A machine that HAS a GPU the app would actually use, so the probe is a
+  // decision worth making. `shader-f16` is part of that since 2026-09-11: the
+  // only precision the app will put on a GPU unasked is fp16, so an adapter
+  // without the feature is not measured at all (the test below pins that), and
+  // stubbing one here would make this test pass or fail for the wrong reason.
+  // The adapter enumerates but cannot build a device, which is fine: this test
+  // is about the measurement RUNNING, not about which backend wins (headless
   // Chromium has no GPU, so the honest verdict is always WASM).
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'gpu', {
       configurable: true,
       value: {
         requestAdapter: async () => ({
-          features: new Set(), limits: {},
+          features: new Set(['shader-f16']), limits: {},
           info: { vendor: 'test', architecture: 'stub', device: '' },
         }),
         getPreferredCanvasFormat: () => 'bgra8unorm',
@@ -244,4 +248,41 @@ test('?mode=med measures the machine even when a backend was once picked by hand
     timeout: 60 * 1000,
     message: 'the medical-mode link never measured this machine',
   }).toBeGreaterThan(0);
+});
+
+test('a GPU the app would never use unasked is not measured at all', async ({ page }) => {
+  // The other side of the gate, and the reason it exists. fp16 is the only
+  // precision the app will put on a graphics card for somebody who did not ask
+  // for it: fp32 nearly triples the download and w4a8 is the weakest encoder on
+  // long audio, so both are hand picks. An adapter with no `shader-f16` cannot
+  // run fp16, so whatever the measurement said, the load would end up on the
+  // processor anyway. Measuring it would spend two timed runs to prove a card
+  // is faster and then not use it, which is worse than not measuring: it is the
+  // kind of result that later reads as a bug ("it said my GPU won").
+  //
+  // This is the development box's own shape, incidentally: an RTX 3090 Ti whose
+  // driver stack does not expose shader-f16 to Dawn.
+  await configureTwoRepos(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      value: {
+        requestAdapter: async () => ({
+          features: new Set(), limits: {},
+          info: { vendor: 'test', architecture: 'stub', device: '' },
+        }),
+        getPreferredCanvasFormat: () => 'bgra8unorm',
+      },
+    });
+  });
+  const probeLogs = [];
+  page.on('console', (m) => { const t = m.text(); if (t.includes('[Probe]')) probeLogs.push(t); });
+
+  await page.goto('/?mode=med');
+  // The preset still lands in full: not measuring is not a failure mode, it is
+  // the answer. Asserting the preset applied is what keeps this from passing
+  // because med mode broke outright.
+  await openSidebar(page);
+  await expectMedModeApplied(page);
+  expect(probeLogs, 'a GPU with no usable precision must not be measured').toEqual([]);
 });

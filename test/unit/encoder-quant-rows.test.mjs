@@ -82,15 +82,15 @@ describe('encoder-precision radio order', () => {
     }
   });
 
-  test('the banner and the radio label quote the same download for a row', () => {
-    // Two places now tell the visitor how big a precision is: the radio label
-    // (i18n, prose, rounded to a human number) and the GPU substitution banner
-    // (QUANT_DOWNLOAD_MB, interpolated as a bare MB count when a precision this
-    // source cannot serve is swapped for one it can). They describe the SAME
-    // file, so a visitor who reads "~610MB" on the radio and is then told the
-    // substitute is 900MB has to be reading two consistent numbers or the
-    // banner is worse than no banner. Rounding is allowed (the labels say
-    // ~1.2GB for 1220MB), a different file is not.
+  test('the size table and the radio label quote the same download for a row', () => {
+    // Two places tell the visitor how big a precision is: the radio label
+    // (i18n, prose, rounded to a human number) and QUANT_DOWNLOAD_MB, which the
+    // benchmark plan prices its rows from and which the sidebar quotes above
+    // the Load button. They describe the SAME file, so a visitor who reads
+    // "~610MB" on the radio and is then quoted 900MB for the load they are
+    // about to start has to be reading two consistent numbers, or the estimate
+    // is worse than no estimate. Rounding is allowed (the labels say ~1.2GB for
+    // 1220MB), a different file is not.
     for (const row of ROWS) {
       const [labelMb] = sizesMb(LABEL_KEY[row]);
       const tableMb = QUANT_DOWNLOAD_MB[row];
