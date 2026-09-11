@@ -82,8 +82,8 @@ test('a seeded int8lite precision survives the reload as the selected radio', as
 // This used to assert the fp16 radio did not EXIST, which held while fp16 was
 // withdrawn outright. It is offered again on WebGPU, and the precision list now
 // renders every row on both backends with the unrunnable ones disabled, so the
-// assertion moved to what actually protects the user: on WASM fp16 is visible
-// but not selectable, and the seeded value did not survive as the choice.
+// assertion moved to what actually protects the user: on WASM fp16 is not on
+// offer at all, and int8 is what the seeded GPU-only value resolved to.
 test('an unknown saved precision falls back to int8 rather than being restored', async ({ page }) => {
   await page.goto('/');
   await seedSettings(page, { wasmEncoderQuant: 'fp16' });
@@ -96,7 +96,5 @@ test('an unknown saved precision falls back to int8 rather than being restored',
   await expect(int8Radio).toBeChecked();
   const fp16Radio = page.locator('input[name="encoderQuant"][value="fp16"]');
   await expect(fp16Radio,
-    'fp16 has no WASM kernels, so it must not be selectable on this backend').toBeDisabled();
-  await expect(fp16Radio,
-    'the seeded GPU-only precision must not have been restored as the choice').not.toBeChecked();
+    'fp16 has no WASM kernels, so this backend does not offer it at all').toHaveCount(0);
 });
