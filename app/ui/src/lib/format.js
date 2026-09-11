@@ -47,6 +47,21 @@ export function relativeAge(fromIso, nowMs = Date.now()) {
 }
 
 /**
+ * Whether an ISO timestamp is younger than `days` days.
+ *
+ * Fails PERMISSIVE on purpose: an absent or unparseable timestamp answers true,
+ * because "we do not know when this instance started" is not evidence that it
+ * started long ago. The dev server never stamps one (only the docker entrypoint
+ * does), and that is precisely where a development warning is most warranted.
+ */
+export function isFresherThanDays(fromIso, days, nowMs = Date.now()) {
+  const then = Date.parse(fromIso);
+  if (!Number.isFinite(then)) return true;
+  if (!Number.isFinite(days)) return true;
+  return (nowMs - then) < days * 86400 * 1000;
+}
+
+/**
  * Format a byte count as a short human-readable string (KB/MB/GB, base 1024).
  * One decimal for MB/GB, integer for KB and B.
  */
