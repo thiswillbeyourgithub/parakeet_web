@@ -461,8 +461,11 @@ the **Mode Dictée Médical** button at the top of the settings sidebar, or a
   resetting: it ships off because the system clipboard is readable by other apps
   and extensions, and a dictation station trades that for the click it saves on
   every utterance. Uncheck it in the General section if you would rather not;
-- **int8** precision on the processor and **fp32** on the GPU, so the choice is
-  already right whichever backend this machine ends up on;
+- **int8** precision on the processor and **fp16** on the graphics card, so the
+  choice is already right whichever backend this machine ends up on. Both are
+  written, and both REPLACE an earlier hand-picked precision: a medical mode
+  link sets up the whole station, so a station once switched to the 2.4 GB
+  encoder by hand stops fetching it;
 - a **French interface**;
 - an **autoconfigure run on page load** rather than at the Load Model click, so
   the processor-vs-GPU question is settled before you touch anything. Here it
