@@ -852,8 +852,10 @@ def parse_args(argv):
     p.add_argument("--section-sec", type=float, default=60.0, help="section window length (s).")
     p.add_argument(
         "--max-pass-sec", type=float, default=DEFAULT_MAX_PASS_SEC,
-        help=f"cap the single pass to this many seconds (default {DEFAULT_MAX_PASS_SEC:g}; "
-             "the encoder aborts past ~400 s / 5000 frames).",
+        help=f"cap the single pass to this many seconds (default {DEFAULT_MAX_PASS_SEC:g}). "
+             "The ~400 s / 5000 frame wall applies to encoders carrying a BAKED "
+             "positional-encoding table; an export that builds positional encoding at "
+             "run time has no such cap, so raise this to test past 400 s.",
     )
     p.add_argument("--quants", default="int8,fp16,fp32")
     p.add_argument(
@@ -1247,7 +1249,8 @@ def main(argv):
           f"encoder quants = {', '.join(quants)}; "
           f"decoder = {args.decoder_quant}; sections = {args.section_sec:g}s; "
           f"oracle = {args.reference_quant}; capped at {args.max_pass_sec:g}s "
-          f"(encoder pos-encoding wall is ~400s / 5000 frames; a longer pass aborts)")
+          f"(encoders with a baked pos-encoding table wall at ~400s / 5000 frames; "
+          f"a runtime-pos-encoding export has no cap)")
     if len(audio_files) > 1:
         print(f"sweeping {len(audio_files)} audio file(s):")
         for f in audio_files:
