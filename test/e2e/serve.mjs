@@ -65,15 +65,58 @@ function setHeaders(res, filePath) {
 function sendFile(req, res, filePath, status = 200) {
   setHeaders(res, filePath);
   res.statusCode = status;
+
+  // Content-Length, ETag and Range are not politeness here, they are the
+  // difference between this harness resembling a real static server and not.
+  // Piping a read stream with no length makes Node fall back to chunked
+  // encoding, and the app treats a response with no length as one whose size
+  // it cannot know: it will not preallocate a buffer for it, will not report
+  // byte progress for it, and will not keep a resumable prefix of it. Serving
+  // the model weights that way meant the loader paths that only run on a real
+  // deployment (progress, resume, the fp32 prefix cache) silently did nothing
+  // under test while every assertion still passed.
+  let stat;
+  try { stat = statSync(filePath); } catch { stat = null; }
+  const etag = stat ? `"${stat.size}-${Math.floor(stat.mtimeMs)}"` : null;
+  if (etag) res.setHeader('ETag', etag);
+  if (stat) res.setHeader('Accept-Ranges', 'bytes');
+
   // HEAD: headers only, no body. The local-fallback model resolver (hub.js)
   // HEAD-probes candidate weights (the fp32 sidecar is ~2.4 GB) to decide
   // the quant; streaming the file would read the whole thing off disk for a
   // metadata-only request, so short-circuit with Content-Length and end.
   if (req.method === 'HEAD') {
-    try { res.setHeader('Content-Length', statSync(filePath).size); } catch { /* ignore */ }
+    if (stat) res.setHeader('Content-Length', stat.size);
     return res.end();
   }
-  createReadStream(filePath).on('error', () => { res.statusCode = 500; res.end('read error'); }).pipe(res);
+
+  // Range, for the resumable-download path. `If-Range` that no longer matches
+  // means the file changed under the client's partial state, and the answer is
+  // the whole entity: the client is expected to throw its prefix away.
+  let start = 0;
+  let end = stat ? stat.size - 1 : 0;
+  const ifRange = req.headers['if-range'];
+  const m = stat && status === 200 && req.headers.range && (!ifRange || ifRange === etag)
+    ? String(req.headers.range).match(/^bytes=(\d+)-(\d*)$/)
+    : null;
+  if (m) {
+    start = parseInt(m[1], 10);
+    if (m[2]) end = Math.min(parseInt(m[2], 10), end);
+    if (start > end) {
+      res.statusCode = 416;
+      res.setHeader('Content-Range', `bytes */${stat.size}`);
+      return res.end();
+    }
+    res.statusCode = 206;
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+  }
+  if (stat) res.setHeader('Content-Length', end - start + 1);
+
+  // An empty file has no valid { start, end } window (end would be -1), and
+  // nothing to read anyway.
+  createReadStream(filePath, stat && stat.size > 0 ? { start, end } : undefined)
+    .on('error', () => { res.statusCode = 500; res.end('read error'); })
+    .pipe(res);
 }
 
 // Resolve a request path safely under a base dir (no traversal outside it).
@@ -167,5 +210,8 @@ server.listen(PORT, '127.0.0.1', () => {
   if (asrRootIn(MODEL_DIR) === MODEL_DIR && !existsSync(join(MODEL_DIR, 'vocab.txt'))) {
     console.warn(`[e2e:serve] WARNING: no vocab.txt at ${MODEL_DIR} or under its model-repo subfolder — run \`npm run e2e:models\` or point PARAKEET_E2E_MODEL_DIR at the weights.`);
   }
-  console.log(`[e2e:serve] Listening on http://127.0.0.1:${PORT} (app=${DIST}, models=${MODEL_DIR})`);
+  // The bound port, not the requested one: PORT=0 asks the OS for a free
+  // port, and a caller that cannot read back which one it got cannot use it.
+  const bound = server.address().port;
+  console.log(`[e2e:serve] Listening on http://127.0.0.1:${bound} (app=${DIST}, models=${MODEL_DIR})`);
 });
