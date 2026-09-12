@@ -96,6 +96,71 @@ export function withExternalData(options, source, modelFilename) {
 }
 
 /**
+ * Bounded look-ahead encode producer, shared by BOTH pipelined drivers in
+ * `transcribeChunked` (the composed decode-worker path and the encode-pool
+ * path). It dispatches up to `ahead` chunk encodes without awaiting them, and
+ * hands them back in STRICT chunk order, refilling the window before it
+ * returns so the pool never idles under the caller's decode.
+ *
+ * The two drivers used to carry a copy of this loop each, identical down to
+ * the `Math.max(1, Math.floor(encodeAhead) || 3)` expression and the
+ * birth-time `.catch(() => {})`; that catch is load-bearing (an encode that
+ * fails BEFORE its in-order turn would otherwise surface as an unhandled
+ * rejection, which crashes Node and spams the browser console) and is exactly
+ * the kind of detail one copy would eventually lose.
+ *
+ * @param {object} opts
+ * @param {Array<{start:number,end:number}>} opts.chunkPlan Chunk windows, in order.
+ * @param {Float32Array} opts.audio Full clip PCM.
+ * @param {number} opts.sampleRate Sample rate, for the chunk meta's timeOffset.
+ * @param {Function} opts.encodeChunk Injected async (pcm, meta, encodeOpts) -> encoded.
+ * @param {number} opts.ahead Max encodes in flight (>= 1).
+ * @param {boolean} opts.enableProfiling Passed through as the encode opts.
+ * @returns {{next: (expectedCi: number) => Promise<{ci:number,tStart:number,encoded:*}>}}
+ */
+export function createEncodeProducer({
+  chunkPlan, audio, sampleRate, encodeChunk, ahead, enableProfiling,
+}) {
+  const pending = [];
+  let nextCi = 0;
+  const dispatch = () => {
+    while (nextCi < chunkPlan.length && pending.length < ahead) {
+      const ci = nextCi; nextCi += 1;
+      const { start, end } = chunkPlan[ci];
+      const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
+      const promise = Promise.resolve(encodeChunk(audio.subarray(start, end), meta, { enableProfiling }));
+      // Mark handled from birth: the consumer awaits strictly in order, so a
+      // rejection landing before this chunk's turn must not surface as an
+      // unhandled rejection. The consumer still receives it when it awaits.
+      promise.catch(() => {});
+      pending.push({ ci, tStart: performance.now(), promise });
+    }
+  };
+  return {
+    /**
+     * Await the OLDEST dispatched encode, refill the window, and return it.
+     * `tStart` is when that chunk was dispatched, so a caller can time the
+     * whole encode-plus-decode wall the way the serial loop did.
+     */
+    async next(expectedCi) {
+      dispatch();
+      const item = pending.shift();
+      // Both drivers consume exactly chunkPlan.length chunks in order. This
+      // used to be a comment; if it ever stops holding, chunks would be
+      // stitched under the wrong seams and the transcript would be silently
+      // mis-ordered rather than loudly wrong, so it is a real check.
+      if (!item) throw new Error(`encode producer exhausted at chunk ${expectedCi}`);
+      if (item.ci !== expectedCi) {
+        throw new Error(`encode producer out of order: expected chunk ${expectedCi}, got ${item.ci}`);
+      }
+      const encoded = await item.promise;
+      dispatch(); // refill BEFORE the caller decodes, so the pool stays busy
+      return { ci: item.ci, tStart: item.tStart, encoded };
+    },
+  };
+}
+
+/**
  * Build the per-transcription perf metrics object and, when `perfEnabled`, log
  * the `[Perf]` summary plus the per-phase table. `proc_t/dur_t` is the
  * processing-time / audio-duration ratio (lower is faster; < 1 = faster than
@@ -3652,30 +3717,14 @@ export class ParakeetModel {
       // dispatch so the pool never idles under a decode). Metrics caveats
       // compose too: per-chunk total_ms is decode-wall only, and SUMMED
       // encode_ms can exceed wall clock because pool workers overlap.
-      const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
-      const encPending = [];
-      let nextEnc = 0;
-      const dispatchEncodes = () => {
-        while (encodeChunk && nextEnc < chunkPlan.length && encPending.length < ahead) {
-          const ci = nextEnc; nextEnc += 1;
-          const { start, end } = chunkPlan[ci];
-          const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
-          const promise = Promise.resolve(encodeChunk(audio.subarray(start, end), meta, { enableProfiling: perfEnabled }));
-          // Mark handled from birth (same rule as the decode dispatch below):
-          // a pooled encode that fails before its in-order turn must not
-          // surface as an unhandled rejection.
-          promise.catch(() => {});
-          encPending.push({ ci, promise });
-        }
-      };
-      const nextEncoded = async (ci) => {
-        if (!encodeChunk) return ensureEncoded(ci);
-        dispatchEncodes();
-        const item = encPending.shift(); // in-order dispatch: item.ci === ci
-        const encoded = await item.promise;
-        dispatchEncodes(); // refill before the decode dispatch below
-        return encoded;
-      };
+      const encodeProducer = encodeChunk ? createEncodeProducer({
+        chunkPlan, audio, sampleRate, encodeChunk,
+        ahead: Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3),
+        enableProfiling: perfEnabled,
+      }) : null;
+      const nextEncoded = async (ci) => (
+        encodeProducer ? (await encodeProducer.next(ci)).encoded : ensureEncoded(ci)
+      );
       const drainOne = async () => {
         const item = inflight.shift();
         const chunkRes = await item.promise;
@@ -3710,32 +3759,17 @@ export class ParakeetModel {
       // preprocess_ms ride through opts.encoded and stay per-chunk correct.
       // Memory bound: at most `encodeAhead` encoder outputs are alive
       // (~3 MB each at the default 60 s window), nothing like the weights.
-      const ahead = Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3);
       const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = stitchOpts;
-      const pending = [];
-      let nextCi = 0;
-      const dispatch = () => {
-        while (nextCi < chunkPlan.length && pending.length < ahead) {
-          const ci = nextCi; nextCi += 1;
-          const { start, end } = chunkPlan[ci];
-          const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
-          const promise = Promise.resolve(encodeChunk(audio.subarray(start, end), meta, { enableProfiling: perfEnabled }));
-          // Mark handled from birth: a rejection landing BEFORE this chunk's
-          // turn (the consumer awaits strictly in order) must not surface as an
-          // unhandled rejection; the consumer still receives it on await.
-          promise.catch(() => {});
-          pending.push({ ci, tStart: performance.now(), promise });
-        }
-      };
-      dispatch();
-      while (pending.length) {
-        const item = pending.shift();
-        const encoded = await item.promise;
-        // Refill BEFORE decoding so the pool stays busy under the decode.
-        dispatch();
-        const { start, end } = chunkPlan[item.ci];
+      const producer = createEncodeProducer({
+        chunkPlan, audio, sampleRate, encodeChunk,
+        ahead: Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3),
+        enableProfiling: perfEnabled,
+      });
+      for (let ci = 0; ci < chunkPlan.length; ci += 1) {
+        const { tStart, encoded } = await producer.next(ci);
+        const { start, end } = chunkPlan[ci];
         const chunkRes = await this.transcribe(audio.subarray(start, end), sampleRate, { ...chunkOptsBase, encoded });
-        await consume(item.ci, chunkRes, performance.now() - item.tStart);
+        await consume(ci, chunkRes, performance.now() - tStart);
       }
     } else {
       for (let ci = 0; ci < chunkPlan.length; ci += 1) {
