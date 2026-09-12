@@ -47,6 +47,55 @@ export function executionProvidersFor(backend) {
 }
 
 /**
+ * The ORT session-option contract every ParakeetModel factory builds sessions
+ * with. It is ONE function on purpose: `fromUrls`, `decoderOnlyFromUrls` and
+ * `encoderOnlyFromUrls` used to spell this object out separately, and
+ * encode.worker.js's own contract is that a pooled chunk "must run the exact
+ * same binaries as an in-thread chunk, or one clip could mix numerics". Three
+ * hand-maintained copies is exactly how that guarantee breaks: add an option
+ * to fromUrls and the two worker factories keep the old config silently, with
+ * a healthy-looking transcript. `test/unit/session-options.test.mjs` pins the
+ * three call sites to this one shape.
+ *
+ * @param {object} opts
+ * @param {Array<string|object>} opts.executionProviders EP list for the session.
+ * @param {boolean} [opts.verbose] ORT verbose logging (logSeverityLevel 0 vs 2).
+ * @param {boolean} [opts.enableProfiling] ORT per-node profiling.
+ * @param {boolean} [opts.enableGraphCapture] ORT graph capture (strict WebGPU only).
+ * @returns {object} ORT InferenceSession options.
+ */
+export function baseSessionOptions({
+  executionProviders, verbose = false, enableProfiling = false, enableGraphCapture = false,
+}) {
+  return {
+    executionProviders,
+    graphOptimizationLevel: 'all',
+    executionMode: 'parallel',
+    enableCpuMemArena: true,
+    enableMemPattern: true,
+    enableProfiling,
+    enableGraphCapture,
+    logSeverityLevel: verbose ? 0 : 2, // 0=verbose, 2=warning
+  };
+}
+
+/**
+ * Copy `options` and attach `externalData` when there is any to mount. Pairs
+ * with baseSessionOptions so the `buildExternalData(...)` + `if (x) opts.externalData = x`
+ * dance is written once instead of at all four session-building sites.
+ *
+ * @param {object} options Session options to copy.
+ * @param {string|ArrayBuffer|Uint8Array|Array<{path:string,data:*}>|null} source
+ *   External-weights source, as accepted by buildExternalData.
+ * @param {string} [modelFilename] Model graph filename (single-sidecar form).
+ * @returns {object} A fresh options object, with externalData when applicable.
+ */
+export function withExternalData(options, source, modelFilename) {
+  const externalData = buildExternalData(source, modelFilename);
+  return externalData ? { ...options, externalData } : { ...options };
+}
+
+/**
  * Build the per-transcription perf metrics object and, when `perfEnabled`, log
  * the `[Perf]` summary plus the per-phase table. `proc_t/dur_t` is the
  * processing-time / audio-duration ratio (lower is faster; < 1 = faster than
@@ -911,18 +960,14 @@ export class ParakeetModel {
     const graphCaptureEnabled = !!enableGraphCapture && backend === 'webgpu-strict';
     const isFullWasm = backend === 'wasm';
 
-    const baseSessionOptions = {
+    const sharedSessionOptions = baseSessionOptions({
       executionProviders: executionProvidersFor(backend),
-      graphOptimizationLevel: 'all',
-      executionMode: 'parallel',
-      enableCpuMemArena: true,
-      enableMemPattern: true,
+      verbose,
       enableProfiling,
       enableGraphCapture: graphCaptureEnabled,
-      logSeverityLevel: verbose ? 0 : 2, // 0=verbose, 2=warning
-    };
+    });
 
-    console.log(`[Parakeet.js] Creating ONNX sessions with execution mode '${backend}'. Providers:`, baseSessionOptions.executionProviders);
+    console.log(`[Parakeet.js] Creating ONNX sessions with execution mode '${backend}'. Providers:`, sharedSessionOptions.executionProviders);
     if (verbose) {
         console.log('[Parakeet.js] Verbose logging enabled for ONNX Runtime.');
     }
@@ -931,13 +976,8 @@ export class ParakeetModel {
     // source is either a single <model>.data sidecar (URL/buffer) or, for a
     // sharded fp32 encoder (fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), an array of { path, data }
     // shard entries; buildExternalData normalises both into the ORT array.
-    const encoderSessionOptions = { ...baseSessionOptions };
-    const encoderExternalData = buildExternalData(encoderDataUrl, filenames?.encoder);
-    if (encoderExternalData) encoderSessionOptions.externalData = encoderExternalData;
-
-    const decoderSessionOptions = { ...baseSessionOptions };
-    const decoderExternalData = buildExternalData(decoderDataUrl, filenames?.decoder);
-    if (decoderExternalData) decoderSessionOptions.externalData = decoderExternalData;
+    const encoderSessionOptions = withExternalData(sharedSessionOptions, encoderDataUrl, filenames?.encoder);
+    const decoderSessionOptions = withExternalData(sharedSessionOptions, decoderDataUrl, filenames?.decoder);
 
     // In hybrid mode, the decoder is always run on WASM to avoid per-step
     // stalls. In pure WASM mode, both EPs are WASM anyway.
@@ -1035,16 +1075,10 @@ export class ParakeetModel {
       throw new Error('decoderOnlyFromUrls requires decoderUrl and tokenizerUrl');
     }
     const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads: cpuThreads, ortVariant });
-    const sessionOptions = {
-      executionProviders: ['wasm'],
-      graphOptimizationLevel: 'all',
-      executionMode: 'parallel',
-      enableCpuMemArena: true,
-      enableMemPattern: true,
-      logSeverityLevel: verbose ? 0 : 2,
-    };
-    const decoderExternalData = buildExternalData(decoderDataUrl, filenames?.decoder);
-    if (decoderExternalData) sessionOptions.externalData = decoderExternalData;
+    const sessionOptions = withExternalData(
+      baseSessionOptions({ executionProviders: ['wasm'], verbose }),
+      decoderDataUrl, filenames?.decoder,
+    );
     const [joinerSession, tokenizer] = await Promise.all([
       ort.InferenceSession.create(decoderUrl, sessionOptions),
       ParakeetTokenizer.fromUrl(tokenizerUrl),
@@ -1095,16 +1129,10 @@ export class ParakeetModel {
       backend: backend.startsWith('webgpu') ? 'webgpu' : 'wasm',
       wasmPaths, numThreads: cpuThreads, ortVariant,
     });
-    const sessionOptions = {
-      executionProviders,
-      graphOptimizationLevel: 'all',
-      executionMode: 'parallel',
-      enableCpuMemArena: true,
-      enableMemPattern: true,
-      logSeverityLevel: verbose ? 0 : 2,
-    };
-    const encoderExternalData = buildExternalData(encoderDataUrl, filenames?.encoder);
-    if (encoderExternalData) sessionOptions.externalData = encoderExternalData;
+    const sessionOptions = withExternalData(
+      baseSessionOptions({ executionProviders, verbose }),
+      encoderDataUrl, filenames?.encoder,
+    );
     const preprocessor = preprocessorBackend === 'js'
       ? new JsPreprocessor({ nMels })
       : new OnnxPreprocessor(preprocessorUrl, { backend: 'wasm', wasmPaths, numThreads: cpuThreads });
