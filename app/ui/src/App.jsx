@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError, shouldRetryLocally } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError } from 'parakeet.js';
 import { parseModelRepos, shortRepoLabel, matchModelRepo } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
@@ -24,6 +24,7 @@ import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns, transcribeErrorMessage, sanitizeDeviceName } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
+import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
 import { BOOST_MINP_DEFAULT, BOOST_STRENGTH_DEFAULT, BOOST_SOURCE_CUSTOM, BOOST_SOURCE_DISABLED } from './lib/boostConfig.js';
 import { diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { useDiarization } from './hooks/useDiarization.js';
@@ -2793,98 +2794,54 @@ export default function App() {
       captureQueue.drain();
     } catch (e) {
       console.error(e);
-      // Recover from an HF download failure (HF blocked/unreachable, or the repo
-      // simply doesn't host the requested model/files) by retrying against the
-      // locally-served /models weights instead of crashing. When the operator
-      // configured local fallback (VITE_MODEL_SOURCE=local|both) we retry
-      // unconditionally; otherwise (default 'hf') we probe /models first and only
-      // retry when the files are actually there, so we never swap a clear HF
-      // error for a confusing "local folder missing" failure.
-      // The MIRROR of the retry below, and what makes the reachability
-      // preflight safe to act on without first verifying the mirror: this load
-      // went local-first only because HuggingFace looked unreachable, and the
-      // mirror turned out not to serve it. A false negative (an extension or a
-      // proxy blocking the probe on a machine where HuggingFace works) must
-      // therefore cost one fast same-origin miss, not a failed load.
-      if (e instanceof HubDownloadError && useLocalFallback && !forceLocalFallback
-          && localFirstRef.current && !hubRetryTried) {
-        console.log('[App] /models could not serve this model and HuggingFace only LOOKED '
-          + 'unreachable; trying HuggingFace after all');
-        return loadModel({ useLocalFallback: false, hubRetryTried: true });
+      // WHAT to do next is pure policy and lives in lib/loadFailure.js, tested
+      // over every input combination; only the DOING is here. The one piece of
+      // I/O the decision needs is a HEAD of the local mirror, and the policy
+      // says when that is worth making.
+      const failure = {
+        isHubError: e instanceof HubDownloadError,
+        isQuantUnavailable: e instanceof QuantUnavailableError,
+        useLocalFallback,
+        forceLocalFallback,
+        localFirst: localFirstRef.current,
+        hubRetryTried,
+        localFallbackEnabled,
+        isWebgpu: backend.startsWith('webgpu'),
+        wasmQuantIsDefault: wasmEncoderQuant === DEFAULT_WASM_ENCODER_QUANT,
+        allowQuantSubstitution,
+        gpuQuantFallbackTried,
+      };
+      let localReachable = false;
+      if (shouldProbeLocalMirror(failure)) {
+        const probe = await checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK }).catch(() => null);
+        localReachable = !!probe?.ok;
       }
-      if (e instanceof HubDownloadError && !useLocalFallback) {
-        // Only probe /models when the operator hasn't already enabled local
-        // fallback (then we'd retry regardless); avoids a needless HEAD request.
-        let localReachable = false;
-        if (!localFallbackEnabled) {
-          const probe = await checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK }).catch(() => null);
-          localReachable = !!probe?.ok;
-        }
-        if (shouldRetryLocally({
-          isHubError: true,
-          alreadyLocal: false,
-          localConfigured: localFallbackEnabled,
-          localReachable,
-        })) {
-          console.log('[App] HuggingFace download failed; retrying against local /models weights');
-          return loadModel({ useLocalFallback: true });
-        }
+      const plan = planLoadFailure({ ...failure, localReachable });
+
+      if (plan.gpuFallbackBanner) {
+        console.warn(`[App] ${webgpuEncoderQuant} cannot be run here or is not hosted; falling back to WASM int8`);
+        setGpuFallbackWarning(t('gpuQuantFallback'));
       }
-      // The requested quant couldn't be served by ANY source (e.g. fp32 on WASM
-      // with no shards hosted). hub.js refuses to silently downgrade to int8, so
-      // tell the user exactly why rather than leaving a bare "Failed".
-      if (e instanceof QuantUnavailableError) {
-        // On a GPU backend it means this machine cannot RUN the precision the
-        // visitor is on (fp16 with no `shader-f16`) or this source does not HOST
-        // it. Either way the answer is WASM int8, never another GPU precision:
-        // substituting fp32 would hand someone who asked for 1.2 GB a 2.35 GB
-        // download, and substituting w4a8 would quietly swap in the weakest
-        // encoder on long audio. Both are reachable by hand and only by hand.
-        //
-        // Retrying on WASM rather than stranding them on Failed matters because
-        // they may never have chosen WebGPU: the performance probe can select it
-        // for them, and a deployment pointed at a repo without GPU weights would
-        // otherwise break for every visitor whose machine wins that probe.
-        //
-        // Deliberately NOT a general "GPU failed, use the CPU" net: this fires
-        // only for a quant that cannot be SERVED, which is a property of the
-        // deployment and is known before a single weight byte is fetched. A
-        // GPU that fails later (OOM, device lost) is a different problem and
-        // must stay visible rather than be silently absorbed here.
-        if (backend.startsWith('webgpu') && allowQuantSubstitution && !gpuQuantFallbackTried) {
-          // Nothing this GPU can run is hosted here, so the backend really is
-          // what has to change. Only now.
-          console.warn(`[App] ${webgpuEncoderQuant} cannot be run here or is not hosted; falling back to WASM int8`);
-          setGpuFallbackWarning(t('gpuQuantFallback'));
-          // Remember WHICH repo+precision could not be served, so the flip to
-          // WASM below is not undone on the next visit by a stored WebGPU
-          // verdict (medical mode re-applies those). Recorded before the flip,
-          // because `backend` becomes 'wasm' a line from here.
-          gpuUnservableSetThisSessionRef.current.add(`${repoId}|${webgpuEncoderQuant}`);
-          setGpuWeightsUnservableSig(`${repoId}|${webgpuEncoderQuant}`);
+      if (plan.markGpuQuantUnservable) {
+        // Remember WHICH repo+precision could not be served, so the flip to
+        // WASM is not undone on the next visit by a stored WebGPU verdict
+        // (medical mode re-applies those). Recorded before the flip, because
+        // `backend` is about to become 'wasm'.
+        gpuUnservableSetThisSessionRef.current.add(`${repoId}|${webgpuEncoderQuant}`);
+        setGpuWeightsUnservableSig(`${repoId}|${webgpuEncoderQuant}`);
+      }
+      if (plan.retry) {
+        console.log(`[App] model load failed (${plan.reason}); retrying`);
+        if (plan.switchBackendToWasm) {
           await applyBackend('wasm');
-          return loadModelRef.current({ useLocalFallback, gpuQuantFallbackTried: true });
+          // Through the ref, not the closure: applyBackend just changed state
+          // this closure cannot see, and the retry must read the new backend.
+          return loadModelRef.current(plan.retry);
         }
-        // Any other precision reaching here was picked by hand and CAN be
-        // changed, so it gets the banner naming it. The default-int8 case falls
-        // through to the popup below instead.
-        if (backend.startsWith('webgpu') || wasmEncoderQuant !== DEFAULT_WASM_ENCODER_QUANT) {
-          setModelLoadError(t('quantUnavailable'));
-        }
+        return loadModel(plan.retry);
       }
-      // Nowhere left to go, on the one configuration the app picks for itself.
-      // Every retry above has either not applied or been spent, and the visitor
-      // is on WASM asking for the default int8: the backend every fallback ends
-      // on, at the precision nothing is allowed to substitute for. So there is
-      // no other precision, backend or source left to try and nothing in the
-      // settings to revisit, which is what separates this from every other load
-      // failure. It gets the blocking popup, like the handheld notice, rather
-      // than a `Failed` status under a page that still looks usable. Any
-      // hand-picked precision keeps the old quiet failure: that one IS a choice
-      // the visitor can go back and change.
-      if (!backend.startsWith('webgpu') && wasmEncoderQuant === DEFAULT_WASM_ENCODER_QUANT) {
-        setFatalModelError(true);
-      }
+      if (plan.loadErrorBanner) setModelLoadError(t(plan.loadErrorBanner));
+      if (plan.fatal) setFatalModelError(true);
       setStatus('failed');
       setProgress('');
     }
