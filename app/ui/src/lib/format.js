@@ -262,3 +262,26 @@ export function transcribeErrorMessage(error) {
     ? `${errorMsg}\n\nCheck console for full error details and stack trace.`
     : errorMsg;
 }
+
+/**
+ * Make an untrusted device-supplied name safe to render.
+ *
+ * A WebHID `productName` comes from the USB descriptor, so a hostile or
+ * Bad-USB device chooses it freely. A U+202E right-to-left override can make
+ * "SpeechMike" visually swap its suffixes at render time, which is enough to
+ * fool a user who reads the UI label to confirm they paired the right device
+ * (F-52). Strip C0/C1 control bytes and the bidi overrides, and length-cap so
+ * a runaway name cannot fill the UI.
+ *
+ * @param {unknown} s         the device-supplied name.
+ * @param {string} [fallback] used when the name is absent or sanitises to nothing.
+ * @returns {string}
+ */
+export function sanitizeDeviceName(s, fallback = 'Dictation device') {
+  if (typeof s !== 'string' || !s.length) return fallback;
+  const cleaned = s.replace(
+    /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,
+    ''
+  ).trim().slice(0, 64);
+  return cleaned || fallback;
+}

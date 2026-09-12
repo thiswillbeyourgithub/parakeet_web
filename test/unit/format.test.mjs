@@ -4,7 +4,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor,
-  transcribeErrorMessage,
+  transcribeErrorMessage, sanitizeDeviceName,
 } from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
@@ -303,5 +303,30 @@ describe('transcribeErrorMessage (what the alert actually says)', () => {
     for (const bad of [null, undefined, 0, '', {}]) {
       assert.equal(transcribeErrorMessage(bad), 'Unknown error');
     }
+  });
+});
+
+describe('sanitizeDeviceName (an untrusted USB descriptor string)', () => {
+  test('a bidi override cannot reshape the label the user reads', () => {
+    // F-52: U+202E makes "SpeechMike" render with its suffixes swapped, which
+    // is enough to fool someone confirming they paired the right device.
+    assert.equal(sanitizeDeviceName('Speech\u202eMike'), 'SpeechMike');
+    assert.equal(sanitizeDeviceName('a\u2066b\u2069c'), 'abc');
+  });
+
+  test('control bytes are stripped', () => {
+    assert.equal(sanitizeDeviceName('Mic\u0000\u001b\u009f 3'), 'Mic 3');
+  });
+
+  test('the name is capped so a hostile device cannot fill the UI', () => {
+    assert.equal(sanitizeDeviceName('x'.repeat(500)).length, 64);
+  });
+
+  test('an absent or all-stripped name falls back', () => {
+    assert.equal(sanitizeDeviceName(''), 'Dictation device');
+    assert.equal(sanitizeDeviceName(null), 'Dictation device');
+    assert.equal(sanitizeDeviceName(42), 'Dictation device');
+    assert.equal(sanitizeDeviceName('\u202e\u202e'), 'Dictation device');
+    assert.equal(sanitizeDeviceName('  ', 'file'), 'file');
   });
 });
