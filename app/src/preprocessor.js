@@ -12,7 +12,11 @@ export class OnnxPreprocessor {
    */
   constructor(modelUrl, opts = {}) {
     this.modelUrl = modelUrl;
-    this.opts = opts;
+    // Copy: defaulting enableGraphCapture below used to write into the
+    // CALLER's object, so a caller reusing one options object across
+    // preprocessors (or reading it back to decide something else) silently
+    // inherited a decision this constructor made from its own backend.
+    this.opts = { ...opts };
     if (this.opts.enableGraphCapture === undefined) {
       this.opts.enableGraphCapture = this.opts.backend === 'wasm';
     }

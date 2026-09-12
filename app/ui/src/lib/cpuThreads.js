@@ -83,14 +83,21 @@ const MIN_POOL_CORES = 12;
  * @returns {{ workers: number, threadsPerWorker: number, reason: (string|null) }}
  */
 export function encodePoolPlan({ cpuThreads, maxCores, deviceMemory }) {
-  const knownCores = Number.isFinite(maxCores) && maxCores > 0;
-  const cores = knownCores ? Math.floor(maxCores) : 8;
-  const threads = Number.isFinite(cpuThreads) && cpuThreads >= 1
-    ? Math.floor(cpuThreads) : defaultWasmThreads(cores);
-  if (!knownCores || cores < MIN_POOL_CORES) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
+  // The cores gate first: an unknown or too-small core count is refused, so
+  // there is no point deriving a thread budget from it. (This used to run
+  // above the gate, complete with a `: 8` fallback for a core count the very
+  // next line then rejected, which read as if an unknown machine had a
+  // default rather than being turned away.)
+  if (!Number.isFinite(maxCores) || maxCores <= 0) {
+    return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
+  }
+  const cores = Math.floor(maxCores);
+  if (cores < MIN_POOL_CORES) return { workers: 0, threadsPerWorker: 0, reason: 'cores' };
   if (Number.isFinite(deviceMemory) && deviceMemory < 8) {
     return { workers: 0, threadsPerWorker: 0, reason: 'memory' };
   }
+  const threads = Number.isFinite(cpuThreads) && cpuThreads >= 1
+    ? Math.floor(cpuThreads) : defaultWasmThreads(cores);
   if (threads < 2) return { workers: 0, threadsPerWorker: 0, reason: 'threads' };
   return { workers: 2, threadsPerWorker: Math.max(1, Math.floor(threads / 2)), reason: null };
 }
