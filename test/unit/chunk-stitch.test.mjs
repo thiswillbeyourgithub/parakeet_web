@@ -14,7 +14,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ParakeetModel, lcsPairs, mergeOverlapWords, normalizeWordText, planChunks } from '../../app/src/parakeet.js';
+import { ParakeetModel, createEncodeProducer, lcsPairs, mergeOverlapWords, normalizeWordText, planChunks } from '../../app/src/parakeet.js';
 
 const SR = 16000;
 
@@ -637,6 +637,110 @@ describe('transcribeChunked single-pass with injected encodeChunk', () => {
 // `mid` seconds (a nominal 0.2 s span, only the midpoint matters to the seam).
 const W = (text, mid) => ({ text, start_time: mid - 0.1, end_time: mid + 0.1 });
 const wordMid = (w) => (w.start_time + w.end_time) / 2;
+
+// createEncodeProducer is the ONE bounded look-ahead loop both pipelined
+// drivers above now share (it used to be copy-pasted into each). These tests
+// drive it directly, so a regression points at the producer rather than at
+// whichever driver noticed first.
+describe('createEncodeProducer (shared bounded encode look-ahead)', () => {
+  const PLAN = [
+    { start: 0, end: 100 }, { start: 100, end: 200 }, { start: 200, end: 300 },
+    { start: 300, end: 400 }, { start: 400, end: 500 },
+  ];
+
+  function makeProducer({ ahead = 2, resolver = null, enableProfiling = false } = {}) {
+    const dispatched = [];
+    const metas = [];
+    const encodeOpts = [];
+    const gates = [];
+    const encodeChunk = (pcm, meta, opts) => {
+      dispatched.push(meta.chunkIndex);
+      metas.push(meta);
+      encodeOpts.push(opts);
+      if (resolver) return resolver(meta.chunkIndex);
+      let release;
+      const promise = new Promise((res) => { release = () => res(`enc${meta.chunkIndex}`); });
+      gates[meta.chunkIndex] = release;
+      return promise;
+    };
+    const producer = createEncodeProducer({
+      chunkPlan: PLAN,
+      audio: new Float32Array(500),
+      sampleRate: 100,
+      encodeChunk,
+      ahead,
+      enableProfiling,
+    });
+    return { producer, dispatched, metas, encodeOpts, gates };
+  }
+
+  test('dispatches at most `ahead` encodes before anything is consumed', async () => {
+    const { producer, dispatched, gates } = makeProducer({ ahead: 2 });
+    const first = producer.next(0);
+    assert.deepEqual(dispatched, [0, 1], 'window opens at exactly `ahead`');
+    gates[0]();
+    assert.equal((await first).encoded, 'enc0');
+    // Consuming one refills one, never more.
+    assert.deepEqual(dispatched, [0, 1, 2]);
+  });
+
+  test('refills BEFORE returning, so the pool is busy under the caller decode', async () => {
+    const { producer, dispatched, gates } = makeProducer({ ahead: 3 });
+    assert.deepEqual(dispatched, []);
+    const p = producer.next(0);
+    gates[0]();
+    await p;
+    // chunk 3 was dispatched by the post-await refill, not by the next call.
+    assert.deepEqual(dispatched, [0, 1, 2, 3]);
+  });
+
+  test('hands chunks back in strict order regardless of completion order', async () => {
+    const { producer, gates } = makeProducer({ ahead: 3 });
+    const p0 = producer.next(0);
+    // Resolve out of order: chunk 2 first, chunk 0 last.
+    gates[2](); gates[1](); gates[0]();
+    assert.equal((await p0).ci, 0);
+    assert.equal((await producer.next(1)).ci, 1);
+    assert.equal((await producer.next(2)).ci, 2);
+  });
+
+  test('passes the chunk meta and enableProfiling straight through', async () => {
+    const { producer, metas, encodeOpts, gates } = makeProducer({ ahead: 1, enableProfiling: true });
+    const p = producer.next(0);
+    gates[0]();
+    await p;
+    assert.deepEqual(metas[0], { chunkIndex: 0, timeOffset: 0, audioLen: 100 });
+    assert.deepEqual(encodeOpts[0], { enableProfiling: true });
+    // sampleRate 100, chunk 1 starts at sample 100 -> 1 s in.
+    assert.equal(metas[1].timeOffset, 1);
+  });
+
+  test('an encode that rejects before its turn is not an unhandled rejection', async () => {
+    await withUnhandledCapture(async () => {
+      const { producer } = makeProducer({
+        ahead: 3,
+        resolver: (ci) => (ci === 2 ? Promise.reject(new Error('boom')) : Promise.resolve(`enc${ci}`)),
+      });
+      assert.equal((await producer.next(0)).encoded, 'enc0');
+      assert.equal((await producer.next(1)).encoded, 'enc1');
+      await assert.rejects(producer.next(2), /boom/);
+    });
+  });
+
+  test('throws rather than mis-stitching when consumed out of order', async () => {
+    // Both drivers consume exactly chunkPlan.length chunks in order. If that
+    // ever stops holding, a silently mis-ordered transcript is far worse than
+    // a loud throw, which is why the old `item.ci === ci` comment is a check.
+    const { producer } = makeProducer({ ahead: 3, resolver: (ci) => Promise.resolve(`enc${ci}`) });
+    await assert.rejects(producer.next(1), /out of order: expected chunk 1, got 0/);
+  });
+
+  test('throws when consumed past the end of the plan', async () => {
+    const { producer } = makeProducer({ ahead: 2, resolver: (ci) => Promise.resolve(`enc${ci}`) });
+    for (let ci = 0; ci < PLAN.length; ci += 1) await producer.next(ci);
+    await assert.rejects(producer.next(PLAN.length), /exhausted at chunk 5/);
+  });
+});
 
 describe('normalizeWordText', () => {
   test('lowercases and strips punctuation so "You." matches "you"', () => {
