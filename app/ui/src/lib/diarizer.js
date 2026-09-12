@@ -71,6 +71,8 @@ export function createDiarizerClient() {
   let lastModelIdentity = null; // identity of the models the live worker holds
   let runId = 0;
   let pending = null;           // { id, resolve, reject } for the single in-flight run
+  let busy = false;             // set from run()'s first line, so the re-entry guard
+                                // below cannot be raced through the awaits
 
   function reset() {
     if (worker) { try { worker.terminate(); } catch (_) { /* ignore */ } }
@@ -129,35 +131,49 @@ export function createDiarizerClient() {
     if (!segmentationBytes || !embeddingBytes) {
       throw new Error('runDiarization: segmentationBytes and embeddingBytes are required');
     }
-
-    const w = await ensureWorker();
-
-    // Send the (large) model bytes only when they differ from what the worker
-    // already holds; a count-change re-run then ships just the pcm + new knobs.
-    const identity = `${segmentationBytes.byteLength}:${embeddingBytes.byteLength}`;
-    const sendModels = identity !== lastModelIdentity;
-
-    const id = ++runId;
-    const opts = { numSpeakers, threshold, minDurationOn, minDurationOff, numThreads };
-    const settled = new Promise((resolve, reject) => { pending = { id, resolve, reject }; });
-
-    // Copy the pcm so the caller keeps its buffer (App.jsx reuses trans.pcm across
-    // re-segmentations, and the piecewise pool passes SUBARRAY VIEWS of one shared
-    // buffer); transfer the throwaway copy to skip the structured clone. Never
-    // transfer the caller's buffer: it would detach every other piece's view.
-    const pcmCopy = pcm16k.slice();
-    const payload = { type: 'run', id, pcm: pcmCopy, opts };
-    if (sendModels) {
-      payload.segBytes = segmentationBytes;
-      payload.embBytes = embeddingBytes;
+    // One worker, one `pending` slot: a second concurrent run() on the same
+    // client would overwrite it and orphan the first caller's promise FOREVER
+    // (nothing ever settles it). The piecewise pool is safe because its
+    // clientLoop awaits each run before dispatching the next, but the default
+    // client backing runDiarization() is shared by every caller of it, so fail
+    // loudly instead of hanging. Set synchronously, before any await, or two
+    // callers race straight past the check.
+    if (busy) {
+      throw new Error('diarizer client busy: one run at a time (use createDiarizerClient for a parallel run)');
     }
-    w.postMessage(payload, [pcmCopy.buffer]);
+    busy = true;
+    try {
+      const w = await ensureWorker();
 
-    const segments = await settled;
-    // Mark models as held only AFTER success: a cancel/terminate before completion
-    // discards the worker, so the next run must re-send them.
-    lastModelIdentity = identity;
-    return segments;
+      // Send the (large) model bytes only when they differ from what the worker
+      // already holds; a count-change re-run then ships just the pcm + new knobs.
+      const identity = `${segmentationBytes.byteLength}:${embeddingBytes.byteLength}`;
+      const sendModels = identity !== lastModelIdentity;
+
+      const id = ++runId;
+      const opts = { numSpeakers, threshold, minDurationOn, minDurationOff, numThreads };
+      const settled = new Promise((resolve, reject) => { pending = { id, resolve, reject }; });
+
+      // Copy the pcm so the caller keeps its buffer (App.jsx reuses trans.pcm across
+      // re-segmentations, and the piecewise pool passes SUBARRAY VIEWS of one shared
+      // buffer); transfer the throwaway copy to skip the structured clone. Never
+      // transfer the caller's buffer: it would detach every other piece's view.
+      const pcmCopy = pcm16k.slice();
+      const payload = { type: 'run', id, pcm: pcmCopy, opts };
+      if (sendModels) {
+        payload.segBytes = segmentationBytes;
+        payload.embBytes = embeddingBytes;
+      }
+      w.postMessage(payload, [pcmCopy.buffer]);
+
+      const segments = await settled;
+      // Mark models as held only AFTER success: a cancel/terminate before completion
+      // discards the worker, so the next run must re-send them.
+      lastModelIdentity = identity;
+      return segments;
+    } finally {
+      busy = false;
+    }
   }
 
   // Abort an in-flight run (hard-terminate the worker, reject pending as
