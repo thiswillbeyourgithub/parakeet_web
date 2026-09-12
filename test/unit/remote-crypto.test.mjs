@@ -105,6 +105,21 @@ describe('pair fingerprint', () => {
     assert.equal(clampedHigh.replace(/-/g, '').length, 64);
   });
 
+  test('a non-numeric length falls back to 16 instead of yielding a BLANK code', async () => {
+    // Math.floor(NaN) is NaN, the clamp keeps it, and hash.slice(0, NaN) is
+    // empty: both screens showed an empty verification box and a user
+    // comparing them would read "they match" off nothing at all. The length
+    // comes from computeFingerprintLength over a room count read off the
+    // signaling server, so the bad input is reachable from the untrusted side.
+    const { a, b } = await pair();
+    const expected = await getPairFingerprint(a.publicKey, b.publicKey, 16);
+    for (const bad of [NaN, undefined, null, 'sixteen', {}, Infinity]) {
+      const fp = await getPairFingerprint(a.publicKey, b.publicKey, bad);
+      assert.equal(fp, expected, `length ${String(bad)}`);
+      assert.equal(fp.replace(/-/g, '').length, 16);
+    }
+  });
+
   test('computeFingerprintLength is floored at 16 regardless of room count', () => {
     assert.equal(computeFingerprintLength(1), 16);
     assert.equal(computeFingerprintLength(100000), 16);
