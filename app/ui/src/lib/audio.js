@@ -21,7 +21,8 @@ export const AUDIO_FILE_ACCEPT =
  * @param {AudioContext} audioCtx Context to create the AnalyserNode in.
  * @param {AudioNode} sourceNode Source to analyse (must be in the same graph).
  * @param {(level: number) => void} onLevel Level callback.
- * @returns {{ stop: () => void }} Handle whose stop() ends the rAF loop.
+ * @returns {{ stop: () => void }} Handle whose stop() ends the rAF loop AND
+ *   disconnects the analyser from the source graph.
  */
 export function createLevelMonitor(audioCtx, sourceNode, onLevel) {
   const analyser = audioCtx.createAnalyser();
@@ -42,7 +43,16 @@ export function createLevelMonitor(audioCtx, sourceNode, onLevel) {
     if (running) requestAnimationFrame(tick);
   };
   tick();
-  return { stop: () => { running = false; } };
+  return {
+    stop: () => {
+      running = false;
+      // Disconnecting matters: stop() used to only end the rAF loop, leaving
+      // the AnalyserNode wired into sourceNode. App.jsx builds one per
+      // recording and remote-mic-entry.jsx two more, so they accumulated for
+      // the life of the tab, each still being fed samples by the graph.
+      try { analyser.disconnect(); } catch (_) { /* already torn down */ }
+    },
+  };
 }
 
 /**
