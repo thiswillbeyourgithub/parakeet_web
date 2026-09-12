@@ -146,19 +146,14 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   await expect(page.locator('.settings-sidebar')).toBeVisible();
   await expect(page.locator('.benchmark-complete')).toBeVisible();
   await expect(page.locator('.benchmark-complete')).toContainText('complete');
-  // Polled, not sampled once: the scroll is a smooth one (App.jsx schedules
-  // scrollIntoView({ behavior: 'smooth' }) in a rAF once the sidebar has
-  // reopened), so it is still animating at the instant the textarea first
-  // carries its value. Reading the rect right then measures the animation's
-  // first frame rather than where the report ends up, which on a loaded box
-  // fails while the feature works. The assertion is unchanged: the report must
-  // come into view, and if the scroll never happens this still fails.
-  await expect
-    .poll(async () => textarea.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      return r.top < window.innerHeight && r.bottom > 0;
-    }), { timeout: 15_000, message: 'the finished report must be scrolled into view' })
-    .toBe(true);
+  // Auto-retrying, not sampled once: the scroll is a smooth one (App.jsx
+  // schedules scrollIntoView({ behavior: 'smooth' }) in a rAF once the sidebar
+  // has reopened), so it is still animating at the instant the textarea first
+  // carries its value, and a single rect read measures the animation's first
+  // frame rather than where the report ends up. If the scroll never happens
+  // this still fails.
+  await expect(textarea, 'the finished report must be scrolled into view')
+    .toBeInViewport({ timeout: 15_000 });
 
   // No model was loaded before the run, so none is left loaded after it: the
   // weights in memory are whichever combination the plan ended on, not the
