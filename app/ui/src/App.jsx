@@ -29,7 +29,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, compileBoostList, parsePrebuiltBoost, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns, transcribeErrorMessage } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { runDiarization, cancelDiarization, createDiarizerClient } from './lib/diarizer.js';
@@ -5402,24 +5402,6 @@ export default function App() {
     // OfflineAudioContexts, which hold no realtime audio thread. Their decoded
     // buffers are dropped above (decoded = null) or become GC-eligible when
     // this scope unwinds, so there is nothing to tear down on the error path.
-  }
-
-  // Format a transcription error into a user-facing alert string. Shared by the
-  // decode path (processAudioFile) and the model path (runTranscription).
-  function transcribeErrorMessage(error) {
-    let errorMsg = 'Unknown error';
-    if (error) {
-      if (error.message) {
-        errorMsg = error.message;
-      } else if (error.name) {
-        errorMsg = `${error.name} - The audio file format may not be supported. Try converting to WAV format.`;
-      } else if (typeof error === 'string') {
-        errorMsg = error;
-      }
-    }
-    return error?.stack
-      ? `${errorMsg}\n\nCheck console for full error details and stack trace.`
-      : errorMsg;
   }
 
   // Shared transcription core: runs the model on already-16kHz PCM and either

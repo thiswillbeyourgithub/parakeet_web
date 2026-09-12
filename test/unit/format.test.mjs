@@ -3,7 +3,9 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor } from '../../app/ui/src/lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor,
+  transcribeErrorMessage,
+} from '../../app/ui/src/lib/format.js';
 
 describe('formatTime (m:ss)', () => {
   test('zero', () => assert.equal(formatTime(0), '0:00'));
@@ -270,5 +272,36 @@ describe('wavNameFor (download name for a stored entry audio)', () => {
   test('survives a missing entry entirely', () => {
     assert.equal(wavNameFor(undefined), 'transcription-audio.wav');
     assert.equal(wavNameFor({}), 'transcription-audio.wav');
+  });
+});
+
+describe('transcribeErrorMessage (what the alert actually says)', () => {
+  test('an Error shows its message', () => {
+    assert.equal(transcribeErrorMessage(new TypeError('bad tensor')).split('\n')[0], 'bad tensor');
+  });
+
+  test('a DOMException-shaped throw with no message becomes the format advice', () => {
+    // The decode path throws these for an unsupported container, and the name
+    // is the only part carrying information.
+    const out = transcribeErrorMessage({ name: 'EncodingError' });
+    assert.match(out, /^EncodingError - /);
+    assert.match(out, /converting to WAV/);
+  });
+
+  test('a bare string is passed through', () => {
+    assert.equal(transcribeErrorMessage('worker gone'), 'worker gone');
+  });
+
+  test('anything with a stack points at the console, since the alert cannot carry it', () => {
+    const withStack = transcribeErrorMessage(new Error('boom'));
+    assert.match(withStack, /Check console for full error details/);
+    // A message-only throw has no stack and must not claim there is one.
+    assert.equal(transcribeErrorMessage({ message: 'boom' }), 'boom');
+  });
+
+  test('null, undefined and an empty object never yield an empty alert', () => {
+    for (const bad of [null, undefined, 0, '', {}]) {
+      assert.equal(transcribeErrorMessage(bad), 'Unknown error');
+    }
   });
 });
