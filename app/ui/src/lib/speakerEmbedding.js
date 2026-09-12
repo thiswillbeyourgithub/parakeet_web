@@ -16,20 +16,55 @@
 import { computeFbank, FBANK_NUM_BINS, FBANK_SAMPLE_RATE } from '../../../src/fbank.js';
 import { loadOrtModule } from '../../../src/backend.js';
 
-let _session = null;
+let _sessionPromise = null;   // Promise<InferenceSession>, not the session itself
 let _sessionKey = null;
 
-
-async function getSession(embeddingBytes) {
+/**
+ * The one ORT session for the CAM++ embedding model, built lazily and reused.
+ *
+ * Memoising the PROMISE rather than the resolved session matters: `getSession`
+ * is async, and App.jsx can have two embedding passes in flight (a diarization
+ * finishing while the user re-segments). Keyed on the resolved value, both saw
+ * a null cache, both built a ~28 MB session, and one of them was overwritten
+ * and leaked. A key change now also releases the session it replaces, and a
+ * failed build clears the memo so the next caller retries instead of inheriting
+ * the rejection.
+ *
+ * @param {Uint8Array} embeddingBytes CAM++ ONNX bytes.
+ * @param {() => Promise<object>} [loadOrt] ORT module loader; injectable for
+ *   the unit test, which has no runtime to build a real session with.
+ * @returns {Promise<object>} the InferenceSession.
+ */
+function getSession(embeddingBytes, loadOrt = loadOrtModule) {
   // The embedding model is fixed for a session; key on byte length (cheap) so we
   // build the session once. Diarization always runs on the CPU/WASM EP here; the
   // model is small (~28 MB) and this stays off the GPU path.
   const key = `${embeddingBytes.byteLength}`;
-  if (_session && _sessionKey === key) return _session;
-  const ort = await loadOrtModule();
-  _session = await ort.InferenceSession.create(embeddingBytes, { executionProviders: ['wasm'] });
+  if (_sessionPromise && _sessionKey === key) return _sessionPromise;
+  const stale = _sessionKey === key ? null : _sessionPromise;
+  const inflight = (async () => {
+    const ort = await loadOrt();
+    return ort.InferenceSession.create(embeddingBytes, { executionProviders: ['wasm'] });
+  })().catch((err) => {
+    if (_sessionPromise === inflight) { _sessionPromise = null; _sessionKey = null; }
+    throw err;
+  });
+  _sessionPromise = inflight;
   _sessionKey = key;
-  return _session;
+  // Free the model it replaces rather than leaving its weights resident for the
+  // life of the tab. Best effort: a failed release must not fail the new build.
+  if (stale) stale.then((s) => s?.release?.()).catch(() => {});
+  return inflight;
+}
+
+// Exported for the unit test only: the property that matters is how the cache
+// behaves under concurrency and across a key change, which needs no real ORT.
+export const _getEmbeddingSession = getSession;
+
+/** Test-only: drop the memoised session so cases start from a cold cache. */
+export function _resetEmbeddingSession() {
+  _sessionPromise = null;
+  _sessionKey = null;
 }
 
 // Concatenate up to `cap` samples of a speaker's segment audio into one buffer.
