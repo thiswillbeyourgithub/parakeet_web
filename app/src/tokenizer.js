@@ -11,6 +11,11 @@ async function fetchText(url) {
   return resp.text();
 }
 
+// Largest token id a vocab line may claim. The models this app loads top out
+// at 4097 pieces (v3 multilingual); a million leaves every plausible vocab room
+// while keeping a malformed or hostile line from asking for a giant array.
+const MAX_VOCAB_ID = 1_000_000;
+
 /**
  * Parse the raw text of a `vocab.txt` / `tokens.txt` file into an `id2token`
  * array (index = id, value = piece). Each line is `<piece> <id>` (whitespace
@@ -27,7 +32,11 @@ export function parseVocabText(text) {
     if (!line) continue;
     const [tok, idStr] = line.split(/\s+/);
     const id = parseInt(idStr, 10);
-    if (isNaN(id) || !tok) {
+    // The id indexes a plain array, and the constructor then `.map()`s it, so
+    // an out-of-range id is not just a bad entry: `x 1e9` on one line asks for
+    // a billion-slot array and a full pass over it. The vocab is a downloaded
+    // file, so treat a wild id like any other malformed line and skip it.
+    if (isNaN(id) || !tok || id < 0 || id > MAX_VOCAB_ID) {
       console.warn(`[ParakeetTokenizer] Skipping invalid vocab line: ${JSON.stringify(line)}`);
       continue;
     }
