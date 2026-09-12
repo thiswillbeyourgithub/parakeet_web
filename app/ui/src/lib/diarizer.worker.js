@@ -58,7 +58,7 @@ function writeModel(Module, path, bytes) {
 // initialised emscripten Module; also stashes the wrapper factory.
 function initEngine({ glueBytes, wrapperBytes, wasmBytes }) {
   if (_ready) return _ready;
-  _ready = new Promise((resolve, reject) => {
+  const inflight = new Promise((resolve, reject) => {
     const glueUrl = URL.createObjectURL(new Blob([glueBytes], { type: 'text/javascript' }));
     const Module = {
       // Hand emscripten the already-verified wasm bytes so it never issues a
@@ -93,7 +93,18 @@ function initEngine({ glueBytes, wrapperBytes, wasmBytes }) {
     }
     _createSD = self.createOfflineSpeakerDiarization;
     return Module;
+  }).catch((err) => {
+    // Only a SUCCESSFUL init is memoised. Without this, one transient failure
+    // (a blob that fails to importScripts, a wasm abort under memory pressure)
+    // poisoned diarization for the whole tab: every later attempt re-awaited
+    // the same rejected promise and reported the original error again. Every
+    // sibling lazy-init in this codebase clears on failure the same way
+    // (getFFmpeg, getDiarizationModels, engineBytes, loadOrtModule, and the
+    // F-103 fix in asset-integrity's loadManifest).
+    if (_ready === inflight) _ready = null;
+    throw err;
   });
+  _ready = inflight;
   return _ready;
 }
 
@@ -156,7 +167,11 @@ self.onmessage = async (ev) => {
   }
   if (msg.type === 'run') {
     try {
-      await _ready; // engine must be ready (client awaits 'ready' before running)
+      // The client awaits 'ready' before running, so _ready is normally set.
+      // It can be null after a failed init cleared the memo; say so rather
+      // than falling through to runOne with a null Module.
+      if (!_ready) throw new Error('diarizer engine not initialised');
+      await _ready;
       const segments = runOne(msg.pcm, msg);
       self.postMessage({ type: 'result', id: msg.id, segments });
     } catch (e) {
