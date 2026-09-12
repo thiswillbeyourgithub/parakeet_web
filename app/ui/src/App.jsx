@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError } from 'parakeet.js';
 import { parseModelRepos, shortRepoLabel, matchModelRepo } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
+import InfoTooltip from './components/InfoTooltip.jsx';
+import CollapsibleSection from './components/CollapsibleSection.jsx';
 import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, createWavBlob, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import { decodeToPcm16k } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
@@ -128,123 +129,6 @@ async function getDictationLib() {
     }
   }
   return _dictationLib;
-}
-
-// Simple help icon component with click-based tooltip.
-// The popup uses position: fixed with coordinates computed from the
-// button's bounding rect, so it can overlay sibling containers (e.g.
-// the settings sidebar) without being clipped by their overflow, and
-// is clamped to stay inside the viewport horizontally.
-// It is rendered through a PORTAL into <body> rather than inside the
-// icon's own span: a dimmed ancestor (`.disabled-option`, opacity 0.5,
-// used for the greyed-out WebGPU radio) would otherwise multiply into
-// the popup and make the very explanation of WHY the option is greyed
-// out unreadable. A portal also keeps the popup out of any ancestor
-// stacking context or transform, which would break position: fixed.
-function InfoTooltip({ text }) {
-  const [isOpen, setIsOpen] = React.useState(false);
-  const [pos, setPos] = React.useState(null);
-  const rootRef = React.useRef(null);
-  const popupRef = React.useRef(null);
-
-  // Prevent the click from bubbling to a wrapping <label>, which would
-  // otherwise toggle the associated checkbox/radio input.
-  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  const toggle = (e) => { stop(e); setIsOpen(v => !v); };
-  const close = (e) => { stop(e); setIsOpen(false); };
-
-  // Compute popup coordinates from the button's rect, clamped to viewport.
-  const computePos = React.useCallback(() => {
-    const btn = rootRef.current && rootRef.current.querySelector('.info-help-button');
-    if (!btn) return;
-    const rect = btn.getBoundingClientRect();
-    const margin = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const popupEl = popupRef.current;
-    // Use a viewport-clamped target width. We deliberately do NOT read
-    // offsetWidth: when the popup renders inside a narrow ancestor (e.g.
-    // the settings sidebar), shrink-to-fit can give a tiny natural width
-    // and pin the popup to a thin, very tall column that overflows on
-    // phones. CSS sets the same min(320px, 100vw - 16px) width so the
-    // hidden first frame already lays out at a sane width.
-    const width = Math.min(320, vw - 2 * margin);
-    const measuredH = popupEl ? popupEl.offsetHeight : 0;
-    let left = rect.left + rect.width / 2 - width / 2;
-    if (left + width > vw - margin) left = vw - margin - width;
-    if (left < margin) left = margin;
-    let top = rect.bottom + 8;
-    const availH = vh - 2 * margin;
-    const fitH = Math.min(measuredH, availH);
-    if (fitH && top + fitH > vh - margin) {
-      const above = rect.top - 8 - fitH;
-      if (above >= margin) top = above;
-      else top = Math.max(margin, vh - margin - fitH);
-    }
-    setPos({ left, top, width });
-  }, []);
-
-  // Dismiss on any outside interaction (click, touch, Escape) and
-  // recompute on resize. We listen at the document level instead of
-  // rendering a full-viewport overlay so the first click outside lands
-  // on its real target (another tooltip, sidebar close button, scrollbar,
-  // etc.) instead of being swallowed just to close the popup.
-  React.useEffect(() => {
-    if (!isOpen) return;
-    computePos();
-    const onOutside = (e) => {
-      if (rootRef.current && rootRef.current.contains(e.target)) return;
-      if (popupRef.current && popupRef.current.contains(e.target)) return;
-      setIsOpen(false);
-    };
-    const onKey = (e) => { if (e.key === 'Escape') setIsOpen(false); };
-    const onScroll = () => setIsOpen(false);
-    const onResize = () => computePos();
-    document.addEventListener('mousedown', onOutside);
-    document.addEventListener('touchstart', onOutside, { passive: true });
-    document.addEventListener('keydown', onKey);
-    // Capture phase so scrolls inside any container also dismiss.
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onResize);
-    return () => {
-      document.removeEventListener('mousedown', onOutside);
-      document.removeEventListener('touchstart', onOutside);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onResize);
-    };
-  }, [isOpen, computePos]);
-
-  // Re-measure once the popup has rendered so the initial frame already
-  // shows it correctly clamped and (if needed) flipped above the button.
-  React.useLayoutEffect(() => {
-    if (isOpen) computePos();
-  }, [isOpen, computePos]);
-
-  return (
-    <span ref={rootRef} className="info-help" onClick={stop}>
-      <button
-        type="button"
-        className="info-help-button"
-        onClick={toggle}
-        aria-label="?"
-      >
-        ?
-      </button>
-      {isOpen && createPortal(
-        <div
-          ref={popupRef}
-          className="info-help-text"
-          onClick={stop}
-          style={pos ? { left: pos.left + 'px', top: pos.top + 'px', width: pos.width + 'px' } : { visibility: 'hidden' }}
-        >
-          {text}
-          <button className="info-help-close" onClick={close}>×</button>
-        </div>,
-        document.body,
-      )}
-    </span>
-  );
 }
 
 // IndexedDB-backed settings persistence built on the shared idb.js helper.
@@ -450,27 +334,6 @@ function usePersistedSetting(key, value, loaded) {
   useEffect(() => {
     if (loaded) saveSetting(key, value);
   }, [key, value, loaded]);
-}
-
-// Collapsible settings group. The header is a button that toggles the body
-// open/closed (the body unmounts when closed so the drawer stays a short list
-// of section titles). Open/closed state lives in the parent so it can be
-// persisted per-section; `open`/`onToggle` are controlled props.
-function CollapsibleSection({ id, title, open, onToggle, children }) {
-  return (
-    <div className="settings-group">
-      <button
-        type="button"
-        className="settings-group-toggle"
-        aria-expanded={open}
-        onClick={() => onToggle(id)}
-      >
-        <span className="settings-group-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
-        <span className="settings-group-title">{title}</span>
-      </button>
-      {open && <div className="settings-group-body">{children}</div>}
-    </div>
-  );
 }
 
 // Helper function to truncate long filenames
