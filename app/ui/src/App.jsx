@@ -9,6 +9,7 @@ import InfoTooltip from './components/InfoTooltip.jsx';
 import CollapsibleSection from './components/CollapsibleSection.jsx';
 import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, createWavBlob, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import DebugSection from './components/settings/DebugSection.jsx';
+import RecordingSection from './components/settings/RecordingSection.jsx';
 import { decodeToPcm16k } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
@@ -5193,96 +5194,23 @@ export default function App() {
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection id="recording" title={t('settingsGroupRecording')} open={!!sectionsOpen.recording} onToggle={toggleSection}>
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('audioProcessing')}:
-              </span>
-              <div style={{ display: 'flex', flexDirection: 'row', gap: '1rem', flexWrap: 'wrap' }}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={noiseSuppression}
-                    onChange={e => setNoiseSuppression(e.target.checked)}
-                    disabled={isRecording}
-                  />
-                  {t('noiseSuppression')}
-                  <InfoTooltip text={t('tooltipNoiseSuppression')} />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={autoGainControl}
-                    onChange={e => setAutoGainControl(e.target.checked)}
-                    disabled={isRecording}
-                  />
-                  {t('autoGainControl')}
-                  <InfoTooltip text={t('tooltipAutoGainControl')} />
-                </label>
-              </div>
-            </div>
-
-            {isRemoteMic && (
-              <div className="setting-row">
-                <span className="setting-label" style={{ flex: '1 1 auto' }}>
-                  {t('remoteMicGain')}:
-                  <InfoTooltip text={t('tooltipRemoteMicGain')} />
-                </span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0.5"
-                  max="5"
-                  step="0.1"
-                  value={remoteMicGain}
-                  onChange={e => {
-                    const v = Number(e.target.value);
-                    if (Number.isFinite(v)) setRemoteMicGain(Math.max(0.5, Math.min(5, v)));
-                  }}
-                  style={{ width: '5rem' }}
-                />
-              </div>
-            )}
-
-            <div className="setting-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={liveTranscriptionEnabled}
-                  onChange={e => setLiveTranscriptionEnabled(e.target.checked)}
-                  disabled={isRecording}
-                />
-                {t('liveTranscription')}
-                <InfoTooltip text={t('tooltipLiveTranscription')} />
-              </label>
-              {liveTranscriptionEnabled && (
-                <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <span className="setting-label">
-                    {t('liveContextWindow')}:
-                    <InfoTooltip text={t('tooltipLiveContextWindow')} />
-                  </span>
-                  <select
-                    value={liveContextWindow}
-                    onChange={e => setLiveContextWindow(e.target.value)}
-                    disabled={isRecording}
-                  >
-                    <option value="auto">{t('liveContextAuto')}</option>
-                    <option value="10">10s</option>
-                    <option value="15">15s</option>
-                    <option value="20">20s</option>
-                    <option value="30">30s</option>
-                    <option value="45">45s</option>
-                    <option value="60">60s</option>
-                  </select>
-                </div>
-              )}
-              {liveTranscriptionEnabled && (
-                <p style={{ fontSize: '0.8rem', opacity: 0.7, margin: '0.25rem 0 0' }}>
-                  {t('liveStreamingNote')}
-                </p>
-              )}
-            </div>
-          </CollapsibleSection>
+          <RecordingSection
+            t={t}
+            open={!!sectionsOpen.recording}
+            onToggle={toggleSection}
+            isRecording={isRecording}
+            noiseSuppression={noiseSuppression}
+            setNoiseSuppression={setNoiseSuppression}
+            autoGainControl={autoGainControl}
+            setAutoGainControl={setAutoGainControl}
+            isRemoteMic={isRemoteMic}
+            remoteMicGain={remoteMicGain}
+            setRemoteMicGain={setRemoteMicGain}
+            liveTranscriptionEnabled={liveTranscriptionEnabled}
+            setLiveTranscriptionEnabled={setLiveTranscriptionEnabled}
+            liveContextWindow={liveContextWindow}
+            setLiveContextWindow={setLiveContextWindow}
+          />
 
           <CollapsibleSection id="boosting" title={t('settingsGroupBoosting')} open={!!sectionsOpen.boosting} onToggle={toggleBoostingSection}>
             <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.4rem' }}>
