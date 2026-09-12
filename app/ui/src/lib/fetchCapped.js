@@ -37,9 +37,16 @@ export async function fetchTextCapped(url, maxBytes = SERVED_FILE_MAX_BYTES) {
   }
   const reader = res.body?.getReader();
   if (!reader) {
+    // No streaming body (an old engine, or a mocked Response). The cap can only
+    // be applied AFTER the whole body is materialised here, so this branch is
+    // about refusing to hand oversize content on, not about avoiding the
+    // allocation. Measure UTF-8 BYTES: `text.length` counts UTF-16 code units,
+    // so a body of multi-byte characters (any non-ASCII boost-phrase list) can
+    // be well over the byte cap this module exists to enforce and still pass.
     const text = await res.text();
-    if (text.length > maxBytes) {
-      return { ok: false, oversize: true, declared: text.length };
+    const bytes = new TextEncoder().encode(text).length;
+    if (bytes > maxBytes) {
+      return { ok: false, oversize: true, declared: bytes };
     }
     return { ok: true, text };
   }
