@@ -38,12 +38,7 @@
 // Built with Claude Code.
 
 import { ParakeetModel } from '../../../src/parakeet.js';
-
-let modelPromise = null;   // Promise<encode-only ParakeetModel>
-// One encoder session per worker: encodes are CPU-bound and ORT already uses
-// the worker's whole thread budget per run, so chain them FIFO (parallelism
-// comes from the POOL, not from concurrent runs inside one worker).
-let encodeChain = Promise.resolve();
+import { createModelWorker } from './modelWorker.js';
 
 function initModel(msg) {
   const {
@@ -63,40 +58,24 @@ function initModel(msg) {
   });
 }
 
-async function runEncode(msg) {
-  const { id, chunkIndex, pcm, sampleRate, enableProfiling } = msg;
-  try {
-    const model = await modelPromise;
-    const encoded = await model.encode(new Float32Array(pcm), sampleRate || 16000, { enableProfiling });
-    // Hand the (large) encoder output back zero-copy; the pcm buffer arrived
-    // transferred and simply dies with this handler.
-    const buf = encoded.transposed.buffer;
-    self.postMessage({
-      type: 'result', id, chunkIndex,
+async function runEncode(msg, model) {
+  const { pcm, sampleRate, enableProfiling } = msg;
+  const encoded = await model.encode(new Float32Array(pcm), sampleRate || 16000, { enableProfiling });
+  // Hand the (large) encoder output back zero-copy; the pcm buffer arrived
+  // transferred and simply dies with this handler.
+  const buf = encoded.transposed.buffer;
+  return {
+    payload: {
       transposed: buf, D: encoded.D, Tenc: encoded.Tenc,
       encodeMs: encoded.encode_ms, preprocessMs: encoded.preprocess_ms,
-    }, [buf]);
-  } catch (e) {
-    self.postMessage({ type: 'error', id, chunkIndex, message: String(e?.message ?? e) });
-  }
+    },
+    transfer: [buf],
+  };
 }
 
-self.onmessage = (ev) => {
-  const msg = ev.data || {};
-  switch (msg.type) {
-    case 'init':
-      modelPromise = initModel(msg);
-      modelPromise.then(
-        () => self.postMessage({ type: 'ready' }),
-        (e) => self.postMessage({ type: 'error', message: String(e?.message ?? e) }),
-      );
-      break;
-
-    case 'encode':
-      encodeChain = encodeChain.then(() => runEncode(msg));
-      break;
-
-    default:
-      break;
-  }
-};
+// The protocol (init handshake, FIFO run chain, error shaping, result
+// envelope) lives in modelWorker.js, shared with decode.worker.js. One encoder
+// session per worker: encodes are CPU-bound and ORT already uses the worker's
+// whole thread budget per run, so runs are chained (parallelism comes from the
+// POOL, not from concurrent runs inside one worker).
+createModelWorker({ initModel, runType: 'encode', run: runEncode });

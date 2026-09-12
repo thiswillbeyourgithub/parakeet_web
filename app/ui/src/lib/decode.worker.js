@@ -35,13 +35,9 @@
 // IndexedDB/download machinery it never uses.
 import { ParakeetModel } from '../../../src/parakeet.js';
 import { BoostingTrie } from '../../../src/phraseBoost.js';
+import { createModelWorker } from './modelWorker.js';
 
-let modelPromise = null;   // Promise<decode-only ParakeetModel>
 let boostTrie = null;      // rebuilt from the main thread's boost payload
-// One joiner session with mutable decode state: decodes MUST run one at a time,
-// so chain them FIFO on this promise (the decode loop yields internally, so
-// concurrent decodes would interleave and corrupt state).
-let decodeChain = Promise.resolve();
 
 function initModel(msg) {
   const {
@@ -57,64 +53,46 @@ function initModel(msg) {
   });
 }
 
-async function runDecode(msg) {
-  const { id, chunkIndex, transposed, D, Tenc, audioLen, encodeMs, preprocessMs, opts } = msg;
-  try {
-    const model = await modelPromise;
-    // Rebuild the encoder-output object transcribe() expects. Fold the main
-    // thread's encode/preprocess timings back in so the transcript's metrics
-    // report them (transcribe reads encoded.encode_ms / .preprocess_ms).
-    const encoded = {
-      transposed: new Float32Array(transposed),
-      D, Tenc,
-      encode_ms: encodeMs || 0,
-      preprocess_ms: preprocessMs || 0,
-    };
-    // `audio` is used only for its `.length` when `encoded` is supplied.
-    const result = await model.transcribe({ length: audioLen }, 16000, {
-      ...opts,
-      encoded,
-      phraseBoost: boostTrie,
-    });
-    self.postMessage({ type: 'result', id, chunkIndex, result });
-  } catch (e) {
-    self.postMessage({ type: 'error', id, chunkIndex, message: String(e?.message ?? e) });
-  }
+async function runDecode(msg, model) {
+  const { transposed, D, Tenc, audioLen, encodeMs, preprocessMs, opts } = msg;
+  // Rebuild the encoder-output object transcribe() expects. Fold the main
+  // thread's encode/preprocess timings back in so the transcript's metrics
+  // report them (transcribe reads encoded.encode_ms / .preprocess_ms).
+  const encoded = {
+    transposed: new Float32Array(transposed),
+    D, Tenc,
+    encode_ms: encodeMs || 0,
+    preprocess_ms: preprocessMs || 0,
+  };
+  // `audio` is used only for its `.length` when `encoded` is supplied.
+  const result = await model.transcribe({ length: audioLen }, 16000, {
+    ...opts,
+    encoded,
+    phraseBoost: boostTrie,
+  });
+  return { payload: { result } };
 }
 
-self.onmessage = (ev) => {
-  const msg = ev.data || {};
-  switch (msg.type) {
-    case 'init':
-      modelPromise = initModel(msg);
-      modelPromise.then(
-        () => self.postMessage({ type: 'ready' }),
-        (e) => self.postMessage({ type: 'error', message: String(e?.message ?? e) }),
-      );
-      break;
+function setBoost(msg) {
+  boostTrie = msg.encoded
+    ? BoostingTrie.buildFromEncoded(msg.encoded, {
+        strength: msg.strength,
+        depthScaling: msg.depthScaling,
+        minpOverride: msg.minpOverride,
+      })
+    : null;
+  if (boostTrie && boostTrie.isEmpty) boostTrie = null;
+  return { type: 'boostReady' };
+}
 
-    case 'boost':
-      try {
-        boostTrie = msg.encoded
-          ? BoostingTrie.buildFromEncoded(msg.encoded, {
-              strength: msg.strength,
-              depthScaling: msg.depthScaling,
-              minpOverride: msg.minpOverride,
-            })
-          : null;
-        if (boostTrie && boostTrie.isEmpty) boostTrie = null;
-        self.postMessage({ type: 'boostReady' });
-      } catch (e) {
-        self.postMessage({ type: 'error', message: String(e?.message ?? e) });
-      }
-      break;
-
-    case 'decode':
-      // FIFO: never run two decodes concurrently on the one joiner session.
-      decodeChain = decodeChain.then(() => runDecode(msg));
-      break;
-
-    default:
-      break;
-  }
-};
+// The protocol (init handshake, FIFO run chain, error shaping, result
+// envelope) lives in modelWorker.js, shared with encode.worker.js. Decodes MUST
+// run one at a time: the joiner session carries mutable decode state and the
+// decode loop yields internally, so concurrent runs would interleave and
+// corrupt it.
+createModelWorker({
+  initModel,
+  runType: 'decode',
+  run: runDecode,
+  handlers: { boost: setBoost },
+});
