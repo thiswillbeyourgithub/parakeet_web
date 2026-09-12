@@ -11,23 +11,34 @@
 // marker" and no clue why (hit for real on 2026-08-23 in a full-suite run).
 //
 // A regex asserted against strings retyped in the test would have passed just
-// as happily. So the cases below are the literal templates from
-// app/ui/src/lib/workerInit.js and app/ui/src/App.jsx, and the last test reads
-// those two sources and fails if either grows a `[Encode]`/`[Decode]` warning
-// the patterns do not cover.
+// as happily. So the cases below are the literal templates the app really
+// emits, and the last test walks EVERY source under app/ui/src and fails if any
+// of them grows a `[Encode]`/`[Decode]` warning the patterns do not cover. The
+// walk is deliberate rather than a fixed file list: the warn sites moved out of
+// App.jsx into hooks/usePipelineWorkers.js during a refactor, and a list would
+// have gone on passing over a file that no longer held any of them.
 //
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { isPipelineTrouble } from '../../test/e2e/pipeline-trouble.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const APP_JSX = resolve(here, '../../app/ui/src/App.jsx');
-const WORKER_INIT = resolve(here, '../../app/ui/src/lib/workerInit.js');
+const UI_SRC = resolve(here, '../../app/ui/src');
+
+/** Every .js/.jsx source under app/ui/src, so a moved warn cannot escape. */
+function uiSources(dir = UI_SRC, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) uiSources(full, out);
+    else if (/\.jsx?$/.test(entry.name)) out.push(readFileSync(full, 'utf-8'));
+  }
+  return out;
+}
 
 // Exactly what the app prints, template holes filled in.
 const ENCODE_FAILURES = [
@@ -86,7 +97,7 @@ describe('coverage of what the app really logs', () => {
     // console.warn is the app's failure channel here (console.log is used for
     // the positive markers and progress), so a warn the patterns miss is
     // exactly the blind spot this file exists to close.
-    const sources = [readFileSync(APP_JSX, 'utf-8'), readFileSync(WORKER_INIT, 'utf-8')].join('\n');
+    const sources = uiSources().join('\n');
     const warns = [...sources.matchAll(/console\.warn\(\s*[`'"]\[(Encode|Decode)\]([^`'"]*)/g)];
     assert.ok(warns.length >= 6, `expected to find the warn sites, found ${warns.length}`);
 
