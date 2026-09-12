@@ -26,6 +26,7 @@ import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
 import { planLoadProgress } from './lib/loadProgress.js';
+import { buildDownloadOpts } from './lib/modelRequest.js';
 import { BOOST_MINP_DEFAULT, BOOST_STRENGTH_DEFAULT, BOOST_SOURCE_CUSTOM, BOOST_SOURCE_DISABLED } from './lib/boostConfig.js';
 import { diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { useDiarization } from './hooks/useDiarization.js';
@@ -2503,81 +2504,25 @@ export default function App() {
       };
 
       // 1. Download all model files (from HF or local fallback).
-      // Pass `backend` and a per-backend quant preference; hub.js resolves the
-      // final quant against what the repo actually ships (resolveModelQuant):
-      //   - WASM: int8 encoder (~800 MB), the only one that fits the 32-bit WASM
-      //     heap / Chromium's ~2 GB blob limit.
-      //   - WebGPU: the fp32 encoder (~2.4 GB, sharded), the only precision the
-      //     GPU EP has an encoder kernel for.
-      const wantWebgpu = backend.startsWith('webgpu');
-      // On WASM the user may opt into the sharded fp32 encoder (full quality);
-      // hub.js only honours it when the repo ships the shards
-      // (allowWasmFp32 gate), else it falls back to the int8 pin. The decoder
-      // stays int8 on WASM regardless (tiny, runs fine).
-      const wasmWantsFp32 = !wantWebgpu && wasmEncoderQuant === 'fp32';
-      // On WebGPU the encoder is fp32 unless the user opted into w4a8, the only
-      // quantised encoder with a GPU kernel (MatMulNBits; int8 has none).
-      // The fused decoder_joint always runs int8 on both backends: on this model
-      // the int8 joiner is as accurate as fp32 (measured) while being smaller and
-      // faster, and the GPU EP runs the int8 decoder fine.
-      // Resolve the WASM encoder request: fp32 (shards), the lite int8 build,
-      // the 4-bit w4a8 build, or the default int8. 'int8lite' and 'w4a8' are
-      // passed straight through rather than collapsed to 'int8' so hub.js can
-      // tell "the user picked that build and this repo has none"
-      // (-> quantUnavailable banner) apart from "the user picked the default",
-      // which is the whole point of the no-silent-downgrade rule. Anything
-      // unrecognised still lands on the default int8.
-      const wasmEncoderRequest = wasmWantsFp32
-        ? 'fp32'
-        : (wasmEncoderQuant === 'int8lite' || wasmEncoderQuant === 'w4a8' ? wasmEncoderQuant : 'int8');
-      // The GPU precision to ASK FOR: exactly what is selected, with no local
-      // rewriting. This used to degrade fp16 to fp32 whenever the adapter had no
-      // `shader-f16`, which is a 2.35 GB download nobody requested; since
-      // 2026-09-11 the only substitution the app makes on its own is WASM int8,
-      // so an fp16 request that this machine or this source cannot honour is
-      // sent as fp16, refused by hub.js with QuantUnavailableError (it re-checks
-      // the adapter feature itself, see `shaderF16` below) and caught into the
-      // GPU-to-WASM fallback. A hand-picked fp32 or w4a8 passes through
-      // untouched, which is the only way either one is ever loaded.
-      const downloadOpts = {
-        encoderQuant: wantWebgpu ? webgpuEncoderQuant : wasmEncoderRequest,
-        decoderQuant: 'int8',
-        allowWasmFp32: wasmWantsFp32,
-        // hub.js re-checks fp16 against this rather than trusting the caller:
-        // it is the one quant that can load and then silently produce nothing.
-        shaderF16: webgpuShaderF16 === true,
-        preprocessor,
+      // buildDownloadOpts (lib/modelRequest.js) owns WHAT precision and which
+      // source this attempt asks for, including the no-silent-downgrade rules;
+      // hub.js then resolves that request against what the repo actually ships
+      // (resolveModelQuant). Only the two non-decisions are attached here: the
+      // progress callback, and the diarization cache keys the model-cache sweep
+      // must not evict.
+      const { opts: downloadOpts, wantWebgpu, wasmEncoderRequest } = buildDownloadOpts({
         backend,
-        progress: progressCallback,
-      };
-      // Operator-level override of the model revision pin. If unset, hub.js
-      // falls back to the per-model revision baked into models.js.
-      if (CONFIG.VITE_MODEL_REVISION) {
-        downloadOpts.revision = CONFIG.VITE_MODEL_REVISION;
-      }
-      if (useLocalFallback) {
-        // Serve weights from this instance under /models/ (hub.js auto-detects a
-        // flat layout or a nested /models/<repoId>/ tree via resolveLocalModelBase).
-        downloadOpts.localFallbackBaseUrl = '/models';
-        console.log('[App] Using local fallback for model download');
-      } else {
-        // First (HuggingFace) attempt: let hub.js transparently switch to the
-        // locally-served /models mirror BEFORE downloading when HF cannot
-        // deliver the requested quant but /models can (the user picked WASM fp32
-        // or WebGPU, and only /models ships the shards). Detecting it
-        // pre-download avoids fetching the wrong (downgraded) weights only to
-        // throw them away.
-        downloadOpts.localUpgradeBaseUrl = '/models';
-      }
-      // Shield any cached diarization models from the generational orphan sweep
-      // (they live in a different repo, so the sweep would otherwise delete them
-      // on every model load and force a re-download).
-      // Never let an unattributed flat /models tree stand in for a repo the
-      // mount has no subfolder for (see ALLOW_FLAT_LOCAL_FALLBACK). Applies to
-      // both local paths above: the explicit fallback and the pre-download
-      // quant upgrade.
-      downloadOpts.allowFlatLocalFallback = ALLOW_FLAT_LOCAL_FALLBACK;
+        wasmEncoderQuant,
+        webgpuEncoderQuant,
+        webgpuShaderF16,
+        preprocessor,
+        useLocalFallback,
+        revision: CONFIG.VITE_MODEL_REVISION,
+        allowFlatLocalFallback: ALLOW_FLAT_LOCAL_FALLBACK,
+      });
+      downloadOpts.progress = progressCallback;
       downloadOpts.protectCacheKeys = diarizationModelProtectKeys();
+      if (useLocalFallback) console.log('[App] Using local fallback for model download');
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
       // Show compiling sessions stage
