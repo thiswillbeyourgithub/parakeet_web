@@ -6,7 +6,8 @@
 //   node scripts/probe-check.mjs --headless     # usually has no navigator.gpu
 //   node scripts/probe-check.mjs --port 4189
 //
-// Exit codes: 0 pass, 1 fail, 2 skip (no real GPU here).
+// Exit codes: 0 pass, 1 fail, 2 skip (no real GPU here, or an adapter without
+// `shader-f16`, on which the app deliberately never auto-probes).
 //
 // WHY THIS EXISTS SEPARATELY FROM THE E2E TIER: test/e2e/perf-probe.spec.js can
 // only prove the probe stays out of the way (headless CI has no GPU, so the GPU
@@ -45,7 +46,14 @@ if (args.help) {
   process.exit(0);
 }
 
+// A skip is not a failure and not a harness error, so it needs its own channel
+// out of the try block. Thrown rather than process.exit()ed: an exit from inside
+// the try skips the async `finally`, which is what tears the browser down and
+// kills the spawned server, and would leave that server holding the port.
+class Skip extends Error {}
+
 const fail = [];
+let skip = null;
 const { proc, baseURL } = spawnAppServer({ port: args.port });
 let browser;
 let exitCode = 0;
@@ -63,11 +71,20 @@ try {
     await ctx.close();
     return r;
   });
-  if (!gate.ok) {
-    console.log(`SKIP: no real WebGPU GPU here (${gate.reason})`);
-    process.exit(2);
+  if (!gate.ok) throw new Skip(`no real WebGPU GPU here (${gate.reason})`);
+  // A real GPU is not enough: since 2026-09-11 the app only probes where the
+  // answer could be acted on, and fp16 is the only GPU precision it will ever
+  // select unasked (gpuBackendAutoUsable in lib/encoderQuants.js). An adapter
+  // without `shader-f16` therefore prefetches nothing, runs no probe and stores
+  // no verdict, ON PURPOSE. That is a skip, not a failure: this script has
+  // nothing left to measure, and asserting a verdict here would be asserting
+  // the app misbehaves. (This box is exactly that case: Dawn does not expose
+  // `shader-f16` on the RTX 3090 Ti even though Vulkan advertises it, so the
+  // script read FAIL for two days before the gate was aligned.)
+  if (!gate.shaderF16) {
+    throw new Skip(`adapter has no shader-f16 (${gate.adapter}), so the app never auto-probes here`);
   }
-  console.log(`GPU: ${gate.adapter}`);
+  console.log(`GPU: ${gate.adapter} (shader-f16)`);
 
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -166,13 +183,17 @@ try {
   }
   await ctx2.close();
 } catch (e) {
-  fail.push(`harness error: ${e?.message ?? e}`);
+  if (e instanceof Skip) skip = e.message;
+  else fail.push(`harness error: ${e?.message ?? e}`);
 } finally {
   await browser?.close();
   proc.kill();
 }
 
-if (fail.length) {
+if (skip) {
+  console.log(`\nSKIP: ${skip}`);
+  exitCode = 2;
+} else if (fail.length) {
   console.log(`\nFAIL\n - ${fail.join('\n - ')}`);
   exitCode = 1;
 } else {

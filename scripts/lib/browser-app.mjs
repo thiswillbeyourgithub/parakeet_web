@@ -133,7 +133,12 @@ export async function loadModelAndWaitReady(page, { timeoutMs = 6 * 60 * 1000 } 
 
 // Reject a software/fallback WebGPU adapter (SwiftShader/lavapipe) the same way
 // webgpu-check.mjs does: a software adapter is useless for a real GPU run (and
-// OOMs on big models). Returns { ok, adapter, reason }.
+// OOMs on big models). Returns { ok, adapter, shaderF16, reason }.
+//
+// `shaderF16` reports the adapter feature, not a verdict: a real GPU without it
+// still runs fp32 and w4a8 by hand. It matters to callers that care about what
+// the app will choose UNASKED, because fp16 is the only GPU precision it ever
+// picks on its own (see gpuBackendAutoUsable in lib/encoderQuants.js).
 export async function probeRealWebGpu(page) {
   return page.evaluate(async () => {
     if (!navigator.gpu) return { ok: false, reason: 'navigator.gpu is undefined' };
@@ -145,7 +150,8 @@ export async function probeRealWebGpu(page) {
       const software = a.isFallbackAdapter
         || /swiftshader|lavapipe|llvmpipe|software|basic render|microsoft basic/.test(desc);
       if (software) return { ok: false, reason: `software adapter (${desc.trim() || 'unknown'})` };
-      return { ok: true, adapter: desc.trim() || 'unknown' };
+      const shaderF16 = !!(a.features && a.features.has && a.features.has('shader-f16'));
+      return { ok: true, adapter: desc.trim() || 'unknown', shaderF16 };
     } catch (e) {
       return { ok: false, reason: String(e && e.message || e) };
     }
