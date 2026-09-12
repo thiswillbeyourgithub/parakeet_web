@@ -27,6 +27,7 @@ import { fetchTextCapped } from './lib/fetchCapped.js';
 import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
 import { planLoadProgress } from './lib/loadProgress.js';
 import { buildDownloadOpts } from './lib/modelRequest.js';
+import { planPipelineWorkers } from './lib/pipelinePlan.js';
 import { BOOST_MINP_DEFAULT, BOOST_STRENGTH_DEFAULT, BOOST_SOURCE_CUSTOM, BOOST_SOURCE_DISABLED } from './lib/boostConfig.js';
 import { diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { useDiarization } from './hooks/useDiarization.js';
@@ -2545,14 +2546,33 @@ export default function App() {
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });
-        // Chunk-parallel encode pool (WASM only). Stash the worker init params
-        // whenever the loaded model is pool-eligible, so the sidebar toggle can
-        // start/stop the pool later without a model reload, and start it now
-        // when the toggle is on. fp32 is excluded: each pool worker holds its
-        // own copy of the encoder weights, fine at int8 (~850 MB) but not at
-        // fp32 (~2.4 GB per copy). Best-effort: a gate or failure just means
-        // the serial in-thread encode runs, exactly as before.
-        encodePoolInitParamsRef.current = (!wantWebgpu && wasmEncoderRequest !== 'fp32') ? {
+        // Off-thread pipeline for this model. WHICH halves are allowed, and
+        // which of them start now, is pure policy in lib/pipelinePlan.js
+        // (unit-tested, because every failure here falls back to the in-thread
+        // path and so produces a perfectly healthy transcript that hides the
+        // breakage). Stashing the init params is what lets the sidebar toggle
+        // start or stop a half later without a model reload.
+        const pipeline = planPipelineWorkers({
+          backend,
+          wasmEncoderRequest,
+          wasmDecodePipelineEnabled,
+          parallelEncode,
+          cpuThreads,
+          maxCores,
+          deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined,
+        });
+        // NOTE (2026-08-11): running the WebGPU encoder session in a dedicated
+        // worker was tried as the fix for the rendering coupling (JSEP yields
+        // inside session.run queueing behind compositor frames while the
+        // spinner animates) and MEASURED WORSE: WebGPU callback delivery is
+        // gated by the page's compositor activity process-wide, so a worker
+        // encode under an animating main page ran ~3x slower than the animated
+        // main thread (723 s vs ~227 s on the 3-min fp32 clip; an ORT-free
+        // mapAsync probe confirmed worker awaits stall >2 s/iter while the
+        // page animates, vs 2.4 ms idle). The actual fix is pausing the page's
+        // CSS animations for the duration of a WebGPU run (the html.gpu-run
+        // toggle in runTranscription), which restores probe speed in-thread.
+        encodePoolInitParamsRef.current = pipeline.poolEligible ? {
           type: 'init',
           encoderUrl: modelUrls.urls.encoderUrl,
           encoderDataUrl: modelUrls.urls.encoderDataUrl,
@@ -2565,61 +2585,20 @@ export default function App() {
           // pool (which does the encoding) on the default runtime.
           ortVariant: ORT_VARIANT,
         } : null;
-        // NOTE (2026-08-11): running the WebGPU encoder session in a dedicated
-        // worker was tried as the fix for the rendering coupling (JSEP yields
-        // inside session.run queueing behind compositor frames while the
-        // spinner animates) and MEASURED WORSE: WebGPU callback delivery is
-        // gated by the page's compositor activity process-wide, so a worker
-        // encode under an animating main page ran ~3x slower than the animated
-        // main thread (723 s vs ~227 s on the 3-min fp32 clip; an ORT-free
-        // mapAsync probe confirmed worker awaits stall >2 s/iter while the
-        // page animates, vs 2.4 ms idle). The actual fix is pausing the page's
-        // CSS animations for the duration of a WebGPU run (the html.gpu-run
-        // toggle in runTranscription), which restores probe speed in-thread.
-        if (encodePoolInitParamsRef.current && parallelEncode) {
-          startEncodePool();
-        } else {
-          teardownEncodePool(encodePoolInitParamsRef.current
-            ? 'parallel encode disabled' : 'encode pool unsupported for this model');
-        }
-        // Decode worker. On WebGPU it overlaps WASM decode with GPU encode; on
-        // WASM it only ever engages COMPOSED with the encode pool (pooled
-        // encodes feed worker decodes, this thread just orchestrates and
-        // stitches), so it is created only when the model is pool-eligible,
-        // the hardware clears the pool gate, and the operator opted in with
-        // VITE_WASM_DECODE_PIPELINE='true'. It starts even while the pool toggle
-        // is off so toggling parallel encode later composes without a model
-        // reload. numThreads differs on purpose: the decode loop's joiner
-        // GEMMs are too small to scale with threads, and on WASM the pool
-        // already budgets ~all cores, so the worker gets 2 threads instead of
-        // the user budget. Best-effort: any failure falls back to in-thread
-        // decode.
-        const wasmComposedEligible = backend === 'wasm' && wasmDecodePipelineEnabled
-          && !!encodePoolInitParamsRef.current
-          && encodePoolPlan({
-            cpuThreads,
-            maxCores,
-            deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined,
-          }).workers > 0;
-        composedDecodeEligibleRef.current = wasmComposedEligible;
-        decodeWorkerInitParamsRef.current = (backend.startsWith('webgpu') || wasmComposedEligible) ? {
+        if (pipeline.startPool) startEncodePool();
+        else teardownEncodePool(pipeline.poolStopReason);
+        composedDecodeEligibleRef.current = pipeline.composedEligible;
+        decodeWorkerInitParamsRef.current = pipeline.decodeWorkerEligible ? {
           type: 'init',
           decoderUrl: modelUrls.urls.decoderUrl,
           decoderDataUrl: modelUrls.urls.decoderDataUrl,
           tokenizerUrl: modelUrls.urls.tokenizerUrl,
           filenames: modelUrls.filenames,
-          numThreads: backend === 'wasm' ? 2 : cpuThreads,
+          numThreads: pipeline.decodeNumThreads,
           ortVariant: ORT_VARIANT,
         } : null;
-        // The WASM worker follows the parallelEncode toggle (it is useless
-        // without the pool, and the user turning the feature off should get
-        // the memory back); the WebGPU one is independent and always starts.
-        if (decodeWorkerInitParamsRef.current && (!wasmComposedEligible || parallelEncode)) {
-          startDecodeWorker({ restart: true });
-        } else {
-          stopDecodeWorker(decodeWorkerInitParamsRef.current
-            ? 'parallel encode disabled' : 'decode pipeline unsupported for this model');
-        }
+        if (pipeline.startDecodeWorker) startDecodeWorker({ restart: true });
+        else stopDecodeWorker(pipeline.decodeWorkerStopReason);
       } catch (sessErr) {
         // A cached weight file that fails ONNX deserialization (truncated
         // download, disk error, quota corruption) is recoverable: drop the bad
