@@ -98,6 +98,70 @@ describe('reconcilePieces label reconciliation', () => {
     assert.equal(out[0].speaker, out[1].speaker);
     assert.equal(out[1].speaker, out[2].speaker); // all one speaker
   });
+
+  test('two locals in ONE piece never collapse onto the same global', () => {
+    // The diarizer already said these are two people. Merging them would be
+    // unrecoverable in the UI (merge exists, un-merge does not), so the second
+    // one has to mint its own speaker even though it also matches A.
+    const nearA = new Float32Array([0.9, 0.4359, 0]); // cos(A) = 0.90
+    const pieces = [
+      { startSec: 0, segments: [seg(0, 5, 0)], embeddings: { 0: A } },
+      {
+        startSec: 600,
+        segments: [seg(0, 5, 0), seg(5, 10, 1)],
+        embeddings: { 0: A, 1: nearA }, // both above the 0.5 threshold vs A
+      },
+    ];
+    const out = reconcilePieces(pieces);
+    const gA = out[0].speaker;
+    const p2first = out.find((s) => s.start === 600);
+    const p2second = out.find((s) => s.start === 605);
+    assert.equal(p2first.speaker, gA); // the exact match keeps A
+    assert.notEqual(p2second.speaker, gA); // the weaker one splits off
+  });
+
+  test('the STRONGEST local claims the global, not whichever came first', () => {
+    // Both locals are above threshold against the single global A, and the
+    // weaker one is listed first, so a first-come scan would hand it A.
+    const w58 = new Float32Array([0.58, 0.8146, 0]); // cos(A) = 0.58
+    const w62 = new Float32Array([0.62, 0.7846, 0]); // cos(A) = 0.62
+    const pieces = [
+      { startSec: 0, segments: [seg(0, 5, 0)], embeddings: { 0: A } },
+      {
+        startSec: 600,
+        segments: [seg(0, 5, 1), seg(5, 10, 0)], // local 1 is seen first
+        embeddings: { 1: w58, 0: w62 },
+      },
+    ];
+    const out = reconcilePieces(pieces);
+    const gA = out[0].speaker;
+    assert.equal(out.find((s) => s.start === 605).speaker, gA); // local 0, 0.62
+    assert.notEqual(out.find((s) => s.start === 600).speaker, gA); // local 1, 0.58
+  });
+
+  test('a local whose best global is taken falls back to its second best', () => {
+    // Losing the top candidate must not mint a new speaker when another
+    // existing global is still above threshold and unclaimed.
+    const Bish = new Float32Array([0.8, 0.6, 0]); // cos(A) = 0.80
+    const between = new Float32Array([0.95, 0.3122, 0]); // cos(A) 0.95, cos(Bish) 0.947
+    const pieces = [
+      {
+        startSec: 0,
+        segments: [seg(0, 5, 0), seg(5, 10, 1)],
+        embeddings: { 0: A, 1: Bish },
+      },
+      {
+        startSec: 600,
+        segments: [seg(0, 5, 0), seg(5, 10, 1)],
+        embeddings: { 0: A, 1: between }, // local 1 wants A too, but loses it
+      },
+    ];
+    const out = reconcilePieces(pieces);
+    const gA = out[0].speaker;
+    const gB = out[1].speaker;
+    assert.equal(out.find((s) => s.start === 600).speaker, gA);
+    assert.equal(out.find((s) => s.start === 605).speaker, gB); // reused, not minted
+  });
 });
 
 describe('reconcilePieces stitching', () => {

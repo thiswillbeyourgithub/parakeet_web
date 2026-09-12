@@ -123,32 +123,51 @@ export function reconcilePieces(pieces, opts = {}) {
     for (const s of piece.segments) localSpeakers.add(s.speaker);
     for (const k of Object.keys(emb)) localSpeakers.add(Number(k));
 
-    const localToGlobal = new Map();
+    // Score every (local, global) pair ONCE against the centroids as the piece
+    // opens, then take the pairs greedily, best score first. Two locals in the
+    // SAME piece are two different people (the diarizer just said so), so a
+    // global that one of them takes is off the table for the others: that is
+    // what `claimed` enforces, and without it two similar voices in one piece
+    // both land on the same global and collapse into one speaker for the rest
+    // of the transcript. Scoring against the piece-entry centroids costs
+    // nothing in fidelity: a global folded or minted during this piece is
+    // claimed, so no other local in the piece could have matched it anyway.
+    const candidates = [];
     for (const local of localSpeakers) {
       const e = emb[local];
+      if (!(e && e.length)) continue;
+      for (const g of globals) {
+        const score = cosineSimilarity(e, centroidOf(g)); // 0 vs a not-yet-embedded global
+        if (score >= threshold) candidates.push({ local, label: g.label, score });
+      }
+    }
+    // Ties broken on label so the outcome never depends on Set-insertion order.
+    candidates.sort((a, b) => b.score - a.score || a.local - b.local || a.label - b.label);
+
+    const localToGlobal = new Map();
+    const claimed = new Set();
+    for (const { local, label } of candidates) {
+      if (localToGlobal.has(local) || claimed.has(label)) continue;
+      localToGlobal.set(local, label);
+      claimed.add(label);
+      foldEmbedding(globals.find((g) => g.label === label), emb[local]);
+    }
+
+    // Whatever matched nothing (no embedding, below threshold, or only ever
+    // above threshold against globals a stronger local already took) mints a
+    // new speaker. Over-splitting is the recoverable direction.
+    for (const local of localSpeakers) {
+      if (localToGlobal.has(local)) continue;
+      const e = emb[local];
       const hasEmb = !!(e && e.length);
-      let assigned = -1;
-      if (hasEmb) {
-        let best = -1;
-        let bestScore = -Infinity;
-        for (const g of globals) {
-          const score = cosineSimilarity(e, centroidOf(g)); // 0 vs a not-yet-embedded global
-          if (score > bestScore) { bestScore = score; best = g.label; }
-        }
-        if (best >= 0 && bestScore >= threshold) assigned = best;
-      }
-      if (assigned < 0) {
-        assigned = nextLabel;
-        nextLabel += 1;
-        globals.push({
-          label: assigned,
-          sum: hasEmb ? Float64Array.from(e) : null,
-          count: hasEmb ? 1 : 0,
-          dim: hasEmb ? e.length : 0,
-        });
-      } else if (hasEmb) {
-        foldEmbedding(globals.find((g) => g.label === assigned), e);
-      }
+      const assigned = nextLabel;
+      nextLabel += 1;
+      globals.push({
+        label: assigned,
+        sum: hasEmb ? Float64Array.from(e) : null,
+        count: hasEmb ? 1 : 0,
+        dim: hasEmb ? e.length : 0,
+      });
       localToGlobal.set(local, assigned);
     }
 
