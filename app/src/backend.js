@@ -36,29 +36,16 @@
 //   - WebCrypto isn't available (legacy browsers).
 // The fallback logs a loud warning; production deployments built via
 // the Dockerfile always ship the manifest.
-async function _sha384B64(blob) {
-  const buf = await blob.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-384', buf);
-  const bytes = new Uint8Array(digest);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return 'sha384-' + btoa(bin);
-}
+import { ASSET_INTEGRITY_HARD_FAIL, integrityError, sha384Base64 } from './integrity.js';
 
-// In production builds we refuse to silently fall back when the manifest
-// is unreachable or empty: an attacker who can swap /ort/*.wasm bytes can
-// also drop the one /ort/manifest.json request and re-open the very
-// attack surface F-38a was meant to close. Dev builds keep the soft path
-// so vite dev server (no postbuild step) and Node-side unit tests still
-// boot. import.meta.env.PROD is a static Vite-replaced boolean, so this
-// branch is dead-code-eliminated in dev.
-const _ASSET_INTEGRITY_HARD_FAIL = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
-
+// The digest and the hard-fail policy are shared with the app's other
+// verify-then-load path (app/ui/src/lib/asset-integrity.js, which pins the PCM
+// worklet and the sherpa engine). Both used to carry their own byte-identical
+// copy of each, which is how the two would eventually disagree about what
+// counts as production.
 function _integrityFailure(reason) {
-  if (_ASSET_INTEGRITY_HARD_FAIL) {
-    const err = new Error(`[Parakeet.js] ORT integrity manifest missing or invalid: ${reason}. Refusing to load ML runtime without integrity check.`);
-    err.name = 'IntegrityError';
-    throw err;
+  if (ASSET_INTEGRITY_HARD_FAIL) {
+    throw integrityError(`[Parakeet.js] ORT integrity manifest missing or invalid: ${reason}. Refusing to load ML runtime without integrity check.`);
   }
   console.warn(`[Parakeet.js] ${reason}. Falling back to unchecked wasmPaths (DEV ONLY; production hard-fails).`);
 }
@@ -199,19 +186,28 @@ export async function _verifiedOrtWasmPaths(basePath, names = ORT_RUNTIME_ASSETS
     return basePath;
   }
   const verified = {};
-  await Promise.all(Object.entries(wanted).map(async ([key, { name, expected }]) => {
-    const resp = await fetch(basePath + name);
-    // A manifest entry the build did not actually ship. Nothing to pin, so
-    // fall through to the base path below (ORT surfaces a clear error at
-    // session-create time if the file is missing there too).
-    if (!resp.ok) return;
-    const blob = await resp.blob();
-    const actual = await _sha384B64(blob);
-    if (actual !== expected) {
-      throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
-    }
-    verified[key] = URL.createObjectURL(blob);
-  }));
+  try {
+    await Promise.all(Object.entries(wanted).map(async ([key, { name, expected }]) => {
+      const resp = await fetch(basePath + name);
+      // A manifest entry the build did not actually ship. Nothing to pin, so
+      // fall through to the base path below (ORT surfaces a clear error at
+      // session-create time if the file is missing there too).
+      if (!resp.ok) return;
+      const blob = await resp.blob();
+      const actual = await sha384Base64(blob);
+      if (actual !== expected) {
+        throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
+      }
+      verified[key] = URL.createObjectURL(blob);
+    }));
+  } catch (e) {
+    // The two fetches run concurrently, so a mismatch on one can land after
+    // the other has already minted an object URL. Throwing straight out of
+    // Promise.all leaked that blob (it pins the whole ~16 MB runtime in
+    // memory for the life of the document) and skipped the revoke below.
+    for (const url of Object.values(verified)) URL.revokeObjectURL(url);
+    throw e;
+  }
   if (!verified.mjs || !verified.wasm) {
     // Don't leak the half we did mint an object URL for.
     for (const url of Object.values(verified)) URL.revokeObjectURL(url);
