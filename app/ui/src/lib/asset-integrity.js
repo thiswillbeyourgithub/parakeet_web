@@ -18,8 +18,11 @@
 // Hard-fail in production: an attacker who can swap the worklet bytes can
 // also drop the one manifest request and re-open the F-38b attack surface.
 // Dev keeps the soft path so vite dev server (no postbuild manifest) and
-// integration tests still work.
-const _HARD_FAIL = typeof import.meta !== 'undefined' && import.meta.env?.PROD === true;
+// integration tests still work. The flag, the digest and the IntegrityError
+// tag are shared with backend.js's ORT-runtime pinning (app/src/integrity.js):
+// the two verify-then-load paths must agree on what counts as production, and
+// they used to carry a copy of each other's answer.
+import { ASSET_INTEGRITY_HARD_FAIL as _HARD_FAIL, integrityError, sha384Base64 } from '../../../src/integrity.js';
 
 let manifestPromise = null;
 
@@ -50,15 +53,6 @@ function loadManifest() {
   return manifestPromise;
 }
 
-async function sha384Base64(blob) {
-  const buf = await blob.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-384', buf);
-  const bytes = new Uint8Array(digest);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return 'sha384-' + btoa(bin);
-}
-
 /**
  * Fetch a loose runtime asset and sha384-verify its bytes against the
  * build-time pin before the caller evaluates them. Shared by
@@ -84,18 +78,14 @@ export async function fetchVerifiedAsset(path, manifestKey = path.split('/').pop
   const blob = await resp.blob();
   if (!expected || !crypto?.subtle) {
     if (_HARD_FAIL) {
-      const err = new Error(`[asset-integrity] no production pin for ${manifestKey}; refusing to load ${path}`);
-      err.name = 'IntegrityError';
-      throw err;
+      throw integrityError(`[asset-integrity] no production pin for ${manifestKey}; refusing to load ${path}`);
     }
     console.warn(`[asset-integrity] no pin for ${manifestKey}; ${path} UNCHECKED (dev only)`);
     return { bytes: new Uint8Array(await blob.arrayBuffer()), blob, verified: false };
   }
   const actual = await sha384Base64(blob);
   if (actual !== expected) {
-    const err = new Error(`Integrity check failed for ${manifestKey}: expected ${expected}, got ${actual}`);
-    err.name = 'IntegrityError';
-    throw err;
+    throw integrityError(`Integrity check failed for ${manifestKey}: expected ${expected}, got ${actual}`);
   }
   return { bytes: new Uint8Array(await blob.arrayBuffer()), blob, verified: true };
 }
@@ -107,31 +97,25 @@ export async function fetchVerifiedAsset(path, manifestKey = path.split('/').pop
  * mismatch so the caller bails before the worklet wires into the audio
  * graph.
  *
+ * The verification itself is `fetchVerifiedAsset`; this function only adds
+ * the blob-URL handoff. It used to inline its own copy of the manifest
+ * lookup, hard-fail branch, fetch, hash, compare and IntegrityError throw,
+ * so the worklet's pin and the sherpa engine's pin could drift apart.
+ *
  * @param {AudioWorklet} audioWorklet
  * @param {string} path absolute path (e.g. '/pcm-recorder-worklet.js')
  */
 export async function verifiedAddModule(audioWorklet, path) {
   const name = path.split('/').pop();
   const manifest = await loadManifest();
-  const expected = manifest[name];
-  if (!expected || !crypto?.subtle) {
-    if (_HARD_FAIL) {
-      const err = new Error(`[asset-integrity] no production pin for ${name}; refusing addModule(${path})`);
-      err.name = 'IntegrityError';
-      throw err;
-    }
+  if ((!manifest[name] || !crypto?.subtle) && !_HARD_FAIL) {
+    // Dev only: with nothing to verify against, let the browser load the
+    // script itself rather than fetching the same bytes a second time. A
+    // production build never reaches here; fetchVerifiedAsset throws instead.
     console.warn(`[asset-integrity] no pin for ${name}; addModule(${path}) UNCHECKED (dev only)`);
     return audioWorklet.addModule(path);
   }
-  const resp = await fetch(path);
-  if (!resp.ok) throw new Error(`addModule fetch ${path}: HTTP ${resp.status}`);
-  const blob = await resp.blob();
-  const actual = await sha384Base64(blob);
-  if (actual !== expected) {
-    const err = new Error(`AudioWorklet integrity check failed for ${name}: expected ${expected}, got ${actual}`);
-    err.name = 'IntegrityError';
-    throw err;
-  }
+  const { blob } = await fetchVerifiedAsset(path, name);
   const url = URL.createObjectURL(blob);
   try {
     await audioWorklet.addModule(url);

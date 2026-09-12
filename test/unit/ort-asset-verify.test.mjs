@@ -219,6 +219,17 @@ describe('_verifiedOrtWasmPaths: fetches only the runtime pair it pins', () => {
     );
   });
 
+  test('a tampered runtime does not leak the sibling blob it already minted', async () => {
+    // The pair is fetched concurrently, so the good half can mint its object
+    // URL before the bad half's hash comes back. Throwing straight out of
+    // Promise.all used to skip the revoke and pin those bytes (the mjs is
+    // small, but the same path throws with wasm good and mjs bad, and that
+    // blob is the whole ~16 MB runtime) for the life of the document.
+    env = stubEnv({ corrupt: ORT_RUNTIME_ASSETS.wasm });
+    await assert.rejects(() => _verifiedOrtWasmPaths(BASE));
+    assert.deepEqual(env.revoked.sort(), env.minted.map((m) => m.url).sort());
+  });
+
   test('a tampered UNUSED variant is not fetched, so it cannot fail the load', async () => {
     // Bytes ORT never loads are no longer verified: the mismatch is invisible
     // because the file is never requested. That is the point of pinning.
