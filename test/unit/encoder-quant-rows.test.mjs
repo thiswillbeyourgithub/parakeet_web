@@ -12,15 +12,15 @@
 // A row whose size changes therefore forces the order to be revisited, which is
 // the moment the decision is actually up for review.
 //
-// Both files are read as text: App.jsx is a Preact component and i18n.jsx a
-// large literal, neither importable under node, and the repo already tests
-// shipped source this way (pipeline-trouble, entrypoint-model-repo). The
-// per-backend whitelists and the download sizes are NOT scraped, though: they
-// live in lib/encoderQuants.js, which is plain JS on purpose (so hub.js's
-// servability rules can be unit-tested), so they are imported and compared as
-// real values. Scraping them was how this test broke when they moved out of
-// App.jsx, and a scrape that stops matching reports the same thing as a
-// genuine drift.
+// Only i18n.jsx is read as text (a large literal, not importable under node,
+// and the repo already tests shipped source this way: pipeline-trouble,
+// entrypoint-model-repo). Everything else is imported as a real value from
+// lib/encoderQuants.js, which is plain JS on purpose so hub.js's servability
+// rules can be unit-tested. That includes the row order itself, which used to
+// be scraped out of App.jsx: the scrape broke twice, once when the whitelists
+// moved into lib/ and once when the order followed the radios into
+// components/settings/EngineSection.jsx, and a scrape that stops matching
+// reports the same thing as a genuine drift.
 //
 // Built with Claude Code.
 
@@ -29,22 +29,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  ENCODER_QUANT_ROWS,
   QUANT_DOWNLOAD_MB,
   WASM_ENCODER_QUANTS,
   WEBGPU_ENCODER_QUANTS,
 } from '../../app/ui/src/lib/encoderQuants.js';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8');
-const APP = read('app/ui/src/App.jsx');
 const I18N = read('app/ui/src/i18n.jsx');
 
-const arrayLiteral = (name, source) => {
-  const m = source.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`));
-  assert.ok(m, `${name} not found`);
-  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
-};
-
-const ROWS = arrayLiteral('ENCODER_QUANT_ROWS', APP);
+const ROWS = ENCODER_QUANT_ROWS;
 const LABEL_KEY = {
   int8lite: 'precisionInt8Lite',
   int8: 'precisionInt8',

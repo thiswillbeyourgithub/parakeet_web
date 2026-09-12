@@ -32,7 +32,7 @@
 import { quantSatisfiable } from '../../../src/hub.js';
 
 // Encoder precisions offered per backend, default first. The radios have their
-// own display order (ENCODER_QUANT_ROWS in App.jsx, ascending download size),
+// own display order (ENCODER_QUANT_ROWS below, ascending download size),
 // and nothing walks these lists looking for a substitute: since 2026-09-11 the
 // only precision the app may reach for unasked is the backend's default, so the
 // order below documents which one that is rather than driving a search.
@@ -120,6 +120,21 @@ export function servableEncoderQuants({ repoFiles, shaderF16 = false } = {}) {
     webgpu: WEBGPU_ENCODER_QUANTS.filter((q) => test('webgpu-hybrid', q)),
   };
 }
+
+// The precision rows the sidebar iterates, smallest download first. Ordering by
+// size is the one axis every row can be compared on (quality and speed do not
+// order the same way: w4a8 is the smallest download AND the slowest to run), so
+// the column reads as a single ramp rather than needing each label read to place
+// it. The recommended choice is int8, which the label says; ordering does not
+// carry that.
+//
+// This is only the DISPLAY order. The per-backend whitelists above stay the
+// thing a saved value is validated against, which is why a WebGPU-only precision
+// like fp16 still has a row here to be greyed out in. It lives beside them so
+// the two cannot drift: a value offered by one and missing from the other is
+// silently reset to int8 on the next reload, which is exactly how int8lite first
+// shipped without surviving a page load.
+export const ENCODER_QUANT_ROWS = ['w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
 
 /**
  * The precision radios to render for a backend: which ones appear at all, and
