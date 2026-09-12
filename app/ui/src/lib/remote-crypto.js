@@ -161,9 +161,18 @@ export async function decrypt(encryptedPackage, sharedKey) {
  * seconds on a laptop. The clamp now floors at 16 (matching the
  * computeFingerprintLength return and SAFE_FALLBACK_HEX_LEN in
  * remote-mic-handshake.js) and ceilings at 64 (full SHA-256 output).
+ *
+ * A non-numeric length falls back to 16 rather than propagating NaN. It used
+ * to: Math.floor(NaN) is NaN, the clamp keeps it, and hash.slice(0, NaN) then
+ * yields an empty string, so BOTH screens showed a blank verification code and
+ * a user comparing them would read "they match" off two empty boxes. The
+ * caller is computeFingerprintLength, which reads a room count off the
+ * signaling server, so the bad input is reachable from the untrusted side.
  */
 export async function getPairFingerprint(receiverPub, senderPub, hexLength = 16) {
-    const len = Math.max(16, Math.min(64, Math.floor(hexLength)));
+    const len = Number.isFinite(hexLength)
+        ? Math.max(16, Math.min(64, Math.floor(hexLength)))
+        : 16;
     const aBytes = new Uint8Array(await crypto.subtle.exportKey('raw', receiverPub));
     const bBytes = new Uint8Array(await crypto.subtle.exportKey('raw', senderPub));
     const combined = new Uint8Array(aBytes.length + bBytes.length);
