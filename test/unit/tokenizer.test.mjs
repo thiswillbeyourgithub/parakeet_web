@@ -37,6 +37,26 @@ describe('parseVocabText', () => {
     const id2token = parseVocabText('▁x 0\r\n<blk> 1\r\n');
     assert.equal(id2token[1], '<blk>');
   });
+  test('skips an out-of-range id instead of allocating a giant array', () => {
+    // The id indexes a plain array and the constructor then maps over it, so a
+    // single line claiming id 1e9 asked for a billion slots and a full pass.
+    // The vocab is a downloaded file, so a wild id is just another bad line.
+    const id2token = parseVocabText('▁ok 0\n▁boom 1000000001\n▁two 1');
+    assert.equal(id2token.length, 2, 'the wild id must not stretch the array');
+    assert.equal(id2token[0], '▁ok');
+    assert.equal(id2token[1], '▁two');
+  });
+  test('skips a negative id', () => {
+    const id2token = parseVocabText('▁ok 0\n▁bad -5');
+    assert.equal(id2token.length, 1);
+    assert.equal(id2token[0], '▁ok');
+  });
+  test('the largest plausible real vocab still parses', () => {
+    // v3 multilingual is 4097 pieces; the bound must be nowhere near it.
+    const id2token = parseVocabText('▁x 0\n<blk> 4096');
+    assert.equal(id2token.length, 4097);
+    assert.equal(id2token[4096], '<blk>');
+  });
 });
 
 describe('ParakeetTokenizer', () => {
