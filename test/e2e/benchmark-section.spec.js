@@ -146,12 +146,10 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   await expect(page.locator('.settings-sidebar')).toBeVisible();
   await expect(page.locator('.benchmark-complete')).toBeVisible();
   await expect(page.locator('.benchmark-complete')).toContainText('complete');
-  // Auto-retrying, not sampled once: the scroll is a smooth one (App.jsx
-  // schedules scrollIntoView({ behavior: 'smooth' }) in a rAF once the sidebar
-  // has reopened), so it is still animating at the instant the textarea first
-  // carries its value, and a single rect read measures the animation's first
-  // frame rather than where the report ends up. If the scroll never happens
-  // this still fails.
+  // Auto-retrying, because App.jsx schedules a smooth scrollIntoView in a rAF
+  // once the sidebar has reopened: the scroll is still animating at the instant
+  // the textarea first carries its value. The short timeout is deliberate, the
+  // 6-minute default would outlive the test budget if the scroll never happens.
   await expect(textarea, 'the finished report must be scrolled into view')
     .toBeInViewport({ timeout: 15_000 });
 
