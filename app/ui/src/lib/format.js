@@ -232,3 +232,33 @@ export function boldRuns(text) {
   }
   return runs;
 }
+
+/**
+ * Format a thrown value into the string an alert or a status banner shows.
+ *
+ * Errors reach the UI from three layers that throw differently: the ONNX/WASM
+ * side throws Errors with a `message`, the browser's decode path throws
+ * DOMExceptions whose useful part is the `name` (an unsupported container has
+ * no message worth reading, so the name is turned into the advice that
+ * actually helps), and a few places still throw bare strings. Anything with a
+ * stack also earns the pointer to the console, since the stack is the part
+ * worth reading and the alert cannot carry it.
+ *
+ * @param {unknown} error
+ * @returns {string} a non-empty, user-facing message.
+ */
+export function transcribeErrorMessage(error) {
+  let errorMsg = 'Unknown error';
+  if (error) {
+    if (error.message) {
+      errorMsg = error.message;
+    } else if (error.name) {
+      errorMsg = `${error.name} - The audio file format may not be supported. Try converting to WAV format.`;
+    } else if (typeof error === 'string') {
+      errorMsg = error;
+    }
+  }
+  return error?.stack
+    ? `${errorMsg}\n\nCheck console for full error details and stack trace.`
+    : errorMsg;
+}
