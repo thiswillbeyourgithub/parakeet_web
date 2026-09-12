@@ -58,23 +58,43 @@ function getFFmpeg() {
   return loadPromise;
 }
 
+/**
+ * Normalise a File/Blob/ArrayBuffer/Uint8Array into bytes THIS MODULE OWNS.
+ *
+ * ffmpeg's `writeFile` TRANSFERS the buffer to its worker, detaching it here.
+ * Bytes derived from a Blob/File are ours to give away, and the File itself
+ * stays re-readable for the Web Audio fallback. But when the CALLER hands us
+ * their own Uint8Array/ArrayBuffer, detaching it empties their buffer, which
+ * breaks `decodeToPcm16k`'s stated contract that a failed ffmpeg attempt
+ * cannot corrupt the fallback's input: the fallback would decode zero bytes.
+ * So those two forms are copied. Every in-app caller passes a File today, so
+ * the copy costs nothing in practice.
+ *
+ * Not unit-tested: this module statically imports '@ffmpeg/ffmpeg', a Vite
+ * alias onto the vendored build, so it cannot be imported in Node.
+ *
+ * @param {File|Blob|ArrayBuffer|Uint8Array} input
+ * @returns {Promise<Uint8Array>} bytes whose buffer is safe to transfer.
+ */
+async function toOwnedBytes(input) {
+  if (input instanceof Uint8Array) return input.slice();
+  if (input instanceof ArrayBuffer) return new Uint8Array(input.slice(0));
+  return new Uint8Array(await input.arrayBuffer());
+}
+
 // Decode an uploaded File/Blob/ArrayBuffer/Uint8Array to 16 kHz mono float32
 // PCM, identical to the CLI decodePcm. Throws on any load/exec/read failure (or
 // an empty decode) so the caller can fall back to the Web Audio path.
 export async function decodeToPcm16kFfmpeg(input) {
   const ff = await getFFmpeg();
-  const bytes = input instanceof Uint8Array
-    ? input
-    : new Uint8Array(input instanceof ArrayBuffer ? input : await input.arrayBuffer());
+  const bytes = await toOwnedBytes(input);
 
   // Fixed FS names. ffmpeg selects the demuxer from content, not extension, so a
   // bare "input" matches the CLI feeding the raw file. Decodes are serialized
   // through the single worker, so there is no cross-call name collision.
   const IN = 'input';
   const OUT = 'output.f32le';
-  // writeFile TRANSFERS bytes.buffer to the worker (detaching it here); that is
-  // fine because we derived it from the File, which stays re-readable for the
-  // fallback path.
+  // Safe to transfer: `bytes` above is always a buffer this function owns.
   await ff.writeFile(IN, bytes);
   try {
     // Byte-for-byte the CLI pipeline: any-format -> mono, 16 kHz, float32 raw.
