@@ -8,6 +8,7 @@ import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import InfoTooltip from './components/InfoTooltip.jsx';
 import CollapsibleSection from './components/CollapsibleSection.jsx';
 import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, createWavBlob, AUDIO_FILE_ACCEPT } from './lib/audio.js';
+import DebugSection from './components/settings/DebugSection.jsx';
 import { decodeToPcm16k } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
@@ -6175,77 +6176,21 @@ export default function App() {
             )}
           </CollapsibleSection>
 
-          <CollapsibleSection id="debug" title={t('settingsGroupDebug')} open={!!sectionsOpen.debug} onToggle={toggleSection}>
-            <div className="setting-row">
-              <span className="setting-label">
-                {t('debugLogging')}:
-                <InfoTooltip text={t('tooltipDebugLogging')} />
-              </span>
-              <select
-                value={(showAdvancedInfo || verboseLog) ? 'full' : 'off'}
-                onChange={e => {
-                  const on = e.target.value === 'full';
-                  setShowAdvancedInfo(on);
-                  saveSetting('showAdvancedInfo', on);
-                  setVerboseLog(on);
-                }}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
-              >
-                <option value="off">{t('debugOff')}</option>
-                <option value="full">{t('debugFullLogs')}</option>
-              </select>
-            </div>
-            <div className="setting-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={debugDecode}
-                  onChange={e => setDebugDecode(e.target.checked)}
-                />
-                {t('debugDecode')}
-                <InfoTooltip text={t('tooltipDebugDecode')} />
-              </label>
-            </div>
-            <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.35rem' }}>
-              <span className="setting-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>
-                  {t('supportReport')}
-                  <InfoTooltip text={t('tooltipSupportReport')} />
-                </span>
-                <button
-                  type="button"
-                  className="support-report-copy"
-                  onClick={copySupportReport}
-                  style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem' }}
-                >
-                  {supportReportCopied ? t('copied') : t('supportReportCopy')}
-                </button>
-              </span>
-              <textarea
-                className="support-report-text"
-                readOnly
-                value={supportReport}
-                spellCheck={false}
-                wrap="off"
-                aria-label={t('supportReport')}
-                style={{
-                  width: '100%',
-                  minHeight: '6rem',
-                  maxHeight: '11rem',
-                  overflow: 'auto',
-                  resize: 'vertical',
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                  fontSize: '0.68rem',
-                  lineHeight: 1.35,
-                  whiteSpace: 'pre',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: '4px',
-                  padding: '0.4rem',
-                  boxSizing: 'border-box',
-                }}
-              />
-            </div>
-          </CollapsibleSection>
+          <DebugSection
+            t={t}
+            open={!!sectionsOpen.debug}
+            onToggle={toggleSection}
+            showAdvancedInfo={showAdvancedInfo}
+            setShowAdvancedInfo={setShowAdvancedInfo}
+            verboseLog={verboseLog}
+            setVerboseLog={setVerboseLog}
+            saveSetting={saveSetting}
+            debugDecode={debugDecode}
+            setDebugDecode={setDebugDecode}
+            supportReport={supportReport}
+            supportReportCopied={supportReportCopied}
+            copySupportReport={copySupportReport}
+          />
           </div>
 
           {/* Dictation device (SpeechMike) connect button. The button itself
