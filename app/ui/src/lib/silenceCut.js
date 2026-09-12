@@ -42,21 +42,30 @@ export const DEFAULT_PAD_SEC = 0.35;
 export const SPLICE_FADE_SEC = 0.010;
 
 /**
- * The p-th percentile of a numeric array (linear interpolation), non-mutating.
- * @param {ArrayLike<number>} values
+ * The p-th percentile of an ALREADY-SORTED ascending array (linear
+ * interpolation). Sorting is the caller's job so that reading several
+ * percentiles off the same data costs one sort: `findSilenceCuts` reads p5 and
+ * p95 off the hop energies, which is ~360k entries for a one-hour recording,
+ * and it used to sort the whole thing twice on the main thread.
+ *
+ * @param {ArrayLike<number>} sorted ascending values
  * @param {number} p  percentile in [0, 100]
  * @returns {number}
  */
-function percentile(values, p) {
-  const n = values.length;
+function percentileOfSorted(sorted, p) {
+  const n = sorted.length;
   if (n === 0) return 0;
-  const sorted = Array.prototype.slice.call(values).sort((a, b) => a - b);
   if (n === 1) return sorted[0];
   const rank = (p / 100) * (n - 1);
   const lo = Math.floor(rank);
   const hi = Math.ceil(rank);
   if (lo === hi) return sorted[lo];
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (rank - lo);
+}
+
+/** Ascending numeric copy; the input is never mutated. */
+function sortedCopy(values) {
+  return Array.prototype.slice.call(values).sort((a, b) => a - b);
 }
 
 /**
@@ -81,8 +90,12 @@ export function findSilenceCuts(pcm, sampleRate, opts = {}) {
 
   const hopSamples = Math.max(1, Math.round(SILENCE_HOP_SEC * sampleRate));
   const { energies } = createEnergySampler(pcm, sampleRate).hopProfile(hopSamples);
-  const noiseFloor = percentile(energies, NOISE_FLOOR_PERCENTILE);
-  const speechRef = percentile(energies, SILENCE_SPEECH_PERCENTILE);
+  // One sort for both percentiles: at the 10 ms hop this array is ~360k entries
+  // for a one-hour clip, and it is read twice, on the main thread, right before
+  // diarization.
+  const sortedEnergies = sortedCopy(energies);
+  const noiseFloor = percentileOfSorted(sortedEnergies, NOISE_FLOOR_PERCENTILE);
+  const speechRef = percentileOfSorted(sortedEnergies, SILENCE_SPEECH_PERCENTILE);
   // Adaptive threshold, but ceilinged below the speech level so a clip without any
   // real silence is not wholly excised (see SILENCE_MAX_FRAC).
   const threshold = Math.max(Math.min(noiseFloor * factor, speechRef * SILENCE_MAX_FRAC), absFloor);
