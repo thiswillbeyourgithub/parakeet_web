@@ -24,6 +24,8 @@ const MODELS = { segmentationBytes: new Uint8Array(8), embeddingBytes: new Uint8
 // Every spawned fake worker, so a test can inspect what the client sent and
 // answer on its behalf.
 let workers = [];
+// How the next spawned fake worker answers its init handshake.
+let initBehaviour = 'ready';
 
 // The client verifies the ~11 MB engine bytes through fetchVerifiedAsset. In
 // Node there is no production pin (the hard-fail flag is a Vite-replaced
@@ -41,22 +43,41 @@ function stubEnv() {
     constructor() {
       this.posted = [];
       this.terminated = false;
+      this.listeners = { message: [], error: [] };
       workers.push(this);
-      // Answer the init handshake on a later turn, like a real worker.
-      queueMicrotask(() => this.onmessage?.({ data: { type: 'ready' } }));
+      // Answer the init handshake on a later turn, like a real worker. The
+      // client's handshake (workerInit.js) listens via addEventListener, so
+      // both listener styles have to see it.
+      queueMicrotask(() => {
+        if (initBehaviour === 'ready') this.emit('message', { type: 'ready' });
+        else if (initBehaviour === 'initError') this.emit('message', { type: 'error', message: 'engine did not load' });
+        else if (initBehaviour === 'crash') this.emit('error', { message: 'worker script blew up' });
+      });
     }
     postMessage(msg) { this.posted.push(msg); }
     terminate() { this.terminated = true; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    removeEventListener(type, fn) {
+      this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn);
+    }
+    /** Deliver one event to the on<type> property AND every addEventListener. */
+    emit(type, payload) {
+      const ev = type === 'error' ? payload : { data: payload };
+      this[`on${type}`]?.(ev);
+      for (const fn of [...(this.listeners[type] || [])]) fn(ev);
+    }
     /** Answer the run the client is currently waiting on (the latest one). */
     finishRun(segments = []) {
       const run = this.posted.filter((m) => m.type === 'run').at(-1);
-      this.onmessage?.({ data: { type: 'result', id: run.id, segments } });
+      this.emit('message', { type: 'result', id: run.id, segments });
     }
     /** Fail the run the client is currently waiting on. */
     failRun(message) {
       const run = this.posted.filter((m) => m.type === 'run').at(-1);
-      this.onmessage?.({ data: { type: 'error', id: run.id, message } });
+      this.emit('message', { type: 'error', id: run.id, message });
     }
+    /** Die the way a real worker does: an `error` event and no message at all. */
+    crash(message = 'wasm aborted') { this.emit('error', { message }); }
   };
   console.warn = () => {};
   return () => {
@@ -64,6 +85,7 @@ function stubEnv() {
     globalThis.Worker = realWorker;
     console.warn = realWarn;
     workers = [];
+    initBehaviour = 'ready';
   };
 }
 
@@ -158,6 +180,79 @@ describe('createDiarizerClient single-run contract', () => {
     await flush();
     workers.at(-1).finishRun();
     await ok;
+    client.dispose();
+  });
+});
+
+describe('createDiarizerClient worker-crash handling', () => {
+  test('a worker that dies AFTER init rejects the run instead of hanging forever', async () => {
+    // The hang this pins: the only `error` handler used to live inside the init
+    // promise and could only reject THAT. Once init had resolved, a worker
+    // `error` event (uncaught throw, WASM OOM, pthread failure) posted no
+    // message, settled nothing, and `pending` stayed unsettled for the life of
+    // the tab with no watchdog anywhere in the diarization path.
+    restore = stubEnv();
+    const client = createDiarizerClient();
+    const first = client.run(PCM, MODELS);
+    await flush();
+    workers[0].crash('wasm aborted');
+    await assert.rejects(first, /wasm aborted/);
+    client.dispose();
+  });
+
+  test('the client rebuilds after a crash rather than staying wedged', async () => {
+    restore = stubEnv();
+    const client = createDiarizerClient();
+    const first = client.run(PCM, MODELS);
+    await flush();
+    workers[0].crash();
+    await assert.rejects(first, /wasm aborted/);
+    assert.equal(workers[0].terminated, true, 'the dead worker must be torn down');
+    const second = client.run(PCM, MODELS);
+    await flush();
+    assert.equal(workers.length, 2, 'the next run spawns a fresh worker');
+    workers[1].finishRun([{ start: 0, end: 1, speaker: 0 }]);
+    assert.deepEqual(await second, [{ start: 0, end: 1, speaker: 0 }]);
+    client.dispose();
+  });
+
+  test('the models are re-sent to the rebuilt worker', async () => {
+    // lastModelIdentity is per worker: a rebuild that skipped the model bytes
+    // would run against an engine holding none.
+    restore = stubEnv();
+    const client = createDiarizerClient();
+    const first = client.run(PCM, MODELS);
+    await flush();
+    workers[0].crash();
+    await assert.rejects(first, /wasm aborted/);
+    const second = client.run(PCM, MODELS);
+    await flush();
+    const run = workers[1].posted.find((m) => m.type === 'run');
+    assert.ok(run.segBytes && run.embBytes, 'the rebuilt worker gets the models again');
+    workers[1].finishRun();
+    await second;
+    client.dispose();
+  });
+
+  test('an init error message surfaces instead of hanging', async () => {
+    restore = stubEnv();
+    initBehaviour = 'initError';
+    const client = createDiarizerClient();
+    await assert.rejects(client.run(PCM, MODELS), /diarizer worker init failed/);
+    client.dispose();
+  });
+
+  test('a worker that dies DURING init surfaces too', async () => {
+    restore = stubEnv();
+    initBehaviour = 'crash';
+    const client = createDiarizerClient();
+    await assert.rejects(client.run(PCM, MODELS), /diarizer worker init failed/);
+    // And the failed init must not have left the client marked busy.
+    initBehaviour = 'ready';
+    const second = client.run(PCM, MODELS);
+    await flush();
+    workers.at(-1).finishRun();
+    await second;
     client.dispose();
   });
 });

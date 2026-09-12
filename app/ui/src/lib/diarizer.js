@@ -31,6 +31,7 @@
 // (verify once, spawn many). cancelDiarization() aborts EVERY live client.
 
 import { fetchVerifiedAsset } from './asset-integrity.js';
+import { workerReady } from './workerInit.js';
 
 const BASE = '/sherpa-onnx/';
 const GLUE = 'sherpa-onnx-wasm-main-speaker-diarization.js';
@@ -67,7 +68,7 @@ const _clients = new Set();
  */
 export function createDiarizerClient() {
   let worker = null;
-  let workerReady = null;       // Promise<Worker>, resolves when initialised
+  let readyPromise = null;      // Promise<Worker>, resolves when initialised
   let lastModelIdentity = null; // identity of the models the live worker holds
   let runId = 0;
   let pending = null;           // { id, resolve, reject } for the single in-flight run
@@ -77,43 +78,60 @@ export function createDiarizerClient() {
   function reset() {
     if (worker) { try { worker.terminate(); } catch (_) { /* ignore */ } }
     worker = null;
-    workerReady = null;
+    readyPromise = null;
     lastModelIdentity = null;
+  }
+
+  // Reject the in-flight run, if any, and tear the worker down so the next run
+  // rebuilds. Used by the worker `error` handler below.
+  function failPending(message) {
+    const p = pending;
+    pending = null;
+    reset();
+    if (p) p.reject(new Error(message));
   }
 
   // Spawn + initialise the worker from the shared verified engine bytes.
   // Idempotent: concurrent callers share the same in-flight promise.
   function ensureWorker() {
-    if (workerReady) return workerReady;
-    workerReady = (async () => {
+    if (readyPromise) return readyPromise;
+    readyPromise = (async () => {
       const { glue, wrapper, wasm } = await engineBytes();
       const w = new Worker(new URL('./diarizer.worker.js', import.meta.url), { type: 'classic' });
       worker = w;
-      // One persistent handler: 'ready'/init-error settle this promise; run
-      // results settle the matching in-flight run by id.
-      await new Promise((resolve, reject) => {
-        w.onmessage = (ev) => {
-          const m = ev.data || {};
-          if (m.type === 'ready') { resolve(); return; }
-          if (m.type === 'error' && m.id === undefined) { reject(new Error(m.message)); return; }
-          if ((m.type === 'result' || m.type === 'error') && pending && m.id === pending.id) {
-            const p = pending; pending = null;
-            if (m.type === 'result') p.resolve(m.segments);
-            else p.reject(new Error(m.message));
-          }
-        };
-        w.onerror = (e) => reject(new Error((e && e.message) || 'diarizer worker error'));
-        // Send the verified bytes; the worker copies them (no transfer) so a later
-        // rebuild can re-init cleanly.
-        w.postMessage({ type: 'init', glueBytes: glue, wrapperBytes: wrapper, wasmBytes: wasm });
-      });
+      // Route run results to the matching in-flight run by id. Init messages
+      // ('ready', and errors carrying no id) belong to the handshake below.
+      w.onmessage = (ev) => {
+        const m = ev.data || {};
+        if ((m.type === 'result' || m.type === 'error') && pending && m.id === pending.id) {
+          const p = pending; pending = null;
+          if (m.type === 'result') p.resolve(m.segments);
+          else p.reject(new Error(m.message));
+        }
+      };
+      // PERSISTENT, unlike the handshake's own error listener, which is removed
+      // once init settles. A worker that dies AFTER init (uncaught throw, WASM
+      // OOM, pthread failure) posts no message at all, so without this the run's
+      // `pending` slot never settles and diarization hangs forever with no
+      // watchdog anywhere in the path.
+      w.onerror = (e) => failPending((e && e.message) || 'diarizer worker error');
+      // Send the verified bytes; the worker copies them (no transfer) so a later
+      // rebuild can re-init cleanly. workerReady() is the same handshake the
+      // model workers use: it folds the init error message, the worker `error`
+      // event and a watchdog into one promise that always settles.
+      const ok = await workerReady(
+        w,
+        { type: 'init', glueBytes: glue, wrapperBytes: wrapper, wasmBytes: wasm },
+        { label: 'Diarizer' },
+      );
+      if (!ok) throw new Error('diarizer worker init failed');
       return w;
     })().catch((err) => {
       // Failed init: tear down so a retry rebuilds from scratch.
       reset();
       throw err;
     });
-    return workerReady;
+    return readyPromise;
   }
 
   async function run(pcm16k, {
