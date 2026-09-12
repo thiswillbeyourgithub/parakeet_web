@@ -146,3 +146,57 @@ export async function resamplePcmTo16k(pcm, sourceSampleRate) {
   const resampled = await offlineCtx.startRendering();
   return resampled.getChannelData(0);
 }
+
+/**
+ * Build a 16-bit PCM WAV blob from a mono Float32Array.
+ *
+ * Used for the inline history player, the downloadable copy of a recording,
+ * and the remote-mic batch that is handed to the transcription core as if it
+ * were an uploaded file, so all three carry byte-identical audio.
+ *
+ * Samples are clamped to [-1, 1] before conversion; the asymmetric scale
+ * (0x8000 below zero, 0x7FFF above) is what keeps full-scale -1.0 from wrapping
+ * to +32767 on the way to int16.
+ *
+ * @param {Float32Array} pcmData  mono samples in [-1, 1].
+ * @param {number} sampleRate
+ * @returns {Blob} audio/wav
+ */
+export function createWavBlob(pcmData, sampleRate) {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = pcmData.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const offset = 44;
+  for (let i = 0; i < pcmData.length; i++) {
+    const sample = Math.max(-1, Math.min(1, pcmData[i]));
+    view.setInt16(offset + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}

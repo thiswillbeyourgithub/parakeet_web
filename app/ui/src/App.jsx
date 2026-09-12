@@ -7,7 +7,7 @@ import { useI18n, LanguageSwitcher } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
-import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, AUDIO_FILE_ACCEPT } from './lib/audio.js';
+import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, createWavBlob, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import { decodeToPcm16k } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
@@ -29,7 +29,7 @@ import { loadBpeEncoder, BPE_ASSET_URL, vocabSignature } from '../../src/bpeEnco
 import { BoostingTrie, compileBoostList, parsePrebuiltBoost, encodedCount, selectPrebuilt, formatBoostConflict, countPhraseLines, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns, transcribeErrorMessage } from './lib/format.js';
+import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns, transcribeErrorMessage, sanitizeDeviceName } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { diarizationModelProtectKeys } from './lib/diarizationModels.js';
@@ -775,23 +775,6 @@ function defaultBeamWidth() {
 }
 const DEFAULT_BEAM_WIDTH = defaultBeamWidth();
 
-
-// Sanitise an arbitrary device-supplied string before rendering it in
-// the UI. WebHID productName comes from the USB descriptor and is
-// trivially spoofable by a hostile USB device or a Bad-USB tool. A
-// U+202E RLO override could make "SpeechMike" visually swap suffixes
-// at render-time, fooling a user who reads the UI label to confirm
-// they paired the right device (F-52). Strip control bytes and bidi
-// codepoints, length-cap so a hostile device cannot fill the UI with
-// a runaway productName.
-function sanitizeDeviceName(s, fallback = 'Dictation device') {
-  if (typeof s !== 'string' || !s.length) return fallback;
-  const cleaned = s.replace(
-    /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/g,
-    ''
-  ).trim().slice(0, 64);
-  return cleaned || fallback;
-}
 
 function truncateFilename(filename, maxLength = 40) {
   if (!filename) return '';
@@ -5197,50 +5180,6 @@ export default function App() {
       navigator.mediaDevices.removeEventListener?.('devicechange', check);
     };
   }, [dictationEnabled]);
-
-  // Helper function to resample audio to 16kHz mono and create a WAV blob for preview
-
-  // Helper to create a WAV blob from PCM Float32Array
-  function createWavBlob(pcmData, sampleRate) {
-    const numChannels = 1;
-    const bitsPerSample = 16;
-    const bytesPerSample = bitsPerSample / 8;
-    const blockAlign = numChannels * bytesPerSample;
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = pcmData.length * bytesPerSample;
-    const buffer = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buffer);
-    
-    // WAV header
-    const writeString = (offset, string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-    
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + dataSize, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true); // fmt chunk size
-    view.setUint16(20, 1, true); // PCM format
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, bitsPerSample, true);
-    writeString(36, 'data');
-    view.setUint32(40, dataSize, true);
-    
-    // Convert float32 PCM to int16
-    const offset = 44;
-    for (let i = 0; i < pcmData.length; i++) {
-      const sample = Math.max(-1, Math.min(1, pcmData[i]));
-      view.setInt16(offset + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-    }
-    
-    return new Blob([buffer], { type: 'audio/wav' });
-  }
 
   async function processAudioFile(file) {
     // Accept the file even while the model is still loading (Q2): decode +
