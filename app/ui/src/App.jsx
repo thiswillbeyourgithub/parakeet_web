@@ -521,6 +521,19 @@ const BOOST_SOURCE_CUSTOM = '__custom__';
 // so switching to it from a very large curated list is instant.
 const BOOST_SOURCE_DISABLED = '__disabled__';
 
+// The dashed hint panel under the phrase-boost controls. Three sibling branches
+// render it and they differ only in text colour, so it lives here once: the
+// copy-paste is how one of them ended up reading a surface token that is
+// defined in no stylesheet, which left the panel near-white on a dark card
+// with --text-muted (#c4c8de in dark) on top of it at about 1.4:1. Every colour
+// here is a theme token for that reason.
+const BOOST_HINT_PANEL_STYLE = {
+  width: '100%', boxSizing: 'border-box',
+  fontSize: '0.78rem', padding: '0.6rem 0.7rem',
+  borderRadius: '4px', border: '1px dashed var(--border-strong)',
+  background: 'var(--bg-subtle)', color: 'var(--text-muted)',
+};
+
 // WebGPU is available app-wide, and which backend a visitor actually gets is
 // decided by MEASURING their machine (lib/perfProbe.js), not by this constant.
 //
@@ -7652,7 +7665,7 @@ export default function App() {
               <select
                 value={transcriptDisplayMode}
                 onChange={e => setTranscriptDisplayMode(e.target.value)}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="raw">{t('raw')}</option>
                 {dictationRegexRules.length > 0 && <option value="dictation">{t('dictationRules')} ({dictationRegexRules.length} {t('dictationRulesExperimental')}</option>}
@@ -7672,7 +7685,7 @@ export default function App() {
               <select
                 value={diarizationNumSpeakers}
                 onChange={e => setDiarizationNumSpeakers(parseInt(e.target.value, 10) || 0)}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="0">{t('auto')}</option>
                 {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
@@ -7784,7 +7797,7 @@ export default function App() {
                   <select
                     value={boostSource}
                     onChange={e => applyBoostSource(e.target.value)}
-                    style={{ flex: '1 1 auto', minWidth: 0, padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                    style={{ flex: '1 1 auto', minWidth: 0, padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                   >
                     <option value={BOOST_SOURCE_DISABLED}>{t('boostSourceDisabled')}</option>
                     <option value={BOOST_SOURCE_CUSTOM}>{t('boostSourceCustom')}</option>
@@ -7812,40 +7825,19 @@ export default function App() {
                 </label>
               </div>
               {boostSource === BOOST_SOURCE_DISABLED ? (
-                <div
-                  style={{
-                    width: '100%', boxSizing: 'border-box',
-                    fontSize: '0.78rem', padding: '0.6rem 0.7rem',
-                    borderRadius: '4px', border: '1px dashed #d1d5db',
-                    background: 'var(--surface-muted, #f9fafb)', color: 'var(--text-muted, #6b7280)',
-                  }}
-                >
+                <div style={BOOST_HINT_PANEL_STYLE}>
                   {t('boostDisabledHint')}
                 </div>
               ) : boostCollapsed ? (
-                <div
-                  style={{
-                    width: '100%', boxSizing: 'border-box',
-                    fontSize: '0.78rem', padding: '0.6rem 0.7rem',
-                    borderRadius: '4px', border: '1px dashed #d1d5db',
-                    background: 'var(--surface-muted, #f9fafb)', color: '#b45309',
-                  }}
-                >
+                <div style={{ ...BOOST_HINT_PANEL_STYLE, color: 'var(--warning-soft-text)' }}>
                   <div style={{ fontWeight: 600 }}>
                     {t('boostCuratedLoaded').replace('{name}', boostSource.replace(/\.txt$/, ''))}
                   </div>
                   <div>{t('boostCuratedEditHint')}</div>
                 </div>
               ) : (boostCustomOversize && !boostEditorOpen) ? (
-                <div
-                  style={{
-                    width: '100%', boxSizing: 'border-box',
-                    fontSize: '0.78rem', padding: '0.6rem 0.7rem',
-                    borderRadius: '4px', border: '1px dashed #d1d5db',
-                    background: 'var(--surface-muted, #f9fafb)', color: 'var(--text-muted, #6b7280)',
-                  }}
-                >
-                  <div style={{ fontWeight: 600, color: '#b45309' }}>
+                <div style={BOOST_HINT_PANEL_STYLE}>
+                  <div style={{ fontWeight: 600, color: 'var(--warning-soft-text)' }}>
                     {t('boostCustomLarge').replace('{n}', boostLineCount)}
                   </div>
                   <div>{t('boostCustomLargeHint')}</div>
@@ -7884,14 +7876,14 @@ export default function App() {
                   style={{
                     width: '100%', boxSizing: 'border-box', resize: 'vertical',
                     fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
-                    borderRadius: '4px', border: '1px solid #d1d5db',
+                    borderRadius: '4px', border: '1px solid var(--border-strong)',
                     background: 'var(--bg-card)', color: 'var(--text)',
                   }}
                 />
               )}
               {boostWarnings.length > 0 && (
                 <p style={{
-                  fontSize: '0.78rem', color: '#b45309', margin: 0,
+                  fontSize: '0.78rem', color: 'var(--warning-soft-text)', margin: 0,
                   overflowWrap: 'anywhere', wordBreak: 'break-word',
                 }}>
                   {t('boostWeightWarning').replace('{max}', MAX_PHRASE_WEIGHT)}{' '}
@@ -7900,7 +7892,7 @@ export default function App() {
               )}
               {boostConflicts.length > 0 && (
                 <p style={{
-                  fontSize: '0.78rem', color: '#b45309', margin: 0,
+                  fontSize: '0.78rem', color: 'var(--warning-soft-text)', margin: 0,
                   overflowWrap: 'anywhere', wordBreak: 'break-word',
                 }}>
                   {t('boostConflictWarning')}{' '}
@@ -7913,7 +7905,7 @@ export default function App() {
                 </p>
               )}
               {boostUnkWarnings.length > 0 && (
-                <details style={{ fontSize: '0.78rem', color: '#b45309' }}>
+                <details style={{ fontSize: '0.78rem', color: 'var(--warning-soft-text)' }}>
                   <summary style={{ cursor: 'pointer' }}>
                     {t('boostUnkSummary').replace('{n}', boostUnkWarnings.length)}
                   </summary>
@@ -7926,7 +7918,7 @@ export default function App() {
                     style={{
                       width: '100%', boxSizing: 'border-box', resize: 'vertical',
                       fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.4rem',
-                      borderRadius: '4px', border: '1px solid #d1d5db',
+                      borderRadius: '4px', border: '1px solid var(--border-strong)',
                       background: 'var(--bg-card)', color: 'var(--text)',
                     }}
                   />
@@ -8011,7 +8003,7 @@ export default function App() {
                     setRepoId(e.target.value);
                   }}
                   disabled={modelSwapBlocked}
-                  style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                  style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                   data-umami-event="model_repo_select"
                 >
                   {modelRepos.map(id => (
@@ -8645,7 +8637,7 @@ export default function App() {
                     fontSize: '0.68rem',
                     lineHeight: 1.35,
                     whiteSpace: 'pre',
-                    border: '1px solid #d1d5db',
+                    border: '1px solid var(--border-strong)',
                     borderRadius: '4px',
                     padding: '0.4rem',
                     boxSizing: 'border-box',
@@ -8700,7 +8692,7 @@ export default function App() {
                   saveSetting('showAdvancedInfo', on);
                   setVerboseLog(on);
                 }}
-                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="off">{t('debugOff')}</option>
                 <option value="full">{t('debugFullLogs')}</option>
@@ -8749,7 +8741,7 @@ export default function App() {
                   fontSize: '0.68rem',
                   lineHeight: 1.35,
                   whiteSpace: 'pre',
-                  border: '1px solid #d1d5db',
+                  border: '1px solid var(--border-strong)',
                   borderRadius: '4px',
                   padding: '0.4rem',
                   boxSizing: 'border-box',
