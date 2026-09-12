@@ -22,6 +22,10 @@ const STEP_TARGET_MS = 2000;        // budget driving WINDOW auto-sizing
 const EMA_ALPHA = 0.4;              // EMA responsiveness
 const HYSTERESIS = 0.10;            // ignore changes <10% to avoid flapping
 const MIN_AUDIO_BEFORE_FIRST_TICK = 3; // seconds — short windows transcribe poorly
+// How long stop() waits for an in-flight tick before giving up on it. The UI
+// cannot leave the recording state until stop() returns, so a wedged
+// transcribe() (a dead worker, a session that never resolves) must not hang it.
+export const STOP_DRAIN_MAX_MS = 10000;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const ema = (prev, sample, alpha = EMA_ALPHA) => prev == null ? sample : prev + alpha * (sample - prev);
@@ -53,6 +57,11 @@ export function createLiveTranscriber(cfg) {
   let stopped = false;
   let running = false;        // a transcribe() call is currently in flight
   let timer = null;
+  // Bumped by every start()/stop(). A tick captures it on entry and only
+  // reschedules if it still matches, so a tick left in flight across a
+  // stop()/start() pair cannot start a SECOND self-rescheduling chain running
+  // alongside the new one (which would double the tick rate for good).
+  let generation = 0;
 
   let currentStep = 3;        // seconds — initial cadence
   let currentWindow = (windowMode === 'auto' ? 15 : clamp(Number(windowMode), WINDOW_MIN, WINDOW_MAX));
@@ -150,8 +159,8 @@ export function createLiveTranscriber(cfg) {
     pendingWords = pend;
   }
 
-  async function tick() {
-    if (stopped || running) return;
+  async function tick(gen) {
+    if (stopped || running || gen !== generation) return;
     running = true;
     try {
       const sr = getSampleRate();
@@ -212,7 +221,7 @@ export function createLiveTranscriber(cfg) {
       console.warn('[Live] tick failed:', e);
     } finally {
       running = false;
-      if (!stopped) timer = setTimeout(tick, currentStep * 1000);
+      if (!stopped && gen === generation) timer = setTimeout(() => tick(gen), currentStep * 1000);
     }
   }
 
@@ -220,14 +229,25 @@ export function createLiveTranscriber(cfg) {
     start() {
       if (timer) return;
       stopped = false;
-      timer = setTimeout(tick, currentStep * 1000);
+      generation += 1;
+      const gen = generation;
+      timer = setTimeout(() => tick(gen), currentStep * 1000);
     },
     async stop() {
       stopped = true;
+      generation += 1; // any in-flight tick is now stale and will not reschedule
       if (timer) { clearTimeout(timer); timer = null; }
       // If a tick is in-flight, give it a moment to settle so we don't race
-      // with the canonical stop-pass that runs right after.
-      while (running) await new Promise(r => setTimeout(r, 50));
+      // with the canonical stop-pass that runs right after. BOUNDED, because
+      // the UI cannot leave the recording state until stop() returns and an
+      // unbounded wait turns one wedged transcribe() into a stuck page.
+      // Giving up early is safe: the bumped generation keeps that tick from
+      // rescheduling, and its words are simply too late for this result.
+      const deadline = Date.now() + STOP_DRAIN_MAX_MS;
+      while (running && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+      if (running) {
+        console.warn(`[Live] stop: a transcribe is still in flight after ${STOP_DRAIN_MAX_MS} ms; returning the words committed so far`);
+      }
       const allWords = committedWords.concat(pendingWords);
       return { text: allWords.map(w => w.text).join(' '), words: allWords };
     },
