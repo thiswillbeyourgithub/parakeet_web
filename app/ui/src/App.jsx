@@ -21,10 +21,11 @@ import { vocabSignature } from '../../src/bpeEncoder.js';
 import { formatBoostConflict, MAX_PHRASE_WEIGHT, DEFAULT_DEPTH_SCALING } from '../../src/phraseBoost.js';
 import { clearCache as clearModelCache, evictModelFiles, isModelDeserializeError } from '../../src/hub.js';
 import { DEFAULT_CHUNK_DURATION_SEC, MIN_CHUNK_DURATION_SEC, MAX_CHUNK_DURATION_SEC } from '../../src/models.js';
-import { formatTime, formatDuration, formatBytes, formatRate, formatEta, updateDownloadRate, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns, transcribeErrorMessage, sanitizeDeviceName } from './lib/format.js';
+import { formatTime, formatDuration, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, boldRuns, transcribeErrorMessage, sanitizeDeviceName } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
 import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
+import { planLoadProgress } from './lib/loadProgress.js';
 import { BOOST_MINP_DEFAULT, BOOST_STRENGTH_DEFAULT, BOOST_SOURCE_CUSTOM, BOOST_SOURCE_DISABLED } from './lib/boostConfig.js';
 import { diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { useDiarization } from './hooks/useDiarization.js';
@@ -2478,48 +2479,27 @@ export default function App() {
     if (!corruptionRetried) console.time('LoadModel');
 
     try {
-      const progressCallback = ({ loaded, total, file, resumed, resumedFrom, attempt, maxAttempts }) => {
-        // Attempt-tracking events fire before any bytes flow so the user sees
-        // "Retry N/M" even on a stalled connection. Distinct from byte events.
-        if (attempt !== undefined) {
-          if (maxAttempts > 1) {
-            const msg = t('retryingDownload')
-              .replace('{n}', attempt)
-              .replace('{total}', maxAttempts)
-              .replace('{file}', file);
-            setProgressText(msg);
-            if (attempt === 1) setProgressPct(0);
-          }
-          return;
-        }
-        // Byte events only ever fire for a file being streamed, so this map
-        // counts network bytes and nothing else. `loaded` is how much of the
-        // FILE is in hand, which on a resumed download starts at whatever was
-        // already cached, so the resumed part has to come back off: the point
-        // of the number is what the connection was asked for. It is the
-        // progress BAR that wants the total, and that reads `loaded` directly.
-        const transferred = Math.max(0, (loaded || 0) - (resumedFrom || 0));
-        loadTransferRef.current.set(file, Math.max(loadTransferRef.current.get(file) || 0, transferred));
-        // ...which is also what makes this the honest moment to say
-        // "downloading". The phase cannot be announced up front, because a load
-        // answered entirely from IndexedDB never streams anything and would
-        // then claim a download it never made. A byte event is proof.
-        if (fetchStartedRef.current === null) fetchStartedRef.current = performance.now();
-        setStatus('downloadingModel');
-        const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-        const prefix = resumed ? `${t('resuming')} ` : '';
-        const sizes = total > 0 ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
-        // Transfer rate averaged over the trailing 10 s window + MM:SS ETA,
-        // recomputed as bytes flow.
+      // One hub progress event -> what the UI shows. The decision is pure
+      // (lib/loadProgress.js, unit-tested); the refs it needs stay here.
+      const progressCallback = (event) => {
         const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const { state, rate, eta } = updateDownloadRate(downloadRateRef.current, { file, loaded, total, now });
-        downloadRateRef.current = state;
-        const rateStr = formatRate(rate);
-        const etaStr = formatEta(eta);
-        const stats = [rateStr, etaStr ? `${etaStr} ${t('etaRemaining')}` : ''].filter(Boolean).join(', ');
-        const statsSuffix = stats ? ` (${stats})` : '';
-        setProgressText(`${prefix}${file}:${sizes} (${pct}%)${statsSuffix}`);
-        setProgressPct(pct);
+        const plan = planLoadProgress(event, {
+          t,
+          now,
+          rateState: downloadRateRef.current,
+          previousTransferred: loadTransferRef.current.get(event.file) || 0,
+        });
+        if (plan.fileTransferredBytes !== null) {
+          loadTransferRef.current.set(event.file, plan.fileTransferredBytes);
+        }
+        if (plan.downloading) {
+          // First byte of the load: the honest start of the fetch phase.
+          if (fetchStartedRef.current === null) fetchStartedRef.current = now;
+          setStatus('downloadingModel');
+        }
+        if (plan.rateState !== null) downloadRateRef.current = plan.rateState;
+        if (plan.progressText !== null) setProgressText(plan.progressText);
+        if (plan.progressPct !== null) setProgressPct(plan.progressPct);
       };
 
       // 1. Download all model files (from HF or local fallback).
