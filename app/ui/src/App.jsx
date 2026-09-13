@@ -35,7 +35,7 @@ import { fetchTextCapped } from './lib/fetchCapped.js';
 import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
 import { planLoadProgress } from './lib/loadProgress.js';
 import { buildDownloadOpts } from './lib/modelRequest.js';
-import { planPipelineWorkers } from './lib/pipelinePlan.js';
+import { planPipelineWorkers, buildWorkerInitParams } from './lib/pipelinePlan.js';
 import { BOOST_MINP_DEFAULT, BOOST_STRENGTH_DEFAULT, BOOST_SOURCE_CUSTOM, BOOST_SOURCE_DISABLED } from './lib/boostConfig.js';
 import { diarizationModelProtectKeys } from './lib/diarizationModels.js';
 import { useDiarization } from './hooks/useDiarization.js';
@@ -2421,31 +2421,22 @@ export default function App() {
         // page animates, vs 2.4 ms idle). The actual fix is pausing the page's
         // CSS animations for the duration of a WebGPU run (the html.gpu-run
         // toggle in runTranscription), which restores probe speed in-thread.
-        encodePoolInitParamsRef.current = pipeline.poolEligible ? {
-          type: 'init',
-          encoderUrl: modelUrls.urls.encoderUrl,
-          encoderDataUrl: modelUrls.urls.encoderDataUrl,
+        // Each worker is its own JS context with its own ORT runtime, so
+        // ORT_VARIANT has to travel in BOTH payloads; buildWorkerInitParams
+        // owns that and is unit-tested for it.
+        const workerInit = buildWorkerInitParams({
+          plan: pipeline,
+          urls: modelUrls.urls,
           filenames: modelUrls.filenames,
           nMels,
           preprocessorBackend: modelUrls.preprocessorBackend,
-          preprocessorUrl: modelUrls.urls.preprocessorUrl,
-          // Each worker is its own JS context with its own ORT runtime, so the
-          // variant has to travel with the init or ?ortep=jsep would leave the
-          // pool (which does the encoding) on the default runtime.
           ortVariant: ORT_VARIANT,
-        } : null;
+        });
+        encodePoolInitParamsRef.current = workerInit.encodePoolInit;
         if (pipeline.startPool) startEncodePool();
         else teardownEncodePool(pipeline.poolStopReason);
         composedDecodeEligibleRef.current = pipeline.composedEligible;
-        decodeWorkerInitParamsRef.current = pipeline.decodeWorkerEligible ? {
-          type: 'init',
-          decoderUrl: modelUrls.urls.decoderUrl,
-          decoderDataUrl: modelUrls.urls.decoderDataUrl,
-          tokenizerUrl: modelUrls.urls.tokenizerUrl,
-          filenames: modelUrls.filenames,
-          numThreads: pipeline.decodeNumThreads,
-          ortVariant: ORT_VARIANT,
-        } : null;
+        decodeWorkerInitParamsRef.current = workerInit.decodeWorkerInit;
         if (pipeline.startDecodeWorker) startDecodeWorker({ restart: true });
         else stopDecodeWorker(pipeline.decodeWorkerStopReason);
       } catch (sessErr) {

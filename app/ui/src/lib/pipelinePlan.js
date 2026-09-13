@@ -91,3 +91,50 @@ export function planPipelineWorkers({
     decodeNumThreads: isWasm ? 2 : cpuThreads,
   };
 }
+
+/**
+ * The init payload for each half the plan allows. Separated from
+ * planPipelineWorkers because deciding WHETHER a half runs and deciding WHAT to
+ * hand it are different questions, and this one has a failure mode of its own:
+ * every worker is its own JS context with its own ORT runtime, so `ortVariant`
+ * has to travel in BOTH payloads or a `?ortep=` choice silently applies to only
+ * some of the contexts that build sessions. That has happened once already (the
+ * first jspi plumbing missed the probe workers and ran 3 jsep / 2 jspi in one
+ * page), and it cannot be seen from a transcript, which is why the payloads are
+ * built here and asserted rather than typed out at the call site.
+ *
+ * A null payload means "do not stash": nothing can start that half later.
+ *
+ * @param {object} a
+ * @param {{poolEligible: boolean, decodeWorkerEligible: boolean, decodeNumThreads: number}} a.plan
+ *   the result of {@link planPipelineWorkers}
+ * @param {object} a.urls              modelUrls.urls from the hub
+ * @param {string[]} a.filenames       modelUrls.filenames
+ * @param {number} a.nMels             mel bin count the preprocessor was built with
+ * @param {string} [a.preprocessorBackend]
+ * @param {string} a.ortVariant        'jsep' | 'jspi'
+ * @returns {{encodePoolInit: (object|null), decodeWorkerInit: (object|null)}}
+ */
+export function buildWorkerInitParams({ plan, urls, filenames, nMels, preprocessorBackend, ortVariant }) {
+  return {
+    encodePoolInit: plan.poolEligible ? {
+      type: 'init',
+      encoderUrl: urls.encoderUrl,
+      encoderDataUrl: urls.encoderDataUrl,
+      filenames,
+      nMels,
+      preprocessorBackend,
+      preprocessorUrl: urls.preprocessorUrl,
+      ortVariant,
+    } : null,
+    decodeWorkerInit: plan.decodeWorkerEligible ? {
+      type: 'init',
+      decoderUrl: urls.decoderUrl,
+      decoderDataUrl: urls.decoderDataUrl,
+      tokenizerUrl: urls.tokenizerUrl,
+      filenames,
+      numThreads: plan.decodeNumThreads,
+      ortVariant,
+    } : null,
+  };
+}

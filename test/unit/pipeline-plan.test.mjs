@@ -6,7 +6,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { planPipelineWorkers } from '../../app/ui/src/lib/pipelinePlan.js';
+import { planPipelineWorkers, buildWorkerInitParams } from '../../app/ui/src/lib/pipelinePlan.js';
 
 // A machine that clears the hardware gate (>= 12 logical cores, >= 8 GB, >= 2
 // threads), so a test that is not about hardware never trips over it.
@@ -193,6 +193,89 @@ describe('planPipelineWorkers: invariants', () => {
     for (const [args, p] of every()) {
       if (args.backend !== 'wasm' || !p.composedEligible) continue;
       assert.equal(p.startDecodeWorker, p.startPool, JSON.stringify(args));
+    }
+  });
+});
+
+describe('buildWorkerInitParams: what each allowed half is handed', () => {
+  const URLS = {
+    encoderUrl: 'blob:enc',
+    encoderDataUrl: 'blob:enc.data',
+    preprocessorUrl: 'blob:pre',
+    decoderUrl: 'blob:dec',
+    decoderDataUrl: 'blob:dec.data',
+    tokenizerUrl: 'blob:tok',
+  };
+  const build = (plan, extra = {}) => buildWorkerInitParams({
+    plan,
+    urls: URLS,
+    filenames: ['encoder-model.onnx'],
+    nMels: 128,
+    preprocessorBackend: 'wasm',
+    ortVariant: 'jspi',
+    ...extra,
+  });
+
+  test('an eligible pool is handed the encoder, the preprocessor and its mel count', () => {
+    const { encodePoolInit } = build({ poolEligible: true, decodeWorkerEligible: false, decodeNumThreads: 2 });
+    assert.equal(encodePoolInit.type, 'init');
+    assert.equal(encodePoolInit.encoderUrl, 'blob:enc');
+    assert.equal(encodePoolInit.encoderDataUrl, 'blob:enc.data');
+    assert.equal(encodePoolInit.preprocessorUrl, 'blob:pre');
+    assert.equal(encodePoolInit.preprocessorBackend, 'wasm');
+    assert.equal(encodePoolInit.nMels, 128);
+    assert.deepEqual(encodePoolInit.filenames, ['encoder-model.onnx']);
+  });
+
+  test('an eligible decode worker is handed the decoder, the tokenizer and its thread count', () => {
+    const { decodeWorkerInit } = build({ poolEligible: false, decodeWorkerEligible: true, decodeNumThreads: 2 });
+    assert.equal(decodeWorkerInit.type, 'init');
+    assert.equal(decodeWorkerInit.decoderUrl, 'blob:dec');
+    assert.equal(decodeWorkerInit.decoderDataUrl, 'blob:dec.data');
+    assert.equal(decodeWorkerInit.tokenizerUrl, 'blob:tok');
+    assert.equal(decodeWorkerInit.numThreads, 2);
+  });
+
+  test('the decode worker gets the plan\'s thread count, not the user\'s budget', () => {
+    const { decodeWorkerInit } = build({ poolEligible: false, decodeWorkerEligible: true, decodeNumThreads: 11 });
+    assert.equal(decodeWorkerInit.numThreads, 11);
+  });
+
+  test('an ineligible half is not stashed at all', () => {
+    const none = build({ poolEligible: false, decodeWorkerEligible: false, decodeNumThreads: 2 });
+    assert.equal(none.encodePoolInit, null);
+    assert.equal(none.decodeWorkerInit, null);
+  });
+
+  test('the encode pool is never handed the decoder, nor the decode worker the encoder', () => {
+    // They are different ORT sessions; a payload carrying the other half's URLs
+    // would build the wrong graph in a worker that then silently falls back.
+    const both = build({ poolEligible: true, decodeWorkerEligible: true, decodeNumThreads: 2 });
+    assert.equal(both.encodePoolInit.decoderUrl, undefined);
+    assert.equal(both.encodePoolInit.tokenizerUrl, undefined);
+    assert.equal(both.decodeWorkerInit.encoderUrl, undefined);
+    assert.equal(both.decodeWorkerInit.preprocessorUrl, undefined);
+  });
+
+  test('ortVariant travels in EVERY stashed payload', () => {
+    // The one that has actually gone wrong: each worker is its own JS context
+    // with its own ORT runtime, and ORT pins one runtime per context, so a
+    // payload missing the variant leaves that context on the default. The first
+    // jspi plumbing missed the probe workers and ran 3 jsep / 2 jspi in one
+    // page, which no transcript can show.
+    for (const variant of ['jsep', 'jspi']) {
+      for (const poolEligible of [true, false]) {
+        for (const decodeWorkerEligible of [true, false]) {
+          const out = build(
+            { poolEligible, decodeWorkerEligible, decodeNumThreads: 2 },
+            { ortVariant: variant },
+          );
+          for (const payload of [out.encodePoolInit, out.decodeWorkerInit]) {
+            if (payload === null) continue;
+            assert.equal(payload.ortVariant, variant, JSON.stringify({ variant, poolEligible, decodeWorkerEligible }));
+          }
+        }
+      }
     }
   });
 });
