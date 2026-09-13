@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError } from 'parakeet.js';
 import { parseModelRepos, matchModelRepo } from './lib/modelRepos.js';
 import './App.css';
-import { useI18n, LanguageSwitcher } from './i18n.jsx';
+import { useI18n } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
 import InfoTooltip from './components/InfoTooltip.jsx';
@@ -14,6 +14,7 @@ import BenchmarkSection from './components/settings/BenchmarkSection.jsx';
 import BoostingSection from './components/settings/BoostingSection.jsx';
 import GeneralSection from './components/settings/GeneralSection.jsx';
 import RecordingSection from './components/settings/RecordingSection.jsx';
+import SettingsSidebar from './components/settings/SettingsSidebar.jsx';
 import { decodeToPcm16k } from './lib/audioDecode.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLiveTranscriber } from './lib/liveTranscriber.js';
@@ -4999,55 +5000,37 @@ export default function App() {
       )}
 
       {showSettings && (
-        <>
-        {/* Backdrop overlay — click to close sidebar */}
-        <div className="settings-sidebar-overlay" onClick={() => setShowSettings(false)} />
-        <div className="settings-sidebar">
-        <button className="settings-sidebar-close" onClick={() => setShowSettings(false)} aria-label={t('closeSettings')}>×</button>
-        <div className="settings-section">
-        <div className="setting-row setting-row--language">
-          <span className="setting-label">{t('language')}</span>
-          <LanguageSwitcher />
-        </div>
-
-        {/* "Mode Dictee Medical": the same preset `?mode=med` applies, one click
-            away. It sits ABOVE the collapsible groups rather than inside one
-            because it is not a setting, it is a shortcut that rewrites a dozen
-            of them across four different groups (model, precision, chunking,
-            display, boosting, language), and burying it in any single group
-            would misrepresent its reach. Locked while a model swap is unsafe,
-            like every other model-defining control. */}
-        <div className="setting-row setting-row--med-mode">
-          <button
-            type="button"
-            className="primary med-mode-button"
-            onClick={async () => {
-              await applyMedModeSettings({ fromUser: true });
-              // The button means "set this machine up as a dictation station",
-              // and choosing the backend by measurement is part of that setup.
-              // Unlike the page-load path this ignores the hand-picked-backend
-              // and stored-verdict gates: the click IS the user asking the
-              // machine to decide, now. It is still skipped when WebGPU could
-              // not be selected here anyway, because then there is no question
-              // to answer and the probe would just be a wait.
-              if (!WEBGPU_DISABLED && webgpuAvailable === true) {
-                const verdict = await runPerfProbe({ trigger: 'medmode-button' });
-                if (verdict && coerceBackend(verdict.backend) !== liveSettingsRef.current.backend) {
-                  armModelReloadIfLoaded();
-                  await applyProbeVerdict(verdict);
-                }
+        <SettingsSidebar
+          t={t}
+          onClose={() => setShowSettings(false)}
+          onMedMode={async () => {
+            await applyMedModeSettings({ fromUser: true });
+            // The button means "set this machine up as a dictation station",
+            // and choosing the backend by measurement is part of that setup.
+            // Unlike the page-load path this ignores the hand-picked-backend
+            // and stored-verdict gates: the click IS the user asking the
+            // machine to decide, now. It is still skipped when WebGPU could
+            // not be selected here anyway, because then there is no question
+            // to answer and the probe would just be a wait.
+            if (!WEBGPU_DISABLED && webgpuAvailable === true) {
+              const verdict = await runPerfProbe({ trigger: 'medmode-button' });
+              if (verdict && coerceBackend(verdict.backend) !== liveSettingsRef.current.backend) {
+                armModelReloadIfLoaded();
+                await applyProbeVerdict(verdict);
               }
-            }}
-            disabled={modelSwapBlocked || probeState === 'running'}
-            title={t('tooltipMedMode')}
-            data-umami-event="med_mode_button"
-          >
-            {t('medMode')}
-          </button>
-          <p className="setting-hint">{t('medModeHint')}</p>
-        </div>
-
-          <div className="settings-content">
+            }
+          }}
+          medModeDisabled={modelSwapBlocked || probeState === 'running'}
+          dictationEnabled={dictationEnabled}
+          dictationSuspectedNoWebhid={dictationSuspectedNoWebhid}
+          dictationDevice={dictationDevice}
+          onConnectDictationDevice={connectDictationDevice}
+          onClearTranscriptions={clearTranscriptions}
+          clearDisabled={transcriptions.length === 0}
+          onResetAllData={resetAllData}
+          onAbout={() => { setShowSettings(false); setShowAbout(true); }}
+          version={VERSION}
+        >
           <GeneralSection
             t={t}
             open={!!sectionsOpen.general}
@@ -5239,73 +5222,7 @@ export default function App() {
             supportReportCopied={supportReportCopied}
             copySupportReport={copySupportReport}
           />
-          </div>
-
-          {/* Dictation device (SpeechMike) connect button. The button itself
-              is always shown when the feature is enabled: on Chromium it opens
-              the WebHID picker; on Firefox/Safari clicking it shows an alert
-              explaining the limitation (see connectDictationDevice). When we
-              suspect a dictation device is plugged in on a non-WebHID browser
-              we additionally render a Banner above it. */}
-          {dictationEnabled && (
-            <div className="setting-row" style={{ marginTop: '1rem' }}>
-              {dictationSuspectedNoWebhid && (
-                <Banner tone="warning" style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                  {t('dictationSuspectedNoWebhid')}
-                </Banner>
-              )}
-              <button
-                onClick={connectDictationDevice}
-                style={{ width: '100%' }}
-                className="primary"
-              >
-                {dictationDevice
-                  ? `${t('connectedDevice')}: ${dictationDevice}`
-                  : t('connectDictationDevice')}
-              </button>
-              {dictationDevice && (
-                <p style={{ fontSize: '0.8rem', color: '#16a34a', margin: '0.25rem 0 0' }}>
-                  {t('dictationDeviceHint')}
-                </p>
-              )}
-            </div>
-          )}
-
-          <button
-            onClick={clearTranscriptions}
-            disabled={transcriptions.length === 0}
-            style={{ marginTop: '1rem', width: '100%' }}
-            className="primary"
-          >
-            {t('clearTranscriptionHistory')}
-          </button>
-          
-          <button 
-            onClick={resetAllData}
-            style={{ 
-              marginTop: '0.5rem', 
-              width: '100%',
-              background: '#dc2626',
-              color: 'white'
-            }}
-            className="primary"
-          >
-            {t('resetAllSettingsAndData')}
-          </button>
-
-          <button
-            onClick={() => { setShowSettings(false); setShowAbout(true); }}
-            style={{ marginTop: '1rem', width: '100%' }}
-            className="primary"
-          >
-            {t('about')}
-          </button>
-          <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 0' }}>
-            v{VERSION}
-          </p>
-        </div>
-        </div>
-        </>
+        </SettingsSidebar>
       )}
 
       {showAdvancedInfo && memoryInfo && Object.keys(memoryInfo).length > 0 && (
