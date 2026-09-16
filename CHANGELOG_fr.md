@@ -8,6 +8,24 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.3.4 (2026-09-17)
+
+### Le moteur de transcription passe à ONNX Runtime 1.30
+
+Le moteur ONNX Runtime Web embarqué (le runtime par lequel passe chaque transcription, aussi bien sur le processeur que sur la carte graphique) passe de 1.29.0 à 1.30.0, la version stable la plus récente publiée sur npm. C'est de l'entretien plutôt que de la vitesse : un A/B entrelacé de 1.30 contre 1.29 dans le navigateur, sur le clip de référence du projet, les avait déjà mesurées indistinguables au bruit près sur les deux chemins, et la nouveauté mise en avant par 1.30 côté carte graphique est un jeu de noyaux matriciels écrits en demi-précision, qu'une carte doit déclarer prendre en charge avant qu'ils puissent seulement s'exécuter. L'ensemble des fichiers téléchargés par un visiteur, et le contrôle d'intégrité auquel ils sont soumis à l'arrivée, ne changent pas.
+
+Rédigé avec Claude Code.
+
+### Un fichier moteur refusé ne garde plus le runtime en mémoire
+
+Les deux fichiers du moteur sont téléchargés et vérifiés par empreinte côte à côte. Quand l'un échouait à sa vérification, l'autre pouvait terminer un instant plus tard et confier au navigateur une référence vers ses octets que rien ne libérait jamais, gardant tout le runtime (environ 16 Mo pour la plus grosse moitié) en mémoire tant que la page restait ouverte. Le nettoyage attend désormais que les deux moitiés aient terminé avant de s'exécuter.
+
+Cela n'arrivait que sur le chemin d'un chargement de toute façon refusé, donc personne n'a transcrit moins bien à cause de cela. Cela mérite d'être consigné parce que c'est exactement ce que le test couvrant ce code avait été écrit pour empêcher, et que le test était d'accord avec le code jusqu'au jour où une machine chargée a changé le minutage.
+
+Rédigé avec Claude Code.
+
+---
+
 ## 11.3.3 (2026-09-12)
 
 ### Le bandeau de développement expire désormais

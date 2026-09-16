@@ -8,6 +8,24 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## 11.3.4 (2026-09-17)
+
+### The transcription engine moved to ONNX Runtime 1.30
+
+The vendored ONNX Runtime Web engine (the runtime every transcription goes through, on both the processor and the graphics-card path) moved from 1.29.0 to 1.30.0, the newest stable release on npm. This is maintenance rather than speed: an interleaved in-browser A/B of 1.30 against 1.29 on this project's benchmark clip had already measured the two within noise of each other on both paths, and 1.30's headline graphics-card work is a set of matrix kernels written in half precision, which a card has to advertise support for before they can run at all. The set of files a visitor downloads, and the integrity check they are verified against on arrival, are unchanged.
+
+Written with Claude Code.
+
+### A refused engine file no longer keeps the runtime in memory
+
+The two engine files are downloaded and checksummed side by side. When one failed its check, the other could finish a moment later and hand the browser a reference to its bytes that nothing ever released, keeping the whole runtime (about 16 MB for the larger half) in memory for as long as the page stayed open. The cleanup now waits for both halves to finish before it runs.
+
+This only ever happened on the way to a load that was being refused anyway, so nobody transcribed anything worse because of it. It is worth recording because it is exactly what the test covering that code was written to prevent, and the test agreed with the code right up until a loaded machine changed the timing.
+
+Written with Claude Code.
+
+---
+
 ## 11.3.3 (2026-09-12)
 
 ### The development banner now expires
