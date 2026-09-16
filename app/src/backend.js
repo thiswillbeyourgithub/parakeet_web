@@ -186,27 +186,29 @@ export async function _verifiedOrtWasmPaths(basePath, names = ORT_RUNTIME_ASSETS
     return basePath;
   }
   const verified = {};
-  try {
-    await Promise.all(Object.entries(wanted).map(async ([key, { name, expected }]) => {
-      const resp = await fetch(basePath + name);
-      // A manifest entry the build did not actually ship. Nothing to pin, so
-      // fall through to the base path below (ORT surfaces a clear error at
-      // session-create time if the file is missing there too).
-      if (!resp.ok) return;
-      const blob = await resp.blob();
-      const actual = await sha384Base64(blob);
-      if (actual !== expected) {
-        throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
-      }
-      verified[key] = URL.createObjectURL(blob);
-    }));
-  } catch (e) {
-    // The two fetches run concurrently, so a mismatch on one can land after
-    // the other has already minted an object URL. Throwing straight out of
-    // Promise.all leaked that blob (it pins the whole ~16 MB runtime in
-    // memory for the life of the document) and skipped the revoke below.
+  // allSettled, not all: the two halves are fetched and hashed concurrently,
+  // so a mismatch on one can land while the other is still in flight. Promise
+  // .all rejects at that instant, and the sibling then mints its object URL
+  // AFTER any revoke sweep, pinning the whole ~16 MB runtime in memory for the
+  // life of the document. Waiting for both to settle is the only moment at
+  // which the minted set is complete and can be swept.
+  const settled = await Promise.allSettled(Object.entries(wanted).map(async ([key, { name, expected }]) => {
+    const resp = await fetch(basePath + name);
+    // A manifest entry the build did not actually ship. Nothing to pin, so
+    // fall through to the base path below (ORT surfaces a clear error at
+    // session-create time if the file is missing there too).
+    if (!resp.ok) return;
+    const blob = await resp.blob();
+    const actual = await sha384Base64(blob);
+    if (actual !== expected) {
+      throw new Error(`ORT integrity check failed for ${name}: expected ${expected}, got ${actual}`);
+    }
+    verified[key] = URL.createObjectURL(blob);
+  }));
+  const failed = settled.find((r) => r.status === 'rejected');
+  if (failed) {
     for (const url of Object.values(verified)) URL.revokeObjectURL(url);
-    throw e;
+    throw failed.reason;
   }
   if (!verified.mjs || !verified.wasm) {
     // Don't leak the half we did mint an object URL for.

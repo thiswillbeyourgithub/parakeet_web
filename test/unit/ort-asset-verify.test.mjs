@@ -56,7 +56,7 @@ const manifestFor = (files) => Object.fromEntries(
 // Install a fetch/URL pair that records every request and serves `files`
 // (plus manifest.json). `corrupt` names a file whose bytes no longer match the
 // manifest; `missing` names one the server 404s.
-function stubEnv({ files = FILES, manifest = manifestFor(FILES), corrupt = null, missing = null } = {}) {
+function stubEnv({ files = FILES, manifest = manifestFor(FILES), corrupt = null, missing = null, slow = null } = {}) {
   const requested = [];
   const minted = [];
   const revoked = [];
@@ -72,6 +72,12 @@ function stubEnv({ files = FILES, manifest = manifestFor(FILES), corrupt = null,
     const name = url.slice(BASE.length);
     if (name === missing || !(name in files)) return { ok: false, status: 404 };
     const body = name === corrupt ? files[name] + '-tampered' : files[name];
+    // `slow` pins the interleaving the leak needs: this half's bytes only
+    // arrive after the other half has already rejected, so it mints its object
+    // URL last. Without it the two halves advance in lockstep and the race is
+    // invisible on a quiet machine (it only showed up as a cross-test flake
+    // under a loaded full-suite run).
+    if (name === slow) await new Promise((r) => setTimeout(r, 10));
     return { ok: true, blob: async () => new Blob([Buffer.from(body)]) };
   };
   URL.createObjectURL = (blob) => {
@@ -228,6 +234,18 @@ describe('_verifiedOrtWasmPaths: fetches only the runtime pair it pins', () => {
     env = stubEnv({ corrupt: ORT_RUNTIME_ASSETS.wasm });
     await assert.rejects(() => _verifiedOrtWasmPaths(BASE));
     assert.deepEqual(env.revoked.sort(), env.minted.map((m) => m.url).sort());
+  });
+
+  test('the sibling blob is revoked even when it is minted AFTER the failure', async () => {
+    // The real ordering behind the leak above, forced instead of hoped for:
+    // the wasm half fails its hash check while the mjs half is still fetching,
+    // so the mjs object URL comes into existence after the rejection. A sweep
+    // that runs at rejection time sees an empty set and the blob lives on for
+    // the life of the document.
+    env = stubEnv({ corrupt: ORT_RUNTIME_ASSETS.wasm, slow: ORT_RUNTIME_ASSETS.mjs });
+    await assert.rejects(() => _verifiedOrtWasmPaths(BASE));
+    assert.equal(env.minted.length, 1);
+    assert.deepEqual(env.revoked, [env.minted[0].url]);
   });
 
   test('a tampered UNUSED variant is not fetched, so it cannot fail the load', async () => {
