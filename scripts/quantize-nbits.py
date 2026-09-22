@@ -3,7 +3,7 @@
 # dependencies = ["onnx>=1.16", "onnxruntime>=1.20", "onnx_ir"]
 # ///
 """Rewrite every eligible MatMul of an encoder into MatMulNBits: block-wise
-weights (block 32, symmetric) with accuracy_level=4, so the kernel dynamically
+weights (--block-size, symmetric) with accuracy_level=4, so the kernel dynamically
 quantizes activations to int8. At --bits 4 that is W4A8, at --bits 8 it is W8A8.
 Neither needs calibration data. WebGPU dequantizes to fp16 instead, so there the
 same file behaves as W4A16 / W8A16 with an unchanged download size.
@@ -49,7 +49,16 @@ ap.add_argument("dst", type=Path, help="output path, e.g. encoder-model.w4a8.onn
 ap.add_argument("--bits", type=int, default=4, choices=(2, 4, 8),
                 help="weight width (default 4). ORT's MatMulNBits accepts 2, 4 or 8. Activations are "
                      "int8 at every width: accuracy_level tops out at 4 (int8), so there is no 'a4'.")
+ap.add_argument("--block-size", type=int, default=32,
+                help="weights per quantization block (default 32). One fp32 scale is stored per "
+                     "block, so the scale payload is weights*4/block_size bytes: at 8 bits that is "
+                     "72.5 MB of scales at 32 and 38.8 MB at 64, for identical packed weights. "
+                     "Larger blocks shrink the file and the resident footprint at some accuracy "
+                     "cost. Must be a power of two >= 16 for ORT's kernels.")
 args = ap.parse_args()
+
+if args.block_size < 16 or args.block_size & (args.block_size - 1):
+    raise SystemExit(f"--block-size must be a power of two >= 16, got {args.block_size}")
 src, dst = args.src, args.dst
 dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -57,7 +66,7 @@ t0 = time.time()
 model = onnx.load(str(src))
 before = Counter(n.op_type for n in model.graph.node)
 
-kwargs = dict(block_size=32, is_symmetric=True, accuracy_level=4)
+kwargs = dict(block_size=args.block_size, is_symmetric=True, accuracy_level=4)
 if "bits" in inspect.signature(Quantizer.__init__).parameters:
     kwargs["bits"] = args.bits
 elif args.bits != 4:
