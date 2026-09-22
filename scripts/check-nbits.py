@@ -6,8 +6,8 @@
 at either width (--bits 4 for the w4a8 build, --bits 8 for the int8 one):
 
  0. graph: MatMulNBits present, every node carries the requested bits, plus
-    block_size=32 and accuracy_level=4 (a silently dropped accuracy_level means
-    fp32 activations)
+    block_size=--block-size and accuracy_level=4 (a silently dropped
+    accuracy_level means fp32 activations)
  1. batch-1 with length = T-1: finite (the hop-multiple case onnx-asr produces)
  2. batch-2 mixed lengths: the same verdict as the fp32 reference graph. The
     mask-free web export answers a padded batch with all NaN (its pad tripwire),
@@ -44,6 +44,10 @@ ap.add_argument("quant", help="the MatMulNBits encoder under test")
 ap.add_argument("ref", help="the fp32 encoder it was built from")
 ap.add_argument("pre", help="nemo128.onnx preprocessor")
 ap.add_argument("wavs", nargs="+", help="real speech for gate 4")
+ap.add_argument("--block-size", type=int, default=32,
+                help="block_size every MatMulNBits node must carry (default 32). Pass the same "
+                     "value given to quantize-nbits.py; a mismatch is exactly the silent drift "
+                     "this gate exists to catch.")
 ap.add_argument("--bits", type=int, default=4, choices=(2, 4, 8, 16),
                 help="width the graph should carry (default 4). 2/4/8 expect MatMulNBits from "
                      "quantize-nbits.py; 16 expects an fp16 cast from convert-fp16.py, which is a "
@@ -86,7 +90,7 @@ else:
     levels = {a.get("accuracy_level") for a in attrs}
     bits = {a.get("bits") for a in attrs}
     blocks = {a.get("block_size") for a in attrs}
-    ok = bool(nbits) and levels == {4} and bits == {args.bits} and blocks == {32}
+    ok = bool(nbits) and levels == {4} and bits == {args.bits} and blocks == {args.block_size}
     print(f"[0] MatMulNBits={len(nbits)} MatMul_left={ops.get('MatMul', 0)} "
           f"accuracy_level={levels} bits={bits} block_size={blocks}: {ok}", flush=True)
 fail += not ok
