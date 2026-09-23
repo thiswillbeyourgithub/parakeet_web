@@ -98,6 +98,17 @@ export const QUANT_FILES = {
 export const ENCODER_QUANTS = Object.keys(QUANT_FILES);
 export const DECODER_QUANTS = ENCODER_QUANTS.filter((q) => QUANT_FILES[q].decoder);
 
+// The encoder quants the WASM EP can actually load. Mirrors the WASM branch of
+// resolveModelQuant in app/src/hub.js, which serves int8 by default and takes
+// w4a8 as an opt-in "on the same terms as lite": one self-contained file, no
+// sidecar and no shards. fp16 is out because the EP has no fp16 kernels, and
+// fp32 because its sidecar blows the 2 GiB per-file cap.
+//
+// Kept here rather than in hub.js so the CLIs can read it without importing the
+// browser module. If the two ever disagree, hub.js is the behaviour that ships
+// and this is the copy that is wrong.
+export const WASM_ENCODER_QUANTS = ['int8', 'w4a8'];
+
 // External-data sidecars live with their graph, so strip the sidecar suffix and
 // classify the graph: `encoder-model.onnx.data.007` -> `encoder-model.onnx` ->
 // `fp32/`. One rule instead of one entry per sidecar shape.

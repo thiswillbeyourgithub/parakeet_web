@@ -16,7 +16,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { QUANT_FILES, ENCODER_QUANTS, DECODER_QUANTS, layoutDirFor } from '../../app/src/modelLayout.js';
+import { QUANT_FILES, ENCODER_QUANTS, DECODER_QUANTS, WASM_ENCODER_QUANTS, layoutDirFor } from '../../app/src/modelLayout.js';
 import { parseArgs } from '../../scripts/grid_search_benchmark.mjs';
 
 const BASE = ['--manifest', 'x.json', '--ort', 'cuda'];
@@ -70,10 +70,23 @@ describe('beam harness --quant / --decoder-quants', () => {
     assert.throws(() => parseArgs([...BASE, '--quant', 'int4']), /--quant must be/);
   });
 
-  test('w4a8 stays off the WASM EP, for its own stated reason', () => {
-    assert.throws(
-      () => parseArgs(['--manifest', 'x.json', '--ort', 'wasm', '--quant', 'w4a8']),
-      /never been measured on this EP/,
-    );
+  // The WASM EP loads int8 AND w4a8. hub.js takes w4a8 there as an opt-in "on
+  // the same terms as lite" (one self-contained file, no sidecar, no shards),
+  // and test/e2e/precision-radio-source-gate.spec.js asserts both radios are
+  // enabled on a mirror serving both. The harness must not be stricter than the
+  // app it benchmarks, so this pins the accept, not a reject.
+  test('w4a8 is allowed on the WASM EP, as it is in the app', () => {
+    assert.ok(WASM_ENCODER_QUANTS.includes('w4a8'));
+    assert.deepEqual(parseArgs(['--manifest', 'x.json', '--ort', 'wasm', '--quant', 'w4a8']).quants, ['w4a8']);
+  });
+
+  test('fp16 and fp32 are still rejected on WASM, and the message says what works', () => {
+    for (const q of ['fp16', 'fp32']) {
+      assert.ok(!WASM_ENCODER_QUANTS.includes(q));
+      assert.throws(
+        () => parseArgs(['--manifest', 'x.json', '--ort', 'wasm', '--quant', q]),
+        /It CAN load int8 and w4a8/,
+      );
+    }
   });
 });
