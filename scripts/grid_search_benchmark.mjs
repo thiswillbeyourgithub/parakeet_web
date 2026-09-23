@@ -77,7 +77,7 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 // Dependency-free by design (no onnxruntime), so it is safe to import statically
 // here even though the rest of the pipeline is imported dynamically in main().
-import { ENCODER_QUANTS, DECODER_QUANTS } from '../app/src/modelLayout.js';
+import { ENCODER_QUANTS, DECODER_QUANTS, WASM_ENCODER_QUANTS } from '../app/src/modelLayout.js';
 
 // --- locate parakeet_web --------------------------------------------------
 // This script lives in <parakeet_web>/scripts/, so parakeet_web is its parent
@@ -265,13 +265,13 @@ function parseArgs(argv) {
     );
   }
   if (a.ort !== 'wasm' && a.ort !== 'node' && a.ort !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ort})`);
-  if (a.ort === 'wasm' && a.quants.some((q) => q !== 'int8')) {
+  // int8 and w4a8 both load on WASM; fp16 and fp32 do not. The set comes from
+  // modelLayout.js so this matches what the web app actually serves there.
+  if (a.ort === 'wasm' && a.quants.some((q) => !WASM_ENCODER_QUANTS.includes(q))) {
     throw new Error(
-      `--ort wasm cannot load ${a.quants.filter((q) => q !== 'int8').join(', ')}: the WASM EP has no fp16 kernels and caps `
-      + 'each weight file at 2 GiB, which rules out fp16 and fp32. w4a8 is excluded for a different '
-      + 'reason: it is small enough and is not fp16, but it has never been measured on this EP, and '
-      + 'the web app does not serve it there either (hub.js pins WASM to int8 and allows w4a8 only on '
-      + 'WebGPU). Use --ort node or --ort cuda.',
+      `--ort wasm cannot load ${a.quants.filter((q) => !WASM_ENCODER_QUANTS.includes(q)).join(', ')}: the WASM EP has `
+      + 'no fp16 kernels and caps each weight file at 2 GiB, which rules out fp16 and the fp32 sidecar. '
+      + `It CAN load ${WASM_ENCODER_QUANTS.join(' and ')}. Use --ort node or --ort cuda for the rest.`,
     );
   }
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
