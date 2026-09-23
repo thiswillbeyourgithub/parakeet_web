@@ -55,6 +55,49 @@ const QUANT_DIRS = [
 // weights (nemo128.onnx, the mel preprocessor) stay at the root.
 const FP32_GRAPHS = new Set(['encoder-model.onnx', 'decoder_joint-model.onnx']);
 
+// Quant name -> the graph basenames that quant is served by. This is the one
+// place the CLI stack learns which quants exist and what each is called; both
+// scripts/transcribe.mjs (which resolves the files) and
+// scripts/grid_search_benchmark.mjs (which validates --quant before it loads
+// anything) read it from here. It lives in this module rather than in
+// transcribe.mjs because transcribe.mjs statically imports onnxruntime, and the
+// beam harness has to validate its arguments without paying for that; this
+// module is dependency-free by design, so a static import costs nothing.
+//
+// `decoder` is ABSENT for an encoder-only quant. w4a8 is the case that matters:
+// the model repo ships w4a8/encoder-model.w4a8.onnx and nothing else in that
+// folder, so a w4a8 run pairs the encoder with some other precision's
+// decoder_joint, exactly as scripts/wer-quants.py does on the Python side.
+//
+// int8 has TWO valid encoder names: the published HF repo uses the canonical
+// `encoder-model.int8.onnx`, while the model-repo working folder keeps the
+// descriptive `encoder-model.int8.smoothquant.onnx`. Canonical first, so the
+// published layout is unchanged and --model-dir can still point at the working
+// folder.
+export const QUANT_FILES = {
+  int8: {
+    encoder: ['encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
+    decoder: ['decoder_joint-model.int8.onnx'],
+  },
+  w4a8: {
+    encoder: ['encoder-model.w4a8.onnx'],
+  },
+  fp16: {
+    encoder: ['encoder-model.fp16.onnx'],
+    decoder: ['decoder_joint-model.fp16.onnx'],
+  },
+  fp32: {
+    encoder: ['encoder-model.onnx'],
+    decoder: ['decoder_joint-model.onnx'],
+  },
+};
+
+// Derived from QUANT_FILES so neither list can drift from it: every quant that
+// can be an ENCODER, and the subset that also ships a decoder_joint and can
+// therefore be a DECODER.
+export const ENCODER_QUANTS = Object.keys(QUANT_FILES);
+export const DECODER_QUANTS = ENCODER_QUANTS.filter((q) => QUANT_FILES[q].decoder);
+
 // External-data sidecars live with their graph, so strip the sidecar suffix and
 // classify the graph: `encoder-model.onnx.data.007` -> `encoder-model.onnx` ->
 // `fp32/`. One rule instead of one entry per sidecar shape.

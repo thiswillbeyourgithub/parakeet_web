@@ -75,6 +75,9 @@ import { resolve, isAbsolute, join, dirname, basename } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
+// Dependency-free by design (no onnxruntime), so it is safe to import statically
+// here even though the rest of the pipeline is imported dynamically in main().
+import { ENCODER_QUANTS, DECODER_QUANTS } from '../app/src/modelLayout.js';
 
 // --- locate parakeet_web --------------------------------------------------
 // This script lives in <parakeet_web>/scripts/, so parakeet_web is its parent
@@ -219,9 +222,9 @@ function parseArgs(argv) {
   // benchmarks each quant in turn (one model load + encoder-cache reset apiece).
   // Dedupe while preserving order so a repeated quant can't collide on its
   // resume key or waste a re-run.
-  if (!a.quants.length) throw new Error('--quant must be a comma-separated list of int8/fp16/fp32');
+  if (!a.quants.length) throw new Error(`--quant must be a comma-separated list of ${ENCODER_QUANTS.join('/')}`);
   for (const q of a.quants) {
-    if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${q})`);
+    if (!ENCODER_QUANTS.includes(q)) throw new Error(`--quant must be ${ENCODER_QUANTS.join(', ')} (got ${q})`);
   }
   a.quants = [...new Set(a.quants)];
   // --decoder-quants is a swept dimension nested under each encoder --quant: a
@@ -229,9 +232,16 @@ function parseArgs(argv) {
   // cell, chosen independently of the swept encoder quant(s). Dedupe while
   // preserving order like --quant so a repeated value can't collide on its resume
   // key or waste a re-run.
-  if (!a.decoderQuants.length) throw new Error('--decoder-quants must be a comma-separated list of int8/fp16/fp32');
+  if (!a.decoderQuants.length) throw new Error(`--decoder-quants must be a comma-separated list of ${DECODER_QUANTS.join('/')}`);
   for (const q of a.decoderQuants) {
-    if (q !== 'int8' && q !== 'fp16' && q !== 'fp32') throw new Error(`--decoder-quants must be int8, fp16 or fp32 (got ${q})`);
+    // Narrower than --quant on purpose: an encoder-only quant such as w4a8 has
+    // no decoder_joint to load, so it is valid on one flag and not the other.
+    if (!DECODER_QUANTS.includes(q)) {
+      throw new Error(ENCODER_QUANTS.includes(q)
+        ? `--decoder-quants got "${q}", which is encoder-only and ships no decoder_joint; `
+          + `use ${DECODER_QUANTS.join(', ')} (it pairs with any --quant)`
+        : `--decoder-quants must be ${DECODER_QUANTS.join(', ')} (got ${q})`);
+    }
   }
   a.decoderQuants = [...new Set(a.decoderQuants)];
   // ORT backend: REQUIRED, never defaulted. wasm and node give the same
@@ -258,7 +268,10 @@ function parseArgs(argv) {
   if (a.ort === 'wasm' && a.quants.some((q) => q !== 'int8')) {
     throw new Error(
       `--ort wasm cannot load ${a.quants.filter((q) => q !== 'int8').join(', ')}: the WASM EP has no fp16 kernels and caps `
-      + 'each weight file at 2 GiB. Use --ort node for fp16/fp32.',
+      + 'each weight file at 2 GiB, which rules out fp16 and fp32. w4a8 is excluded for a different '
+      + 'reason: it is small enough and is not fp16, but it has never been measured on this EP, and '
+      + 'the web app does not serve it there either (hub.js pins WASM to int8 and allows w4a8 only on '
+      + 'WebGPU). Use --ort node or --ort cuda.',
     );
   }
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
