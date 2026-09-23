@@ -72,7 +72,7 @@ case "${PREPUSH_WEBGPU:-}" in 1|y|Y) run_webgpu=y ;; *) run_webgpu=n ;; esac
 ask_yn() { # prompt -> echoes y or n, aborts the push on anything else
   local prompt="$1" answer
   printf "%s" "$prompt" >&2
-  read -r answer < /dev/tty
+  read -r answer <&5
   case "$answer" in
     y|Y) echo y ;;
     n|N) echo n ;;
@@ -80,9 +80,21 @@ ask_yn() { # prompt -> echoes y or n, aborts the push on anything else
   esac
 }
 
-if [ -e /dev/tty ]; then
+# Detect the terminal by OPENING it, not by stat'ing it. /dev/tty is a device
+# node that exists on the filesystem whether or not this process has a
+# controlling terminal, so `[ -e /dev/tty ]` (and -r, and -c) is true in BOTH
+# cases; only open(2) tells them apart, failing with ENXIO when there is none.
+# The stat test therefore sent every terminal-less push into ask_yn, where the
+# read failed, `answer` stayed empty, and the hook aborted with "Unrecognised
+# answer ''" instead of taking the skip path below. Any push without a
+# controlling tty hit it: CI, cron, an editor's git integration, `setsid`.
+# Probe in a subshell so the failure is silent, then hold the terminal on fd 5
+# for ask_yn (which also closes the gap between probing and reading).
+if ( : < /dev/tty ) 2>/dev/null; then
+  exec 5< /dev/tty
   echo "[pre-push] Answer this now, then you can leave it unattended:" >&2
   run_e2e=$(ask_yn "[pre-push]   Run tier 3 (Playwright WASM E2E: int8 + fp32/lite/diarization/chunking/fleurs)? [y/n] ")
+  exec 5<&-
 else
   echo "[pre-push] No terminal available; skipping tier 3." >&2
 fi
