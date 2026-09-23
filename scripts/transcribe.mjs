@@ -31,7 +31,9 @@ import { homedir } from 'node:os';
 import * as ortmod from '../app/ui/vendor/onnxruntime-web/dist/ort.node.min.mjs';
 import { ParakeetModel, DEFAULT_SNAP_TO_SILENCE_SEC } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
-import { candidatePaths } from '../app/src/modelLayout.js';
+import { candidatePaths, QUANT_FILES, ENCODER_QUANTS, DECODER_QUANTS } from '../app/src/modelLayout.js';
+
+export { QUANT_FILES, ENCODER_QUANTS, DECODER_QUANTS };
 import { JsPreprocessor } from '../app/src/mel.js';
 import { loadBpeEncoder, vocabSignature } from '../app/src/bpeEncoder.js';
 import { BoostingTrie, parseBoostDirectives, resolveBoostLines, expandAugmentations, DEFAULT_BOOST_MIN_P } from '../app/src/phraseBoost.js';
@@ -188,8 +190,8 @@ function parseArgs(argv) {
     }
   }
   if (!a.audio) throw new Error('No audio file given. See --help.');
-  if (a.quant !== 'int8' && a.quant !== 'fp16' && a.quant !== 'fp32') throw new Error(`--quant must be int8, fp16 or fp32 (got ${a.quant})`);
-  if (a.decoderQuant !== 'int8' && a.decoderQuant !== 'fp16' && a.decoderQuant !== 'fp32') throw new Error(`--decoder-quant must be int8, fp16 or fp32 (got ${a.decoderQuant})`);
+  if (!ENCODER_QUANTS.includes(a.quant)) throw new Error(`--quant must be ${ENCODER_QUANTS.join(', ')} (got ${a.quant})`);
+  if (!DECODER_QUANTS.includes(a.decoderQuant)) throw new Error(`--decoder-quant must be ${DECODER_QUANTS.join(', ')} (got ${a.decoderQuant})`);
   if (a.ortBackend !== 'wasm' && a.ortBackend !== 'node' && a.ortBackend !== 'cuda') throw new Error(`--ort must be wasm, node or cuda (got ${a.ortBackend})`);
   if ((a.wasmPaths || a.wasmSimd) && a.ortBackend !== 'wasm') throw new Error('--wasm-paths / --wasm-simd only apply to --ort wasm');
   if (!Number.isFinite(a.strength)) throw new Error('--boost-strength must be a number');
@@ -479,44 +481,10 @@ export function resolveModelDir(cliDir, repoId) {
 // decoder_joint-model graph (prediction network + joint network in one file): this
 // model export has no standalone joint file, so the decoder quant covers both.
 //
-// int8 has TWO valid encoder names: the published HF repo renames the SmoothQuant
-// int8 encoder to the canonical `encoder-model.int8.onnx` (what App.jsx/hub.js and
-// fetch-e2e-models.mjs download), while the model-repo working folder
-// (fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/) keeps it under the descriptive
-// `encoder-model.int8.smoothquant.onnx`. Try the canonical name first so the
-// published/cached layout is unchanged, then fall back to the SmoothQuant name so
-// `--model-dir` can point straight at the working folder. The int8 DECODER keeps
-// the single `decoder_joint-model.int8.onnx` name in both layouts.
-//
-// There are no other names to try. The model repo's graph work (an encoder whose
-// runtime shape glue is constant-folded away, a decoder carrying the beam
-// search's in-graph log-partition and top-K outputs) ships INSIDE the canonical
-// files, so a dir either has the optimized build under the canonical name or it
-// has a stock upstream one. Whether the decoder actually carries the extra
-// outputs is discovered from the loaded session's outputNames (parakeet.js
-// _topkOutputsReady), never from the filename.
-//
-// fp16 is kept here even though the model repo withdrew its fp16 files on
-// 2026-08-23: scripts/quantize-fp16.py can regenerate them, and this CLI (via
-// wer-bench.mjs --ort node) is how such a build would be measured.
-//
-// These are BASENAMES only. Which directory each sits in is app/src/modelLayout
-// .js's business, so the same list covers a --model-dir with one folder per
-// precision, a flat one, and a flat one with sharded/ fp32.
-const QUANT_FILES = {
-  int8: {
-    encoder: ['encoder-model.int8.onnx', 'encoder-model.int8.smoothquant.onnx'],
-    decoder: ['decoder_joint-model.int8.onnx'],
-  },
-  fp16: {
-    encoder: ['encoder-model.fp16.onnx'],
-    decoder: ['decoder_joint-model.fp16.onnx'],
-  },
-  fp32: {
-    encoder: ['encoder-model.onnx'],
-    decoder: ['decoder_joint-model.onnx'],
-  },
-};
+// The quant -> basenames table itself lives in app/src/modelLayout.js, next to
+// the basename -> directory rule it is the other half of, so the beam harness
+// can validate --quant without importing this module (and with it onnxruntime).
+// Re-exported here because callers of this CLI already import it from here.
 
 // `decoderQuant` defaults to the encoder `quant` (matched, the historical
 // behaviour) so existing 2-arg callers are unchanged; pass it explicitly to mix
@@ -531,9 +499,13 @@ const QUANT_FILES = {
 // shards sitting BESIDE the graph rather than at the model-dir root.
 export function resolveFiles(dir, quant, decoderQuant = quant) {
   const encSpec = QUANT_FILES[quant];
-  if (!encSpec) throw new Error(`Unknown quant "${quant}" (expected int8, fp16 or fp32)`);
+  if (!encSpec) throw new Error(`Unknown quant "${quant}" (expected ${ENCODER_QUANTS.join(', ')})`);
   const decSpec = QUANT_FILES[decoderQuant];
-  if (!decSpec) throw new Error(`Unknown decoder quant "${decoderQuant}" (expected int8, fp16 or fp32)`);
+  if (!decSpec) throw new Error(`Unknown decoder quant "${decoderQuant}" (expected ${DECODER_QUANTS.join(', ')})`);
+  if (!decSpec.decoder) {
+    throw new Error(`Quant "${decoderQuant}" is encoder-only and ships no decoder_joint; `
+      + `pass --decoder-quant as one of ${DECODER_QUANTS.join(', ')}`);
+  }
   // First existing candidate wins, each tried in its own candidate paths; if
   // none exist, name every alternative we tried.
   const locate = (name) => candidatePaths(name).find((rel) => existsSync(join(dir, rel))) || null;
