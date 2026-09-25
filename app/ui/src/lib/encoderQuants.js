@@ -74,8 +74,8 @@ export const QUANT_DOWNLOAD_MB = {
   int8: 900,
   w4a8: 610,
   // Only a ternary model ships w2a8 (parakeet-redux, 2 bits pack its
-  // {-a, 0, +a} weights exactly); TODO measure on the published redux repo.
-  w2a8: 250,
+  // {-a, 0, +a} weights exactly). Measured on the redux build: 190 MB encoder.
+  w2a8: 210,
   fp16: 1220,
   fp32: 2350,
 };
