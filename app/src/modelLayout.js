@@ -13,6 +13,7 @@
  *   int8/       encoder-model.int8.onnx, decoder_joint-model.int8.onnx
  *   int8-lite/  encoder-model.int8.lite.onnx
  *   w4a8/       encoder-model.w4a8.onnx
+ *   w2a8/       encoder-model.w2a8.onnx
  *   fp16/       encoder-model.fp16.onnx, decoder_joint-model.fp16.onnx
  *   (root)      vocab.txt, config.json, nemo128.onnx, README.md, *.nemo
  *
@@ -47,6 +48,7 @@ const QUANT_DIRS = [
   ['.int8.lite.onnx', 'int8-lite/'],
   ['.int8.onnx', 'int8/'],
   ['.w4a8.onnx', 'w4a8/'],
+  ['.w2a8.onnx', 'w2a8/'],
   ['.fp16.onnx', 'fp16/'],
 ];
 
@@ -82,6 +84,9 @@ export const QUANT_FILES = {
   w4a8: {
     encoder: ['encoder-model.w4a8.onnx'],
   },
+  w2a8: {
+    encoder: ['encoder-model.w2a8.onnx'],
+  },
   fp16: {
     encoder: ['encoder-model.fp16.onnx'],
     decoder: ['decoder_joint-model.fp16.onnx'],
@@ -107,7 +112,16 @@ export const DECODER_QUANTS = ENCODER_QUANTS.filter((q) => QUANT_FILES[q].decode
 // Kept here rather than in hub.js so the CLIs can read it without importing the
 // browser module. If the two ever disagree, hub.js is the behaviour that ships
 // and this is the copy that is wrong.
-export const WASM_ENCODER_QUANTS = ['int8', 'w4a8'];
+export const WASM_ENCODER_QUANTS = ['int8', 'w4a8', 'w2a8'];
+
+// The encoder-only MatMulNBits builds from scripts/quantize-nbits.py: w4a8 (int4
+// weights) and w2a8 (2-bit weights, only meaningful for a model whose weights are
+// ternary to begin with, i.e. parakeet-redux, where it is lossless). They follow
+// ONE rule on every backend: one self-contained file, no sidecar, no shards, so
+// the repo shipping it is the only condition, and the WebGPU EP has a kernel for
+// both (it dequantizes to fp16 in the shader). hub.js and the UI branch on this
+// set rather than on either name, so a third width is one entry here.
+export const NBITS_ENCODER_QUANTS = ['w4a8', 'w2a8'];
 
 // External-data sidecars live with their graph, so strip the sidecar suffix and
 // classify the graph: `encoder-model.onnx.data.007` -> `encoder-model.onnx` ->
@@ -119,7 +133,7 @@ const SIDECAR_RE = /\.data(\.\d+)?$/;
  * concatenate ('' for the repo root, otherwise trailing-slashed).
  *
  * @param {string} basename File basename (no directory part).
- * @returns {('fp32/'|'int8/'|'int8-lite/'|'w4a8/'|'fp16/'|'')} Directory prefix.
+ * @returns {('fp32/'|'int8/'|'int8-lite/'|'w4a8/'|'w2a8/'|'fp16/'|'')} Directory prefix.
  */
 export function layoutDirFor(basename) {
   if (typeof basename !== 'string' || basename.length === 0) return ROOT_DIR;
