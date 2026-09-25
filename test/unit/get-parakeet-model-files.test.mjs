@@ -452,7 +452,7 @@ describe('getParakeetModel file selection: w4a8', () => {
 
   // Neither backend may quietly serve something else when the w4a8 file is
   // absent. WASM pins to int8 and refuses; WebGPU falls back to fp32 internally
-  // but is flagged (w4a8NeedsFile) and refuses too, because a visitor who picked
+  // but is flagged (nbitsNeedsFile) and refuses too, because a visitor who picked
   // a 610 MB encoder must not silently receive a 2.35 GB one. The GPU fixture
   // deliberately SHIPS the shards, so the only thing that can refuse that load is
   // the missing w4a8 file, not the fp32 shard check sitting behind it.

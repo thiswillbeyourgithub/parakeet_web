@@ -175,6 +175,7 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'encoder-model.onnx',
       'encoder-model.onnx.data',
       'encoder-model.onnx.data.000',
+      'encoder-model.w2a8.onnx',
       'encoder-model.w4a8.onnx',
       'fp16/encoder-model.fp16.onnx',
       'fp32/decoder_joint-model.onnx',
@@ -199,7 +200,9 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'sharded/encoder-model.onnx',
       'sharded/encoder-model.onnx.data',
       'sharded/encoder-model.onnx.data.000',
+      'sharded/encoder-model.w2a8.onnx',
       'sharded/encoder-model.w4a8.onnx',
+      'w2a8/encoder-model.w2a8.onnx',
       'w4a8/encoder-model.w4a8.onnx',
     ]);
   });

@@ -68,7 +68,7 @@ describe('resolveModelQuant: the nested repo layout', () => {
     assert.equal(w4a8.encoderQ, 'w4a8');
     const gpuW4a8 = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
     assert.equal(gpuW4a8.encoderQ, 'w4a8');
-    assert.equal(gpuW4a8.w4a8NeedsFile, false);
+    assert.equal(gpuW4a8.nbitsNeedsFile, false);
   });
 
   test('a nested repo WITHOUT an opt-in build still reports it as unservable', () => {
@@ -330,7 +330,7 @@ describe('resolveModelQuant: w4a8 opt-in', () => {
     });
 
     // No w4a8 file: encoderQ falls back to fp32 so the caller still has a
-    // loadable graph, but w4a8NeedsFile FLAGS it. Serving that fallback silently
+    // loadable graph, but nbitsNeedsFile FLAGS it. Serving that fallback silently
     // would hand someone who picked a 610 MB encoder a 2.35 GB one, and w4a8 is
     // offered as a live choice on this backend (int8 is greyed out), so the
     // no-silent-downgrade rule applies here exactly as it does to the WASM pin.
@@ -339,25 +339,25 @@ describe('resolveModelQuant: w4a8 opt-in', () => {
       assert.equal(r.encoderQ, 'fp32');
       assert.equal(r.pinnedToInt8, false);
       assert.equal(r.webgpuFp32NeedsShards, false, 'the shards are there, so the fp32 fallback would load');
-      assert.equal(r.w4a8NeedsFile, true, 'a loadable fp32 fallback is not a reason to swap it in unannounced');
+      assert.equal(r.nbitsNeedsFile, true, 'a loadable fp32 fallback is not a reason to swap it in unannounced');
       assert.equal(quantSatisfiable({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }), false);
     });
 
     test(`${backend} flags a w4a8 request when neither the w4a8 file nor the shards are shipped`, () => {
       const r = resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NO_SHARDS });
       assert.equal(r.encoderQ, 'fp32');
-      assert.equal(r.w4a8NeedsFile, true);
+      assert.equal(r.nbitsNeedsFile, true);
       assert.equal(r.webgpuFp32NeedsShards, true, 'the fp32 fallback is itself unloadable without shards');
       assert.equal(quantSatisfiable({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NO_SHARDS }), false);
     });
 
     // The flag must stay off when the request was honoured, or every GPU load
     // would refuse itself.
-    test(`${backend} leaves w4a8NeedsFile clear when the encoder is shipped, and for other quants`, () => {
-      assert.equal(resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_W4A8 }).w4a8NeedsFile, false);
+    test(`${backend} leaves nbitsNeedsFile clear when the encoder is shipped, and for other quants`, () => {
+      assert.equal(resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_W4A8 }).nbitsNeedsFile, false);
       for (const q of ['int8', 'int8lite', 'fp32']) {
         assert.equal(
-          resolveModelQuant({ backend, encoderQuant: q, decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }).w4a8NeedsFile,
+          resolveModelQuant({ backend, encoderQuant: q, decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }).nbitsNeedsFile,
           false,
           `${q} must not be caught by the w4a8 flag`,
         );
@@ -600,4 +600,27 @@ describe('local /models fallback decision (HF downgraded + local can satisfy)', 
     const req = { backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', allowWasmFp32: true };
     assert.equal(quantSatisfiable({ ...req, repoFiles: NO_SHARDS }), false, 'local without shards cannot satisfy either');
   });
+});
+
+// A ternary model repo (parakeet-redux) ships a 2-bit build next to w4a8. It must
+// be resolved exactly like w4a8 on both backends, and a repo without it must
+// refuse the request instead of quietly loading a different encoder: before
+// w2a8 was an nbits quant, WASM mapped it to int8 without a word.
+const REDUX_LAYOUT = [...NESTED_LAYOUT, 'w2a8/encoder-model.w2a8.onnx'];
+describe('resolveModelQuant: w2a8 (2-bit ternary build)', () => {
+  for (const backend of ['wasm', 'webgpu']) {
+    test(`${backend} serves w2a8 from w2a8/ when the repo ships it`, () => {
+      const r = resolveModelQuant({ backend, encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: REDUX_LAYOUT });
+      assert.equal(r.encoderQ, 'w2a8');
+      // WASM reports a refusal as pinnedToInt8, WebGPU as nbitsNeedsFile.
+      assert.equal(backend === 'wasm' ? r.pinnedToInt8 : r.nbitsNeedsFile, false);
+      assert.equal(quantSatisfiable({ backend, encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: REDUX_LAYOUT }), true);
+    });
+
+    test(`${backend} flags w2a8 on a repo that ships only w4a8`, () => {
+      const r = resolveModelQuant({ backend, encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
+      assert.equal(backend === 'wasm' ? r.pinnedToInt8 : r.nbitsNeedsFile, true);
+      assert.equal(quantSatisfiable({ backend, encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT }), false);
+    });
+  }
 });

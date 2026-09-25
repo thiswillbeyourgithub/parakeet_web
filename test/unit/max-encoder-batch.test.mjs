@@ -103,6 +103,9 @@ describe('resolveMaxEncoderBatch', () => {
 describe('encoderWeightBytesFromName', () => {
   test('maps quant substrings (and plain name = fp32) to weight footprints', () => {
     assert.equal(encoderWeightBytesFromName('encoder-model.int8.onnx'), 0.6e9);
+    // w2a8 carries none of the other markers, so without its own branch it would
+    // fall into the fp32 catch-all and reserve 12x its real footprint.
+    assert.equal(encoderWeightBytesFromName('encoder-model.w2a8.onnx'), 0.2e9);
     assert.equal(encoderWeightBytesFromName('encoder-model.int8.smoothquant.onnx'), 0.6e9);
     assert.equal(encoderWeightBytesFromName('encoder-model.fp16.onnx'), 1.2e9);
     assert.equal(encoderWeightBytesFromName('encoder-model.onnx'), 2.4e9); // plain == fp32

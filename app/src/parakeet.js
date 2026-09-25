@@ -224,6 +224,9 @@ export function encoderWeightBytesFromName(name) {
   // 0.6 GB encoder would needlessly shrink the activation budget (and with it the
   // encoder batch).
   if (n.includes('w4a8')) return 0.6e9;
+  // w2a8 is the 2-bit build of a ternary model (parakeet-redux), ~0.2 GB packed;
+  // the shader dequantizes per tile, so the packed size is what stays resident.
+  if (n.includes('w2a8')) return 0.2e9;
   if (n.includes('fp32') || (!n.includes('int8') && !n.includes('fp16'))) return 2.4e9; // fp32 / plain
   if (n.includes('fp16')) return 1.2e9;
   return 0.6e9; // int8 (and int8.smoothquant)

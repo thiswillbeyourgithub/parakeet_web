@@ -8,7 +8,7 @@
 
 import { MODELS, getModelConfig } from './models.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbGetAllKeys } from './idb.js';
-import { candidatePaths, findRepoFile } from './modelLayout.js';
+import { candidatePaths, findRepoFile, NBITS_ENCODER_QUANTS } from './modelLayout.js';
 /** @typedef {import('./models.js').ModelConfig} ModelConfig */
 
 /**
@@ -1224,7 +1224,7 @@ export async function checkLocalModelFiles(baseUrl, repoId, { allowFlatFallback 
 //     the root, and every fetch against a nested mirror would 404.
 //   - the external-data sidecars and the optional encoder builds, which
 //     resolveModelQuant reads before any weight is fetched. It refuses an
-//     int8lite or w4a8 request the source cannot serve, so a mirror that HAS one
+//     int8lite, w4a8 or w2a8 request the source cannot serve, so a mirror that HAS one
 //     must be able to say so; omitting them would make those precisions
 //     permanently unavailable on a local-weights deployment and would stop the
 //     /models auto-upgrade from ever rescuing an HF repo that ships neither.
@@ -1242,6 +1242,7 @@ const LOCAL_PROBE_CANDIDATES = [
   'decoder_joint-model.int8.onnx',
   'encoder-model.int8.lite.onnx',
   'encoder-model.w4a8.onnx',
+  'encoder-model.w2a8.onnx',
   // Probed so the /models upgrade path can serve fp16 to a shader-f16 machine
   // when the configured HF repo has no such file. Costs one HEAD per candidate
   // path on a mirror that does not ship it, which is the same price every other
@@ -1399,6 +1400,7 @@ export const QUANT_SUFFIX = {
   int8: '.int8.onnx',
   int8lite: '.int8.lite.onnx',
   w4a8: '.w4a8.onnx',
+  w2a8: '.w2a8.onnx',
   fp16: '.fp16.onnx',
   fp32: '.onnx',
 };
@@ -1414,6 +1416,7 @@ export const QUANT_SUFFIX = {
 // calibration any more, it is a different build entirely.)
 const INT8_ENCODER_QUANTS = ['int8', 'int8lite'];
 const isInt8Encoder = (q) => INT8_ENCODER_QUANTS.includes(q);
+const isNbitsEncoder = (q) => NBITS_ENCODER_QUANTS.includes(q);
 
 // There is exactly ONE encoder and ONE decoder build per quant, under the
 // canonical istupakov names, and both are already optimized at the source: the
@@ -1484,7 +1487,7 @@ function hasFp32ShardSet(repoFiles) {
 }
 
 // Whether the listing carries the encoder build for a quant. Only the model repo
-// builds the lite int8 and w4a8 encoders, so a mirror that predates them (or
+// builds the lite int8 and MatMulNBits (w4a8, w2a8) encoders, so a mirror that predates them (or
 // upstream istupakov, which never had them) legitimately does not ship them.
 // findRepoFile matches the basename in its precision folder, at the flat root or
 // under `sharded/`, so all three layouts answer the same question the same way.
@@ -1513,7 +1516,7 @@ function hasEncoderFor(repoFiles, quant) {
  *
  * @param {Object} args
  * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').
- * @param {('int8'|'int8lite'|'w4a8'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
+ * @param {('int8'|'int8lite'|'w4a8'|'w2a8'|'fp16'|'fp32')} args.encoderQuant Requested encoder quant.
  * @param {('int8'|'fp32')} args.decoderQuant Requested decoder quant.
  * @param {string[]} args.repoFiles Filenames available in the repo.
  * @param {boolean} [args.shaderF16=false] Whether the WebGPU adapter exposes the
@@ -1522,7 +1525,7 @@ function hasEncoderFor(repoFiles, quant) {
  *   is flagged rather than failing silently at transcription time.
  * @param {boolean} [args.allowWasmFp32=false] Opt-in: allow sharded fp32 on WASM
  *   when the repo ships encoder-model.onnx.data.NNN shards and fp32 is requested.
- * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, webgpuFp32NeedsShards: boolean, w4a8NeedsFile: boolean}}
+ * @returns {{encoderQ: string, decoderQ: string, pinnedToInt8: boolean, webgpuFp32NeedsShards: boolean, nbitsNeedsFile: boolean}}
  */
 export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16 = false, allowWasmFp32 = false }) {
   if (!backend.startsWith('webgpu')) {
@@ -1547,13 +1550,13 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
         pinnedToInt8: false,
       };
     }
-    // Opt-in w4a8 on WASM, on the same terms as lite: one self-contained file
-    // (int4 weights, int8 activations in-kernel), no sidecar and no shards, so
-    // shipping it is the only condition. Same deliberate fall-through to the pin
-    // when the repo lacks it.
-    if (decoderHonoured && encoderQuant === 'w4a8' && hasEncoderFor(repoFiles, 'w4a8')) {
+    // Opt-in MatMulNBits builds (w4a8, w2a8) on WASM, on the same terms as lite:
+    // one self-contained file (int4 or 2-bit weights, int8 activations
+    // in-kernel), no sidecar and no shards, so shipping it is the only condition.
+    // Same deliberate fall-through to the pin when the repo lacks it.
+    if (decoderHonoured && isNbitsEncoder(encoderQuant) && hasEncoderFor(repoFiles, encoderQuant)) {
       return {
-        encoderQ: 'w4a8',
+        encoderQ: encoderQuant,
         decoderQ: 'int8',
         pinnedToInt8: false,
       };
@@ -1577,7 +1580,8 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
       pinnedToInt8: encoderQuant !== 'int8' || decoderQuant !== 'int8',
     };
   }
-  // fp32 is the GPU path's DEFAULT encoder precision. fp16 and w4a8 are opt-in
+  // fp32 is the GPU path's DEFAULT encoder precision. fp16 and the MatMulNBits
+  // builds (w4a8, w2a8; "w4a8" below stands for both) are opt-in
   // alternatives to it, each with its own condition. An int8 request on WebGPU becomes
   // fp32 (there is no GPU int8 encoder kernel either, for the lite build as much
   // as the default), and the decoder is always int8: it is as accurate as fp32 on
@@ -1597,7 +1601,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   // which is exactly the silent quant swap the rest of this module refuses to do.
   // The flag routes it through the /models upgrade probe and then
   // QuantUnavailableError, the same path the WASM pin takes.
-  const w4a8Servable = encoderQuant === 'w4a8' && hasEncoderFor(repoFiles, 'w4a8');
+  const nbitsServable = isNbitsEncoder(encoderQuant) && hasEncoderFor(repoFiles, encoderQuant);
   // fp16 needs BOTH conditions, and they fail for different reasons that the
   // caller has to be able to tell apart:
   //   - the adapter must expose `shader-f16`. Without it ORT still BUILDS the
@@ -1615,7 +1619,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   const fp16NeedsFile = encoderQuant === 'fp16' && !hasEncoderFor(repoFiles, 'fp16');
   const fp16Servable = encoderQuant === 'fp16' && !fp16NeedsF16Adapter && !fp16NeedsFile;
   const encoderQ = isInt8Encoder(encoderQuant)
-    || (encoderQuant === 'w4a8' && !w4a8Servable)
+    || (isNbitsEncoder(encoderQuant) && !nbitsServable)
     || (encoderQuant === 'fp16' && !fp16Servable)
     ? 'fp32'
     : encoderQuant;
@@ -1634,7 +1638,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     decoderQ,
     pinnedToInt8: false,
     webgpuFp32NeedsShards,
-    w4a8NeedsFile: encoderQuant === 'w4a8' && !w4a8Servable,
+    nbitsNeedsFile: isNbitsEncoder(encoderQuant) && !nbitsServable,
     fp16NeedsFile,
     fp16NeedsF16Adapter,
   };
@@ -1658,7 +1662,7 @@ export function quantSatisfiable(args) {
   // upgrade probe then finds the local mirror equally unable and the caller
   // throws, which is what keeps a 1.2 GB choice from silently becoming a
   // 2.35 GB download.
-  return !r.pinnedToInt8 && !r.webgpuFp32NeedsShards && !r.w4a8NeedsFile
+  return !r.pinnedToInt8 && !r.webgpuFp32NeedsShards && !r.nbitsNeedsFile
     && !r.fp16NeedsFile && !r.fp16NeedsF16Adapter;
 }
 
@@ -1759,7 +1763,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     : await listRepoFiles(repoId, effectiveRevision);
 
   // Resolve the effective quantisation per backend and per availability.
-  let { encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile,
+  let { encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, nbitsNeedsFile,
         fp16NeedsFile, fp16NeedsF16Adapter } =
     resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16, allowWasmFp32 });
 
@@ -1771,7 +1775,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // path (no explicit localFallbackBaseUrl) and only when a probe target was
   // provided by the caller (localUpgradeBaseUrl).
   if (localUpgradeBaseUrl && !localFallbackBaseUrl
-      && (pinnedToInt8 || webgpuFp32NeedsShards || w4a8NeedsFile || fp16NeedsFile)) {
+      && (pinnedToInt8 || webgpuFp32NeedsShards || nbitsNeedsFile || fp16NeedsFile)) {
     // Resolve flat-vs-nested once so the listing and the later weight fetches
     // both target the layout the operator actually mounted. A refusal (null,
     // several repos on offer and only an unattributed flat tree here) must NOT
@@ -1788,7 +1792,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
         + `the local mirror at ${resolvedUpgrade} can, switching the load to it`);
       effectiveLocalBase = resolvedUpgrade;
       repoFiles = localFiles;
-      ({ encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, w4a8NeedsFile,
+      ({ encoderQ, decoderQ, pinnedToInt8, webgpuFp32NeedsShards, nbitsNeedsFile,
          fp16NeedsFile, fp16NeedsF16Adapter } =
         resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16, allowWasmFp32 }));
     }
@@ -1808,8 +1812,8 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
       ? `the lite int8 encoder (encoder-model${QUANT_SUFFIX.int8lite}, built by `
         + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
-      : encoderQuant === 'w4a8'
-      ? `the w4a8 encoder (encoder-model${QUANT_SUFFIX.w4a8}, built by scripts/quantize-nbits.py), `
+      : isNbitsEncoder(encoderQuant)
+      ? `the ${encoderQuant} encoder (encoder-model${QUANT_SUFFIX[encoderQuant]}, built by scripts/quantize-nbits.py), `
         + `which neither HuggingFace nor the local /models mirror ships. Host it or pick int8.`
       : `the <2 GB fp32 shards (encoder-model.onnx.data.NNN from `
         + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), `
@@ -1821,8 +1825,8 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
           + `${backend} backend from any available source. It needs ${missing}`,
     });
   }
-  if (w4a8NeedsFile) {
-    // w4a8 was picked on WebGPU and NO source we tried ships the encoder. The
+  if (nbitsNeedsFile) {
+    // w4a8 (or w2a8) was picked on WebGPU and NO source we tried ships the encoder. The
     // resolution above already fell back to fp32 so the rest of this function
     // has a loadable graph, but serving that silently would be a 2.35 GB
     // download in place of the 610 MB the user chose, and unlike int8 (greyed
@@ -1831,9 +1835,9 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     throw new QuantUnavailableError({
       backend,
       requested: { encoder: encoderQuant, decoder: decoderQuant },
-      message: `Requested encoder=w4a8 cannot run on the ${backend} backend from any `
+      message: `Requested encoder=${encoderQuant} cannot run on the ${backend} backend from any `
         + `available source: neither HuggingFace nor the local /models mirror ships `
-        + `encoder-model${QUANT_SUFFIX.w4a8} (built by scripts/quantize-nbits.py). `
+        + `encoder-model${QUANT_SUFFIX[encoderQuant]} (built by scripts/quantize-nbits.py). `
         + `Host it, or pick fp32.`,
     });
   }
