@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["onnx>=1.16", "onnxruntime>=1.20", "onnx_ir"]
+# dependencies = ["onnx>=1.16", "onnxruntime>=1.20", "onnx_ir", "numpy"]
 # ///
 """Rewrite every eligible MatMul of an encoder into MatMulNBits: block-wise
 weights (--block-size, symmetric) with accuracy_level=4, so the kernel dynamically
@@ -17,7 +17,17 @@ calibration set to go stale and no long-audio drift from a mismatched range.
 Attention's activation-times-activation MatMuls have no constant weight and stay
 fp32, as do the convolutions and LayerNorms.
 
-Usage: quantize-nbits.py <src.onnx> <dst.onnx> [--bits {4,8}]
+--ternary is for an encoder whose weights are ALREADY ternary per block, i.e.
+parakeet-redux after hf-to-nemo.py expanded it: every block of --block-size
+weights along K is {-a, 0, +a}. Rounding those through the RTN quantizer is not
+exact (its symmetric grid does not put +a and -a on codes), so ORT still builds
+the graph but the packed weights and scales are overwritten with the exact
+encoding, code = sign + default zero point, scale = a, which any width from 2
+bits up represents losslessly. A MatMul whose weight is not ternary (the
+subsampling projection) is left fp32 rather than rounded, and the result is
+checked by dequantizing every packed tensor back against its source.
+
+Usage: quantize-nbits.py <src.onnx> <dst.onnx> [--bits {2,4,8}] [--ternary]
 Verify the result with check-nbits.py before shipping it. Written with Claude Code.
 """
 import argparse
@@ -26,7 +36,9 @@ import time
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import onnx
+from onnx import numpy_helper
 
 try:  # ORT >= ~1.22 renamed the module and generalized the class
     from onnxruntime.quantization.matmul_nbits_quantizer import MatMulNBitsQuantizer as Quantizer
@@ -55,6 +67,9 @@ ap.add_argument("--block-size", type=int, default=32,
                      "72.5 MB of scales at 32 and 38.8 MB at 64, for identical packed weights. "
                      "Larger blocks shrink the file and the resident footprint at some accuracy "
                      "cost. Must be a power of two >= 16 for ORT's kernels.")
+ap.add_argument("--ternary", action="store_true",
+                help="pack already-ternary weights exactly instead of rounding them; non-ternary "
+                     "MatMuls stay fp32 (see the module docstring)")
 args = ap.parse_args()
 
 if args.block_size < 16 or args.block_size & (args.block_size - 1):
@@ -66,14 +81,85 @@ t0 = time.time()
 model = onnx.load(str(src))
 before = Counter(n.op_type for n in model.graph.node)
 
+
+
+def ternary_blocks(w, block):
+    """[K, N] weight -> (signs int8 [N, K], scale [N, K/block]) when every block of
+    `block` rows in every column is {-a, 0, +a}; None otherwise."""
+    k, n = w.shape
+    if k % block:
+        return None
+    b = w.T.reshape(n, k // block, block)
+    scale = np.abs(b).max(axis=2)
+    if not np.array_equal(np.abs(b), (b != 0) * scale[..., None]):
+        return None
+    return np.sign(b).astype(np.int8).reshape(n, k), scale.astype(np.float32)
+
+
+def pack(signs, bits, block):
+    """Signs [N, K] -> MatMulNBits B [N, K/block, block*bits/8], element i of a
+    block in bits (i % per) of byte (i // per), lowest first, around the default
+    zero point 2^(bits-1) that a symmetric node without zero_points implies."""
+    n, k = signs.shape
+    per = 8 // bits
+    q = (signs.astype(np.int16) + (1 << (bits - 1))).astype(np.uint8).reshape(n, k // block, block // per, per)
+    out = np.zeros(q.shape[:3], np.uint8)
+    for i in range(per):
+        out |= q[..., i] << (bits * i)
+    return out
+
+
+ternary, exclude = {}, []
+if args.ternary:
+    inits = {t.name: t for t in model.graph.initializer}
+    for node in model.graph.node:
+        if node.op_type != "MatMul" or node.input[1] not in inits:
+            continue
+        w = numpy_helper.to_array(inits[node.input[1]])
+        hit = ternary_blocks(w, args.block_size) if w.ndim == 2 else None
+        if hit is None:
+            exclude.append(node.name)
+        else:
+            ternary[node.input[1]] = hit
+    print(f"ternary: {len(ternary)} MatMul weights pack exactly, {len(exclude)} stay fp32: {exclude}", flush=True)
+
 kwargs = dict(block_size=args.block_size, is_symmetric=True, accuracy_level=4)
 if "bits" in inspect.signature(Quantizer.__init__).parameters:
     kwargs["bits"] = args.bits
 elif args.bits != 4:
     raise SystemExit(f"{Quantizer.__name__} in this onnxruntime is 4-bit only; --bits {args.bits} unavailable")
 print(f"using {Quantizer.__name__} kwargs={kwargs}", flush=True)
+if exclude:
+    kwargs["nodes_to_exclude"] = exclude
 q = Quantizer(model, **kwargs)
 q.process()
+if ternary:
+    done = 0
+    for init in q.model.model.graph.initializer:
+        for suffix, is_b in ((f"_Q{args.bits}", True), ("_scales", False)):
+            src = init.name[: -len(suffix)] if init.name.endswith(suffix) else None
+            if src not in ternary:
+                continue
+            signs, scale = ternary[src]
+            new = pack(signs, args.bits, args.block_size) if is_b else scale.reshape(numpy_helper.to_array(init).shape)
+            old = numpy_helper.to_array(init)
+            assert old.shape == new.shape and old.dtype == new.dtype, (init.name, old.shape, new.shape)
+            init.CopyFrom(numpy_helper.from_array(new, init.name))
+            done += is_b
+    if done != len(ternary):
+        raise SystemExit(f"ternary: rewrote {done} packed weights, expected {len(ternary)}")
+    # Decode what was written, independently of how it was written, and compare
+    # to the source weights: exactness is the whole point of this mode.
+    got = {t.name: numpy_helper.to_array(t) for t in q.model.model.graph.initializer}
+    per, zp = 8 // args.bits, 1 << (args.bits - 1)
+    for src, (signs, scale) in ternary.items():
+        blob = got[f"{src}_Q{args.bits}"]
+        codes = np.stack([(blob >> (args.bits * i)) & ((1 << args.bits) - 1) for i in range(per)], -1)
+        dq = (codes.reshape(signs.shape).astype(np.float32) - zp) * np.repeat(got[f"{src}_scales"].reshape(scale.shape), args.block_size, 1)
+        ref = np.sign(signs) * np.repeat(scale, args.block_size, 1)
+        if not np.array_equal(dq, ref):
+            raise SystemExit(f"ternary: {src} does not decode back exactly")
+    print(f"ternary: {done} weights packed and verified bit-exact", flush=True)
 q.model.save_model_to_file(str(dst), use_external_data_format=True)
 
 data = dst.parent / (dst.name + ".data")
