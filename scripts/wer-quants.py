@@ -78,6 +78,7 @@ and a flat one with the fp32 shards in sharded/ are both still accepted, and
 vocab.txt is always at the root:
   int8 -> int8/encoder-model.int8.onnx + int8/decoder_joint-model.int8.onnx
   w4a8 -> w4a8/encoder-model.w4a8.onnx
+  w2a8 -> w2a8/encoder-model.w2a8.onnx  (ternary models only, e.g. parakeet-redux)
   fp16 -> fp16/encoder-model.fp16.onnx + fp16/decoder_joint-model.fp16.onnx
   fp32 -> fp32/encoder-model.onnx (+ .data)  + fp32/decoder_joint-model.onnx
 
@@ -157,9 +158,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # quant label -> onnx-asr `quantization` argument (None == fp32, the plain files)
 # Encoder quant name -> onnx-asr `quantization=` suffix (None = the unsuffixed fp32
 # file). onnx-asr resolves `encoder-model.<suffix>.onnx`, so `w4a8` picks up the
-# MatMulNBits 4-bit encoder written by scripts/quantize-nbits.py. No decoder ships
+# MatMulNBits 4-bit encoder written by scripts/quantize-nbits.py (`w2a8` the 2-bit one). No decoder ships
 # at that width: mixed_model_files() below always pairs it with --decoder-quant.
-QUANT_ARG = {"int8": "int8", "w4a8": "w4a8", "fp16": "fp16", "fp32": None}
+QUANT_ARG = {"int8": "int8", "w4a8": "w4a8", "w2a8": "w2a8", "fp16": "fp16", "fp32": None}
 
 # --- model-dir layout ------------------------------------------------------
 #
@@ -178,6 +179,7 @@ _QUANT_DIRS = (
     (".int8.lite.onnx", "int8-lite/"),
     (".int8.onnx", "int8/"),
     (".w4a8.onnx", "w4a8/"),
+    (".w2a8.onnx", "w2a8/"),
     (".fp16.onnx", "fp16/"),
 )
 # The unsuffixed fp32 graphs, matched by exact name so that root-level ONNX files
@@ -793,7 +795,7 @@ def corpus_cer(refs, hyps, normalize=True):
 
 
 def parse_args(argv):
-    p = argparse.ArgumentParser(description="WER + timing + RAM + per-section WER across int8/w4a8/fp16/fp32.")
+    p = argparse.ArgumentParser(description="WER + timing + RAM + per-section WER across int8/w4a8/w2a8/fp16/fp32.")
     p.add_argument("--audio", default=str(DEFAULT_AUDIO))
     p.add_argument(
         "--reference", default=None,

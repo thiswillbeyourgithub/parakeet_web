@@ -226,6 +226,13 @@ def T13_w4a8_is_a_known_encoder_quant():
     assert wq.QUANT_ARG["fp32"] is None
 
 
+def T13b_w2a8_is_a_known_encoder_quant_in_its_own_folder():
+    # The 2-bit build a ternary model (parakeet-redux) ships. Without both entries,
+    # --quants w2a8 exits as "unknown quant" or looks for the file at the root.
+    assert wq.QUANT_ARG["w2a8"] == "w2a8", wq.QUANT_ARG
+    assert wq.layout_dir_for("encoder-model.w2a8.onnx") == "w2a8/"
+
+
 def _make_model_dir(root, files):
     """Create empty placeholder weights at the given relative paths."""
     for rel in files:
