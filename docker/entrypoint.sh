@@ -327,7 +327,7 @@ else
   # This looks for ONE marker, vocab.txt, because that is the one file the model
   # repo keeps at its root in every layout the app supports (see
   # app/src/modelLayout.js: weights may sit in fp32/, int8/, int8-lite/, w4a8/,
-  # fp16/, or flat, but vocab.txt never moves). The mount may also be a parent of
+  # w2a8/, fp16/, or flat, but vocab.txt never moves). The mount may also be a parent of
   # one or more HuggingFace-style repo folders (files under <repoId>/, e.g. what
   # `hf download` leaves); when only that is present, descend into it so Caddy
   # (/models/*), the boost prebuild, and the app's probes all see the repo root.

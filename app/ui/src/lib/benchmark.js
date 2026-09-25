@@ -56,7 +56,7 @@ export const HEAVY_DOWNLOAD_MB = 1500;
 // under the heavy line, but it only exists on WebGPU, so pre-checking it would
 // silently add a 1.2 GB download to the default run of every visitor whose GPU
 // happens to report shader-f16.
-export const OPT_IN_QUANTS = new Set(['int8lite', 'w4a8', 'fp16']);
+export const OPT_IN_QUANTS = new Set(['int8lite', 'w4a8', 'w2a8', 'fp16']);
 
 function comboId(backend, quant) {
   return `${backend}:${quant}`;
@@ -102,6 +102,9 @@ export function planBenchmark({
     // activations in-kernel): a quarter of fp32's download for the same accuracy,
     // bought with slower inference, which is again a per-machine question.
     { backend: 'wasm', quant: 'w4a8' },
+    // w2a8 only exists for a ternary model (parakeet-redux); servableQuants
+    // drops it everywhere else, so it costs no row on an ordinary repo.
+    { backend: 'wasm', quant: 'w2a8' },
     { backend: 'wasm', quant: 'fp32' },
   ];
   if (webgpuAvailable && !webgpuDisabled) {
@@ -110,6 +113,7 @@ export function planBenchmark({
     // the shader (so the GPU win is download and VRAM, not arithmetic).
     combos.push({ backend: 'webgpu-hybrid', quant: 'fp32' });
     combos.push({ backend: 'webgpu-hybrid', quant: 'w4a8' });
+    combos.push({ backend: 'webgpu-hybrid', quant: 'w2a8' });
     // fp16 is the third, and only on an adapter that reports shader-f16:
     // without that feature ORT builds the session and then returns an empty
     // transcript, so benchmarking it there would measure nothing and report a

@@ -9,7 +9,7 @@
 //     makes on its own is the whole-backend flip to WASM int8 (see
 //     loadFailure.js), so an fp16 request this machine or this source cannot
 //     honour is SENT as fp16, refused by hub.js, and caught there.
-//   - `int8lite` and `w4a8` are passed straight through rather than collapsed
+//   - `int8lite`, `w4a8` and `w2a8` are passed straight through rather than collapsed
 //     to `int8`, so hub.js can tell "the user hand-picked that build and this
 //     repo ships none" (which raises the quantUnavailable banner) apart from
 //     "the user is on the default". That distinction IS the no-silent-downgrade
@@ -25,7 +25,7 @@
 // asserted without downloading a real model.
 
 /** WASM encoder builds requested verbatim; anything else falls back to int8. */
-const WASM_PASSTHROUGH_QUANTS = new Set(['int8lite', 'w4a8']);
+const WASM_PASSTHROUGH_QUANTS = new Set(['int8lite', 'w4a8', 'w2a8']);
 
 /**
  * Resolve the options object handed to `getParakeetModel`, minus the two things
