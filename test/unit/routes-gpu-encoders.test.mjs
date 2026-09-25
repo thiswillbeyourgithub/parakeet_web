@@ -64,6 +64,7 @@ const MANIFEST = [
   'fp32/encoder-model.onnx.data.001',
   'sharded/encoder-model.onnx.data.000',
   'w4a8/encoder-model.w4a8.onnx',
+  'w2a8/encoder-model.w2a8.onnx',
   'fp16/encoder-model.fp16.onnx',
 ];
 
@@ -75,6 +76,7 @@ describe('routeLocalMirrorWithoutGpuEncoders', () => {
       'fp32/encoder-model.onnx.data.000',
       'sharded/encoder-model.onnx.data.000',
       'w4a8/encoder-model.w4a8.onnx',
+      'w2a8/encoder-model.w2a8.onnx',
       'fp16/encoder-model.fp16.onnx',
     ]) {
       assert.equal((await call(`${ORIGIN}/models/repo/${path}`)).status, 404, path);

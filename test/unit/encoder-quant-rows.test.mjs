@@ -43,6 +43,7 @@ const LABEL_KEY = {
   int8lite: 'precisionInt8Lite',
   int8: 'precisionInt8',
   w4a8: 'precisionW4a8',
+  w2a8: 'precisionW2a8',
   fp16: 'precisionFp16',
   fp32: 'precisionFp32',
 };

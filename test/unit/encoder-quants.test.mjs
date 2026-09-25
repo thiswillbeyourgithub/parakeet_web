@@ -98,8 +98,18 @@ describe('servableEncoderQuants: what a source can really deliver', () => {
     assert.deepEqual(got.wasm, ['int8', 'w4a8', 'fp32']);
   });
 
-  test('the full optimized repo serves every precision', () => {
+  test('the full optimized repo serves every precision but w2a8', () => {
+    // w2a8 is only exact for a ternary model (parakeet-redux), so the ordinary
+    // v3 repo does not ship it, and its absence must hide it, not grey it.
     const got = servableEncoderQuants({ repoFiles: listing('optimized'), shaderF16: true });
+    const notW2 = (q) => q !== 'w2a8';
+    assert.deepEqual(got.wasm, WASM_ENCODER_QUANTS.filter(notW2));
+    assert.deepEqual(got.webgpu, WEBGPU_ENCODER_QUANTS.filter(notW2));
+  });
+
+  test('a ternary repo that adds w2a8/ serves it on both backends', () => {
+    const repoFiles = [...listing('optimized'), 'w2a8/encoder-model.w2a8.onnx'];
+    const got = servableEncoderQuants({ repoFiles, shaderF16: true });
     assert.deepEqual(got.wasm, WASM_ENCODER_QUANTS);
     assert.deepEqual(got.webgpu, WEBGPU_ENCODER_QUANTS);
   });
@@ -260,7 +270,7 @@ describe('encoderQuantRows: what the sidebar actually renders', () => {
     // on an unanswered question is how a loadable precision becomes unreachable.
     for (const repoFiles of [null, []]) {
       const rows = encoderQuantRows({ backend: 'wasm', repoFiles });
-      assert.deepEqual(values(rows), ['int8lite', 'int8', 'w4a8', 'fp32']);
+      assert.deepEqual(values(rows), ['int8lite', 'int8', 'w4a8', 'w2a8', 'fp32']);
     }
   });
 

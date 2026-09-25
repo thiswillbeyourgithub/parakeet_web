@@ -256,6 +256,7 @@ export default function EngineSection({
           int8lite: () => t('precisionInt8Lite'),
           int8: () => t('precisionInt8'),
           w4a8: () => t('precisionW4a8'),
+    w2a8: () => t('precisionW2a8'),
           fp16: () => t('precisionFp16'),
           fp32: () => t('precisionFp32'),
         };

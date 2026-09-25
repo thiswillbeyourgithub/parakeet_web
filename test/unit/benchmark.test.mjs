@@ -31,10 +31,10 @@ import {
 } from '../../app/ui/src/lib/benchmark.js';
 
 describe('planBenchmark', () => {
-  test('a WASM-only device gets the four WASM rows and no GPU row', () => {
+  test('a WASM-only device gets the five WASM rows and no GPU row', () => {
     const plan = planBenchmark({ webgpuAvailable: false });
     // The default selection (int8) sorts last so it stays the cached model.
-    assert.deepEqual(plan.map(r => r.id), ['wasm:int8lite', 'wasm:w4a8', 'wasm:fp32', 'wasm:int8']);
+    assert.deepEqual(plan.map(r => r.id), ['wasm:int8lite', 'wasm:w4a8', 'wasm:w2a8', 'wasm:fp32', 'wasm:int8']);
     assert.ok(plan.every(r => r.backend === 'wasm'));
   });
 
@@ -71,9 +71,12 @@ describe('planBenchmark', () => {
     // Opt-in on the GPU row too, or a WebGPU visitor's default run would pull
     // 610 MB they never asked for.
     assert.equal(gpu.defaultSelected, false);
-    // The smallest download of the lot, which is the whole reason it exists.
+    // The smallest download an ordinary model ships, which is the whole reason
+    // it exists. Only w2a8 is smaller, and only a ternary model has one.
     assert.equal(QUANT_DOWNLOAD_MB.w4a8, 610);
-    assert.ok(Object.values(QUANT_DOWNLOAD_MB).every(mb => mb >= QUANT_DOWNLOAD_MB.w4a8));
+    const { w2a8, ...ordinary } = QUANT_DOWNLOAD_MB;
+    assert.ok(Object.values(ordinary).every(mb => mb >= QUANT_DOWNLOAD_MB.w4a8));
+    assert.ok(w2a8 < QUANT_DOWNLOAD_MB.w4a8);
   });
 
   test('a visitor already on WebGPU w4a8 gets that row checked and sorted last', () => {
@@ -118,11 +121,11 @@ describe('planBenchmark', () => {
     const off = planBenchmark({ webgpuAvailable: true, webgpuDisabled: true });
     assert.ok(off.every(r => r.backend === 'wasm'));
     const on = planBenchmark({ webgpuAvailable: true });
-    // fp32 and w4a8 are the precisions any WebGPU adapter can run (plain int8
-    // has no GPU kernel at all). fp16 needs one more thing, pinned below.
+    // fp32, w4a8 and w2a8 are the precisions any WebGPU adapter can run (plain
+    // int8 has no GPU kernel at all). fp16 needs one more thing, pinned below.
     assert.deepEqual(
       on.filter(r => r.backend === 'webgpu-hybrid').map(r => r.quant),
-      ['fp32', 'w4a8'],
+      ['fp32', 'w4a8', 'w2a8'],
     );
   });
 
@@ -210,7 +213,7 @@ describe('planBenchmark', () => {
     const plan = planBenchmark({});
     const all = estimatedDownloadMB(plan);
     assert.equal(all, QUANT_DOWNLOAD_MB.int8lite + QUANT_DOWNLOAD_MB.int8
-      + QUANT_DOWNLOAD_MB.w4a8 + QUANT_DOWNLOAD_MB.fp32);
+      + QUANT_DOWNLOAD_MB.w4a8 + QUANT_DOWNLOAD_MB.w2a8 + QUANT_DOWNLOAD_MB.fp32);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8']), all - QUANT_DOWNLOAD_MB.int8);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8lite']), all - QUANT_DOWNLOAD_MB.int8lite);
     assert.equal(estimatedDownloadMB(plan, ['wasm:w4a8']), all - QUANT_DOWNLOAD_MB.w4a8);

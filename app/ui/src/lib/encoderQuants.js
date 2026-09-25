@@ -38,17 +38,18 @@ import { quantSatisfiable } from '../../../src/hub.js';
 // order below documents which one that is rather than driving a search.
 //
 // WASM: int8 is the default; int8lite trades ~88 MB and ~164 MiB RSS for
-// slightly higher WER; w4a8 is the smallest by a wide margin; fp32 is opt-in and
+// slightly higher WER; w4a8 is the smallest by a wide margin (w2a8 smaller still,
+// but only a ternary model such as parakeet-redux ships it); fp32 is opt-in and
 // only loadable when the source ships the shard set (a single 2.4 GB sidecar
 // overflows both the 32-bit WASM heap and Chromium's blob wall).
-export const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'fp32'];
+export const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'w2a8', 'fp32'];
 // WebGPU: fp16 is the default (~1.2 GB, near-lossless, and a single file that
 // stays under every wall). fp32 and w4a8 are opt-in and are NEVER selected for
 // anyone: fp32 needs shards, like WASM, for Chromium's ~2 GB IndexedDB readback
 // wall rather than the 32-bit one, and w4a8's MatMulNBits dequantizes to fp16 in
 // the shader, so its win is download and VRAM, not arithmetic. int8 is absent on
 // purpose: there is no GPU int8 encoder kernel.
-export const WEBGPU_ENCODER_QUANTS = ['fp16', 'fp32', 'w4a8'];
+export const WEBGPU_ENCODER_QUANTS = ['fp16', 'fp32', 'w4a8', 'w2a8'];
 
 // What a visitor gets before they have ever picked anything, and what a
 // nonsense saved value is coerced back to.
@@ -72,6 +73,9 @@ export const QUANT_DOWNLOAD_MB = {
   int8lite: 810,
   int8: 900,
   w4a8: 610,
+  // Only a ternary model ships w2a8 (parakeet-redux, 2 bits pack its
+  // {-a, 0, +a} weights exactly); TODO measure on the published redux repo.
+  w2a8: 250,
   fp16: 1220,
   fp32: 2350,
 };
@@ -134,7 +138,7 @@ export function servableEncoderQuants({ repoFiles, shaderF16 = false } = {}) {
 // the two cannot drift: a value offered by one and missing from the other is
 // silently reset to int8 on the next reload, which is exactly how int8lite first
 // shipped without surviving a page load.
-export const ENCODER_QUANT_ROWS = ['w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
+export const ENCODER_QUANT_ROWS = ['w2a8', 'w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
 
 /**
  * The precision radios to render for a backend: which ones appear at all, and
@@ -211,7 +215,7 @@ export function encoderQuantRows({ backend, repoFiles = null, shaderF16 = false,
  *     manifest would make a perfectly loadable model unreachable.
  *
  * When the selection survives all three it is the answer, and that INCLUDES a
- * hand-picked fp32 or w4a8: those are deliberate choices and are honoured.
+ * hand-picked fp32, w4a8 or w2a8: those are deliberate choices and are honoured.
  *
  * When it does not, the only substitution allowed is the backend's own default
  * (owner rule, 2026-09-11). Nothing here may ever answer fp32 or w4a8, because
