@@ -84,11 +84,15 @@ export function launchWebGpuBrowser({ headless = false, channel = 'chromium' } =
 // shards and the diarization models), navigate, seed the settings DB, and
 // reload so the app picks the settings up. `settings` are the unprefixed keys
 // seedSettings understands (e.g. { backend, webgpuEncoderQuant, beamWidth }).
-export async function bootApp(page, { baseURL, settings = {}, ortep, modelSource = 'local' } = {}) {
+export async function bootApp(page, { baseURL, settings = {}, ortep, modelSource = 'local', modelRepo } = {}) {
   // modelSource is a CONFIG value the docker entrypoint writes into
   // window.__CONFIG__ (NOT a settings-DB key), so inject it the same way before
-  // any app script runs. With 'local', hub.js HEAD-probes /models.
-  await page.addInitScript((src) => { window.__CONFIG__ = { VITE_MODEL_SOURCE: src }; }, modelSource);
+  // any app script runs. With 'local', hub.js HEAD-probes /models. modelRepo
+  // (VITE_MODEL_REPO, optional) picks which repo under /models/<owner>/<name>
+  // is loaded; unset keeps the app's default repo.
+  await page.addInitScript(({ src, repo }) => {
+    window.__CONFIG__ = { VITE_MODEL_SOURCE: src, ...(repo ? { VITE_MODEL_REPO: repo } : {}) };
+  }, { src: modelSource, repo: modelRepo });
   // WebGPU is available app-wide now, so a seeded webgpu-hybrid backend is
   // honoured without any query parameter. `?webgpu=1` is kept on the webgpu
   // path purely as a no-op guard: if the app-wide pin ever came back (it

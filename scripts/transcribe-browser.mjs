@@ -42,6 +42,8 @@ import {
   ROOT, sleep, waitForServer, spawnAppServer, launchWebGpuBrowser,
   bootApp, loadModelAndWaitReady, probeRealWebGpu, seedSettings,
 } from './lib/browser-app.mjs';
+import { encoderQuantsFor } from '../app/ui/src/lib/encoderQuants.js';
+import { QUANT_SUFFIX } from '../app/src/hub.js';
 
 // The app's on-mount WebGPU probe (navigator.gpu.requestAdapter) resolves in
 // well under a second; give it a comfortable margin to settle so it never races
@@ -49,6 +51,28 @@ import {
 const WEBGPU_SETTLE_MS = 1500;
 
 const DIST = resolve(ROOT, 'app/ui/dist');
+
+// The encoder graph the model cache holds, from its IndexedDB keys, or null.
+// Keys read `hf-<repo>-<rev>-<subfolder>-<path>` (plus `meta-`/`partial-`
+// siblings and `-seg-N` prefix segments); only the graph's basename identifies
+// the precision, and the fp32 shards map back to their graph. hub.js logs
+// nothing for a local-mirror load, so the cache is the one record every source
+// leaves. Pure, exported for unit tests.
+export function encoderFileFromCacheKeys(keys) {
+  for (const key of keys) {
+    const m = /(?:^|[/-])(encoder-model(?:\.[a-z0-9]+)*?\.onnx)(?:\.data(?:\.\d+)?)?(?:-seg-\d+)?$/.exec(String(key));
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// Whether `file` is the encoder graph hub.js names for `quant`. The run is
+// refused when it is not: the app's fallbacks (a source that cannot serve the
+// precision, a probe-driven backend flip) load SOMETHING and transcribe happily,
+// so a transcript alone never proves which precision produced it.
+export function encoderFileMatches(file, quant) {
+  return file === `encoder-model${QUANT_SUFFIX[quant]}`;
+}
 
 // --- arg parsing (pure, exported for unit tests) --------------------------
 // Defaults are tuned to the high-quality WebGPU use case: fp32 encoder on the
@@ -59,7 +83,8 @@ export function parseArgs(argv) {
     audio: null,
     out: null,               // default derived from the audio basename
     backend: 'webgpu-hybrid', // the app's user-selectable WebGPU backend
-    quant: 'fp32',           // WebGPU encoder quant (fp32 needs no shader-f16)
+    quant: null,             // encoder quant; null = fp32 on WebGPU (no shader-f16 needed), int8 on WASM
+    modelRepo: null,         // VITE_MODEL_REPO to load from /models (null = the app default)
     beamWidth: 5,            // MAES beam width (1 = greedy)
     diarize: true,           // run speaker diarization
     numSpeakers: 2,          // forced speaker count (0 = auto-detect)
@@ -95,6 +120,7 @@ export function parseArgs(argv) {
       case '--channel': a.channel = val(flag); break;
       case '--port': a.port = parseInt(val(flag), 10); break;
       case '--model-dir': a.modelDir = val(flag); break;
+      case '--model-repo': a.modelRepo = val(flag); break;
       case '--timeout-min': a.timeoutMin = Number(val(flag)); break;
       case '--keep-open': a.keepOpen = true; break;
       default:
@@ -108,8 +134,12 @@ export function parseArgs(argv) {
   if (a.backend !== 'webgpu-hybrid' && a.backend !== 'wasm') {
     throw new Error(`--backend must be webgpu-hybrid or wasm (got ${a.backend})`);
   }
-  if (a.quant !== 'fp32' && a.quant !== 'int8') {
-    throw new Error(`--quant must be fp32 or int8 (got ${a.quant})`);
+  // Validated against the app's own per-backend list, so the harness accepts
+  // exactly the precisions the sidebar offers on that backend.
+  a.quant ??= a.backend === 'wasm' ? 'int8' : 'fp32';
+  const offered = encoderQuantsFor(a.backend);
+  if (!offered.includes(a.quant)) {
+    throw new Error(`--quant must be one of ${offered.join(', ')} on ${a.backend} (got ${a.quant})`);
   }
   if (!Number.isInteger(a.beamWidth) || a.beamWidth < 1 || a.beamWidth > 10) {
     throw new Error('--beam-width must be an integer in [1, 10] (the UI cap)');
@@ -184,14 +214,17 @@ Options:
       --ortep V           Pin the ORT distribution for this run: jsep (the escape
                           hatch to the older JS-implemented runtime) or jspi (the
                           default native C++ one). Applies to the workers too.
-      --quant Q           WebGPU encoder quant: fp32 (default) or int8. int8 has
-                          no GPU encoder kernel, so it resolves to fp32 anyway;
-                          it is accepted so a WASM run can be seeded the same way.
+      --quant Q           Encoder precision, any the sidebar offers on the backend
+                          (e.g. w2a8, w4a8, int8 on wasm; fp32, fp16, w4a8 on
+                          webgpu-hybrid). Default fp32 on WebGPU, int8 on WASM.
+                          The run fails if a different encoder file was loaded.
       --lang L            Seed the UI language (default en) so control text matches.
       --headless          Run headless (WebGPU is more reliable headed on a GPU box).
       --channel C         Browser build: chromium (default) or chrome.
       --port N            Static-server port. Default 4180.
       --model-dir DIR     Weights dir to serve at /models. Default ./fallback_models.
+      --model-repo R      Repo to load from /models/<R> (VITE_MODEL_REPO), e.g.
+                          Olicorne/parakeet-tdt-0.6b-v3-redux-onnx. Default: the app's.
       --timeout-min N     Overall transcription timeout, minutes. Default 120.
       --keep-open         Leave the browser open after finishing (for inspection).
   -h, --help              Show this help.
@@ -263,12 +296,12 @@ async function main() {
     // Boot the app on the requested backend/quant, beam width, and language.
     const settings = {
       backend: args.backend,
-      webgpuEncoderQuant: args.quant,
+      [args.backend.startsWith('webgpu') ? 'webgpuEncoderQuant' : 'wasmEncoderQuant']: args.quant,
       beamWidth: args.beamWidth,
       lang: args.lang,
     };
     const wantWebgpu = args.backend.startsWith('webgpu');
-    await bootApp(page, { baseURL, settings, ortep: args.ortep });
+    await bootApp(page, { baseURL, settings, ortep: args.ortep, modelRepo: args.modelRepo || undefined });
 
     // Let the app's OWN on-mount WebGPU probe (navigator.gpu.requestAdapter)
     // resolve BEFORE we touch WebGPU. This ordering matters: if our gate probe
@@ -324,7 +357,21 @@ async function main() {
       }
       console.error(`[transcribe-browser] app fell back to '${sessionMode}'; re-seeding webgpu backend and retrying ...`);
     }
-    console.error(`[transcribe-browser] session mode: ${sessionMode}`);
+    const encoderFile = encoderFileFromCacheKeys(await page.evaluate(() => new Promise((done) => {
+      const req = indexedDB.open('parakeet-cache-db');
+      req.onerror = () => done([]);
+      req.onsuccess = () => {
+        try {
+          const all = req.result.transaction('file-store').objectStore('file-store').getAllKeys();
+          all.onsuccess = () => done(all.result.map(String));
+          all.onerror = () => done([]);
+        } catch { done([]); }
+      };
+    })));
+    console.error(`[transcribe-browser] session mode: ${sessionMode}, encoder ${encoderFile}`);
+    if (!encoderFileMatches(encoderFile, args.quant)) {
+      throw new Error(`asked for ${args.quant} but the app loaded ${encoderFile ?? 'no encoder in its model cache'}`);
+    }
 
     // Upload the clip; the app transcribes an upload immediately.
     console.error(`[transcribe-browser] transcribing ${basename(audioPath)} (this can take a while) ...`);
