@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 
 import {
   parseArgs, defaultOutPath, turnsToMarkdown, buildMarkdown,
+  encoderFileFromCacheKeys, encoderFileMatches,
 } from '../../scripts/transcribe-browser.mjs';
 
 test('parseArgs: defaults match the high-quality WebGPU recipe', () => {
@@ -45,6 +46,36 @@ test('parseArgs: --help returns early without requiring an audio arg', () => {
   const a = parseArgs(['--help']);
   assert.equal(a.help, true);
   assert.equal(a.audio, null);
+});
+
+test('parseArgs: --quant follows the backend (default and allowed set)', () => {
+  assert.equal(parseArgs(['a.wav', '--backend', 'wasm']).quant, 'int8');
+  assert.equal(parseArgs(['a.wav', '--backend', 'wasm', '--quant', 'w2a8']).quant, 'w2a8');
+  assert.equal(parseArgs(['a.wav', '--quant', 'w4a8']).quant, 'w4a8');
+  // fp16 has no WASM kernel and int8 no GPU one: refused, not silently remapped.
+  assert.throws(() => parseArgs(['a.wav', '--backend', 'wasm', '--quant', 'fp16']), /--quant must be one of/);
+  assert.throws(() => parseArgs(['a.wav', '--quant', 'int8']), /--quant must be one of/);
+});
+
+test('parseArgs: --model-repo is passed through', () => {
+  const repo = 'Olicorne/parakeet-tdt-0.6b-v3-redux-onnx';
+  assert.equal(parseArgs(['a.wav', '--model-repo', repo]).modelRepo, repo);
+  assert.equal(parseArgs(['a.wav']).modelRepo, null);
+});
+
+test('encoderFileFromCacheKeys / encoderFileMatches: prove which precision loaded', () => {
+  const R = 'hf-Olicorne/parakeet-tdt-0.6b-v3-redux-onnx-main--';
+  assert.equal(encoderFileFromCacheKeys([`${R}vocab.txt`, `${R}w2a8/encoder-model.w2a8.onnx`]), 'encoder-model.w2a8.onnx');
+  assert.equal(encoderFileFromCacheKeys([`meta-${R}int8/encoder-model.int8.onnx`]), 'encoder-model.int8.onnx');
+  assert.equal(encoderFileFromCacheKeys([`partial-${R}fp32/encoder-model.onnx.data.000-seg-3`]), 'encoder-model.onnx');
+  assert.equal(encoderFileFromCacheKeys([`${R}int8-lite/encoder-model.int8.lite.onnx`]), 'encoder-model.int8.lite.onnx');
+  assert.equal(encoderFileFromCacheKeys([`${R}int8/decoder_joint-model.int8.onnx`, 'settings']), null);
+  assert.equal(encoderFileMatches('encoder-model.w2a8.onnx', 'w2a8'), true);
+  assert.equal(encoderFileMatches('encoder-model.onnx', 'fp32'), true);
+  assert.equal(encoderFileMatches('encoder-model.int8.lite.onnx', 'int8lite'), true);
+  // The silent fallback this guards against: w2a8 asked, int8 loaded.
+  assert.equal(encoderFileMatches('encoder-model.int8.onnx', 'w2a8'), false);
+  assert.equal(encoderFileMatches(null, 'int8'), false);
 });
 
 test('parseArgs: validation errors', () => {
