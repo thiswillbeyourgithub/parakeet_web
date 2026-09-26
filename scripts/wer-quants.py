@@ -165,44 +165,33 @@ QUANT_ARG = {"int8": "int8", "w4a8": "w4a8", "w2a8": "w2a8", "fp16": "fp16", "fp
 # --- model-dir layout ------------------------------------------------------
 #
 # A file's directory is a pure function of its basename; the basenames never
-# change. This is the SAME rule the web app uses in app/src/modelLayout.js, and
-# this block is its only Python copy: everything on this side that needs to know
-# where a weight lives goes through layout_dir_for/candidate_paths, so if the
-# rule ever changes there are exactly two places to edit, not one per consumer.
+# change. The rule itself is DATA in app/src/model-layout.json, the one copy the
+# web app (app/src/modelLayout.js) and the model repo's wer-fleurs-validation.sh
+# read too, so a new precision is one entry there. This block only implements the
+# lookup; everything on this side that needs to know where a weight lives goes
+# through layout_dir_for/candidate_paths.
 #
-# Two legacy layouts stay supported by the fallback order below, because they are
-# live in the wild: everything flat at the root (upstream istupakov, older
-# mirrors, an `hf download` of a pre-move revision), and flat plus a `sharded/`
-# folder holding the <2 GB fp32 shard set and its rewritten encoder graph.
-_QUANT_DIRS = (
-    # Longest suffix first: `.int8.lite.onnx` must not be read as `.int8.onnx`.
-    (".int8.lite.onnx", "int8-lite/"),
-    (".int8.onnx", "int8/"),
-    (".w4a8.onnx", "w4a8/"),
-    (".w2a8.onnx", "w2a8/"),
-    (".fp16.onnx", "fp16/"),
-)
-# The unsuffixed fp32 graphs, matched by exact name so that root-level ONNX files
-# which are not model weights (nemo128.onnx) stay at the root.
-_FP32_GRAPHS = {"encoder-model.onnx", "decoder_joint-model.onnx"}
-# External-data sidecars live with their graph: strip the sidecar suffix and
-# classify the graph, so encoder-model.onnx.data.007 lands in fp32/ too.
-_SIDECAR_RE = re.compile(r"\.data(\.\d+)?$")
+# Two legacy layouts stay supported by the fallback dirs, because they are live
+# in the wild: everything flat at the root (upstream istupakov, older mirrors, an
+# `hf download` of a pre-move revision), and flat plus a `sharded/` folder
+# holding the <2 GB fp32 shard set and its rewritten encoder graph.
+_LAYOUT = json.loads((Path(__file__).resolve().parent.parent / "app/src/model-layout.json").read_text())
+_SIDECAR_RE = re.compile(_LAYOUT["sidecarPattern"])
 
 
 def layout_dir_for(basename):
     """Directory a basename belongs in, as a prefix ('' for the repo root)."""
     graph = _SIDECAR_RE.sub("", basename)
-    for suffix, directory in _QUANT_DIRS:
+    for suffix, directory in _LAYOUT["quantDirs"]:
         if graph.endswith(suffix):
             return directory
-    return "fp32/" if graph in _FP32_GRAPHS else ""
+    return _LAYOUT["fp32Dir"] if graph in _LAYOUT["fp32Graphs"] else ""
 
 
 def candidate_paths(basename):
     """Every relative path a basename may sit at, in resolution order: its layout
-    directory, the flat root, then sharded/. Deduplicated."""
-    ordered = [layout_dir_for(basename) + basename, basename, "sharded/" + basename]
+    directory, then the fallback dirs (flat root, sharded/). Deduplicated."""
+    ordered = [d + basename for d in [layout_dir_for(basename), *_LAYOUT["fallbackDirs"]]]
     return list(dict.fromkeys(ordered))
 
 
