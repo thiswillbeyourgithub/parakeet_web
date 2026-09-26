@@ -141,6 +141,18 @@ describe('matchModelRepo', () => {
     assert.equal(matchModelRepo('optimized', withDecoy), BASE);
   });
 
+  test('the four-repo deployment: ultra, redux and ultimed each resolve, "ult" does not', () => {
+    // The reference deployment's list. 'ultra' and 'UltiMed' share the prefix
+    // 'ult', so the documented links only work because each is an exact label.
+    const ULTRA = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
+    const REDUX = 'Olicorne/parakeet-tdt-0.6b-v3-redux-onnx';
+    const four = [BASE, ULTIMED, ULTRA, REDUX];
+    assert.equal(matchModelRepo('ultra', four), ULTRA);
+    assert.equal(matchModelRepo('redux', four), REDUX);
+    assert.equal(matchModelRepo('ultimed', four), ULTIMED);
+    assert.equal(matchModelRepo('ult', four), null);
+  });
+
   test('an empty repo list matches nothing', () => {
     assert.equal(matchModelRepo('ultimed', []), null);
     assert.equal(matchModelRepo('ultimed', null), null);
