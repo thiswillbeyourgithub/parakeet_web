@@ -10,6 +10,18 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.4 (2026-09-17)
 
+### Two more models: parakeet-ultra and parakeet-redux
+
+The model picker can now offer ONNX exports of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) and [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), published as [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) and [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx), and the reference deployment lists them after the default model and UltiMed (`?model=ultra`, `?model=redux`). The default model is unchanged. Both were published only in the `transformers` format, so they are converted back to NeMo and then built exactly like the default model, every precision included. On a 25-language FLEURS subset (20 clips per language, greedy decoding, int8 encoder, measured on the processor path), the macro WER was 12.38 % for the default model, 10.71 % for Ultra and 11.55 % for Redux. The full-dataset and long-audio benchmarks were still running when this was written.
+
+Written with Claude Code.
+
+### A 2-bit encoder for models whose weights are ternary
+
+Redux's encoder weights are ternary: every weight in a block of 128 is -a, 0 or +a. Two bits hold that exactly, so a new **w2a8** precision packs it with no loss at all, and its encoder is 190 MB against 643 MB for int8. On the same FLEURS subset it measured 11.68 % macro WER against 11.55 % for Redux int8. It runs on both the processor and the graphics-card path, and like every precision it is offered only where the model source actually hosts the file, so it appears for Redux and nowhere else.
+
+Written with Claude Code.
+
 ### The transcription engine moved to ONNX Runtime 1.30
 
 The vendored ONNX Runtime Web engine (the runtime every transcription goes through, on both the processor and the graphics-card path) moved from 1.29.0 to 1.30.0, the newest stable release on npm. This is maintenance rather than speed: an interleaved in-browser A/B of 1.30 against 1.29 on this project's benchmark clip had already measured the two within noise of each other on both paths, and 1.30's headline graphics-card work is a set of matrix kernels written in half precision, which a card has to advertise support for before they can run at all. The set of files a visitor downloads, and the integrity check they are verified against on arrival, are unchanged.
