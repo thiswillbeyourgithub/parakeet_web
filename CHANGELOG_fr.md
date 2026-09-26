@@ -10,6 +10,18 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.4 (2026-09-17)
 
+### Deux modèles de plus : parakeet-ultra et parakeet-redux
+
+Le sélecteur de modèle peut désormais proposer des exports ONNX de [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) et de [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), publiés sous [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) et [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx), et le déploiement de référence les liste après le modèle par défaut et UltiMed (`?model=ultra`, `?model=redux`). Le modèle par défaut ne change pas. Tous deux n'étaient publiés qu'au format `transformers` : ils sont donc reconvertis en NeMo puis construits exactement comme le modèle par défaut, toutes précisions comprises. Sur un sous-ensemble FLEURS de 25 langues (20 extraits par langue, décodage glouton, encodeur int8, mesuré sur la voie processeur), le WER macro vaut 12,38 % pour le modèle par défaut, 10,71 % pour Ultra et 11,55 % pour Redux. Les mesures sur le jeu complet et sur l'audio long étaient encore en cours au moment de la rédaction.
+
+Rédigé avec Claude Code.
+
+### Un encodeur sur 2 bits pour les modèles à poids ternaires
+
+Les poids de l'encodeur de Redux sont ternaires : dans chaque bloc de 128, chaque poids vaut -a, 0 ou +a. Deux bits suffisent à les représenter exactement, donc une nouvelle précision **w2a8** les encode sans aucune perte, et son encodeur pèse 190 Mo contre 643 Mo pour int8. Sur le même sous-ensemble FLEURS, elle mesure 11,68 % de WER macro contre 11,55 % pour Redux en int8. Elle fonctionne sur la voie processeur comme sur la voie carte graphique, et comme toute précision elle n'est proposée que là où la source de modèles héberge réellement le fichier : elle apparaît donc pour Redux et nulle part ailleurs.
+
+Rédigé avec Claude Code.
+
 ### Le moteur de transcription passe à ONNX Runtime 1.30
 
 Le moteur ONNX Runtime Web embarqué (le runtime par lequel passe chaque transcription, aussi bien sur le processeur que sur la carte graphique) passe de 1.29.0 à 1.30.0, la version stable la plus récente publiée sur npm. C'est de l'entretien plutôt que de la vitesse : un A/B entrelacé de 1.30 contre 1.29 dans le navigateur, sur le clip de référence du projet, les avait déjà mesurées indistinguables au bruit près sur les deux chemins, et la nouveauté mise en avant par 1.30 côté carte graphique est un jeu de noyaux matriciels écrits en demi-précision, qu'une carte doit déclarer prendre en charge avant qu'ils puissent seulement s'exécuter. L'ensemble des fichiers téléchargés par un visiteur, et le contrôle d'intégrité auquel ils sont soumis à l'arrivée, ne changent pas.
