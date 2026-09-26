@@ -1,6 +1,7 @@
 /**
- * The ONE place that knows how the Parakeet ONNX model repos lay their files
- * out. Imported by browser code (hub.js) and by the node scripts (transcribe,
+ * The JS implementation of how the Parakeet ONNX model repos lay their files
+ * out (the rule itself is data, in model-layout.json, shared with the Python
+ * and bash tooling). Imported by browser code (hub.js) and by the node scripts (transcribe,
  * fetch-e2e-models, the e2e static server), so no consumer ever hard-codes a
  * directory again. Pure, dependency-free ESM: no fs, no fetch, no DOM.
  *
@@ -36,26 +37,21 @@
  * Built with Claude Code.
  */
 
+// The layout rule itself (which suffix goes in which directory, the fp32 graph
+// names, the sidecar pattern, the legacy fallback dirs) lives in
+// model-layout.json, the ONE copy shared with scripts/wer-quants.py and the
+// model repo's wer-fleurs-validation.sh. This module only implements the
+// lookup. quantDirs is kept longest-suffix-first there: `.int8.lite.onnx` must
+// be tested before `.int8.onnx`, or the lite build would land in `int8/`.
+import LAYOUT from './model-layout.json' with { type: 'json' };
+
 /** Directory every layout can place a file in, in resolution order. */
 const ROOT_DIR = '';
-const SHARDED_DIR = 'sharded/';
-
-// Graph-name suffix -> directory. Order matters: `.int8.lite.onnx` must be
-// tested before `.int8.onnx` would be, and it is the longer match, so keeping
-// the list longest-suffix-first is what makes the lite build land in
-// `int8-lite/` rather than `int8/`.
-const QUANT_DIRS = [
-  ['.int8.lite.onnx', 'int8-lite/'],
-  ['.int8.onnx', 'int8/'],
-  ['.w4a8.onnx', 'w4a8/'],
-  ['.w2a8.onnx', 'w2a8/'],
-  ['.fp16.onnx', 'fp16/'],
-];
-
-// The unsuffixed fp32 graphs. Matched by exact name rather than by "ends with
-// .onnx and has no quant suffix", so root-level ONNX files that are not model
-// weights (nemo128.onnx, the mel preprocessor) stay at the root.
-const FP32_GRAPHS = new Set(['encoder-model.onnx', 'decoder_joint-model.onnx']);
+const QUANT_DIRS = LAYOUT.quantDirs;
+// Matched by exact name rather than by "ends with .onnx and has no quant
+// suffix", so root-level ONNX files that are not model weights (nemo128.onnx,
+// the mel preprocessor) stay at the root.
+const FP32_GRAPHS = new Set(LAYOUT.fp32Graphs);
 
 // Quant name -> the graph basenames that quant is served by. This is the one
 // place the CLI stack learns which quants exist and what each is called; both
@@ -126,7 +122,7 @@ export const NBITS_ENCODER_QUANTS = ['w4a8', 'w2a8'];
 // External-data sidecars live with their graph, so strip the sidecar suffix and
 // classify the graph: `encoder-model.onnx.data.007` -> `encoder-model.onnx` ->
 // `fp32/`. One rule instead of one entry per sidecar shape.
-const SIDECAR_RE = /\.data(\.\d+)?$/;
+const SIDECAR_RE = new RegExp(LAYOUT.sidecarPattern);
 
 /**
  * The directory a file belongs in under the v2 layout, as a prefix ready to
@@ -141,7 +137,7 @@ export function layoutDirFor(basename) {
   for (const [suffix, dir] of QUANT_DIRS) {
     if (graph.endsWith(suffix)) return dir;
   }
-  return FP32_GRAPHS.has(graph) ? 'fp32/' : ROOT_DIR;
+  return FP32_GRAPHS.has(graph) ? LAYOUT.fp32Dir : ROOT_DIR;
 }
 
 /**
@@ -154,7 +150,7 @@ export function layoutDirFor(basename) {
  * @returns {string[]} Ordered, unique repo-relative candidate paths.
  */
 export function candidatePaths(basename) {
-  const ordered = [layoutDirFor(basename) + basename, basename, SHARDED_DIR + basename];
+  const ordered = [layoutDirFor(basename), ...LAYOUT.fallbackDirs].map((dir) => dir + basename);
   return [...new Set(ordered)];
 }
 

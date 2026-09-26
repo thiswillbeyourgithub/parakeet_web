@@ -269,6 +269,21 @@ def T15_candidate_paths_order_is_layout_root_sharded():
     assert wq.candidate_paths("vocab.txt") == ["vocab.txt", "sharded/vocab.txt"]
 
 
+def T15b_candidate_paths_match_the_js_implementation():
+    # Both sides read the rule from app/src/model-layout.json, but each has its
+    # own few-line lookup: ask modelLayout.js for the same basenames and compare,
+    # so the two lookups cannot drift apart silently.
+    import subprocess
+    names = ["encoder-model.int8.onnx", "encoder-model.int8.lite.onnx", "encoder-model.w2a8.onnx",
+             "encoder-model.onnx.data.007", "decoder_joint-model.onnx.data", "encoder-model.fp16.onnx",
+             "nemo128.onnx", "vocab.txt"]
+    layout_js = (Path(__file__).resolve().parent.parent / "app/src/modelLayout.js").as_uri()
+    js = (f"import('{layout_js}').then(m => console.log(JSON.stringify("
+          f"{json.dumps(names)}.map(n => m.candidatePaths(n)))))")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == [wq.candidate_paths(n) for n in names], out
+
+
 def T16_relocate_finds_the_nested_layout():
     # The layout the model repos ship: one directory per precision.
     with tempfile.TemporaryDirectory() as d:
