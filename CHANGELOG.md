@@ -36,6 +36,12 @@ This only ever happened on the way to a load that was being refused anyway, so n
 
 Written with Claude Code.
 
+### The download progress bar no longer jumps back and forth
+
+On a machine with a graphics card, clicking Load model first runs a short speed test to pick between the processor and the graphics card. That test takes a few seconds, and during it the Load model button stayed on screen and clickable. A second click in that window started a load at once, and the speed test started another one when it finished, so the same model was downloaded twice in parallel. Both downloads reported to the one progress bar, which kept jumping between their two percentages. A second click (or the Space/Enter shortcut) is now ignored while a load request is already under way, so the model is downloaded once.
+
+Written with Claude Code.
+
 ---
 
 ## 11.3.3 (2026-09-12)
