@@ -36,6 +36,12 @@ Cela n'arrivait que sur le chemin d'un chargement de toute façon refusé, donc 
 
 Rédigé avec Claude Code.
 
+### La barre de téléchargement ne fait plus de va-et-vient
+
+Sur une machine équipée d'une carte graphique, cliquer sur Charger le modèle lance d'abord un court test de vitesse pour choisir entre le processeur et la carte graphique. Ce test dure quelques secondes, et pendant ce temps le bouton Charger le modèle restait affiché et cliquable. Un second clic à ce moment lançait aussitôt un chargement, puis le test de vitesse en lançait un autre en se terminant : le même modèle était téléchargé deux fois en parallèle. Les deux téléchargements alimentaient la même barre de progression, qui sautait sans cesse entre leurs deux pourcentages. Un second clic (ou le raccourci Espace/Entrée) est désormais ignoré tant qu'une demande de chargement est en cours, et le modèle n'est téléchargé qu'une fois.
+
+Écrit avec Claude Code.
+
 ---
 
 ## 11.3.3 (2026-09-12)

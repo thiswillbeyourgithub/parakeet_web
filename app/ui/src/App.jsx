@@ -1768,7 +1768,9 @@ export default function App() {
           // Before a load has started: Space/Enter kick off model loading.
           if ((status === 'idle' || status === 'failed' || status === 'transcriptionFailed') && (key === ' ' || key === 'enter')) {
             e.preventDefault();
-            loadModel();
+            // Same entry point as the button, so a key press during the auto
+            // probe cannot start a second, concurrent load.
+            handleLoadModelClick();
             break;
           }
           // Once loading has begun (or the model is ready): R/Space start
@@ -4704,11 +4706,26 @@ export default function App() {
   }
 
   const [showLowRamConfirm, setShowLowRamConfirm] = useState(false);
+  // One load request at a time. The auto probe below runs for several seconds
+  // while `status` is still 'idle', so the Load button stays visible: a second
+  // click in that window used to start a load straight away, and the probe then
+  // started another one. Two downloads of the same file fed one progress bar,
+  // which jumped between their two percentages.
+  const loadRequestInFlightRef = useRef(false);
   const handleLoadModelClick = async (opts) => {
+    if (loadRequestInFlightRef.current) return;
     if (isLowRam) {
       setShowLowRamConfirm(true);
       return;
     }
+    loadRequestInFlightRef.current = true;
+    try {
+      await probeThenLoad(opts);
+    } finally {
+      loadRequestInFlightRef.current = false;
+    }
+  };
+  const probeThenLoad = async (opts) => {
     // Probe before the download starts, so the verdict can still choose which
     // weights to fetch. It stays out of the way of anyone who made their own
     // choice, and runs once per machine (see shouldAutoProbe).
@@ -4732,11 +4749,11 @@ export default function App() {
       if (verdict) {
         await applyProbeVerdict(verdict);
         // Call through the ref so the closure sees the backend just applied.
-        loadModelRef.current(opts);
+        await loadModelRef.current(opts);
         return;
       }
     }
-    loadModel(opts);
+    await loadModel(opts);
   };
   const confirmLowRamLoad = () => {
     setShowLowRamConfirm(false);
