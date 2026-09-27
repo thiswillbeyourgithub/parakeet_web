@@ -35,9 +35,16 @@ test('a file uploaded while the model is loading is queued and transcribed once 
   // holding it means the load stalls before a single byte has crossed the
   // network. That is a real state (and the app correctly still says "Loading
   // model" in it), but it is the wrong one for the download-phase assertion
-  // below. Holding vocab.txt instead lets the encoder and decoder stream in
-  // full first, so bytes have provably moved by the time we look.
-  await page.route('**/vocab.txt', async (route) => {
+  // below. Holding the decoder instead lets the encoder stream in full first,
+  // so bytes have provably moved by the time we look.
+  //
+  // Not vocab.txt, which this used to hold: on the local source the app fetches
+  // vocab.txt FIRST, as its mirror reachability check, before any weight. That
+  // was invisible while seeded specs silently loaded from HuggingFace (where
+  // vocab.txt came after the weights); once they really used the local mirror,
+  // holding it parked the load before a single byte, exactly the state the
+  // comment above rules out.
+  await page.route('**/decoder_joint-model.int8.onnx', async (route) => {
     await new Promise((r) => setTimeout(r, 15000));
     await route.continue();
   });
@@ -57,8 +64,8 @@ test('a file uploaded while the model is loading is queued and transcribed once 
   // Prove we really are mid-load, not already ready, when we hand over the file.
   await expect(page.locator('[data-umami-event="load_model_button"]')).toBeHidden();
   await expect(page.locator('body')).not.toContainText('✔');
-  // And that the status line names the phase it is actually in. The encoder and
-  // decoder have streamed by now, so anything still saying "Loading model"
+  // And that the status line names the phase it is actually in. The encoder
+  // has streamed by now, so anything still saying "Loading model"
   // would be the old conflation that made a multi-minute cold download
   // indistinguishable from a slow machine. The word only ever switches on a
   // real byte event, which is what keeps a cache-only load from claiming a
