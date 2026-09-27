@@ -38,7 +38,9 @@ test('a seeded non-default setting survives the first boot and the reload', asyn
     'seeded wasmEncoderQuant must not be clobbered by the first boot').toBe('fp32');
   // ...and the base config the seeder always writes came through too.
   expect(await readSetting(page, 'backend')).toBe('wasm');
-  expect(await readSetting(page, 'modelSource')).toBe('local');
+  // modelSource is operator config, not a setting: it reaches the app through
+  // window.__CONFIG__, and that is what it booted with.
+  expect(await page.evaluate(() => window.__CONFIG__?.VITE_MODEL_SOURCE)).toBe('local');
 
   // The app BOOTED on the seeded value, not merely stored it: the WASM
   // encoder-precision radio reflects fp32.
@@ -97,4 +99,45 @@ test('an unknown saved precision falls back to int8 rather than being restored',
   const fp16Radio = page.locator('input[name="encoderQuant"][value="fp16"]');
   await expect(fp16Radio,
     'fp16 has no WASM kernels, so this backend does not offer it at all').toHaveCount(0);
+});
+
+// Regression: the seeder wrote modelSource: 'local' to the settings DB long
+// after the app stopped reading it there (it is VITE_MODEL_SOURCE, operator
+// config), so every seeded spec actually loaded its weights from HuggingFace
+// and used the local mirror only as a fallback. Nothing failed until a network
+// change mid-download (ERR_NETWORK_CHANGED) failed an unrelated spec through its
+// console-error check. A seeded spec must load entirely from serve.mjs.
+test('a seeded spec loads its model without a single HuggingFace request', async ({ page }) => {
+  // Counted from the reload on: the first goto('/') necessarily boots on the
+  // build's default config (every spec seeds only after it), and its listing
+  // probes are not what this guards. The seeded boot is.
+  const hfRequests = [];
+  let seeded = false;
+  page.on('request', (r) => {
+    if (seeded && /huggingface\.co|hf\.co/.test(r.url())) hfRequests.push(r.url());
+  });
+  await page.goto('/');
+  await seedSettings(page);
+  seeded = true;
+  await page.reload();
+  await page.locator('[data-umami-event="load_model_button"]').click();
+  await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+  expect(hfRequests, 'requests that left for HuggingFace').toEqual([]);
+});
+
+test('a spec can opt back into the HuggingFace source, and its own __CONFIG__ wins', async ({ page }) => {
+  await page.goto('/');
+  await seedSettings(page, { modelSource: 'hf' });
+  await page.reload();
+  expect(await page.evaluate(() => window.__CONFIG__?.VITE_MODEL_SOURCE)).toBe('hf');
+  // No settings key is minted for it: it is config, and a stored copy is what
+  // hid this bug.
+  expect(await readSetting(page, 'modelSource')).toBeUndefined();
+
+  const page2 = await page.context().newPage();
+  await page2.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'both' }; });
+  await page2.goto('/');
+  await seedSettings(page2);
+  await page2.reload();
+  expect(await page2.evaluate(() => window.__CONFIG__?.VITE_MODEL_SOURCE)).toBe('both');
 });

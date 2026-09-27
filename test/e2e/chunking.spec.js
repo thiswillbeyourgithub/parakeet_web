@@ -49,7 +49,7 @@ test('chunks long audio at a 10 s window and stitches it back together', async (
   // load-model button only renders once settings are loaded), let the default
   // write flush, THEN seed our 10 s window (the minimum allowed), then reload.
   // 10 s is small enough to split this ~11 s clip into >1 chunk.
-  // (modelSource/backend are not auto-persisted, which is why the other specs can
+  // (backend is not auto-persisted, which is why the other specs can
   // seed immediately; chunkDuration is the one that needs this ordering.)
   await page.goto('/');
   await page.locator('[data-umami-event="load_model_button"]').waitFor({ timeout: 30 * 1000 });

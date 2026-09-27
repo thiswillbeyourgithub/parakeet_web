@@ -71,7 +71,25 @@ const STORM_SENTINEL = 'wasmEncoderQuant';
 // overrides that base with spec-specific keys, passed UNPREFIXED (the
 // `parakeetweb_` prefix is applied here), e.g.
 //   seedSettings(page, { verboseLog: true, chunkDuration: 5 }).
-export async function seedSettings(page, extra = {}) {
+//
+// `modelSource` is the one key that is NOT a setting. It used to be, and this
+// seeder kept writing it to IndexedDB after the app moved it to the operator
+// config (VITE_MODEL_SOURCE, read only from window.__CONFIG__), where nothing
+// read it any more. The e2e build has no config.js, so the app fell back to
+// 'hf' and every seeded spec downloaded the int8 encoder from HuggingFace,
+// with the local mirror only as a fallback: a network blip mid-download
+// (ERR_NETWORK_CHANGED, 2026-09-27) failed specs that are about something
+// else entirely, through their console-error assertion. So it is applied here
+// as an init script instead, which the reload that follows every seed picks
+// up. It only fills VITE_MODEL_SOURCE in when the spec's own __CONFIG__ did
+// not set it, so a spec's explicit config always wins, in either registration
+// order. Pass { modelSource: 'hf' } for a spec that NEEDS the HuggingFace path
+// (e.g. one that holds the HF request pending to keep a load in flight).
+export async function seedSettings(page, { modelSource = 'local', ...extra } = {}) {
+  await page.addInitScript((src) => {
+    const cfg = window.__CONFIG__ || {};
+    if (cfg.VITE_MODEL_SOURCE === undefined) window.__CONFIG__ = { ...cfg, VITE_MODEL_SOURCE: src };
+  }, modelSource);
   // Wait for the first boot to have stamped `version` AND to have run its
   // default-persist storm (see the race note above). `version` alone is written
   // BEFORE `setSettingsLoaded(true)`, so it only proves the purge branch is
@@ -125,7 +143,7 @@ export async function seedSettings(page, extra = {}) {
   // STABLE_CHECKS consecutive polls (see the default-persist-storm note above).
   await page.waitForFunction(
     async ({ extra, version, DB, STORE, PREFIX, STABLE_CHECKS }) => {
-      const settings = { version, modelSource: 'local', backend: 'wasm', ...extra };
+      const settings = { version, backend: 'wasm', ...extra };
       // VersionLESS open: the app's openIdb self-heal can bump the DB past
       // version 1, and an open(DB, 1) against that rejects with VersionError.
       // The upgrade handler only fires if this open itself created the DB

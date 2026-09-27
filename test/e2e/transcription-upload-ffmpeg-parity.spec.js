@@ -68,10 +68,10 @@ const PROD_CSP = [
   "object-src 'none'",
 ].join('; ');
 
-// The app probes the default HF repo before falling back to the local /models
-// mirror; under the strict CSP those cross-origin connects are blocked (expected,
-// orthogonal to this feature). Match every HF CDN variant seen (huggingface.co,
-// *.hf.co, *.xethub.hf.co) so they can be excluded from the error asserts.
+// With the seeded 'local' source the app should not contact HuggingFace at all,
+// but if an HF probe ever reappears, the strict CSP blocks it (orthogonal to
+// this feature). Match every HF CDN variant seen (huggingface.co, *.hf.co,
+// *.xethub.hf.co) so such blocks are excluded from the error asserts.
 const isHfConnect = (e) => /hf\.co|huggingface|xethub/i.test(e);
 
 test('uploaded venlaf.aac decodes via ffmpeg.wasm under CSP and matches the CLI spelling', async ({ page }) => {
@@ -102,10 +102,9 @@ test('uploaded venlaf.aac decodes via ffmpeg.wasm under CSP and matches the CLI 
     });
   });
 
-  // Seed local model source + wasm backend, and pin greedy decoding. Note
-  // `modelSource: 'local'` ENABLES the local /models fallback; the app still
-  // probes HuggingFace first, so the strict CSP above blocks that probe and the
-  // load completes via the local mirror (see isHfConnect / the header comment).
+  // Seed the local model source + wasm backend, and pin greedy decoding. The
+  // seeder sets VITE_MODEL_SOURCE 'local', so the app never contacts
+  // HuggingFace; isHfConnect stays as a guard in case a probe ever returns.
   await page.goto('/');
   await seedSettings(page, { beamWidth: 1 });
   await page.reload();
