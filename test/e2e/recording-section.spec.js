@@ -97,7 +97,8 @@ test('the capture-shaping controls lock while a recording runs, and unlock after
   // downloading one.
   await page.route(/huggingface\.co/, () => { /* keep the request pending */ });
   await page.goto('/');
-  await seedSettings(page, { liveTranscriptionEnabled: true });
+  // HF source on purpose: the pending HF route above is what keeps the load in flight.
+  await seedSettings(page, { liveTranscriptionEnabled: true, modelSource: 'hf' });
   await page.reload();
 
   await page.locator('[data-umami-event="load_model_button"]').click();

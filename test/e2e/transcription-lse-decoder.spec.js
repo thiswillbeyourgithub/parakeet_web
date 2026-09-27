@@ -53,9 +53,9 @@ test('transcribes JFK English (MP3) at beam 5 on a decoder with in-graph log-par
   });
 
   // Force the LOCAL model source at CONFIG level: only the local /models server
-  // (serve.mjs) is guaranteed to serve the promoted decoder. The seeded
-  // `modelSource: 'local'` alone is NOT enough, it only enables the local
-  // fallback while the app still lists the HF repo first.
+  // (serve.mjs) is guaranteed to serve the promoted decoder. seedSettings now
+  // sets the same default, but this spec states it explicitly because its
+  // premise depends on it.
   await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
 
   // Seed a deliberate beam width: the LSE outputs are only consumed on the beam
