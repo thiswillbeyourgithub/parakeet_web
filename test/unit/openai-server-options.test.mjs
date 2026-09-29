@@ -42,7 +42,7 @@ test('defaults: port 8002, loopback, wasm/int8, no auth', () => {
   assert.equal(options.ort, 'wasm');
   assert.equal(options.quant, 'int8');
   assert.equal(options.apiKey, '');
-  assert.equal(options.modelId, 'parakeet-tdt-0.6b-v3-int8', 'model id derives from model+quant');
+  assert.equal(options.modelId, 'parakeet-tdt-0.6b-v3-ultra-int8', 'model id derives from model+quant');
 });
 
 test('precedence: CLI beats env, env beats default', () => {

@@ -59,6 +59,23 @@ export const MODELS = {
     predLayers: 2,
     revision: 'main',
   },
+  // moondream's post-trained v3 (moondream/parakeet-ultra): same architecture,
+  // tokenizer and repo layout as the base entry above, better on every
+  // benchmark moondream reports, so it is the default (DEFAULT_MODEL below) and
+  // the base entry is kept only so an explicit key or repo id still resolves.
+  'parakeet-tdt-0.6b-v3-ultra': {
+    repoId: 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx',
+    displayName: 'Parakeet TDT 0.6B v3 Ultra (Multilingual)',
+    languages: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'ru', 'uk', 'ja', 'ko', 'zh'],
+    defaultLanguage: 'en',
+    vocabSize: 4097,
+    featuresSize: 128,
+    preprocessor: 'nemo128',
+    subsampling: 8,
+    predHidden: 640,
+    predLayers: 2,
+    revision: 'main',
+  },
   // Same v3 architecture, fine-tuned on French medical speech: identical
   // vocabulary (8193 lines), 128 mel bins and TDT prediction network, so it
   // rides every code path the base model does. Listed here rather than left to
@@ -83,11 +100,12 @@ export const MODELS = {
 
 /**
  * Default model to use when none specified. Matches the web app's own default
- * repo (App.jsx pins Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), so the CLI and the
- * browser default to the same multilingual v3 model.
+ * repo (DEFAULT_MODEL_REPO in app/ui/src/lib/modelRepos.js,
+ * Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx), so the CLI and the browser default
+ * to the same multilingual v3 model.
  * @type {string}
  */
-export const DEFAULT_MODEL = 'parakeet-tdt-0.6b-v3';
+export const DEFAULT_MODEL = 'parakeet-tdt-0.6b-v3-ultra';
 
 /**
  * Get model configuration by model key or repo ID.

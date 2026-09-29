@@ -47,16 +47,15 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 
 ---
 
-Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), then re-quantized and graph-optimized for this app as [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)) on the WASM (CPU) backend.
+Browser-based speech-to-text running entirely client-side using NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model (converted to ONNX by [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), then re-quantized and graph-optimized for this app) on the WASM (CPU) backend. The default model is [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), a further-trained v3, built the same way as [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx).
 
-**The reference deployment offers four models**, and you switch between them from the model picker in the sidebar (see [Offering several models](#offering-several-models)):
+**The reference deployment offers three models**, and you switch between them from the model picker in the sidebar (see [Offering several models](#offering-several-models)):
 
-- [**Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) (the default): the multilingual baseline described above.
-- [**Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx): the same model fine-tuned on [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3,105 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultimed`.
-- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx): an ONNX export of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), a further-trained Parakeet TDT 0.6B v3. On the full 25-language FLEURS validation split (greedy, int8) it scores 11.57 % macro WER against the default model's 13.14 %. `?model=ultra`.
+- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) (the default): an ONNX export of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), a further-trained Parakeet TDT 0.6B v3. On the full 25-language FLEURS validation split (greedy, int8) it scores 11.57 % macro WER against 13.14 % for the plain v3 export ([Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), which it supersedes and which is no longer offered). `?model=ultra`.
+- [**Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx): NVIDIA's base Parakeet TDT 0.6B v3 fine-tuned on [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3,105 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultimed`.
 - [**Olicorne/parakeet-tdt-0.6b-v3-redux-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx): an ONNX export of [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), whose encoder weights are ternary (each weight is -a, 0 or +a). That makes a 2-bit encoder lossless, so this repo also ships **w2a8**, a 190 MB encoder, about a third of the int8 download, which scores 12.64 % macro WER on the same split, identical to Redux int8 and fp32. `?model=redux`.
 
-All four are listed with the rest of the stack under [Related repositories](#related-repositories).
+All three are listed with the rest of the stack under [Related repositories](#related-repositories).
 
 ![](./image.png)
 
@@ -422,13 +421,12 @@ gets:
 
 ```bash
 # In docker/.env:
-VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
 ```
 
-That pair is what `docker/env.example` suggests: the multilingual baseline
+That pair is what `docker/env.example` suggests: the multilingual default
 first, then the French medical fine-tune (see the top of this README for
 what each one is). The reference deployment appends
-`Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx` and
 `Olicorne/parakeet-tdt-0.6b-v3-redux-onnx` to the same list.
 
 No spaces around the commas: a space is not a legal HuggingFace repo-id
@@ -503,7 +501,7 @@ it with the ONNX files, bind-mount it into the container, and set
 
 ```bash
 # 1. Populate any host folder with the ONNX files:
-hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx \
+hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx \
     --local-dir /host/path/to/onnx-files
 ```
 
@@ -543,7 +541,7 @@ subfolder underneath:
 ```
 /host/path/
   Olicorne/
-    parakeet-tdt-0.6b-v3-optimized-onnx/{vocab.txt,int8/,fp32/,...}
+    parakeet-tdt-0.6b-v3-ultra-onnx/{vocab.txt,int8/,fp32/,...}
     parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
 ```
 
@@ -687,7 +685,7 @@ The models this app loads, and the French medical ASR stack behind them, are all
 | [Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) | [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), a ternary-weight model, exported to ONNX (fp32 / fp16 / int8 / w4a8 / w2a8, the last three packing the ternary weights exactly). |
-| [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The multilingual baseline the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. |
+| [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The plain v3 export the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. Superseded by the ultra export and no longer offered by the app; kept online so existing links keep working. |
 | [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts) | The open recipe that built that dataset end to end: text sources, spoken-form normalization, the batch synthesis client, and the transcribe-and-rescore QC pass. |
 | [UltiMed-ASR-FR-v1-NeMo_training_scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-NeMo_training_scripts) | The NeMo fork and training configs used to run the fine-tune itself. |
 | [UltiMed-ASR-FR-v1-Voxtral](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-Voxtral) | The Voxtral TTS container that spoke every clip of the dataset: Dockerfile, tuning, and the vllm-omni patches. |

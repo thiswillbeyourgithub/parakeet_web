@@ -55,7 +55,7 @@ services:
       # <repoId>/ subfolder which the entrypoint descends into) into the
       # container, then set LOCAL_MODEL_PATH below to the in-container target.
       # Caddy serves it under /models/. Pre-populate the host folder with e.g.:
-      #   hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir /host/path
+      #   hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx --local-dir /host/path
       # Drop the `:ro` if you set PRECOMPRESS_MODELS below, which writes the
       # `.zst` sidecars into this folder at boot.
       # - /host/path/to/onnx-files:/models:ro
@@ -86,7 +86,7 @@ services:
       - VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-true}
       # One repo id, or several comma-separated to offer a sidebar model
       # picker (first entry is the default). See docker/env.example.
-      - VITE_MODEL_REPO=${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}
+      - VITE_MODEL_REPO=${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx}
       - VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-}
       # Where to fetch model weights from:
       #   hf    : HuggingFace only (default)

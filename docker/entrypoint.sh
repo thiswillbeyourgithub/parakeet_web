@@ -331,7 +331,7 @@ else
   # one or more HuggingFace-style repo folders (files under <repoId>/, e.g. what
   # `hf download` leaves); when only that is present, descend into it so Caddy
   # (/models/*), the boost prebuild, and the app's probes all see the repo root.
-  _MODEL_REPOS="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}"
+  _MODEL_REPOS="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx}"
   _LOCAL_REPO="${_MODEL_REPOS%%,*}"   # the default repo: first entry of the list
   case "${_MODEL_REPOS}" in
     *,*) _MULTI_REPO=1 ;;
@@ -699,7 +699,7 @@ mkdir -p /run/config
 # so that even if a future refactor inlines the config, it stays safe.
 VITE_DEV_MODE="${VITE_DEV_MODE:-false}" \
 VITE_DICTATION_DEVICE_SUPPORT="${VITE_DICTATION_DEVICE_SUPPORT:-true}" \
-VITE_MODEL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx}" \
+VITE_MODEL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx}" \
 VITE_MODEL_REVISION="${VITE_MODEL_REVISION:-}" \
 VITE_MODEL_SOURCE="${VITE_MODEL_SOURCE:-}" \
 VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \

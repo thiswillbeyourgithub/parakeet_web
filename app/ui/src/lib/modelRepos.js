@@ -9,7 +9,7 @@
 // self-host.
 
 /** Repo used when the operator configured nothing at all. */
-export const DEFAULT_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
+export const DEFAULT_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
 
 // A HuggingFace repo id: `owner/name`, both segments limited to the characters
 // HF itself allows. Deliberately the same shape entrypoint.sh validates, so an

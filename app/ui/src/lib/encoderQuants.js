@@ -67,7 +67,8 @@ export const DEFAULT_WEBGPU_ENCODER_QUANT = 'fp16';
 // Approximate download per encoder precision, in MB. Used to warn about
 // bandwidth before a benchmark run and to price a selection in the sidebar. The
 // real sizes come from the repo being served; these are measured on the shipped
-// Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx weights, with the decoder
+// Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx weights (the default
+// Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx files are the same size), with the decoder
 // (~18 MB) and preprocessor (~1 MB) folded in.
 export const QUANT_DOWNLOAD_MB = {
   int8lite: 810,
