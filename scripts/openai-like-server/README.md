@@ -78,7 +78,7 @@ The directory must contain, for the precision you asked for:
 | `model.onnx` (pyannote segmentation) | only with `--diarize` |
 | `*campplus*.onnx` (CAM++ embeddings) | only with `--diarize` |
 
-Each weight sits in the folder its precision names, which is how the model repo ships (`int8/`, `int8-lite/`, `w4a8/`, `fp16/`, `fp32/`), with `vocab.txt` and the diarization models at the root. A folder with everything flat still works, and so does the older layout that kept the fp32 shards in `sharded/`: the lookup tries the precision folder, then the root, then `sharded/`.
+Each weight sits in the folder its precision names, which is how the model repo ships (`int8/`, `w4a8/`, `fp16/`, `fp32/`), with `vocab.txt` and the diarization models at the root. A folder with everything flat still works, and so does the older layout that kept the fp32 shards in `sharded/`: the lookup tries the precision folder, then the root, then `sharded/`.
 
 `--model-dir` also accepts a path to one of the `.onnx` files and walks up to the repo root, so `-m /models/int8/encoder-model.int8.onnx` works the way whisper.cpp's `-m` does.
 

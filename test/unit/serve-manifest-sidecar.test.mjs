@@ -33,8 +33,8 @@ test('serve.mjs serves model-manifest.json from the sidecar tree, weights from t
 
   // A weight only the sidecar manifest names: no candidate path in
   // modelLayout.js reaches into a nested sub-repo, which is the whole point.
-  const NESTED = 'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx';
-  await mkdir(join(models, REPO, 'istupakov_smoothquant/int8-lite'), { recursive: true });
+  const NESTED = 'istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx';
+  await mkdir(join(models, REPO, 'istupakov_smoothquant/w4a8'), { recursive: true });
   await writeFile(join(models, REPO, 'vocab.txt'), 'vocab');
   await writeFile(join(models, REPO, NESTED), 'weights');
   await mkdir(join(manifests, REPO), { recursive: true });

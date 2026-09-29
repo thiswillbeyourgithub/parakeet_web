@@ -92,7 +92,7 @@ describe('partitionDangling', () => {
       { path: join('sharded', 'encoder-model.onnx'), target: 'x' },
       { path: join('int8', 'encoder-model.int8.onnx'), target: 'x' },
       { path: join('fp32', 'encoder-model.onnx.data.000'), target: 'x' },
-      { path: join('int8-lite', 'encoder-model.int8.lite.onnx'), target: 'x' },
+      { path: join('w4a8', 'encoder-model.w4a8.onnx'), target: 'x' },
       { path: join('candidates', 'encoder-model.onnx'), target: 'x' },
       { path: join('Repo', 'sharded', 'deep.bin'), target: 'x' },
     ]);
@@ -101,7 +101,7 @@ describe('partitionDangling', () => {
       join('sharded', 'encoder-model.onnx'),
       join('int8', 'encoder-model.int8.onnx'),
       join('fp32', 'encoder-model.onnx.data.000'),
-      join('int8-lite', 'encoder-model.int8.lite.onnx'),
+      join('w4a8', 'encoder-model.w4a8.onnx'),
     ]);
     assert.deepEqual(other.map((d) => d.path), [join('candidates', 'encoder-model.onnx'), join('Repo', 'sharded', 'deep.bin')]);
   });

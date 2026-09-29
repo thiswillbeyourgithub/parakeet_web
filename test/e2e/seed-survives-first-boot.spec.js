@@ -22,8 +22,15 @@
 
 import { test, expect } from '@playwright/test';
 import { seedSettings, expandSettingsSection, readSetting } from './seed.mjs';
+import { routeSyntheticLocalMirror } from './routes.mjs';
 
-
+// A mirror hosting a non-default WASM precision besides the default int8.
+const MIRROR_WITH_W4A8 = [
+  'vocab.txt',
+  'int8/encoder-model.int8.onnx',
+  'int8/decoder_joint-model.int8.onnx',
+  'w4a8/encoder-model.w4a8.onnx',
+];
 
 test('a seeded non-default setting survives the first boot and the reload', async ({ page }) => {
   await page.goto('/');
@@ -53,26 +60,47 @@ test('a seeded non-default setting survives the first boot and the reload', asyn
 
 // Regression: the settings restore validated the saved WASM precision with a
 // `=== 'fp32' ? 'fp32' : 'int8'` ternary, so every value except fp32 was reset
-// to int8 on boot. int8lite therefore shipped as a radio you could click and
-// which silently reverted on the next page load. The bytes were in IndexedDB
+// to int8 on boot. A non-default precision therefore shipped as a radio you
+// could click and which silently reverted on the next page load. The bytes were in IndexedDB
 // the whole time, so only a spec that reads the RADIO after a reload catches it
 // (a storage-only assertion passes on the broken build).
 //
 // Cheap on purpose: no model load, so it costs seconds and needs no weights.
-test('a seeded int8lite precision survives the reload as the selected radio', async ({ page }) => {
+test('a seeded non-default precision survives the reload as the selected radio', async ({ page }) => {
+  // w4a8 rather than fp32: fp32 is the one value the broken ternary DID keep,
+  // so it cannot catch this regression. The radios only list what the source
+  // hosts, so state a mirror that hosts w4a8 (no bytes are ever fetched).
+  await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
+  await routeSyntheticLocalMirror(page, MIRROR_WITH_W4A8);
+  await page.goto('/');
+  await seedSettings(page, { wasmEncoderQuant: 'w4a8' });
+  await page.reload();
+
+  expect(await readSetting(page, 'wasmEncoderQuant')).toBe('w4a8');
+
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Model and performance');
+  const w4a8Radio = page.locator('input[name="encoderQuant"][value="w4a8"]');
+  await w4a8Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
+  await expect(w4a8Radio,
+    'the restore reset the saved precision to int8 instead of honouring it').toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).not.toBeChecked();
+});
+
+// A returning visitor may still have 'int8lite' saved from before that precision
+// was retired (no offered model ships it). It must boot as int8, never be
+// handed to hub.js as a quant no source can serve.
+test('a saved int8lite (retired precision) boots as int8', async ({ page }) => {
   await page.goto('/');
   await seedSettings(page, { wasmEncoderQuant: 'int8lite' });
   await page.reload();
 
-  expect(await readSetting(page, 'wasmEncoderQuant')).toBe('int8lite');
-
   await page.locator('.settings-toggle').click();
   await expandSettingsSection(page, 'Model and performance');
-  const liteRadio = page.locator('input[name="encoderQuant"][value="int8lite"]');
-  await liteRadio.waitFor({ state: 'visible', timeout: 30 * 1000 });
-  await expect(liteRadio,
-    'the restore reset the saved precision to int8 instead of honouring it').toBeChecked();
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).not.toBeChecked();
+  const int8Radio = page.locator('input[name="encoderQuant"][value="int8"]');
+  await int8Radio.waitFor({ state: 'visible', timeout: 30 * 1000 });
+  await expect(int8Radio).toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="int8lite"]')).toHaveCount(0);
 });
 
 // The flip side of the whitelist: a value this build does not know about must

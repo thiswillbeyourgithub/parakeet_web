@@ -37,12 +37,11 @@ import { quantSatisfiable } from '../../../src/hub.js';
 // only precision the app may reach for unasked is the backend's default, so the
 // order below documents which one that is rather than driving a search.
 //
-// WASM: int8 is the default; int8lite trades ~88 MB and ~164 MiB RSS for
-// slightly higher WER; w4a8 is the smallest by a wide margin (w2a8 smaller still,
+// WASM: int8 is the default; w4a8 is the smallest by a wide margin (w2a8 smaller still,
 // but only a ternary model such as parakeet-redux ships it); fp32 is opt-in and
 // only loadable when the source ships the shard set (a single 2.4 GB sidecar
 // overflows both the 32-bit WASM heap and Chromium's blob wall).
-export const WASM_ENCODER_QUANTS = ['int8lite', 'int8', 'w4a8', 'w2a8', 'fp32'];
+export const WASM_ENCODER_QUANTS = ['int8', 'w4a8', 'w2a8', 'fp32'];
 // WebGPU: fp16 is the default (~1.2 GB, near-lossless, and a single file that
 // stays under every wall). fp32 and w4a8 are opt-in and are NEVER selected for
 // anyone: fp32 needs shards, like WASM, for Chromium's ~2 GB IndexedDB readback
@@ -71,7 +70,6 @@ export const DEFAULT_WEBGPU_ENCODER_QUANT = 'fp16';
 // Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx files are the same size), with the decoder
 // (~18 MB) and preprocessor (~1 MB) folded in.
 export const QUANT_DOWNLOAD_MB = {
-  int8lite: 810,
   int8: 900,
   w4a8: 610,
   // Only a ternary model ships w2a8 (parakeet-redux, 2 bits pack its
@@ -90,6 +88,24 @@ export const QUANT_DOWNLOAD_MB = {
  */
 export function encoderQuantsFor(backend) {
   return String(backend || '').startsWith('webgpu') ? WEBGPU_ENCODER_QUANTS : WASM_ENCODER_QUANTS;
+}
+
+/**
+ * The precision to restore from a persisted setting for a backend.
+ *
+ * A whitelist, not a pass-through: a saved value this build does not offer
+ * falls back to the backend's default. That covers a retired precision (a
+ * returning visitor's 'int8lite', dropped once no offered model shipped it,
+ * restores as int8), a value written by a NEWER build, and a hand-edited
+ * record, none of which may reach hub.js as an unresolvable quant.
+ *
+ * @param {string} backend 'wasm' | 'webgpu-hybrid' | ...
+ * @param {unknown} saved The persisted value, possibly missing or stale.
+ * @returns {string}
+ */
+export function restoredEncoderQuant(backend, saved) {
+  if (encoderQuantsFor(backend).includes(saved)) return saved;
+  return String(backend || '').startsWith('webgpu') ? DEFAULT_WEBGPU_ENCODER_QUANT : DEFAULT_WASM_ENCODER_QUANT;
 }
 
 /**
@@ -137,9 +153,8 @@ export function servableEncoderQuants({ repoFiles, shaderF16 = false } = {}) {
 // thing a saved value is validated against, which is why a WebGPU-only precision
 // like fp16 still has a row here to be greyed out in. It lives beside them so
 // the two cannot drift: a value offered by one and missing from the other is
-// silently reset to int8 on the next reload, which is exactly how int8lite first
-// shipped without surviving a page load.
-export const ENCODER_QUANT_ROWS = ['w2a8', 'w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
+// silently reset to the default on the next reload (restoredEncoderQuant).
+export const ENCODER_QUANT_ROWS = ['w2a8', 'w4a8', 'int8', 'fp16', 'fp32'];
 
 /**
  * The precision radios to render for a backend: which ones appear at all, and

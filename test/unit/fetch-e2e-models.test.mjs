@@ -31,12 +31,6 @@ describe('fetch-e2e-models: optional vs required download entries', () => {
     assert.ok(!byFile['int8/encoder-model.int8.onnx'].optional);
     assert.ok(!byFile['int8/decoder_joint-model.int8.onnx'].optional);
     assert.ok(!byFile['vocab.txt'].optional);
-    // The lite int8 encoder is the one precision ALTERNATIVE headless Chromium
-    // can run, so it is listed to give transcription-int8-lite-wasm.spec.js real
-    // CI coverage. Dropping it would not fail anything loudly: strict-weights is
-    // lenient in CI, so that spec would just skip forever. Pin it here.
-    assert.ok(byFile['int8-lite/encoder-model.int8.lite.onnx'], 'the lite int8 encoder must stay in the CI fetch list');
-    assert.ok(!byFile['int8-lite/encoder-model.int8.lite.onnx'].optional);
     // No `optional` creep anywhere: a 404 on ANY entry must fail the fetch, not
     // warn and leave a spec to discover the gap.
     assert.deepEqual(MODELS.filter((m) => m.optional).map((m) => m.file), []);
@@ -203,9 +197,9 @@ describe('fetch-e2e-models: asrRootIn', () => {
 // The fetch list names the CANONICAL layout path, because that is where a file
 // has to LAND for serve.mjs and the local-mirror probes to find it. Where it is
 // FETCHED from is a separate question that only the repo listing can answer,
-// and the two drifted apart for real: the optimized repo moved the lite int8
-// encoder into its nested istupakov_smoothquant/ sub-repo, so the hardcoded
-// int8-lite/ request started 404ing. Every entry is required, so that would
+// and the two drifted apart for real: the old optimized repo moved an encoder
+// build into its nested istupakov_smoothquant/ sub-repo, so the hardcoded
+// canonical request started 404ing. Every entry is required, so that would
 // have taken CI down on the next cache miss while the app, which resolves
 // against the listing, went on loading the file without complaint.
 describe('fetch-e2e-models: remotePathFor', () => {
@@ -214,9 +208,12 @@ describe('fetch-e2e-models: remotePathFor', () => {
   const FLAT = JSON.parse(readFileSync(
     new URL('../fixtures/repo-listings/istupakov-flat.json', import.meta.url), 'utf8'));
 
-  test('follows the lite encoder into the nested sub-repo it moved to', () => {
-    assert.equal(remotePathFor(OPTIMIZED, 'int8-lite/encoder-model.int8.lite.onnx'),
-      'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx');
+  test('follows a file into the nested sub-repo it moved to', () => {
+    // The real listing, minus the top-level copy, so the ONLY w4a8 encoder left
+    // is the one filed under the nested sub-repo.
+    const movedAway = OPTIMIZED.filter((f) => f !== 'w4a8/encoder-model.w4a8.onnx');
+    assert.equal(remotePathFor(movedAway, 'w4a8/encoder-model.w4a8.onnx'),
+      'istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx');
   });
 
   test('leaves a file alone when the repo already keeps it where we ask', () => {
@@ -237,8 +234,8 @@ describe('fetch-e2e-models: remotePathFor', () => {
     // canonical path then produces an honest 404 naming the file, which is far
     // better than skipping the download and letting a spec discover the gap.
     for (const listing of [[], null, undefined]) {
-      assert.equal(remotePathFor(listing || [], 'int8-lite/encoder-model.int8.lite.onnx'),
-        'int8-lite/encoder-model.int8.lite.onnx');
+      assert.equal(remotePathFor(listing || [], 'w4a8/encoder-model.w4a8.onnx'),
+        'w4a8/encoder-model.w4a8.onnx');
     }
   });
 
@@ -251,11 +248,11 @@ describe('fetch-e2e-models: remotePathFor', () => {
     globalThis.fetch = async (url) => { urls.push(String(url)); return new Response('model-bytes'); };
     await download({
       repo: 'r/x',
-      file: 'int8-lite/encoder-model.int8.lite.onnx',
-      remote: 'nested/int8-lite/encoder-model.int8.lite.onnx',
+      file: 'w4a8/encoder-model.w4a8.onnx',
+      remote: 'nested/w4a8/encoder-model.w4a8.onnx',
     }, dir);
-    assert.ok(urls[0].includes('/r/x/resolve/main/nested/int8-lite/encoder-model.int8.lite.onnx'), urls[0]);
-    assert.equal(readFileSync(join(dir, 'r', 'x', 'int8-lite', 'encoder-model.int8.lite.onnx'), 'utf-8'), 'model-bytes');
+    assert.ok(urls[0].includes('/r/x/resolve/main/nested/w4a8/encoder-model.w4a8.onnx'), urls[0]);
+    assert.equal(readFileSync(join(dir, 'r', 'x', 'w4a8', 'encoder-model.w4a8.onnx'), 'utf-8'), 'model-bytes');
     assert.equal(existsSync(join(dir, 'r', 'x', 'nested')), false);
     rmSync(dir, { recursive: true, force: true });
   });

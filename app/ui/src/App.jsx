@@ -51,8 +51,7 @@ import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
 import { reconcileSelection } from './lib/loadedModel.js';
 import {
   QUANT_DOWNLOAD_MB,
-  WASM_ENCODER_QUANTS,
-  WEBGPU_ENCODER_QUANTS,
+  restoredEncoderQuant,
   DEFAULT_WASM_ENCODER_QUANT,
   DEFAULT_WEBGPU_ENCODER_QUANT,
   effectiveEncoderQuant as resolveEffectiveEncoderQuant,
@@ -643,10 +642,8 @@ export default function App() {
   // Encoder precision for the WASM/CPU backend: 'int8' (default; ~900 MB, fast,
   // good quality on long audio: since 2026-09-03 both repos ship it as a
   // MatMulNBits 8-bit build, weight-only int8 with dynamic int8 activations),
-  // 'int8lite' (the lighter SmoothQuant build, 11 MatMuls left in fp32 instead
-  // of 18: ~88 MB smaller and ~164 MiB lighter on RAM, slightly less accurate)
-  // or 'fp32' (sharded ~2.4 GB,
-  // full quality, ~35 % slower). Both non-default values are opt-in: only
+  // 'w4a8'/'w2a8' (smaller MatMulNBits builds) or 'fp32' (sharded ~2.4 GB,
+  // full quality, ~35 % slower). The non-default values are opt-in: only
   // honoured when the repo actually ships the matching files, else hub.js throws
   // QuantUnavailableError (no silent downgrade; resolveModelQuant). Ignored on
   // WebGPU, which has its own selection.
@@ -1440,29 +1437,14 @@ export default function App() {
           // app-wide, so an old saved choice must not resurrect the GPU path.
           setBackend(coerceBackend(savedBackend));
         }
-        // Whitelist rather than a fp32-or-int8 ternary. That ternary silently
-        // reset ANY other saved value to int8 on every boot, so when 'int8lite'
-        // joined the radios the choice did not survive a reload at all. It has
-        // to stay a whitelist so a value from a NEWER build (or a hand-edited
-        // record) still lands on the safe default instead of being handed to
-        // hub.js as an unresolvable quant.
-        setWasmEncoderQuant(
-          WASM_ENCODER_QUANTS.includes(savedWasmEncoderQuant)
-            ? savedWasmEncoderQuant
-            : DEFAULT_WASM_ENCODER_QUANT,
-        );
-        // Same whitelist treatment for WebGPU, which runs fp16, fp32 and w4a8:
-        // a saved int8 (no GPU kernel) is coerced to the default rather than
-        // restored. A saved 'fp16' DOES restore, because the list is about what
-        // the app supports; whether this particular adapter can run it is a
-        // separate, machine-dependent question the shader-f16 probe answers,
-        // and the effective-quant fallback below turns a no into fp32 without
-        // losing the preference for the next machine.
-        setWebgpuEncoderQuant(
-          WEBGPU_ENCODER_QUANTS.includes(savedWebgpuEncoderQuant)
-            ? savedWebgpuEncoderQuant
-            : DEFAULT_WEBGPU_ENCODER_QUANT,
-        );
+        // Both precisions go through the shared whitelist (restoredEncoderQuant):
+        // a value this build does not offer, whether retired ('int8lite'), from
+        // a NEWER build or hand-edited, lands on the backend's default instead of
+        // being handed to hub.js as an unresolvable quant. A saved 'fp16' DOES
+        // restore on WebGPU, because the list is about what the app supports;
+        // whether this adapter can run it is the shader-f16 probe's question.
+        setWasmEncoderQuant(restoredEncoderQuant('wasm', savedWasmEncoderQuant));
+        setWebgpuEncoderQuant(restoredEncoderQuant('webgpu-hybrid', savedWebgpuEncoderQuant));
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setDebugDecode(!!savedDebugDecode);

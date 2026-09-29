@@ -72,23 +72,24 @@ describe('buildDownloadOpts: WASM encoder request', () => {
     assert.equal(wasmEncoderRequest, 'fp32');
   });
 
-  test('int8lite and w4a8 pass straight through, NOT collapsed to int8', () => {
+  test('w4a8 and w2a8 pass straight through, NOT collapsed to int8', () => {
     // Collapsing them would make "this repo ships no such build" indistinguishable
     // from "the user is on the default", which is the whole no-silent-downgrade
     // signal hub.js needs to raise quantUnavailable.
-    for (const q of ['int8lite', 'w4a8']) {
+    for (const q of ['w4a8', 'w2a8']) {
       assert.equal(build({ wasmEncoderQuant: q }).opts.encoderQuant, q, q);
     }
   });
 
   test('anything else falls back to int8', () => {
-    for (const q of ['int8', 'fp16', 'nonsense', undefined, '']) {
+    // 'int8lite' included: the retired precision must never reach hub.js.
+    for (const q of ['int8', 'int8lite', 'fp16', 'nonsense', undefined, '']) {
       assert.equal(build({ wasmEncoderQuant: q }).opts.encoderQuant, 'int8', String(q));
     }
   });
 
   test('allowWasmFp32 is set only for the fp32 request', () => {
-    for (const q of ['int8', 'int8lite', 'w4a8']) {
+    for (const q of ['int8', 'w4a8', 'w2a8']) {
       assert.equal(build({ wasmEncoderQuant: q }).opts.allowWasmFp32, false, q);
     }
   });
@@ -143,7 +144,7 @@ describe('buildDownloadOpts: what the caller still needs afterwards', () => {
       return !wantWebgpu && wasmEncoderRequest !== 'fp32';
     };
     assert.equal(eligible({ wasmEncoderQuant: 'int8' }), true);
-    assert.equal(eligible({ wasmEncoderQuant: 'int8lite' }), true);
+    assert.equal(eligible({ wasmEncoderQuant: 'w2a8' }), true);
     assert.equal(eligible({ wasmEncoderQuant: 'w4a8' }), true);
     assert.equal(eligible({ wasmEncoderQuant: 'fp32' }), false);
     assert.equal(eligible({ backend: 'webgpu-hybrid' }), false);

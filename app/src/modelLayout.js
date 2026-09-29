@@ -12,7 +12,6 @@
  *               encoder-model.onnx.data.NNN, decoder_joint-model.onnx,
  *               decoder_joint-model.onnx.data
  *   int8/       encoder-model.int8.onnx, decoder_joint-model.int8.onnx
- *   int8-lite/  encoder-model.int8.lite.onnx
  *   w4a8/       encoder-model.w4a8.onnx
  *   w2a8/       encoder-model.w2a8.onnx
  *   fp16/       encoder-model.fp16.onnx, decoder_joint-model.fp16.onnx
@@ -41,8 +40,8 @@
 // names, the sidecar pattern, the legacy fallback dirs) lives in
 // model-layout.json, the ONE copy shared with scripts/wer-quants.py and the
 // model repo's wer-fleurs-validation.sh. This module only implements the
-// lookup. quantDirs is kept longest-suffix-first there: `.int8.lite.onnx` must
-// be tested before `.int8.onnx`, or the lite build would land in `int8/`.
+// lookup. quantDirs is kept longest-suffix-first there, so a
+// longer suffix that ends like a shorter one can never land in the wrong folder.
 import LAYOUT from './model-layout.json' with { type: 'json' };
 
 /** Directory every layout can place a file in, in resolution order. */
@@ -101,7 +100,7 @@ export const DECODER_QUANTS = ENCODER_QUANTS.filter((q) => QUANT_FILES[q].decode
 
 // The encoder quants the WASM EP can actually load. Mirrors the WASM branch of
 // resolveModelQuant in app/src/hub.js, which serves int8 by default and takes
-// w4a8 as an opt-in "on the same terms as lite": one self-contained file, no
+// w4a8 as an opt-in: one self-contained file, no
 // sidecar and no shards. fp16 is out because the EP has no fp16 kernels, and
 // fp32 because its sidecar blows the 2 GiB per-file cap.
 //
@@ -129,7 +128,7 @@ const SIDECAR_RE = new RegExp(LAYOUT.sidecarPattern);
  * concatenate ('' for the repo root, otherwise trailing-slashed).
  *
  * @param {string} basename File basename (no directory part).
- * @returns {('fp32/'|'int8/'|'int8-lite/'|'w4a8/'|'w2a8/'|'fp16/'|'')} Directory prefix.
+ * @returns {('fp32/'|'int8/'|'w4a8/'|'w2a8/'|'fp16/'|'')} Directory prefix.
  */
 export function layoutDirFor(basename) {
   if (typeof basename !== 'string' || basename.length === 0) return ROOT_DIR;

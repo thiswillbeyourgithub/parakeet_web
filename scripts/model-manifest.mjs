@@ -4,7 +4,7 @@
 // file server, which cannot be listed, so without a manifest the app HEAD-probes
 // the paths app/src/modelLayout.js predicts. That works for every layout anyone
 // wrote down and for none that they did not: the optimized repo keeps a complete
-// second model under istupakov_smoothquant/ and moved the lite int8 encoder into
+// second model under istupakov_smoothquant/ and moved an encoder build into
 // it, and no candidate path names that. Over HuggingFace the app resolves it from
 // the repo listing; locally the quant simply reads as unavailable.
 //

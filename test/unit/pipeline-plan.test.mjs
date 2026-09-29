@@ -30,7 +30,7 @@ describe('planPipelineWorkers: encode pool eligibility', () => {
   });
 
   test('the other WASM builds are pool-eligible', () => {
-    for (const q of ['int8', 'int8lite', 'w4a8']) {
+    for (const q of ['int8', 'w4a8', 'w2a8']) {
       assert.equal(plan({ wasmEncoderRequest: q }).poolEligible, true, q);
     }
   });
@@ -131,7 +131,7 @@ describe('planPipelineWorkers: decode worker', () => {
 
 describe('planPipelineWorkers: invariants', () => {
   const BACKENDS = ['wasm', 'webgpu-hybrid', 'nonsense'];
-  const QUANTS = ['int8', 'int8lite', 'w4a8', 'fp32'];
+  const QUANTS = ['int8', 'w4a8', 'w2a8', 'fp32'];
   const CORES = [2, 8, 12, 24];
 
   function* every() {
