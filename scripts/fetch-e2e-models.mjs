@@ -49,13 +49,13 @@ import { writeMirrorManifests, MANIFEST_FILE } from './model-manifest.mjs';
 // Each entry is a { repo, file } HuggingFace descriptor, where `file` is the
 // IN-REPO path: it is both what gets requested from HF and where the file lands
 // under MODEL_DIR, so the e2e mirror is a faithful copy of the repo layout
-// rather than a flattened one. The int8 set matches App.jsx's pinned default
-// repo (the int8 build the app actually ships, not the upstream istupakov plain
-// int8), so the tier-3 e2e exercises the same weights users get. The diarization
+// rather than a flattened one. The int8 set comes from the app's default model
+// repo (DEFAULT_MODEL_REPO in app/ui/src/lib/modelRepos.js, now the ultra
+// repo), so the tier-3 e2e exercises the same weights users get by default. The diarization
 // set matches diarizationModels.js's un-gated csukuangfj defaults, whose repos
 // keep their single model at the root.
 const REVISION = 'main';
-export const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
+export const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
 // The two diarization repos, named so the specs that probe for their weights
 // share this list's idea of where they came from instead of restating the ids.
 export const DIARIZATION_SEG_REPO = 'csukuangfj/sherpa-onnx-pyannote-segmentation-3-0';

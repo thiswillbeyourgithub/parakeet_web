@@ -148,7 +148,7 @@ describe('fetch-e2e-models: optional vs required download entries', () => {
 // the worst direction: returning the wrong root makes the batching gate find no
 // model and SELF-SKIP, so CI stays green while checking nothing.
 describe('fetch-e2e-models: asrRootIn', () => {
-  const ASR = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
+  const ASR = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
 
   test('descends into the repo folder of a nested mirror', () => {
     const dir = tmp();
