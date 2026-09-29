@@ -96,7 +96,7 @@ services:
       # below); it is the model repo ROOT, with vocab.txt at the top and the
       # weights in a folder per precision (int8/encoder-model.int8.onnx,
       # fp32/encoder-model.onnx, ...). A flat directory works too. Populate one with:
-      #   hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models
+      #   hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx --local-dir ./models
       # Read-only: the server only ever reads weights, and a compromised process
       # must not be able to swap the model under you.
       - ${MODEL_DIR:?set MODEL_DIR in .env to the host directory holding the ONNX weights}:/models:ro
@@ -130,7 +130,7 @@ services:
       # ── model ───────────────────────────────────────────────────────────────
       # In-container path; must match the volume mount above.
       - PARAKEET_MODEL_DIR=/models
-      - PARAKEET_MODEL=${PARAKEET_MODEL:-parakeet-tdt-0.6b-v3}
+      - PARAKEET_MODEL=${PARAKEET_MODEL:-parakeet-tdt-0.6b-v3-ultra}
       - PARAKEET_MODEL_ID=${PARAKEET_MODEL_ID:-}
       # int8 is the only precision the wasm backend can load. fp16/fp32 need
       # PARAKEET_ORT=node (and ORT_NODE_VARIANT=cpu or cuda at build time).

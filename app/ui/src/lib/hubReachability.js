@@ -57,7 +57,7 @@ export const HUB_API_ORIGIN = 'https://huggingface.co';
  * probe exercises the very endpoint the load will use; the bare collection
  * endpoint otherwise. Any answer at all (200, 401, 404) proves reachability.
  *
- * @param {string} [repoId] e.g. 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx'.
+ * @param {string} [repoId] e.g. 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx'.
  * @returns {string}
  */
 export function hubProbeUrl(repoId) {

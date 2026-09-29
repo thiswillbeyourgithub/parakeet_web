@@ -10,6 +10,12 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.4 (2026-09-17)
 
+### Ultra is now the default model
+
+With no model configured, the app, the command-line tools and the Docker image now load [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) instead of [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx). On the full 25-language FLEURS validation split (greedy, int8 encoder) that is 11.57 % macro WER against 13.14 %. Both repositories ship the same layout and the same file sizes, so the download does not change. The reference deployment no longer offers the optimized model; a visitor who had it selected falls back to the new default. The OpenAI-compatible server's default model id follows, from `parakeet-tdt-0.6b-v3-int8` to `parakeet-tdt-0.6b-v3-ultra-int8`.
+
+Written with Claude Code.
+
 ### Two more models: parakeet-ultra and parakeet-redux
 
 The model picker can now offer ONNX exports of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) and [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), published as [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) and [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx), and the reference deployment lists them after the default model and UltiMed (`?model=ultra`, `?model=redux`). The default model is unchanged. Both were published only in the `transformers` format, so they are converted back to NeMo and then built exactly like the default model, every precision included. On the full FLEURS validation split (25 languages, greedy decoding, int8 encoder), the macro WER is 13.14 % for the default model, 11.57 % for Ultra and 12.64 % for Redux. At beam 5 (60 clips per language) Ultra reaches 10.65 % and Redux 11.72 %. On both models int8 costs nothing measurable against fp32 (Ultra 11.55 %, Redux 12.64 %), and both hold up over a single 390 s and 607 s pass. The full tables are in each model repo's README.

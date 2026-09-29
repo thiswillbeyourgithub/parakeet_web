@@ -31,7 +31,7 @@ const DEFAULT_PROBES = [
   // One repo the app ships against, and one file big enough to be stored as LFS
   // or Xet (a small text file may be served inline from huggingface.co itself,
   // which would prove nothing about the CDN).
-  ['Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx', 'int8/encoder-model.int8.onnx'],
+  ['Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx', 'int8/encoder-model.int8.onnx'],
   ['istupakov/parakeet-tdt-0.6b-v3-onnx', 'encoder-model.int8.onnx'],
 ];
 

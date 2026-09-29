@@ -10,6 +10,12 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.4 (2026-09-17)
 
+### Ultra devient le modèle par défaut
+
+Sans modèle configuré, l'application, les outils en ligne de commande et l'image Docker chargent désormais [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) au lieu de [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx). Sur la partition de validation FLEURS complète de 25 langues (glouton, encodeur int8), cela fait 11,57 % de WER macro contre 13,14 %. Les deux dépôts ont la même organisation et des fichiers de même taille, donc le téléchargement ne change pas. Le déploiement de référence ne propose plus le modèle optimized ; un visiteur qui l'avait choisi retombe sur le nouveau modèle par défaut. L'identifiant de modèle par défaut du serveur compatible OpenAI suit, de `parakeet-tdt-0.6b-v3-int8` à `parakeet-tdt-0.6b-v3-ultra-int8`.
+
+Rédigé avec Claude Code.
+
 ### Deux modèles de plus : parakeet-ultra et parakeet-redux
 
 Le sélecteur de modèle peut désormais proposer des exports ONNX de [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) et de [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), publiés sous [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) et [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx), et le déploiement de référence les liste après le modèle par défaut et UltiMed (`?model=ultra`, `?model=redux`). Le modèle par défaut ne change pas. Tous deux n'étaient publiés qu'au format `transformers` : ils sont donc reconvertis en NeMo puis construits exactement comme le modèle par défaut, toutes précisions comprises. Sur la partition de validation FLEURS complète (25 langues, décodage glouton, encodeur int8), le WER macro vaut 13,14 % pour le modèle par défaut, 11,57 % pour Ultra et 12,64 % pour Redux. En faisceau de 5 (60 extraits par langue), Ultra atteint 10,65 % et Redux 11,72 %. Sur les deux modèles, int8 ne coûte rien de mesurable face à fp32 (Ultra 11,55 %, Redux 12,64 %), et les deux tiennent sur un passage unique de 390 s comme de 607 s. Les tableaux complets sont dans le README de chaque dépôt de modèle.

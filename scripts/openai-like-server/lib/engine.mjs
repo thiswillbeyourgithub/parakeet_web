@@ -64,7 +64,7 @@ export async function createEngine(options) {
   if (!existsSync(modelDir)) {
     throw new Error(
       `model directory ${modelDir} does not exist.\n`
-      + '  Populate one with:  hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models\n'
+      + '  Populate one with:  hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx --local-dir ./models\n'
       + '  then point --model-dir / PARAKEET_MODEL_DIR at it (in the container: /models).',
     );
   }
@@ -87,7 +87,7 @@ export async function createEngine(options) {
       `${err.message}\n`
       + `  Expected the ${options.quant} encoder + ${options.decoderQuant} decoder (in their precision\n`
       + `  folders, or flat) plus vocab.txt under ${modelDir}.\n`
-      + '  Fetch them with:  hf download Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx --local-dir ./models',
+      + '  Fetch them with:  hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx --local-dir ./models',
     );
   }
   const { model, tokenizer } = loaded;
