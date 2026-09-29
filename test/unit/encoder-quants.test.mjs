@@ -34,6 +34,7 @@ import {
   encoderQuantRows,
   encoderQuantsFor,
   gpuBackendAutoUsable,
+  restoredEncoderQuant,
   servableEncoderQuants,
 } from '../../app/ui/src/lib/encoderQuants.js';
 
@@ -92,7 +93,7 @@ describe('servableEncoderQuants: what a source can really deliver', () => {
     // missing, and it is missing from the mirror's own manifest.
     assert.ok(!got.webgpu.includes('fp16'));
     assert.deepEqual(got.webgpu, ['fp32', 'w4a8']);
-    // int8lite is absent for the same reason (its encoder build is not
+    // w2a8 is absent for the same reason (its encoder build is not
     // mirrored), while sharded fp32 IS servable, which is the case a naive
     // "does encoder-model.onnx.data exist" check gets backwards.
     assert.deepEqual(got.wasm, ['int8', 'w4a8', 'fp32']);
@@ -218,14 +219,13 @@ describe('encoderQuantRows: what the sidebar actually renders', () => {
     assert.equal(rowFor(wasm, 'fp16'), null);
     const gpu = encoderQuantRows({ backend: 'webgpu-hybrid', repoFiles: null });
     assert.equal(rowFor(gpu, 'int8'), null, 'no GPU int8 encoder kernel exists');
-    assert.equal(rowFor(gpu, 'int8lite'), null);
   });
 
   test('a precision the source does not host is not rendered either', () => {
-    // int8-lite is the live case: neither repo ships it any more, so offering
-    // it describes a deployment that does not exist.
+    // w2a8 is the live case: only a ternary model ships it, so offering it on
+    // this mirror describes a deployment that does not exist.
     const rows = encoderQuantRows({ backend: 'wasm', repoFiles: DEPLOYED_MIRROR_WITH_FP16 });
-    assert.equal(rowFor(rows, 'int8lite'), null);
+    assert.equal(rowFor(rows, 'w2a8'), null);
     assert.deepEqual(values(rows), ['int8', 'w4a8', 'fp32']);
     assert.ok(rows.every((r) => r.available), 'everything left is selectable');
   });
@@ -270,7 +270,7 @@ describe('encoderQuantRows: what the sidebar actually renders', () => {
     // on an unanswered question is how a loadable precision becomes unreachable.
     for (const repoFiles of [null, []]) {
       const rows = encoderQuantRows({ backend: 'wasm', repoFiles });
-      assert.deepEqual(values(rows), ['int8lite', 'int8', 'w4a8', 'w2a8', 'fp32']);
+      assert.deepEqual(values(rows), ['int8', 'w4a8', 'w2a8', 'fp32']);
     }
   });
 
@@ -283,7 +283,7 @@ describe('encoderQuantRows: what the sidebar actually renders', () => {
   });
 
   test('the display order is honoured and never invents a row', () => {
-    const order = ['w4a8', 'int8lite', 'int8', 'fp16', 'fp32'];
+    const order = ['w4a8', 'int8', 'fp16', 'fp32'];
     const rows = encoderQuantRows({ backend: 'webgpu-hybrid', repoFiles: null, shaderF16: true, order });
     assert.deepEqual(values(rows), ['w4a8', 'fp16', 'fp32']);
     for (const r of rows) assert.ok(WEBGPU_ENCODER_QUANTS.includes(r.value), r.value);
@@ -389,13 +389,13 @@ describe('effectiveEncoderQuant: what a load would really use', () => {
   });
 
   test('an unservable hand-picked precision falls to int8 on WASM, never to fp32', () => {
-    // int8lite is the case that exists in the wild: the app offers it, plenty
-    // of repos do not ship it. The answer is the default, not the next entry in
+    // w2a8 is the case that exists in the wild: the app offers it, most repos
+    // do not ship it. The answer is the default, not the next entry in
     // some list, because fp32 and w4a8 are only ever loaded on request.
     const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR, shaderF16: true });
-    assert.ok(!servable.wasm.includes('int8lite'));
+    assert.ok(!servable.wasm.includes('w2a8'));
     assert.equal(
-      effectiveEncoderQuant({ backend: 'wasm', selected: 'int8lite', servable }),
+      effectiveEncoderQuant({ backend: 'wasm', selected: 'w2a8', servable }),
       DEFAULT_WASM_ENCODER_QUANT,
     );
   });
@@ -409,5 +409,30 @@ describe('effectiveEncoderQuant: what a load would really use', () => {
     assert.equal(gpu({ servable: none, shaderF16: true }), null);
     assert.equal(gpu({ servable: none, shaderF16: false }), null);
     assert.equal(effectiveEncoderQuant({ backend: 'wasm', selected: 'int8', servable: none }), null);
+  });
+});
+
+describe('restoredEncoderQuant: what a persisted precision restores as', () => {
+  test('a saved int8lite (retired precision) restores as int8, never as itself', () => {
+    // Returning visitors can still have 'int8lite' in their stored settings
+    // from before the precision was removed. Handing it to hub.js would ask for
+    // a quant no offered model ships, so it has to land on the WASM default.
+    assert.ok(!WASM_ENCODER_QUANTS.includes('int8lite'));
+    assert.equal(restoredEncoderQuant('wasm', 'int8lite'), 'int8');
+  });
+
+  test('every offered precision survives a reload on its own backend', () => {
+    for (const q of WASM_ENCODER_QUANTS) assert.equal(restoredEncoderQuant('wasm', q), q);
+    for (const q of WEBGPU_ENCODER_QUANTS) assert.equal(restoredEncoderQuant('webgpu-hybrid', q), q);
+  });
+
+  test('a value the backend does not offer, or garbage, restores as that backend\'s default', () => {
+    assert.equal(restoredEncoderQuant('wasm', 'fp16'), DEFAULT_WASM_ENCODER_QUANT);
+    assert.equal(restoredEncoderQuant('webgpu-hybrid', 'int8'), DEFAULT_WEBGPU_ENCODER_QUANT);
+    assert.equal(restoredEncoderQuant('webgpu-hybrid', 'int8lite'), DEFAULT_WEBGPU_ENCODER_QUANT);
+    for (const junk of [undefined, null, '', 42, 'w9a9']) {
+      assert.equal(restoredEncoderQuant('wasm', junk), DEFAULT_WASM_ENCODER_QUANT);
+      assert.equal(restoredEncoderQuant('webgpu-hybrid', junk), DEFAULT_WEBGPU_ENCODER_QUANT);
+    }
   });
 });

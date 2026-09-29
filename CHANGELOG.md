@@ -16,6 +16,12 @@ With no model configured, the app, the command-line tools and the Docker image n
 
 Written with Claude Code.
 
+### The "int8 lite" precision is gone
+
+The "int8 lite" encoder precision has been removed from the settings, the loader and the tooling: none of the models the app offers ships that build any more, so the choice could only ever end on an "unavailable" banner. A browser that still has int8 lite saved from an earlier visit now loads int8 instead.
+
+Written with Claude Code.
+
 ### Two more models: parakeet-ultra and parakeet-redux
 
 The model picker can now offer ONNX exports of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) and [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), published as [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) and [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx), and the reference deployment lists them after the default model and UltiMed (`?model=ultra`, `?model=redux`). The default model is unchanged. Both were published only in the `transformers` format, so they are converted back to NeMo and then built exactly like the default model, every precision included. On the full FLEURS validation split (25 languages, greedy decoding, int8 encoder), the macro WER is 13.14 % for the default model, 11.57 % for Ultra and 12.64 % for Redux. At beam 5 (60 clips per language) Ultra reaches 10.65 % and Redux 11.72 %. On both models int8 costs nothing measurable against fp32 (Ultra 11.55 %, Redux 12.64 %), and both hold up over a single 390 s and 607 s pass. The full tables are in each model repo's README.

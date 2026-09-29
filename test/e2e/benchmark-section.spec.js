@@ -98,10 +98,8 @@ test('benchmark runs a real combination, reports it anonymously, and sends nothi
   // Nor may any other row be. This spec asserts a single result below, so a new
   // pre-selected row would break it, but the reason it must not exist is the
   // product one: pressing Run without touching a checkbox has to stay free for a
-  // visitor whose model is already cached. int8lite is the live case (810 MB,
-  // under the heavy threshold, so only OPT_IN_QUANTS keeps it unchecked).
-  await expect(page.locator('input[name="benchmark-combo-wasm:int8lite"]')).toBeVisible();
-  await expect(page.locator('input[name="benchmark-combo-wasm:int8lite"]')).not.toBeChecked();
+  // visitor whose model is already cached (OPT_IN_QUANTS keeps the light
+  // alternatives unchecked; the unit tests pin that rule per precision).
   expect(await page.locator('input[name^="benchmark-combo-"]:checked').count(),
     'exactly one row may be pre-selected: the visitor\'s own cached model').toBe(1);
   await page.locator('[data-umami-event="benchmark_run"]').click();

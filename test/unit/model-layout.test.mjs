@@ -33,8 +33,7 @@ describe('layoutDirFor', () => {
   test('routes each quantised build to its own folder', () => {
     assert.equal(layoutDirFor('encoder-model.int8.onnx'), 'int8/');
     assert.equal(layoutDirFor('decoder_joint-model.int8.onnx'), 'int8/');
-    // The lite build must NOT land in int8/: its suffix is the longer match.
-    assert.equal(layoutDirFor('encoder-model.int8.lite.onnx'), 'int8-lite/');
+    assert.equal(layoutDirFor('encoder-model.w2a8.onnx'), 'w2a8/');
     assert.equal(layoutDirFor('encoder-model.w4a8.onnx'), 'w4a8/');
     assert.equal(layoutDirFor('encoder-model.fp16.onnx'), 'fp16/');
     assert.equal(layoutDirFor('decoder_joint-model.fp16.onnx'), 'fp16/');
@@ -93,14 +92,12 @@ describe('findRepoFile: layout v2 (nested)', () => {
     'fp32/decoder_joint-model.onnx',
     'int8/encoder-model.int8.onnx',
     'int8/decoder_joint-model.int8.onnx',
-    'int8-lite/encoder-model.int8.lite.onnx',
     'w4a8/encoder-model.w4a8.onnx',
   ];
 
   test('resolves every basename to its nested path', () => {
     assert.equal(findRepoFile(listing, 'encoder-model.int8.onnx'), 'int8/encoder-model.int8.onnx');
     assert.equal(findRepoFile(listing, 'decoder_joint-model.int8.onnx'), 'int8/decoder_joint-model.int8.onnx');
-    assert.equal(findRepoFile(listing, 'encoder-model.int8.lite.onnx'), 'int8-lite/encoder-model.int8.lite.onnx');
     assert.equal(findRepoFile(listing, 'encoder-model.w4a8.onnx'), 'w4a8/encoder-model.w4a8.onnx');
     assert.equal(findRepoFile(listing, 'encoder-model.onnx'), 'fp32/encoder-model.onnx');
     assert.equal(findRepoFile(listing, 'vocab.txt'), 'vocab.txt');

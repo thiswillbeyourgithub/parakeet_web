@@ -271,8 +271,8 @@ describe('getParakeetModel: the nested repo layout', () => {
     'fp32/encoder-model.onnx', 'fp32/encoder-model.onnx.data.000', 'fp32/encoder-model.onnx.data.001',
     'fp32/decoder_joint-model.onnx',
     'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx',
-    'int8-lite/encoder-model.int8.lite.onnx',
     'w4a8/encoder-model.w4a8.onnx',
+    'w2a8/encoder-model.w2a8.onnx',
   ];
   let originalFetch3;
   beforeEach(() => { originalFetch3 = globalThis.fetch; });
@@ -292,8 +292,8 @@ describe('getParakeetModel: the nested repo layout', () => {
 
   test('HF listing, the opt-in encoders come from their own folders', async () => {
     for (const [quant, path] of [
-      ['int8lite', 'int8-lite/encoder-model.int8.lite.onnx'],
       ['w4a8', 'w4a8/encoder-model.w4a8.onnx'],
+      ['w2a8', 'w2a8/encoder-model.w2a8.onnx'],
     ]) {
       const downloaded = mockHfPaths(REPO_NESTED);
       await getParakeetModel(`test/nested-${quant}`, {

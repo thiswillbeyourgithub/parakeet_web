@@ -44,7 +44,6 @@ const NESTED_LAYOUT = [
   'fp32/encoder-model.onnx', 'fp32/encoder-model.onnx.data.000', 'fp32/encoder-model.onnx.data.001',
   'fp32/decoder_joint-model.onnx',
   'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx',
-  'int8-lite/encoder-model.int8.lite.onnx',
   'w4a8/encoder-model.w4a8.onnx',
 ];
 
@@ -60,10 +59,11 @@ describe('resolveModelQuant: the nested repo layout', () => {
     assert.equal(gpu.webgpuFp32NeedsShards, false);
   });
 
-  test('the opt-in encoders are found in int8-lite/ and w4a8/', () => {
-    const lite = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
-    assert.equal(lite.encoderQ, 'int8lite');
-    assert.equal(lite.pinnedToInt8, false);
+  test('the opt-in encoders are found in w2a8/ and w4a8/', () => {
+    const withW2a8 = [...NESTED_LAYOUT, 'w2a8/encoder-model.w2a8.onnx'];
+    const w2a8 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: withW2a8 });
+    assert.equal(w2a8.encoderQ, 'w2a8');
+    assert.equal(w2a8.pinnedToInt8, false);
     const w4a8 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
     assert.equal(w4a8.encoderQ, 'w4a8');
     const gpuW4a8 = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
@@ -73,8 +73,8 @@ describe('resolveModelQuant: the nested repo layout', () => {
 
   test('a nested repo WITHOUT an opt-in build still reports it as unservable', () => {
     // The directory rule must not be read as "the file is implied by its folder".
-    const noLite = NESTED_LAYOUT.filter((f) => !f.includes('int8-lite/'));
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: noLite });
+    // NESTED_LAYOUT has no w2a8/ folder at all.
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
     assert.equal(r.encoderQ, 'int8');
     assert.equal(r.pinnedToInt8, true);
   });
@@ -180,86 +180,23 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
   });
 });
 
-// The lite int8 encoder is the same SmoothQuant recipe with 11 fp32 MatMuls
-// kept instead of 18: one extra file, no sidecar and no shards, so the only
-// question is whether the source ships it. Only the model repo builds it, and
-// the crucial rule is that a source WITHOUT it must not quietly serve the
-// heavier default int8: it pins (which routes through the /models upgrade probe
-// and then QuantUnavailableError), exactly like a missing fp32 shard set.
-describe('resolveModelQuant: WASM lite-int8 opt-in', () => {
-  const WITH_LITE = [
-    'encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'decoder_joint-model.int8.onnx',
-  ];
-  const WITH_LITE_SUBFOLDER = [
-    'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx',
-    'sub/encoder-model.int8.lite.onnx',
-  ];
-
-  test('int8lite request + the lite encoder shipped -> lite encoder, int8 decoder, not pinned', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8lite', 'int8']);
-    assert.equal(r.pinnedToInt8, false);
-    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE }), true);
-  });
-
-  test('int8lite request but NO lite encoder -> int8 pin, never a silent downgrade', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: NO_SHARDS });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
-    assert.equal(r.pinnedToInt8, true, 'a source with no lite build must surface, not swap in the heavier int8');
-    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: NO_SHARDS }), false);
-  });
-
-  test('the lite encoder is found under a subfolder too (HF tree API returns full paths)', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE_SUBFOLDER });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8lite', 'int8']);
-    assert.equal(r.pinnedToInt8, false);
-  });
-
-  // A near-miss name must not be mistaken for the lite build: the download loop
-  // would then ask for a file the source does not have.
-  test('a lookalike filename does not count as the lite encoder', () => {
-    const lookalike = ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'encoder-model.int8.lite.onnx.bak', 'xencoder-model.int8.lite.onnx'];
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: lookalike });
-    assert.equal(r.pinnedToInt8, true);
-  });
-
-  test('an int8lite request never drags in the fp32 shards, and fp32 never picks up lite', () => {
-    const both = [...WITH_FP32_SHARDS, 'encoder-model.int8.lite.onnx'];
-    const lite = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: both, allowWasmFp32: true });
-    assert.deepEqual([lite.encoderQ, lite.decoderQ], ['int8lite', 'int8']);
-    const fp32 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: both, allowWasmFp32: true });
-    assert.deepEqual([fp32.encoderQ, fp32.decoderQ], ['fp32', 'int8']);
-  });
-
-  test('an fp32 DECODER request still pins, even with the lite encoder present', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'fp32', repoFiles: WITH_LITE });
+// int8lite was retired once no offered model shipped it. A stray request (an
+// old saved setting, a hand-edited record) must never load the lite file even
+// where a source still lists it: it pins, which routes to QuantUnavailableError.
+describe('resolveModelQuant: the retired int8lite quant', () => {
+  test('a WASM int8lite request pins even when the lite file is listed', () => {
+    const withLite = ['encoder-model.int8.onnx', 'encoder-model.int8.lite.onnx', 'decoder_joint-model.int8.onnx'];
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: withLite });
     assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
     assert.equal(r.pinnedToInt8, true);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: withLite }), false);
   });
-
-  // The GPU EP has no int8 encoder kernel at all, so the lite build is as
-  // unrunnable there as the default int8: both must resolve to fp32.
-  for (const backend of ['webgpu', 'webgpu-hybrid']) {
-    test(`${backend} resolves an int8lite request to fp32, exactly like int8`, () => {
-      const r = resolveModelQuant({ backend, encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: [...WITH_FP32_SHARDS, 'encoder-model.int8.lite.onnx'] });
-      assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
-      assert.equal(r.pinnedToInt8, false);
-      assert.equal(r.webgpuFp32NeedsShards, false);
-    });
-
-    test(`${backend} still demands the shards for an int8lite request`, () => {
-      const r = resolveModelQuant({ backend, encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE });
-      assert.equal(r.encoderQ, 'fp32');
-      assert.equal(r.webgpuFp32NeedsShards, true, 'shipping a lite int8 encoder does nothing for the GPU path');
-      assert.equal(quantSatisfiable({ backend, encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: WITH_LITE }), false);
-    });
-  }
 });
 
 // The w4a8 encoder packs the weights to 4 bits (MatMulNBits) and keeps the
 // activations int8 inside the kernel: one extra file, no sidecar and no shards,
-// so on WASM it resolves on exactly the same terms as the lite build, pin
-// included. The GPU path is where it parts company with int8/int8lite:
+// so on WASM the only question is whether the source ships it, pin included.
+// The GPU path is where it parts company with int8:
 // MatMulNBits HAS a WebGPU kernel, so the request is not rewritten to fp32
 // there, and the file carries its own weights, so no shard set is demanded.
 describe('resolveModelQuant: w4a8 opt-in', () => {
@@ -307,17 +244,25 @@ describe('resolveModelQuant: w4a8 opt-in', () => {
   });
 
   // Both opt-in encoders in one listing: each request must get its own build, so
-  // the branch order inside resolveModelQuant cannot leak lite into a w4a8 pick.
+  // the branch order inside resolveModelQuant cannot leak w2a8 into a w4a8 pick.
   test('a source shipping both opt-in encoders serves each request its own build', () => {
-    const both = [...WITH_W4A8, 'encoder-model.int8.lite.onnx'];
+    const both = [...WITH_W4A8, 'encoder-model.w2a8.onnx'];
     const w4a8 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: both });
     assert.equal(w4a8.encoderQ, 'w4a8');
-    const lite = resolveModelQuant({ backend: 'wasm', encoderQuant: 'int8lite', decoderQuant: 'int8', repoFiles: both });
-    assert.equal(lite.encoderQ, 'int8lite');
+    const w2a8 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w2a8', decoderQuant: 'int8', repoFiles: both });
+    assert.equal(w2a8.encoderQ, 'w2a8');
+  });
+
+  test('a w4a8 request never drags in the fp32 shards, and fp32 never picks up w4a8', () => {
+    const both = [...WITH_FP32_SHARDS, 'encoder-model.w4a8.onnx'];
+    const w4a8 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: both, allowWasmFp32: true });
+    assert.deepEqual([w4a8.encoderQ, w4a8.decoderQ], ['w4a8', 'int8']);
+    const fp32 = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: both, allowWasmFp32: true });
+    assert.deepEqual([fp32.encoderQ, fp32.decoderQ], ['fp32', 'int8']);
   });
 
   for (const backend of ['webgpu', 'webgpu-hybrid']) {
-    // Where w4a8 diverges from int8lite: the shader dequantizes the int4 weights
+    // Where w4a8 diverges from int8: the shader dequantizes the int4 weights
     // to fp16, so the GPU EP can run this encoder and the request survives. The
     // file carries its own weights, so the fp32 shard demand does not apply:
     // WITH_W4A8 ships no shard set at all and still satisfies.
@@ -355,7 +300,7 @@ describe('resolveModelQuant: w4a8 opt-in', () => {
     // would refuse itself.
     test(`${backend} leaves nbitsNeedsFile clear when the encoder is shipped, and for other quants`, () => {
       assert.equal(resolveModelQuant({ backend, encoderQuant: 'w4a8', decoderQuant: 'int8', repoFiles: WITH_W4A8 }).nbitsNeedsFile, false);
-      for (const q of ['int8', 'int8lite', 'fp32']) {
+      for (const q of ['int8', 'fp32']) {
         assert.equal(
           resolveModelQuant({ backend, encoderQuant: q, decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS }).nbitsNeedsFile,
           false,

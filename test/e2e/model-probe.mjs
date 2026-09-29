@@ -9,8 +9,8 @@
 //   - FLAT, <base>/<path>: the single-repo LOCAL_MODEL_PATH contract, and what a
 //     maintainer's fallback_models checkout has historically been.
 //
-// The specs that HEAD-probe for optional weights (fp32 shards, the lite int8
-// encoder, the diarization pair) must not care which one they got. Hard-coding
+// The specs that HEAD-probe for optional weights (fp32 shards, the opt-in
+// encoder builds, the diarization pair) must not care which one they got. Hard-coding
 // the flat URL made a nested mirror look like MISSING weights, which is the
 // worst failure available here: strict-weights turns a missing weight into a
 // local FAILURE, so the tier would blame the checkout rather than the probe.
@@ -26,7 +26,7 @@
 // reads only from there, so on a mirror that is both (a repo root AND a flat
 // tree, which every maintainer checkout with root symlinks is) a file found
 // flat is one the app will never load. The first version of this file missed
-// that and reported the lite int8 encoder as served from the flat tree while
+// that and reported an opt-in encoder as served from the flat tree while
 // the app, resolving to the repo root that no longer carries it, failed on a
 // quant-unavailable banner seven minutes later. A gate that green-lights a run
 // the app cannot complete is worse than no gate: it moves the failure far away
@@ -34,7 +34,7 @@
 //
 // Within a layout the directory is not guessed either: candidatePaths owns the
 // "a file's directory is a pure function of its basename" rule (int8/, fp32/,
-// int8-lite/, with the root and sharded/ as the historical spellings), and
+// w4a8/, with the root and sharded/ as the historical spellings), and
 // serve.mjs already resolves a bare basename through it. Reusing it here is
 // what keeps a probe from missing shards that sit in sharded/ rather than
 // fp32/, without this file holding an opinion of its own about layout.

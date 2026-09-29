@@ -37,7 +37,6 @@ describe('listLocalRepoFiles: the current nested layout', () => {
       'int8/encoder-model.int8.onnx',
       'int8/decoder_joint-model.int8.onnx',
       'fp16/encoder-model.fp16.onnx',
-      'int8-lite/encoder-model.int8.lite.onnx',
       'w4a8/encoder-model.w4a8.onnx',
     ]);
     const files = await listLocalRepoFiles('/models');
@@ -46,7 +45,6 @@ describe('listLocalRepoFiles: the current nested layout', () => {
       'fp32/decoder_joint-model.onnx',
       'int8/encoder-model.int8.onnx',
       'int8/decoder_joint-model.int8.onnx',
-      'int8-lite/encoder-model.int8.lite.onnx',
       'w4a8/encoder-model.w4a8.onnx',
       'fp16/encoder-model.fp16.onnx',
       'fp32/encoder-model.onnx.data.000',
@@ -156,8 +154,8 @@ describe('listLocalRepoFiles: the probe budget', () => {
     // The weight graphs earn their probes because this list IS the repo listing
     // on a local-weights deployment: without them the download plan cannot know
     // which directory to fetch from. The optional encoder builds earn theirs
-    // because resolveModelQuant must decide whether the source can serve an
-    // int8lite, w4a8 or fp16 request BEFORE any weight is fetched. Variant filenames
+    // because resolveModelQuant must decide whether the source can serve a
+    // w4a8, w2a8 or fp16 request BEFORE any weight is fetched. Variant filenames
     // (the withdrawn optimized/LSE/TopK builds) are NOT probed: those graphs ship
     // under the canonical names and the decoder fast paths are detected from the
     // loaded session's outputNames.
@@ -170,7 +168,6 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'decoder_joint-model.onnx',
       'decoder_joint-model.onnx.data',
       'encoder-model.fp16.onnx',
-      'encoder-model.int8.lite.onnx',
       'encoder-model.int8.onnx',
       'encoder-model.onnx',
       'encoder-model.onnx.data',
@@ -183,7 +180,6 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'fp32/encoder-model.onnx',
       'fp32/encoder-model.onnx.data',
       'fp32/encoder-model.onnx.data.000',
-      'int8-lite/encoder-model.int8.lite.onnx',
       'int8/decoder_joint-model.int8.onnx',
       'int8/encoder-model.int8.onnx',
       // The one request that is not a probe: a mirror may declare its own file
@@ -195,7 +191,6 @@ describe('listLocalRepoFiles: the probe budget', () => {
       'sharded/decoder_joint-model.onnx',
       'sharded/decoder_joint-model.onnx.data',
       'sharded/encoder-model.fp16.onnx',
-      'sharded/encoder-model.int8.lite.onnx',
       'sharded/encoder-model.int8.onnx',
       'sharded/encoder-model.onnx',
       'sharded/encoder-model.onnx.data',
@@ -217,11 +212,11 @@ describe('listLocalRepoFiles: the probe budget', () => {
   });
 
   // The point of the optional probes: a mirror that HAS one of them must report
-  // it, so resolveModelQuant can honour an int8lite or w4a8 request against local
+  // it, so resolveModelQuant can honour a w4a8 or w2a8 request against local
   // weights instead of pinning to the heavier default int8. Both layouts.
   for (const rel of [
-    'encoder-model.int8.lite.onnx', 'int8-lite/encoder-model.int8.lite.onnx',
     'encoder-model.w4a8.onnx', 'w4a8/encoder-model.w4a8.onnx',
+    'encoder-model.w2a8.onnx', 'w2a8/encoder-model.w2a8.onnx',
   ]) {
     test(`a mirror serving ${rel} reports it`, async () => {
       mockMirror([rel]);
@@ -244,7 +239,7 @@ describe('listLocalRepoFiles: the probe budget', () => {
 
 // A mirror that declares its own file list. This is the only way a local mirror
 // can serve a layout nothing predicted, which stopped being hypothetical when
-// the optimized repo moved the lite int8 encoder into its nested
+// the old optimized repo moved an encoder build into its nested
 // istupakov_smoothquant/ sub-repo: over HF the app resolves that from the repo
 // listing, while locally no candidate path names it and the quant reads as
 // unavailable. So the tests below care about two things in equal measure: that
@@ -273,7 +268,7 @@ describe('listLocalRepoFiles: the mirror manifest', () => {
       'vocab.txt',
       'int8/encoder-model.int8.onnx',
       'int8/decoder_joint-model.int8.onnx',
-      'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx',
+      'istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx',
     ];
     mockManifestMirror(listing, { probed });
     assert.deepEqual(await listLocalRepoFiles('/models'), listing);
@@ -283,8 +278,8 @@ describe('listLocalRepoFiles: the mirror manifest', () => {
 
   test('it can name a directory no candidate path predicts', async () => {
     // The whole reason the manifest exists. Probing could never report this
-    // path, so a mirror of the optimized repo could not serve its lite encoder.
-    const nested = 'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx';
+    // path, so a mirror of the old optimized repo could not serve its nested encoder.
+    const nested = 'istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx';
     mockManifestMirror(['vocab.txt', nested]);
     assert.ok((await listLocalRepoFiles('/models')).includes(nested));
   });

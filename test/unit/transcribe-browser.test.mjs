@@ -68,11 +68,11 @@ test('encoderFileFromCacheKeys / encoderFileMatches: prove which precision loade
   assert.equal(encoderFileFromCacheKeys([`${R}vocab.txt`, `${R}w2a8/encoder-model.w2a8.onnx`]), 'encoder-model.w2a8.onnx');
   assert.equal(encoderFileFromCacheKeys([`meta-${R}int8/encoder-model.int8.onnx`]), 'encoder-model.int8.onnx');
   assert.equal(encoderFileFromCacheKeys([`partial-${R}fp32/encoder-model.onnx.data.000-seg-3`]), 'encoder-model.onnx');
-  assert.equal(encoderFileFromCacheKeys([`${R}int8-lite/encoder-model.int8.lite.onnx`]), 'encoder-model.int8.lite.onnx');
+  assert.equal(encoderFileFromCacheKeys([`${R}int8/encoder-model.int8.smoothquant.onnx`]), 'encoder-model.int8.smoothquant.onnx');
   assert.equal(encoderFileFromCacheKeys([`${R}int8/decoder_joint-model.int8.onnx`, 'settings']), null);
   assert.equal(encoderFileMatches('encoder-model.w2a8.onnx', 'w2a8'), true);
   assert.equal(encoderFileMatches('encoder-model.onnx', 'fp32'), true);
-  assert.equal(encoderFileMatches('encoder-model.int8.lite.onnx', 'int8lite'), true);
+  assert.equal(encoderFileMatches('encoder-model.fp16.onnx', 'fp16'), true);
   // The silent fallback this guards against: w2a8 asked, int8 loaded.
   assert.equal(encoderFileMatches('encoder-model.int8.onnx', 'w2a8'), false);
   assert.equal(encoderFileMatches(null, 'int8'), false);

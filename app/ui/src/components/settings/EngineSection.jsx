@@ -219,9 +219,9 @@ export default function EngineSection({
       )}
 
       {(backend === 'wasm' || backend.startsWith('webgpu')) && (() => {
-        // One display order (w4a8 / int8 lite / int8 / fp16 / fp32, by
+        // One display order (w2a8 / w4a8 / int8 / fp16 / fp32, by
         // ascending download size, see ENCODER_QUANT_ROWS), filtered per
-        // backend and per source. Neither int8 build has a GPU encoder
+        // backend and per source. int8 has no GPU encoder
         // kernel and fp16 has no usable WASM one, so those rows are
         // absent rather than greyed; fp32 and w4a8 run on both, w4a8
         // through the MatMulNBits kernel the GPU EP does implement. The
@@ -234,11 +234,7 @@ export default function EngineSection({
         const isWebgpu = isWebgpuSelected;
         const setQuant = isWebgpu ? setWebgpuEncoderQuant : setWasmEncoderQuant;
         const effectiveQuant = effectiveEncoderQuant;
-        // int8 is the default on WASM. int8 lite is the same recipe with
-        // fewer MatMuls quantised: ~88 MB smaller and lighter on RAM, at
-        // slightly higher error, and only the model repo ships it (a repo
-        // without it surfaces the quantUnavailable banner rather than
-        // silently loading the heavier int8). w4a8 is the 4-bit build:
+        // int8 is the default on WASM. w4a8 is the 4-bit build:
         // the smallest download by far and the fastest to load, but
         // slower to run than int8 on WASM and than fp32 on WebGPU (the
         // encoder is compute-bound, so shrinking the weights buys load
@@ -249,11 +245,9 @@ export default function EngineSection({
         // Built from ENCODER_QUANT_ROWS so the radios and the whitelists
         // the settings restore validates against cannot drift apart: a
         // value offered here but missing there would be silently reset to
-        // int8 on the next reload, which is exactly how int8lite first
-        // shipped without surviving a page load. A value with no entry in
+        // int8 on the next reload. A value with no entry in
         // PRECISION_ROW throws here rather than rendering a blank radio.
         const PRECISION_ROW = {
-          int8lite: () => t('precisionInt8Lite'),
           int8: () => t('precisionInt8'),
           w4a8: () => t('precisionW4a8'),
     w2a8: () => t('precisionW2a8'),

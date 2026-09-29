@@ -10,8 +10,8 @@
 //   optimized.json       Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx
 //                        v2 at the root PLUS a complete nested sub-repo at
 //                        istupakov_smoothquant/ (its own vocab, nemo128 and
-//                        precision folders), which is where the lite int8
-//                        encoder lives now that it moved out of the root.
+//                        precision folders), which also holds a retired int8
+//                        lite encoder the app no longer asks for.
 //   istupakov-flat.json  istupakov/parakeet-tdt-0.6b-v3-onnx
 //                        Upstream, everything FLAT at the root, fp32 as a single
 //                        encoder-model.onnx.data sidecar rather than shards.
@@ -19,10 +19,10 @@
 // Why pin this rather than trust modelLayout's own unit test: that one checks
 // the RULES against hand-written paths, so it stays green while the repos move
 // underneath it. This one checks the rules against what the repos really serve,
-// which is the failure the app suffers. The lite encoder is the worked example:
-// the model repo moved it from int8-lite/ to istupakov_smoothquant/int8-lite/
-// and nothing in the tree noticed, because findRepoFile's last-resort branch
-// quietly kept resolving it while a hardcoded path in the CI fetch list 404ed.
+// which is the failure the app suffers. The worked example: the optimized repo
+// moved an encoder build out of its root into istupakov_smoothquant/ and nothing
+// in the tree noticed, because findRepoFile's last-resort branch quietly kept
+// resolving it while a hardcoded path in the CI fetch list 404ed.
 //
 // So the table below is deliberately EXHAUSTIVE and written as literal paths.
 // A repo reorganisation is supposed to break it, and the diff is then the list
@@ -67,14 +67,6 @@ const RESOLUTIONS = [
     ultimed: 'int8/decoder_joint-model.int8.onnx',
     optimized: 'int8/decoder_joint-model.int8.onnx',
     flat: 'decoder_joint-model.int8.onnx',
-  }],
-  ['encoder-model.int8.lite.onnx', {
-    ultimed: null,
-    // The nested sub-repo case. No candidatePaths entry matches, so this is
-    // findRepoFile's last-resort "the listing knows better than the layout
-    // rules" branch doing exactly the job it exists for.
-    optimized: 'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx',
-    flat: null,
   }],
   ['encoder-model.fp16.onnx', {
     ultimed: 'fp16/encoder-model.fp16.onnx',
@@ -163,7 +155,7 @@ describe('reference repo layouts: which quants each one can actually serve', () 
   });
 
   test('a quant upstream does not ship pins back to int8 rather than guessing', () => {
-    for (const q of ['int8lite', 'w4a8']) {
+    for (const q of ['w4a8', 'w2a8']) {
       const r = wasm(FLAT, q);
       assert.equal(r.encoderQ, 'int8', q);
       assert.equal(r.pinnedToInt8, true, q);
@@ -174,14 +166,15 @@ describe('reference repo layouts: which quants each one can actually serve', () 
     assert.equal(fp32.pinnedToInt8, true);
   });
 
-  test('the lite int8 encoder is served from the nested sub-repo, not refused', () => {
-    // The regression this whole file exists for: optimized moved the lite
-    // encoder under istupakov_smoothquant/, and the app must keep offering it.
-    assert.equal(wasm(OPTIMIZED, 'int8lite').encoderQ, 'int8lite');
-    // UltiMed ships no lite build at all, so it correctly pins instead.
-    const ultimed = wasm(ULTIMED, 'int8lite');
-    assert.equal(ultimed.encoderQ, 'int8');
-    assert.equal(ultimed.pinnedToInt8, true);
+  test('the retired int8lite quant is refused even where its file is still listed', () => {
+    // The optimized listing still carries the lite encoder under
+    // istupakov_smoothquant/, but the app no longer offers the precision, so a
+    // stray request must pin (and surface the banner) rather than load it.
+    for (const [name, files] of Object.entries(REPOS)) {
+      const r = wasm(files, 'int8lite');
+      assert.equal(r.encoderQ, 'int8', name);
+      assert.equal(r.pinnedToInt8, true, name);
+    }
   });
 
   test('sharded fp32 loads on WASM from both Olicorne repos when opted in', () => {

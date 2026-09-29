@@ -45,18 +45,18 @@ import { QUANT_DOWNLOAD_MB } from './encoderQuants.js';
 // reflex on a benchmark they can run without it.
 export const HEAVY_DOWNLOAD_MB = 1500;
 
-// Offered, but never pre-selected. int8lite is an ALTERNATIVE to a precision the
-// visitor already has rather than a backend they cannot otherwise reach, and at
-// 810 MB it slips under HEAVY_DOWNLOAD_MB. Pre-checking it would have taken the
-// default run for a typical int8 visitor from free (their model is cached) to a
-// second full model load plus 810 MB, which is exactly the reflex spend the
-// heavy rule exists to prevent. `isCurrent` still wins below, so a visitor who
-// already runs lite gets their own row checked at no cost.
+// Offered, but never pre-selected. w4a8 and w2a8 are ALTERNATIVES to a precision
+// the visitor already has rather than a backend they cannot otherwise reach, and
+// they slip under HEAVY_DOWNLOAD_MB. Pre-checking them would take the default run
+// for a typical int8 visitor from free (their model is cached) to a second full
+// model load plus its download, which is exactly the reflex spend the heavy rule
+// exists to prevent. `isCurrent` still wins below, so a visitor who already runs
+// one of them gets their own row checked at no cost.
 // fp16 joins them for the same reason plus one of its own: at 1220 MB it is
 // under the heavy line, but it only exists on WebGPU, so pre-checking it would
 // silently add a 1.2 GB download to the default run of every visitor whose GPU
 // happens to report shader-f16.
-export const OPT_IN_QUANTS = new Set(['int8lite', 'w4a8', 'w2a8', 'fp16']);
+export const OPT_IN_QUANTS = new Set(['w4a8', 'w2a8', 'fp16']);
 
 function comboId(backend, quant) {
   return `${backend}:${quant}`;
@@ -92,11 +92,6 @@ export function planBenchmark({
   servableQuants = null,
 } = {}) {
   const combos = [
-    // int8lite is the same SmoothQuant recipe with 11 fp32 MatMuls kept instead
-    // of 18: ~88 MB less to download and ~164 MiB less peak RSS, for slightly
-    // higher WER. Whether that trade is worth it is exactly the kind of question
-    // a benchmark on the visitor's own machine answers, so it gets a row.
-    { backend: 'wasm', quant: 'int8lite' },
     { backend: 'wasm', quant: 'int8' },
     // w4a8 is the smallest encoder by a wide margin (int4 weights, int8
     // activations in-kernel): a quarter of fp32's download for the same accuracy,

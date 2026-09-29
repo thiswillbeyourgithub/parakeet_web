@@ -1,7 +1,6 @@
 {
   "_comment": "Where each Parakeet ONNX weight file lives in a model repo. THE single source of truth for the layout rule: read by app/src/modelLayout.js (browser + node scripts), scripts/wer-quants.py, and the model repo's wer-fleurs-validation.sh. quantDirs is matched longest-suffix-first against the graph name (sidecar suffix stripped by sidecarPattern); fp32Graphs are matched exactly; anything else lives at the root. fallbackDirs are tried after the layout dir, for the two legacy layouts (flat root, flat plus sharded/). Written with Claude Code.",
   "quantDirs": [
-    [".int8.lite.onnx", "int8-lite/"],
     [".int8.onnx", "int8/"],
     [".w4a8.onnx", "w4a8/"],
     [".w2a8.onnx", "w2a8/"],

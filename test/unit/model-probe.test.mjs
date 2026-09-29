@@ -28,7 +28,7 @@ describe('modelProbeUrls', () => {
 
   test('covers both layouts for every directory candidatePaths knows', () => {
     // The probe must not hold its own opinion about which folder a file lives
-    // in: that rule belongs to modelLayout.js (int8/, fp32/, int8-lite/, plus
+    // in: that rule belongs to modelLayout.js (int8/, fp32/, w4a8/, plus
     // the root and sharded/ spellings), and serve.mjs already resolves bare
     // basenames through it. Pinning the product here is what stops the probe
     // from drifting into a private, narrower idea of the layout.
@@ -48,7 +48,7 @@ describe('modelProbeUrls', () => {
     // the app will never load. Ordering nested first is not enough: the flat
     // hit still comes back and green-lights a run that then dies inside the app
     // on a quant-unavailable banner, far from the cause.
-    const urls = modelProbeUrls(ASR, 'encoder-model.int8.lite.onnx', { repoRootServed: true });
+    const urls = modelProbeUrls(ASR, 'encoder-model.w4a8.onnx', { repoRootServed: true });
     assert.ok(urls.length > 0, 'the nested candidates must still be probed');
     assert.ok(urls.every((u) => u.startsWith(`/models/${ASR}/`)),
       `no flat candidate may survive a served repo root:\n${urls.join('\n')}`);
@@ -108,13 +108,13 @@ describe('probeModelUrl', () => {
   });
 
   test('a manifest decides, even for a directory no candidate path names', async () => {
-    // The case the manifest exists for: the optimized repo files its lite int8
-    // encoder inside a nested sub-repo, so probing alone can never find it and
+    // The case the manifest exists for: the old optimized repo filed an encoder
+    // build inside a nested sub-repo, so probing alone can never find it and
     // the spec would skip on a mirror that serves it perfectly well.
-    const nested = 'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx';
+    const nested = 'istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx';
     const got = await probeModelUrl(
       mirror({ manifests: { [`/models/${ASR}`]: ['vocab.txt', nested] } }),
-      ASR, 'encoder-model.int8.lite.onnx');
+      ASR, 'encoder-model.w4a8.onnx');
     assert.equal(got, `/models/${ASR}/${nested}`);
   });
 
@@ -123,15 +123,15 @@ describe('probeModelUrl', () => {
     // find something the app will not read. Silence is the honest answer.
     const seen = [];
     const got = await probeModelUrl(
-      mirror({ served: [`/models/${ASR}/int8-lite/encoder-model.int8.lite.onnx`],
+      mirror({ served: [`/models/${ASR}/w4a8/encoder-model.w4a8.onnx`],
                manifests: { [`/models/${ASR}`]: ['vocab.txt'] }, seen }),
-      ASR, 'encoder-model.int8.lite.onnx');
+      ASR, 'encoder-model.w4a8.onnx');
     assert.equal(got, null);
     assert.ok(!seen.some((r) => r.startsWith('HEAD')), seen.join('\n'));
   });
 
   test('a flat mirror is asked for its own manifest, and only after the repo root misses', async () => {
-    const basename = 'encoder-model.int8.lite.onnx';
+    const basename = 'encoder-model.w4a8.onnx';
     const got = await probeModelUrl(
       mirror({ manifests: { '/models': ['weird_export/' + basename] } }), ASR, basename);
     assert.equal(got, `/models/weird_export/${basename}`);
@@ -140,24 +140,24 @@ describe('probeModelUrl', () => {
   test('a repo root that IS served stops the flat manifest being consulted', async () => {
     // Same rule the flat HEAD arm follows: hub.js resolves the repo to its own
     // folder and reads only from there, so the flat tree cannot answer for it.
-    const basename = 'encoder-model.int8.lite.onnx';
+    const basename = 'encoder-model.w4a8.onnx';
     const got = await probeModelUrl(
-      mirror({ served: [repoRootUrl(ASR)], manifests: { '/models': [`int8-lite/${basename}`] } }),
+      mirror({ served: [repoRootUrl(ASR)], manifests: { '/models': [`w4a8/${basename}`] } }),
       ASR, basename);
     assert.equal(got, null);
   });
 
   test('no manifest anywhere falls back to probing, exactly as before', async () => {
-    const url = `/models/${ASR}/int8-lite/encoder-model.int8.lite.onnx`;
-    assert.equal(await probeModelUrl(mirror({ served: [url] }), ASR, 'encoder-model.int8.lite.onnx'), url);
+    const url = `/models/${ASR}/w4a8/encoder-model.w4a8.onnx`;
+    assert.equal(await probeModelUrl(mirror({ served: [url] }), ASR, 'encoder-model.w4a8.onnx'), url);
   });
 
   test('a manifest that is not a listing is ignored rather than believed', async () => {
     // A static host with an SPA fallback answers a missing file with HTML at
     // 200. Treating that as an empty listing would skip every optional spec.
-    const url = `/models/${ASR}/int8-lite/encoder-model.int8.lite.onnx`;
+    const url = `/models/${ASR}/w4a8/encoder-model.w4a8.onnx`;
     assert.equal(await probeModelUrl(
       mirror({ served: [url], manifests: { [`/models/${ASR}`]: { files: [] } } }),
-      ASR, 'encoder-model.int8.lite.onnx'), url);
+      ASR, 'encoder-model.w4a8.onnx'), url);
   });
 });

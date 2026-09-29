@@ -246,8 +246,6 @@ def T14_layout_dir_for_maps_basename_to_directory():
     # the basename, and the sidecars follow their graph.
     assert wq.layout_dir_for("encoder-model.int8.onnx") == "int8/"
     assert wq.layout_dir_for("decoder_joint-model.int8.onnx") == "int8/"
-    # The longer suffix wins, or the lite build would land in int8/.
-    assert wq.layout_dir_for("encoder-model.int8.lite.onnx") == "int8-lite/"
     assert wq.layout_dir_for("encoder-model.w4a8.onnx") == "w4a8/"
     assert wq.layout_dir_for("encoder-model.fp16.onnx") == "fp16/"
     assert wq.layout_dir_for("encoder-model.onnx") == "fp32/"
@@ -274,7 +272,7 @@ def T15b_candidate_paths_match_the_js_implementation():
     # own few-line lookup: ask modelLayout.js for the same basenames and compare,
     # so the two lookups cannot drift apart silently.
     import subprocess
-    names = ["encoder-model.int8.onnx", "encoder-model.int8.lite.onnx", "encoder-model.w2a8.onnx",
+    names = ["encoder-model.int8.onnx", "encoder-model.w2a8.onnx",
              "encoder-model.onnx.data.007", "decoder_joint-model.onnx.data", "encoder-model.fp16.onnx",
              "nemo128.onnx", "vocab.txt"]
     layout_js = (Path(__file__).resolve().parent.parent / "app/src/modelLayout.js").as_uri()

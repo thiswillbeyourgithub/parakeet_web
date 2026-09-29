@@ -326,7 +326,7 @@ if [ -z "${LOCAL_MODEL_PATH}" ]; then
 else
   # This looks for ONE marker, vocab.txt, because that is the one file the model
   # repo keeps at its root in every layout the app supports (see
-  # app/src/modelLayout.js: weights may sit in fp32/, int8/, int8-lite/, w4a8/,
+  # app/src/modelLayout.js: weights may sit in fp32/, int8/, w4a8/,
   # w2a8/, fp16/, or flat, but vocab.txt never moves). The mount may also be a parent of
   # one or more HuggingFace-style repo folders (files under <repoId>/, e.g. what
   # `hf download` leaves); when only that is present, descend into it so Caddy
@@ -394,7 +394,7 @@ else
   # so without one it HEAD-probes the paths app/src/modelLayout.js predicts:
   # every layout anyone wrote down, and no others. A repo that files a weight
   # somewhere else (the optimized repo keeps a second model under
-  # istupakov_smoothquant/ and put the lite int8 encoder in it) then resolves
+  # istupakov_smoothquant/ and put an encoder build in it) then resolves
   # fine from HuggingFace and reads as unavailable from this mount. So describe
   # the mount instead of making the app guess at it.
   #

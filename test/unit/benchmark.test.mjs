@@ -31,10 +31,10 @@ import {
 } from '../../app/ui/src/lib/benchmark.js';
 
 describe('planBenchmark', () => {
-  test('a WASM-only device gets the five WASM rows and no GPU row', () => {
+  test('a WASM-only device gets the four WASM rows and no GPU row', () => {
     const plan = planBenchmark({ webgpuAvailable: false });
     // The default selection (int8) sorts last so it stays the cached model.
-    assert.deepEqual(plan.map(r => r.id), ['wasm:int8lite', 'wasm:w4a8', 'wasm:w2a8', 'wasm:fp32', 'wasm:int8']);
+    assert.deepEqual(plan.map(r => r.id), ['wasm:w4a8', 'wasm:w2a8', 'wasm:fp32', 'wasm:int8']);
     assert.ok(plan.every(r => r.backend === 'wasm'));
   });
 
@@ -56,9 +56,9 @@ describe('planBenchmark', () => {
       // alternatives, fp32 for fp16 (half the GPU download is its whole point).
       assert.ok(QUANT_DOWNLOAD_MB[quant] < QUANT_DOWNLOAD_MB[gpuOnly ? 'fp32' : 'int8']);
     }
-    // No GPU row for int8lite: the GPU EP has no int8 encoder kernel, lite or
-    // not. w4a8 is the opt-in that DOES reach the GPU, pinned below.
-    assert.equal(plan.some(r => r.backend.startsWith('webgpu') && r.quant === 'int8lite'), false);
+    // No GPU row for int8: the GPU EP has no int8 encoder kernel. w4a8 is the
+    // opt-in that DOES reach the GPU, pinned below.
+    assert.equal(plan.some(r => r.backend.startsWith('webgpu') && r.quant === 'int8'), false);
   });
 
   test('w4a8 gets a row on both backends, opt-in on each', () => {
@@ -100,14 +100,14 @@ describe('planBenchmark', () => {
     assert.equal(estimatedDownloadMB(selected, ['wasm:int8']), 0);
   });
 
-  test('a visitor already on int8lite gets that row checked, current and sorted last', () => {
-    const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'int8lite' });
-    const lite = plan[plan.length - 1];
-    assert.equal(lite.id, 'wasm:int8lite');
+  test('a visitor already on WASM w4a8 gets that row checked, current and sorted last', () => {
+    const plan = planBenchmark({ currentBackend: 'wasm', currentWasmQuant: 'w4a8' });
+    const own = plan[plan.length - 1];
+    assert.equal(own.id, 'wasm:w4a8');
     assert.equal(plan.filter(r => r.isCurrent).length, 1);
     // isCurrent beats the opt-in rule: their model is already cached, so
     // selecting it costs nothing, exactly as for a heavy row they already run.
-    assert.equal(lite.defaultSelected, true);
+    assert.equal(own.defaultSelected, true);
   });
 
   test('the currently selected combination is sorted last so it stays cached', () => {
@@ -212,10 +212,9 @@ describe('planBenchmark', () => {
   test('estimatedDownloadMB skips combinations already on disk', () => {
     const plan = planBenchmark({});
     const all = estimatedDownloadMB(plan);
-    assert.equal(all, QUANT_DOWNLOAD_MB.int8lite + QUANT_DOWNLOAD_MB.int8
+    assert.equal(all, QUANT_DOWNLOAD_MB.int8
       + QUANT_DOWNLOAD_MB.w4a8 + QUANT_DOWNLOAD_MB.w2a8 + QUANT_DOWNLOAD_MB.fp32);
     assert.equal(estimatedDownloadMB(plan, ['wasm:int8']), all - QUANT_DOWNLOAD_MB.int8);
-    assert.equal(estimatedDownloadMB(plan, ['wasm:int8lite']), all - QUANT_DOWNLOAD_MB.int8lite);
     assert.equal(estimatedDownloadMB(plan, ['wasm:w4a8']), all - QUANT_DOWNLOAD_MB.w4a8);
   });
 });
@@ -767,15 +766,15 @@ describe('planBenchmark: rows a deployment cannot serve are not offered', () => 
     });
     assert.ok(!rows.some((r) => r.quant === 'fp16'));
     assert.ok(rows.some((r) => r.backend === 'webgpu-hybrid' && r.quant === 'w4a8'));
-    // int8lite is dropped for the same reason, from the WASM side.
-    assert.ok(!rows.some((r) => r.quant === 'int8lite'));
+    // w2a8 is dropped for the same reason, from the WASM side.
+    assert.ok(!rows.some((r) => r.quant === 'w2a8'));
   });
 
   test('an unknown listing still offers everything', () => {
     // A mirror with no manifest must not lose its whole benchmark.
     const rows = planBenchmark({ webgpuAvailable: true, shaderF16: true, servableQuants: null });
     assert.ok(rows.some((r) => r.quant === 'fp16'));
-    assert.ok(rows.some((r) => r.quant === 'int8lite'));
+    assert.ok(rows.some((r) => r.quant === 'w2a8'));
   });
 
   test('the ordering and default-selection rules survive the filter', () => {

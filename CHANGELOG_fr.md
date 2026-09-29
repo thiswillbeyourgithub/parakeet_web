@@ -16,6 +16,12 @@ Sans modèle configuré, l'application, les outils en ligne de commande et l'ima
 
 Rédigé avec Claude Code.
 
+### La précision « int8 lite » disparaît
+
+La précision d'encodeur « int8 lite » a été retirée des réglages, du chargeur et des outils : aucun des modèles proposés par l'application ne fournit plus cette version, ce choix ne pouvait donc aboutir qu'à un bandeau « indisponible ». Un navigateur qui avait encore int8 lite enregistré d'une visite précédente charge désormais int8.
+
+Rédigé avec Claude Code.
+
 ### Deux modèles de plus : parakeet-ultra et parakeet-redux
 
 Le sélecteur de modèle peut désormais proposer des exports ONNX de [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) et de [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), publiés sous [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) et [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx), et le déploiement de référence les liste après le modèle par défaut et UltiMed (`?model=ultra`, `?model=redux`). Le modèle par défaut ne change pas. Tous deux n'étaient publiés qu'au format `transformers` : ils sont donc reconvertis en NeMo puis construits exactement comme le modèle par défaut, toutes précisions comprises. Sur la partition de validation FLEURS complète (25 langues, décodage glouton, encodeur int8), le WER macro vaut 13,14 % pour le modèle par défaut, 11,57 % pour Ultra et 12,64 % pour Redux. En faisceau de 5 (60 extraits par langue), Ultra atteint 10,65 % et Redux 11,72 %. Sur les deux modèles, int8 ne coûte rien de mesurable face à fp32 (Ultra 11,55 %, Redux 12,64 %), et les deux tiennent sur un passage unique de 390 s comme de 607 s. Les tableaux complets sont dans le README de chaque dépôt de modèle.

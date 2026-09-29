@@ -164,10 +164,10 @@ test('the same mirror drops nothing it does host on the CPU backend', async ({ p
   // missing from the server" by someone who had just published it.
   await expect(precisionRadio(page, 'fp16')).toHaveCount(0, { timeout: FAST });
 
-  // int8lite is the interesting one: the app offers it on WASM, this mirror
+  // w2a8 is the interesting one: the app offers it on WASM, this mirror
   // does not carry it, so it must be gone for the SOURCE reason. That is the
   // same failure as the fp16 report, on the backend most visitors use.
-  await expect(precisionRadio(page, 'int8lite')).toHaveCount(0, { timeout: FAST });
+  await expect(precisionRadio(page, 'w2a8')).toHaveCount(0, { timeout: FAST });
   // Absence has to be specific, not a probe that failed and emptied the list.
   await expect(precisionLabel(page, 'int8')).toContainText('int8', { timeout: FAST });
 });

@@ -41,14 +41,14 @@ describe('listFiles', () => {
   });
 
   test('descends into a nested sub-repo, which is the whole point', async () => {
-    // The optimized repo carries a complete second model under
-    // istupakov_smoothquant/ and keeps the lite int8 encoder there. No candidate
+    // The old optimized repo carries a complete second model under
+    // istupakov_smoothquant/ with its own encoder builds. No candidate
     // path in modelLayout.js names it, so probing can never report it and a
     // mirror of that repo cannot serve the quant. The manifest can.
     const dir = tmp();
     put(dir, 'vocab.txt');
-    put(dir, 'istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx');
-    assert.ok((await listFiles(dir)).includes('istupakov_smoothquant/int8-lite/encoder-model.int8.lite.onnx'));
+    put(dir, 'istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx');
+    assert.ok((await listFiles(dir)).includes('istupakov_smoothquant/w4a8/encoder-model.w4a8.onnx'));
     rmSync(dir, { recursive: true, force: true });
   });
 

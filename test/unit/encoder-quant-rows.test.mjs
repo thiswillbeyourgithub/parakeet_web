@@ -40,7 +40,6 @@ const I18N = read('app/ui/src/i18n.jsx');
 
 const ROWS = ENCODER_QUANT_ROWS;
 const LABEL_KEY = {
-  int8lite: 'precisionInt8Lite',
   int8: 'precisionInt8',
   w4a8: 'precisionW4a8',
   w2a8: 'precisionW2a8',
@@ -49,7 +48,7 @@ const LABEL_KEY = {
 };
 
 // Every quoted size for one label key, in MB, in both languages (~900MB, ~1.2GB,
-// ~810 Mo, ~1,2 Go). Returned as a list so the two translations can be compared
+// ~610 Mo, ~1,2 Go). Returned as a list so the two translations can be compared
 // against each other as well as used for the ordering.
 function sizesMb(key) {
   const lines = [...I18N.matchAll(new RegExp(`${key}: '([^']+)'`, 'g'))].map((m) => m[1]);
@@ -65,7 +64,7 @@ function sizesMb(key) {
 describe('encoder-precision radio order', () => {
   test('the rows are the union of the per-backend whitelists', () => {
     // A precision a backend accepts but the UI never renders is unreachable
-    // except by seeding storage by hand, which is how int8lite first shipped.
+    // except by seeding storage by hand.
     const whitelisted = new Set([...WASM_ENCODER_QUANTS, ...WEBGPU_ENCODER_QUANTS]);
     assert.deepEqual([...ROWS].sort(), [...whitelisted].sort());
   });

@@ -5,8 +5,8 @@
 // one a deployment offering a choice of models must use. Local dev already has
 // the ASR weights in ./fallback_models; this exists so CI can populate a cached
 // dir without the full 3 GB weight set. Two model sets:
-//   - the int8 ASR weights (both encoders + decoder + vocab), keeping the repo's
-//     own precision folders (int8/, int8-lite/) under the repo prefix, which is
+//   - the int8 ASR weights (encoder + decoder + vocab), keeping the repo's
+//     own precision folder (int8/) under the repo prefix, which is
 //     what app/src/modelLayout.js resolves and serve.mjs serves,
 //   - the two speaker-diarization models (pyannote segmentation + CAM++
 //     embedding) that transcription-diarization.spec.js needs; that spec
@@ -25,7 +25,7 @@
 // Each entry names the file's CANONICAL layout path (app/src/modelLayout.js),
 // which is where it LANDS locally. Where it is FETCHED from is resolved per run
 // against the repo's live listing, because a repo is free to file it elsewhere:
-// upstream istupakov is flat, and the optimized repo moved the lite int8 encoder
+// upstream istupakov is flat, and the old optimized repo moved an encoder build
 // into its nested istupakov_smoothquant/ sub-repo. So the mirror copies the FILE,
 // not the directory it happened to be under.
 //
@@ -62,13 +62,6 @@ export const DIARIZATION_SEG_REPO = 'csukuangfj/sherpa-onnx-pyannote-segmentatio
 export const DIARIZATION_EMB_REPO = 'csukuangfj/speaker-embedding-models';
 export const MODELS = [
   { repo: ASR_REPO, file: 'int8/encoder-model.int8.onnx' },
-  // The lite int8 encoder (same calibration, --exclude-worst 0.05, so 11 MatMuls
-  // stay fp32 instead of 18). It is the ONE precision alternative headless
-  // Chromium can actually run, so fetching it is what gives
-  // transcription-int8-lite-wasm.spec.js CI coverage instead of a permanent
-  // strict-weights skip. Costs ~793 MB on a cache miss; the cache is keyed on
-  // this file, so adding it here re-keys and re-bakes automatically.
-  { repo: ASR_REPO, file: 'int8-lite/encoder-model.int8.lite.onnx' },
   { repo: ASR_REPO, file: 'int8/decoder_joint-model.int8.onnx' },
   { repo: ASR_REPO, file: 'vocab.txt' },
   // No variant filenames: the model repo's graph work (folded encoder, decoder
@@ -87,8 +80,7 @@ async function exists(p) {
 }
 
 // `optional` tolerates a 404 instead of failing the fetch. No entry above needs
-// it today (every file is required, and the lite encoder was verified live on
-// HF before being listed as such), but it is the mechanism for the recurring
+// it today (every file is required), but it is the mechanism for the recurring
 // window where a new file is committed to the model repo and not yet pushed to
 // HF, so it stays and stays tested.
 export function destPath(modelDir, repo, file) {
@@ -128,8 +120,8 @@ export function asrRootIn(modelDir, repo = ASR_REPO) {
  * serve.mjs serves and what the local-mirror HEAD probes look for. But a repo
  * is free to keep it somewhere else, and they do. Upstream istupakov is flat;
  * the optimized repo carries a complete nested sub-repo under
- * istupakov_smoothquant/ and moved the lite int8 encoder into it, at which
- * point the hardcoded int8-lite/ path here started 404ing while the app, which
+ * istupakov_smoothquant/ and moved an encoder build into it, at which point
+ * the hardcoded canonical path here started 404ing while the app, which
  * resolves against the real listing, kept loading it fine.
  *
  * So ask the listing the same way hub.js does, and let the answer differ from
