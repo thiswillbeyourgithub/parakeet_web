@@ -326,7 +326,7 @@ Options:
                            Defaults to the HuggingFace cache for the model.
       --quant int8|fp16|fp32
                            ENCODER quantisation. Default int8. fp16 files come
-                           from fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py
+                           from fallback_models/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx/scripts/quantize-fp16.py
                            (~1.2 GB encoder, lossless vs fp32).
       --decoder-quant int8|fp16|fp32
                            DECODER/joiner quantisation, chosen independently of
@@ -472,7 +472,7 @@ export function resolveModelDir(cliDir, repoId) {
 
 // Per-quant filename candidates for the encoder and decoder, in preference
 // order (the first that exists on disk wins). fp16 files are produced by
-// fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-fp16.py from the fp32
+// fallback_models/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx/scripts/quantize-fp16.py from the fp32
 // pieces; fp32 is the plain name (with an external .onnx.data for the encoder).
 //
 // The encoder and decoder quant are resolved INDEPENDENTLY (resolveFiles takes a
@@ -544,7 +544,7 @@ export async function createSession(modelPath, opts, { ortMod = ort, fromPath = 
   const buf = await readFile(modelPath);
   const sessionOpts = { ...opts };
   // External weights live either in a single <model>.data sidecar (the upstream
-  // fp32 layout) or, for a sharded fp32 encoder (fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/shard-fp32.py), in
+  // fp32 layout) or, for a sharded fp32 encoder (fallback_models/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx/scripts/shard-fp32.py), in
   // <model>.data.000, .001, ... each kept under 2 GB so no externalData buffer
   // trips the WASM ArrayBuffer / blob caps. Mount every matching file; the `path`
   // must equal the location string baked into the graph (the shard basename).

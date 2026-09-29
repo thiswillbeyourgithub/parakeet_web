@@ -44,7 +44,7 @@ test('transcribes JFK English (MP3) with the WASM lite int8 encoder', async ({ p
   const probed = await probeModelUrl(request, ASR_REPO, LITE_ENCODER);
   requireWeightsOrSkip(test, !probed,
     `no lite int8 encoder under ${baseURL}/models (build it with `
-    + `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx/scripts/quantize-int8-smoothquant.py --exclude-worst 0.05, `
+    + `scripts/smoothquant/quantize-int8-smoothquant.py --exclude-worst 0.05 from the Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx repo, `
     + `or symlink it into fallback_models/, for local lite coverage)`);
 
   const FIXTURE_AUDIO = fixture('jfk.mp3');
