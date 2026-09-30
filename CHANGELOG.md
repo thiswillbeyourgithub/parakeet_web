@@ -10,6 +10,12 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.4 (2026-09-17)
 
+### Misheard drug names can be corrected
+
+A new **Correct misheard drug names** setting (General section, switched on by the medical dictation mode, remembered otherwise) adds a **Drugs** view right of **Raw** on every transcript. It rewrites French drug names the model hears as ordinary words ("l'ananas de l'umab" becomes "lanadelumab") with 9,807 rules learned from the drug-name errors of the UltiMed and parakeet-ultra models, and it runs before the Dictation regexes. Applied to the 59,151 correct labels of the UltiMed test split, the rules changed 3. The rules ship with the app, so they work with any model, and the 3 MB file is only fetched once the setting is on. Indexed by word, they cost about 0.14 ms per transcript (measured in Node on the shipped rules) instead of 20 ms applied one by one, with the same output.
+
+Written with Claude Code.
+
 ### Ultra is now the default model
 
 With no model configured, the app, the command-line tools and the Docker image now load [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) instead of [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx). On the full 25-language FLEURS validation split (greedy, int8 encoder) that is 11.57 % macro WER against 13.14 %. Both repositories ship the same layout and the same file sizes, so the download does not change. The reference deployment no longer offers the optimized model; a visitor who had it selected falls back to the new default. The OpenAI-compatible server's default model id follows, from `parakeet-tdt-0.6b-v3-int8` to `parakeet-tdt-0.6b-v3-ultra-int8`.

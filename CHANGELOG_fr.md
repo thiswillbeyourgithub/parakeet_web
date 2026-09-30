@@ -10,6 +10,12 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## 11.3.4 (2026-09-17)
 
+### Les noms de médicaments mal entendus peuvent être corrigés
+
+Un nouveau réglage **Corriger les noms de médicaments mal entendus** (section Général, activé par le mode dictée médicale, mémorisé sinon) ajoute un affichage **Médicaments** à droite de **Brut** sur chaque transcription. Il réécrit les noms de médicaments que le modèle entend comme des mots ordinaires (« l'ananas de l'umab » devient « lanadelumab ») avec 9 807 règles apprises sur les erreurs de noms de médicaments des modèles UltiMed et parakeet-ultra, et il passe avant les regex de la Dictée. Appliquées aux 59 151 étiquettes correctes du split de test d'UltiMed, les règles en ont modifié 3. Les règles sont livrées avec l'application, elles fonctionnent donc avec n'importe quel modèle, et le fichier de 3 Mo n'est téléchargé qu'une fois le réglage activé. Indexées par mot, elles coûtent environ 0,14 ms par transcription (mesuré sous Node sur les règles livrées) au lieu de 20 ms appliquées une à une, pour le même résultat.
+
+Écrit avec Claude Code.
+
 ### Ultra devient le modèle par défaut
 
 Sans modèle configuré, l'application, les outils en ligne de commande et l'image Docker chargent désormais [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) au lieu de [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx). Sur la partition de validation FLEURS complète de 25 langues (glouton, encodeur int8), cela fait 11,57 % de WER macro contre 13,14 %. Les deux dépôts ont la même organisation et des fichiers de même taille, donc le téléchargement ne change pas. Le déploiement de référence ne propose plus le modèle optimized ; un visiteur qui l'avait choisi retombe sur le nouveau modèle par défaut. L'identifiant de modèle par défaut du serveur compatible OpenAI suit, de `parakeet-tdt-0.6b-v3-int8` à `parakeet-tdt-0.6b-v3-ultra-int8`.
