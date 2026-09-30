@@ -24,6 +24,11 @@ const TOKEN_SPLIT = /[^0-9A-Za-z_À-ÖØ-öø-ɏ]+/u;
 // be able to smuggle terminal escape sequences into a paste.
 const UNSAFE_REPLACEMENT = /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/;
 
+/** Where the app serves the vendored rules (app/ui/public/drug-rules/). */
+export const DRUG_RULES_URL = '/drug-rules/drug_fix_rules.jsonl';
+/** Fetch cap: the shipped file is 3.1 MB, so leave room for the rule set to grow. */
+export const DRUG_RULES_MAX_BYTES = 16 * 1024 * 1024;
+
 const fold = (t) => t.toLowerCase().normalize('NFKD').replace(/\p{Mn}/gu, '');
 const tokens = (t) => new Set(fold(t).split(TOKEN_SPLIT).filter(Boolean));
 
