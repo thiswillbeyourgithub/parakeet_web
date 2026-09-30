@@ -55,7 +55,7 @@ function serialize(c) {
 }
 
 const git = (cwd, ...a) => {
-  try { return execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (_) { return null; }
+  try { return execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (_) { return null; }
 };
 
 if (!existsSync(source)) die(`source not found: ${source}`);
