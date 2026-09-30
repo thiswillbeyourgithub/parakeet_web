@@ -8,7 +8,7 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## 11.3.4 (2026-09-17)
+## 11.4.0 (2026-09-30)
 
 ### Misheard drug names can be corrected
 

@@ -8,7 +8,7 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## 11.3.4 (2026-09-17)
+## 11.4.0 (2026-09-30)
 
 ### Les noms de médicaments mal entendus peuvent être corrigés
 
