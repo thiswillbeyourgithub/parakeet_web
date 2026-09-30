@@ -32,6 +32,7 @@ import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, transcribeErrorMessage, sanitizeDeviceName } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
+import { compileDrugRules, applyDrugRules, DRUG_RULES_URL, DRUG_RULES_MAX_BYTES } from './lib/drugRules.js';
 import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
 import { planLoadProgress } from './lib/loadProgress.js';
 import { buildDownloadOpts } from './lib/modelRequest.js';
@@ -996,6 +997,9 @@ export default function App() {
   // layer on a raw base, 'raw' -> neither. Either axis can be toggled per entry.
   const [entryDisplayModes, setEntryDisplayModes] = useState({});
   const [entryDictation, setEntryDictation] = useState({});
+  // A third axis of the same kind: the drug-name fix layer (id -> bool),
+  // only consulted while the sidebar's drugFixEnabled is on.
+  const [entryDrugFix, setEntryDrugFix] = useState({});
   // Set of transcription ids whose inline audio player is expanded.
   const [openAudioIds, setOpenAudioIds] = useState(() => new Set());
   // Id of the entry currently being re-transcribed via "Transcribe again", so
@@ -1201,7 +1205,13 @@ export default function App() {
   const [transcriptDisplayMode, setTranscriptDisplayMode] = useState('raw');
   const [dictationRegexRules, setDictationRegexRules] = useState([]); // [{regex, replacement, source}]
   const [dictationRegexLoaded, setDictationRegexLoaded] = useState(false);
-  // Track which transcriptions have had dictation applied (id -> cleaned text)
+  // Drug-name fix layer (lib/drugRules.js), applied after raw and before the
+  // dictation regexes. drugFixEnabled is the persisted default (sidebar, and
+  // forced on by the medical preset); drugRules is the compiled vendored rule
+  // set, fetched only once the layer is first enabled (~3 MB).
+  const [drugFixEnabled, setDrugFixEnabled] = useState(false);
+  const [drugRules, setDrugRules] = useState(null);
+  // Track which transcriptions have had dictation applied (cache key -> cleaned text)
   const [dictationCache, setDictationCache] = useState({});
 
   // Speaker diarization ("Speakers" view): 15 state slots, the run itself and
@@ -1332,6 +1342,7 @@ export default function App() {
           savedChunkDuration,
           savedChunkDurationMigrated,
           savedTranscriptDisplayMode,
+          savedDrugFixEnabled,
           savedDiarizationNumSpeakers,
           savedLiveTranscriptionEnabled,
           savedLiveContextWindow,
@@ -1387,6 +1398,7 @@ export default function App() {
           loadSetting('chunkDuration', null),
           loadSetting('chunkDurationMigrated', false),
           loadSetting('transcriptDisplayMode', 'raw'),
+          loadSetting('drugFixEnabled', false),
           loadSetting('diarizationNumSpeakers', 0),
           loadSetting('liveTranscriptionEnabled', false),
           loadSetting('liveContextWindow', 'auto'),
@@ -1508,6 +1520,7 @@ export default function App() {
         }
         // 'confidence' was a removed display mode; map any persisted value to 'raw'.
         setTranscriptDisplayMode(savedTranscriptDisplayMode === 'confidence' ? 'raw' : savedTranscriptDisplayMode);
+        setDrugFixEnabled(savedDrugFixEnabled === true);
         setDiarizationNumSpeakers(Number.isInteger(savedDiarizationNumSpeakers) && savedDiarizationNumSpeakers > 0 ? savedDiarizationNumSpeakers : 0);
         setLiveTranscriptionEnabled(savedLiveTranscriptionEnabled);
         setLiveContextWindow(savedLiveContextWindow);
@@ -2015,6 +2028,7 @@ export default function App() {
   // persisted like any other setting once the user changes it.
   usePersistedSetting('chunkDuration', chunkDuration, settingsLoaded);
   usePersistedSetting('transcriptDisplayMode', transcriptDisplayMode, settingsLoaded);
+  usePersistedSetting('drugFixEnabled', drugFixEnabled, settingsLoaded);
   usePersistedSetting('diarizationNumSpeakers', diarizationNumSpeakers, settingsLoaded);
   usePersistedSetting('liveTranscriptionEnabled', liveTranscriptionEnabled, settingsLoaded);
   usePersistedSetting('liveContextWindow', liveContextWindow, settingsLoaded);
@@ -2114,6 +2128,7 @@ export default function App() {
     setEnableChunking(MED_MODE_PRESET.enableChunking);
     setChunkDuration(MED_MODE_PRESET.chunkDurationSec);
     setTranscriptDisplayMode(MED_MODE_PRESET.transcriptDisplayMode);
+    setDrugFixEnabled(MED_MODE_PRESET.drugFix);
     // The one default this preset flips ON rather than restores (see the field
     // note in lib/medMode.js): dictate-then-paste is the whole workflow here.
     setAutoCopyToClipboard(MED_MODE_PRESET.autoCopyToClipboard);
@@ -3520,9 +3535,7 @@ export default function App() {
       // Auto-copy transcription to clipboard if enabled
       if (autoCopyToClipboard && res.utterance_text) {
         try {
-          const textToCopy = defaultDictation && dictationRegexRules.length > 0
-            ? applyDictationRegex(res.utterance_text)
-            : res.utterance_text;
+          const textToCopy = postProcessText(res.utterance_text, defaultLayers);
           await navigator.clipboard.writeText(sanitizeClipboardText(textToCopy));
           setCopySuccess(true);
           setTimeout(() => setCopySuccess(false), 2000);
@@ -4071,6 +4084,17 @@ export default function App() {
   function toggleEntryDictation(id) {
     setEntryDictation(prev => ({ ...prev, [id]: !(prev[id] ?? defaultDictation) }));
   }
+  // The drug-name fix layer is gated harder: the sidebar's drugFixEnabled
+  // switches the whole feature (its view button included), and the per-entry
+  // flag, ON unless toggled, only picks the view within it. So turning the
+  // setting off can never leave a hidden override rewriting an entry.
+  // postProcessText also gates the transform on drugRules being loaded.
+  function entryDrugFixOn(id) {
+    return drugFixEnabled && (entryDrugFix[id] ?? true);
+  }
+  function toggleEntryDrugFix(id) {
+    setEntryDrugFix(prev => ({ ...prev, [id]: !(prev[id] ?? true) }));
+  }
 
   // Lazily mint (and cache) the object URL backing an entry's inline player.
   function getEntryAudioUrl(trans) {
@@ -4254,6 +4278,30 @@ export default function App() {
     loadDictationRegex();
   }, []);
 
+  // Load the vendored drug-name fix rules the first time the setting is on.
+  // Compiling ~10k regexes takes ~0.2 s, once. A failure only leaves the
+  // layer inert: the view button stays hidden.
+  const drugRulesRequestedRef = useRef(false);
+  useEffect(() => {
+    if (!drugFixEnabled || drugRulesRequestedRef.current) return;
+    drugRulesRequestedRef.current = true;
+    (async () => {
+      try {
+        const r = await fetchTextCapped(DRUG_RULES_URL, DRUG_RULES_MAX_BYTES);
+        if (!r.ok) {
+          console.warn('[DrugFix] Could not fetch the rules:', r.oversize ? `oversize (${r.declared} bytes)` : `HTTP ${r.status}`);
+          return;
+        }
+        const compiled = compileDrugRules(r.text);
+        if (compiled.skipped) console.warn(`[DrugFix] Skipped ${compiled.skipped} unusable rules`);
+        console.log(`[DrugFix] Loaded ${compiled.rules.length} drug-name rules`);
+        if (compiled.rules.length) setDrugRules(compiled);
+      } catch (e) {
+        console.warn('[DrugFix] Failed to load the rules:', e);
+      }
+    })();
+  }, [drugFixEnabled]);
+
   // Simple CSV line parser that handles quoted fields with commas
   function parseCSVLine(line) {
     const fields = [];
@@ -4310,52 +4358,71 @@ export default function App() {
     return result;
   }
 
-  // Build dictation cache lazily via useEffect to avoid setState during render.
-  // The dictation layer is per-entry and independent of the base view, so cache
-  // any entry whose dictation flag is on (its override, or the global default).
-  // Only the flat (raw-base) view reads this cache; the diarized view applies
-  // the regex per turn at render time.
+  // Every text layer after raw, in this order: drug names first (their rules
+  // were learned on raw model output, which the dictation regexes would
+  // reshape), then the dictation cleanup. Display, copy, auto-copy and the
+  // live preview all go through here, so no two paths can disagree.
+  // `layers` is {drugFix, dictate}; each is a no-op while its rules are absent.
+  function postProcessText(text, { drugFix = false, dictate = false } = {}) {
+    let out = text;
+    if (drugFix && drugRules) out = applyDrugRules(out, drugRules);
+    if (dictate && dictationRegexRules.length > 0) out = applyDictationRegex(out);
+    return out;
+  }
+  // The layers switched on for one entry (its overrides, else the defaults).
+  function entryLayers(id) {
+    return { drugFix: entryDrugFixOn(id), dictate: entryDictationOn(id) };
+  }
+  // Global defaults, for text that has no entry yet (auto-copy, live preview).
+  const defaultLayers = { drugFix: drugFixEnabled, dictate: defaultDictation };
+
+  // Build the dictation cache lazily via useEffect to avoid setState during
+  // render. The dictation regexes are recompiled on every call, so the flat
+  // (raw-base) view caches its result per entry AND per drug-fix state (the
+  // dictation input differs with it). The diarized view applies the layers
+  // per turn at render time.
+  const dictationCacheKey = (id, drugFix) => (drugFix && drugRules ? `${id}+drugs` : String(id));
   useEffect(() => {
     if (!dictationRegexRules.length) return;
-    const missing = transcriptions.filter(t => t.text && entryDictationOn(t.id) && !dictationCache[t.id]);
-    if (missing.length === 0) return;
     const newEntries = {};
-    for (const t of missing) {
-      newEntries[t.id] = applyDictationRegex(t.text);
+    for (const t of transcriptions) {
+      const layers = entryLayers(t.id);
+      const key = dictationCacheKey(t.id, layers.drugFix);
+      if (t.text && layers.dictate && !dictationCache[key]) newEntries[key] = postProcessText(t.text, layers);
     }
+    if (Object.keys(newEntries).length === 0) return;
     setDictationCache(prev => ({ ...prev, ...newEntries }));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dictationCache
     // is read but intentionally excluded: the effect mutates it via the
     // functional updater above, and including it would re-trigger the
-    // effect on every cache write (a no-op since `missing` is then empty).
-  }, [transcriptDisplayMode, entryDisplayModes, entryDictation, dictationRegexRules, transcriptions]);
+    // effect on every cache write (a no-op since nothing is then missing).
+  }, [transcriptDisplayMode, entryDisplayModes, entryDictation, dictationRegexRules, transcriptions, entryDrugFix, drugFixEnabled, drugRules]);
 
-  // Get the display text for a transcription from its two display axes. The
-  // dictation layer composes with the base view: diarized + dictation copies as
-  // "Speaker: cleaned text" blocks (the regex applied to each turn).
+  // Get the display text for a transcription from its display axes. The text
+  // layers compose with the base view: diarized + dictation copies as
+  // "Speaker: cleaned text" blocks (the layers applied to each turn).
   function getDisplayText(trans) {
-    const dictate = entryDictationOn(trans.id) && dictationRegexRules.length > 0;
+    const layers = entryLayers(trans.id);
     if (getEntryBase(trans.id) === 'diarized' && hasDiarization(trans)) {
       // Diarized copies/exports as "Speaker: text" blocks (renamed labels
       // included), which is what makes the speaker view useful to paste.
-      return diarizedPlainText(trans, dictate);
+      return diarizedPlainText(trans, layers);
     }
-    if (dictate) {
+    if (layers.dictate && dictationRegexRules.length > 0) {
       // Return cached result, or compute synchronously without setting state
-      return dictationCache[trans.id] || applyDictationRegex(trans.text);
+      return dictationCache[dictationCacheKey(trans.id, layers.drugFix)] || postProcessText(trans.text, layers);
     }
-    return trans.text;
+    return postProcessText(trans.text, layers);
   }
 
 
-  // Diarized transcript as plain "Name: text" blocks, for copy/export. When
-  // `dictate` is set, the dictation regex is applied to each turn's text so the
-  // speaker view and the dictation cleanup compose.
-  function diarizedPlainText(trans, dictate = false) {
+  // Diarized transcript as plain "Name: text" blocks, for copy/export. The
+  // text `layers` (see postProcessText) are applied to each turn's text so
+  // the speaker view and the drug/dictation cleanup compose.
+  function diarizedPlainText(trans, layers = {}) {
     const turns = getDiarizedTurns(trans);
-    if (!turns || turns.length === 0) return dictate ? applyDictationRegex(trans.text) : trans.text;
-    const textFor = dictate ? (txt) => applyDictationRegex(txt) : null;
-    return turnsToLabeledText(turns, (spk, pos) => speakerDisplayName(trans.id, spk, pos), textFor);
+    if (!turns || turns.length === 0) return postProcessText(trans.text, layers);
+    return turnsToLabeledText(turns, (spk, pos) => speakerDisplayName(trans.id, spk, pos), (txt) => postProcessText(txt, layers));
   }
 
   // Render an entry's transcript as speaker turns (turns + colour). Maps each
@@ -4369,7 +4436,7 @@ export default function App() {
       return <span style={{ whiteSpace: 'pre-wrap' }}>{trans.text}</span>;
     }
     // Dictation layer composes with the speaker view: clean each turn's text.
-    const dictate = entryDictationOn(trans.id) && dictationRegexRules.length > 0;
+    const layers = entryLayers(trans.id);
     return (
       <div className="diar-turns">
         {turns.map((turn, i) => {
@@ -4401,7 +4468,7 @@ export default function App() {
                   {speakerDisplayName(trans.id, turn.speaker, turn.position)}
                 </button>
               )}
-              <span className="diar-turn-text">{dictate ? applyDictationRegex(turn.text) : turn.text}</span>
+              <span className="diar-turn-text">{postProcessText(turn.text, layers)}</span>
             </div>
           );
         })}
@@ -5033,6 +5100,8 @@ export default function App() {
             setAutoCopyToClipboard={setAutoCopyToClipboard}
             numbersToDigits={numbersToDigits}
             setNumbersToDigits={setNumbersToDigits}
+            drugFixEnabled={drugFixEnabled}
+            setDrugFixEnabled={setDrugFixEnabled}
             persistTranscripts={persistTranscripts}
             setPersistTranscripts={setPersistTranscripts}
             forgetPersistedTranscripts={forgetPersistedTranscripts}
@@ -5529,7 +5598,7 @@ export default function App() {
                 // Same two transforms the finished transcript gets, so the live
                 // preview does not respell itself when the final pass lands.
                 const live = numbersToDigits ? numberWordsToDigits(liveTranscript.text, lang) : liveTranscript.text;
-                return dictationRegexRules.length > 0 ? applyDictationRegex(live) : live;
+                return postProcessText(live, { ...defaultLayers, dictate: dictationRegexRules.length > 0 });
               })()
             : (
               <span className="live-dots" aria-label="Listening" style={{ color: 'var(--text-subtle)' }}>
@@ -5662,6 +5731,19 @@ export default function App() {
                       >
                         {t('raw')}
                       </button>
+                      {/* Drug names sit right of Raw because that is where
+                          they apply: on the raw text, before Dictée. */}
+                      {drugFixEnabled && drugRules && (
+                        <button
+                          onClick={() => toggleEntryDrugFix(trans.id)}
+                          className={`display-mode-button${entryDrugFixOn(trans.id) ? ' active' : ''}`}
+                          aria-pressed={entryDrugFixOn(trans.id)}
+                          title={t('drugFixHint').replace('{n}', drugRules.rules.length.toLocaleString())}
+                          data-testid="drug-fix-toggle"
+                        >
+                          {t('drugFixView')}
+                        </button>
+                      )}
                       {dictationRegexRules.length > 0 && (
                         <button
                           onClick={() => toggleEntryDictation(trans.id)}
@@ -5782,7 +5864,7 @@ export default function App() {
                               while the entry is displayed raw. */}
                           {dictationRegexRules.length > 0 && (
                             <button onClick={async () => {
-                              const cleaned = applyDictationRegex(trans.text);
+                              const cleaned = postProcessText(trans.text, { drugFix: entryDrugFixOn(trans.id), dictate: true });
                               try { await navigator.clipboard.writeText(sanitizeClipboardText(cleaned)); setCopiedHistoryId(trans.id); setTimeout(() => setCopiedHistoryId(null), 2000); } catch (e) { console.error('[Copy] Failed:', e); }
                               setOpenKebabId(null);
                             }}>

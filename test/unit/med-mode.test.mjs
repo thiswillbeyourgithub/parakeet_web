@@ -107,7 +107,14 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
     assert.equal(MED_MODE_PRESET.lang, 'fr');
   });
 
-  test('turns auto-copy ON, the one default it flips rather than restores', () => {
+  test('turns the drug-name fix layer ON', () => {
+    // It defaults OFF app-wide (the rules only know French drug names), so a
+    // station without it would silently keep the model's most common medical
+    // mishearings.
+    assert.equal(MED_MODE_PRESET.drugFix, true);
+  });
+
+  test('turns auto-copy ON, a default it flips rather than restores', () => {
     // Asserted explicitly because it is the preset's only privacy-relevant
     // value: auto-copy ships OFF (the system clipboard is readable by other
     // apps), and a dictation station trades that for the dictate-then-paste

@@ -71,13 +71,17 @@ export const MED_MODE_ALIASES = Object.freeze([
  *    GPU would either be refused or silently execute on the CPU.
  *  - lang is forced to French: the lexicon, the dictation regexes and the model
  *    are all French, so an English UI would misdescribe the station.
- *  - autoCopyToClipboard is the one preset value that turns a default OFF into
- *    an ON, and it is a deliberate trade rather than an oversight. It is off by
+ *  - drugFix switches on the drug-name fix layer (lib/drugRules.js), which
+ *    also defaults OFF: its rules are French drug names, useless outside
+ *    medical dictation, where they are the most common thing the model gets
+ *    wrong.
+ *  - autoCopyToClipboard is the only other preset value that turns a default
+ *    OFF into an ON, and it is a deliberate trade rather than an oversight. It is off by
  *    default because the system clipboard is readable by other apps and
  *    extensions; on a dictation station the whole workflow is dictate-then-paste
  *    into a record, so paying that cost once buys back a click per utterance.
- *    Note it copies the DICTATED text (regexes applied) when the dictation view
- *    is on, which this preset also switches on.
+ *    Note it copies the DICTATED text (drug fixes and regexes applied) when
+ *    those views are on, which this preset also switches on.
  */
 export const MED_MODE_PRESET = Object.freeze({
   modelQuery: 'ultimed',
@@ -85,6 +89,7 @@ export const MED_MODE_PRESET = Object.freeze({
   enableChunking: true,
   chunkDurationSec: 30,
   transcriptDisplayMode: 'dictation',
+  drugFix: true,
   autoCopyToClipboard: true,
   wasmEncoderQuant: 'int8',
   webgpuEncoderQuant: 'fp16',

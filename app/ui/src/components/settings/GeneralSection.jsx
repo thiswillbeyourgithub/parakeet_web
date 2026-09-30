@@ -21,6 +21,8 @@ export default function GeneralSection({
   setAutoCopyToClipboard,
   numbersToDigits,
   setNumbersToDigits,
+  drugFixEnabled,
+  setDrugFixEnabled,
   persistTranscripts,
   setPersistTranscripts,
   forgetPersistedTranscripts,
@@ -101,6 +103,19 @@ export default function GeneralSection({
           <input type="checkbox" checked={numbersToDigits} onChange={e => setNumbersToDigits(e.target.checked)} />
           {t('numbersToDigits')}
           <InfoTooltip text={t('tooltipNumbersToDigits')} />
+        </label>
+      </div>
+
+      <div className="setting-row">
+        <label>
+          <input
+            type="checkbox"
+            checked={drugFixEnabled}
+            onChange={e => setDrugFixEnabled(e.target.checked)}
+            data-testid="drug-fix-setting"
+          />
+          {t('drugFixSetting')}
+          <InfoTooltip text={t('tooltipDrugFix')} />
         </label>
       </div>
 
