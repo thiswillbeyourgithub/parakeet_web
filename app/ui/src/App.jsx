@@ -32,7 +32,7 @@ import { DEFAULT_CHUNK_DURATION_SEC } from '../../src/models.js';
 import { formatTime, formatDuration, relativeAge, isFresherThanDays, formatMetricsTooltip, wavNameFor, transcribeErrorMessage, sanitizeDeviceName } from './lib/format.js';
 import { isModelLoading, formatLoadTiming } from './lib/loadPhase.js';
 import { fetchTextCapped } from './lib/fetchCapped.js';
-import { compileDrugRules, applyDrugRules, DRUG_RULES_URL, DRUG_RULES_MAX_BYTES } from './lib/drugRules.js';
+import { loadDrugRules, applyDrugRules, DRUG_RULES_URL, DRUG_RULES_MAX_BYTES } from './lib/drugRules.js';
 import { planLoadFailure, shouldProbeLocalMirror } from './lib/loadFailure.js';
 import { planLoadProgress } from './lib/loadProgress.js';
 import { buildDownloadOpts } from './lib/modelRequest.js';
@@ -4278,9 +4278,10 @@ export default function App() {
     loadDictationRegex();
   }, []);
 
-  // Load the vendored drug-name fix rules the first time the setting is on.
-  // Compiling ~10k regexes takes ~0.2 s, once. A failure only leaves the
-  // layer inert: the view button stays hidden.
+  // Load the compiled drug-name fix rules the first time the setting is on
+  // (~130 KB brotli, ~50 ms to parse; each RegExp is only built the first time
+  // a transcript contains its word). A failure only leaves the layer inert:
+  // the view button stays hidden.
   const drugRulesRequestedRef = useRef(false);
   useEffect(() => {
     if (!drugFixEnabled || drugRulesRequestedRef.current) return;
@@ -4292,8 +4293,11 @@ export default function App() {
           console.warn('[DrugFix] Could not fetch the rules:', r.oversize ? `oversize (${r.declared} bytes)` : `HTTP ${r.status}`);
           return;
         }
-        const compiled = compileDrugRules(r.text);
-        if (compiled.skipped) console.warn(`[DrugFix] Skipped ${compiled.skipped} unusable rules`);
+        const compiled = loadDrugRules(JSON.parse(r.text));
+        if (!compiled) {
+          console.warn('[DrugFix] The rules file is not a compiled rule set of the expected format');
+          return;
+        }
         console.log(`[DrugFix] Loaded ${compiled.rules.length} drug-name rules`);
         if (compiled.rules.length) setDrugRules(compiled);
       } catch (e) {

@@ -16,22 +16,24 @@ import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings, readSetting, expandSettingsSection } from './seed.mjs';
+import { compileDrugRuleSource } from '../../app/ui/src/lib/drugRules.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AUDIO = resolve(here, '../fixtures/jfk.mp3');
 
 const WB = "(?<![0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u024F'-])";
 const WE = '(?![0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u024F-])';
-const DRUG_RULES = JSON.stringify({
+// Compiled by the same build stage as the shipped file.
+const DRUG_RULES = JSON.stringify(compileDrugRuleSource(JSON.stringify({
   pattern: `${WB}fellow[\\s,]+americans${WE}`,
   replacement: 'fellowmab',
   variant: 'fellow americans',
-}) + '\n';
+})));
 
 test('drug-name view: on by default, applied before dictation, removable from the sidebar', async ({ page }) => {
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.route('**/drug-rules/drug_fix_rules.jsonl', (r) => r.fulfill({ contentType: 'application/x-ndjson', body: DRUG_RULES }));
+  await page.route('**/drug-rules/drug_rules.json', (r) => r.fulfill({ contentType: 'application/json', body: DRUG_RULES }));
   await page.route('**/dictation-regex/manifest.txt', (r) => r.fulfill({ contentType: 'text/plain', body: 'order.csv\n' }));
   await page.route('**/dictation-regex/order.csv', (r) => r.fulfill({ contentType: 'text/csv', body: 'regex,replacement\nfellowmab,ORDERMARK\n' }));
 
