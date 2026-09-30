@@ -11,10 +11,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  compileDrugRules,
+  compileDrugRuleSource,
+  loadDrugRules,
   applyDrugRules,
   applyDrugRulesNaive,
+  DRUG_RULES_FORMAT,
 } from '../../app/ui/src/lib/drugRules.js';
+
+// Build stage then runtime stage, through a real JSON round trip, exactly the
+// path the rules take from the model repo to the browser.
+const compileDrugRules = (jsonl) => loadDrugRules(JSON.parse(JSON.stringify(compileDrugRuleSource(jsonl))));
 
 const WB = '(?<![0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u024F\'-])';
 const WE = '(?![0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u024F-])';
@@ -57,6 +63,7 @@ describe('applyDrugRules', () => {
   test('an unanchorable variant still runs on every text', () => {
     const c = compileDrugRules(rule('a.b', 'Abc', 'a\\.b'));
     assert.deepEqual(c.always, [0]);
+    assert.deepEqual([...c.byAnchor.keys()], []);
     assert.equal(both('prendre a.b demain', c), 'prendre Abc demain');
   });
 
@@ -73,9 +80,9 @@ describe('applyDrugRules', () => {
   });
 });
 
-describe('compileDrugRules', () => {
+describe('compileDrugRuleSource (build stage)', () => {
   test('skips unusable lines instead of failing the whole set', () => {
-    const c = compileDrugRules([
+    const c = compileDrugRuleSource([
       rule('foo', 'bar'),
       '{not json',
       JSON.stringify({ pattern: '(', replacement: 'x', variant: 'x' }),
@@ -87,19 +94,72 @@ describe('compileDrugRules', () => {
     assert.equal(c.skipped, 5);
   });
 
-  test('an HTML page (SPA fallback for a missing file) yields zero rules', () => {
-    const c = compileDrugRules('<!doctype html>\n<html><body>app</body></html>\n');
-    assert.equal(c.rules.length, 0);
+  test('keeps only [pattern, replacement] and records the metadata it is given', () => {
+    const c = compileDrugRuleSource(rule('foo', 'bar'), { source_sha256: 'abc' });
+    assert.equal(c.format, DRUG_RULES_FORMAT);
+    assert.equal(c.source_sha256, 'abc');
+    assert.equal(c.rules[0].length, 2);
+    assert.deepEqual(c.anchors, { foo: [0] });
+  });
+
+  test('a variant word that collides with an Object.prototype key still anchors', () => {
+    const c = compileDrugRules(rule('constructor', 'Kontructor'));
+    assert.equal(applyDrugRules('le constructor', c), 'le Kontructor');
   });
 });
 
-describe('vendored drug_fix_rules.jsonl', () => {
-  const path = fileURLToPath(new URL('../../app/ui/public/drug-rules/drug_fix_rules.jsonl', import.meta.url));
-  const c = compileDrugRules(readFileSync(path, 'utf8'));
+describe('loadDrugRules (runtime stage)', () => {
+  test('refuses anything that is not a compiled rule file of this format', () => {
+    assert.equal(loadDrugRules(null), null);
+    assert.equal(loadDrugRules({ rules: [], anchors: {}, always: [] }), null);
+    assert.equal(loadDrugRules({ format: DRUG_RULES_FORMAT + 1, rules: [], anchors: {}, always: [] }), null);
+    assert.equal(loadDrugRules({ format: DRUG_RULES_FORMAT, rules: 'x', anchors: {}, always: [] }), null);
+  });
 
-  test('every rule compiles', () => {
-    assert.equal(c.skipped, 0);
+  test('re-checks the SERVED file: a tampered unsafe replacement or bad index is dropped', () => {
+    const c = loadDrugRules({
+      format: DRUG_RULES_FORMAT,
+      rules: [['foo', 'evil\x1b]52;c;\x07'], ['bar', 'ok'], 'junk'],
+      anchors: { foo: [0], bar: [1, 7, -1, 2] },
+      always: [0, 1.5],
+    });
+    assert.deepEqual(c.byAnchor.get('foo'), []);
+    assert.deepEqual(c.byAnchor.get('bar'), [1]);
+    assert.deepEqual(c.always, []);
+    assert.equal(applyDrugRules('foo bar', c), 'foo ok');
+  });
+
+  test('builds a RegExp only when its anchor shows up, and skips a pattern that will not compile', () => {
+    const c = loadDrugRules({
+      format: DRUG_RULES_FORMAT,
+      rules: [['foo', 'X'], ['bar', 'Y'], ['(', 'Z']],
+      anchors: { foo: [0], bar: [1], baz: [2] },
+      always: [],
+    });
+    assert.equal(applyDrugRules('foo', c), 'X');
+    assert.ok(c.res[0] instanceof RegExp);
+    assert.equal(c.res[1], undefined);
+    assert.equal(applyDrugRules('baz', c), 'baz');
+    assert.equal(c.res[2], null);
+  });
+});
+
+describe('committed drug_rules.json', () => {
+  const path = fileURLToPath(new URL('../../app/ui/public/drug-rules/drug_rules.json', import.meta.url));
+  const data = JSON.parse(readFileSync(path, 'utf8'));
+  const c = loadDrugRules(data);
+
+  test('loads whole, with its provenance', () => {
+    assert.ok(c, 'loadDrugRules refused the committed file');
     assert.ok(c.rules.length > 9000, `only ${c.rules.length} rules`);
+    assert.match(data.source_sha256, /^[0-9a-f]{64}$/);
+    const indexed = new Set([...c.always, ...[...c.byAnchor.values()].flat()]);
+    assert.equal(indexed.size, c.rules.length, 'every rule must be reachable through the index');
+  });
+
+  test('every pattern compiles', () => {
+    applyDrugRulesNaive('x', c); // runs, and so builds, every rule
+    assert.equal(c.res.filter((re) => re === null).length, 0);
   });
 
   test('fixes known mishearings', () => {

@@ -1,13 +1,17 @@
-# Vendored drug-name fix rules
+# Compiled drug-name fix rules
 
-- File: `drug_fix_rules.jsonl` (9,807 rules, one JSON object per line)
-- Source: https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx, commit `fc495c7e17c5eabac290c9d93957ffe7f0d968dc` (2026-09-30)
-- SHA-256: `4a850efeed558d5dc377ebb492d6f67c464190f72699df517b81adf648784c24`
+- File: `drug_rules.json`, compiled by `scripts/compile-drug-rules.mjs` from `drug_fix_rules.jsonl` (9,807 rules)
+- Source: https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx. The exact commit and the SHA-256 of the source file are recorded in `drug_rules.json` itself (`source_commit`, `source_sha256`), so they cannot drift from the bytes.
 - License: CC BY 4.0, drug names from French open data (Licence Ouverte / Etalab 2.0: OPEN_MEDIC, RETROCEDAM, BDPM). See the "Licence and attribution" section of the model repo README.
 - How the rules are built: [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules)
 
-Copied here on purpose rather than fetched from whichever model is loaded: the rules fix drug names the way French speech mishears them, so they are useful whatever Parakeet model the visitor runs, and the app must not lose the feature when an operator serves a model repo that does not ship the file.
+Shipped with the app on purpose rather than fetched from whichever model is loaded: the rules fix drug names the way French speech mishears them, so they are useful whatever Parakeet model the visitor runs, and the app must not lose the feature when an operator serves a model repo that does not ship the file.
 
-Each rule is `{pattern, replacement, variant, drug, ...}`. The app compiles `pattern` with the `giu` flags and applies the rules top to bottom through an anchor index (see `app/ui/src/lib/drugRules.js`).
+The compiled form keeps only `[pattern, replacement]` per rule plus a prebuilt anchor index (see `app/ui/src/lib/drugRules.js`): 3.1 MB of source becomes 1.9 MB, and 131 KB as the brotli sidecar the Docker build generates.
 
-To refresh: copy `drug_fix_rules.jsonl` from the model repo over this one, and update the commit and SHA-256 above.
+To refresh, from the repo root, with the model repo checked out under `fallback_models/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/`:
+
+```bash
+node scripts/compile-drug-rules.mjs          # rewrite drug_rules.json, then commit it
+node scripts/compile-drug-rules.mjs --check  # what deploy.sh runs: fails when out of sync
+```
