@@ -20,6 +20,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Quick Start](#quick-start)
 - [Features in Detail](#features-in-detail)
   - [Dictation Mode](#dictation-mode)
+  - [Drug-Name Correction](#drug-name-correction)
   - [Speaker Diarization](#speaker-diarization)
   - [Dictation Devices (SpeechMike)](#dictation-devices-speechmike)
   - [Live Transcription](#live-transcription)
@@ -71,6 +72,7 @@ All three are listed with the rest of the stack under [Related repositories](#re
 | 🎯 **Phrase Boosting** | Bias the decoder toward your own list of phrases (names, jargon, drug names, acronyms), with optional per-phrase weights. Runs fully client-side |
 | 🔦 **Beam Search** | Optional multi-hypothesis decoding (file transcription) that lets phrase boosting recover words greedy would discard; the default adapts to your device (greedy on phones, up to width 5 on desktops) |
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
+| 💊 **Drug-Name Correction** | Optional view that repairs French drug names the model mishears ("l'ananas de l'umab" becomes "lanadelumab"), with 9,807 rules learned from UltiMed and parakeet-ultra errors |
 | 🔢 **Numbers as Digits** | Numbers dictated as words are written as digits ("twenty-five milligrams" becomes "25 milligrams", "one point five" becomes "1.5"), in English and French. On by default, with a switch in the settings |
 | 🗣️ **Speaker Diarization** | Optional "who spoke when" view: groups the transcript into colour-coded `First:`/`Second:`/... turns, fully client-side via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (in a background worker, so it never freezes the UI). The speaker count is detected automatically; rename a speaker to another's label to merge them |
 | 🕐 **Word Timestamps** | Per-word timestamps |
@@ -116,6 +118,19 @@ This feature is very early and will improve rapidly.
 - **Docker**: The entrypoint script downloads the single combined `regex.csv` file from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) on every container start.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Two display modes are available per transcription: **Raw** and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default Murmure URL. This can be a GitLab-compatible repo URL (e.g. `https://framagit.org/interhop/murmure-regex`) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
+
+</details>
+
+### Drug-Name Correction
+
+<details>
+<summary><strong>Details</strong></summary>
+
+The model sometimes hears a French drug name as ordinary words ("l'ananas de l'umab" instead of "lanadelumab", "jy c'est le cas" instead of "Jyseleca"). The **Correct misheard drug names** checkbox in the General section of the settings adds a **Drugs** view, right of **Raw**, on every transcript: it rewrites those mishearings with 9,807 rules learned from the drug-name errors of the UltiMed and parakeet-ultra models on the UltiMed drug train and validation splits. Applied to the 59,151 correct labels of the UltiMed test split, the rules changed 3, each a drug name the label spells another way. The medical dictation mode switches the setting on, and the app remembers it otherwise.
+
+- The view applies to the raw text **before** the Dictation regexes, because the rules were learned on raw model output. Each view can be toggled per transcript, so switching Drugs off shows what the model actually heard. Copy, auto-copy and the live preview use the same layers as the display.
+- The rules ship with the app (`app/ui/public/drug-rules/`, provenance in its `SOURCE.md`), so they work whatever model is loaded. They come from the [UltiMed model repo](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx); how they are built is in [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules).
+- The 3 MB file is only downloaded once the setting is on. The rules are indexed by their longest word, so a transcript only runs the handful whose word it contains: about 0.14 ms per text instead of 20 ms for all of them in order, with the same output.
 
 </details>
 
@@ -457,7 +472,7 @@ the **Mode Dictée Médical** button at the top of the settings sidebar, or a
 - the **French medical phrase list** (`french_medical.txt`) at its default
   strength and min-p gate;
 - **30-second chunks** for long audio, instead of the usual 60;
-- the **dictation view** as the default transcript display;
+- the **dictation view** as the default transcript display, and the **drug-name correction** view;
 - **auto-copy to the clipboard**, so each finished utterance is ready to paste
   into a record. This is the one setting the preset switches *on* rather than
   resetting: it ships off because the system clipboard is readable by other apps

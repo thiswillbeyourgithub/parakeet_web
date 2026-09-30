@@ -20,6 +20,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Démarrage rapide](#démarrage-rapide)
 - [Fonctionnalités en détail](#fonctionnalités-en-détail)
   - [Mode dictée](#mode-dictée)
+  - [Correction des noms de médicaments](#correction-des-noms-de-médicaments)
   - [Identification des locuteurs](#identification-des-locuteurs)
   - [Appareils de dictée (SpeechMike)](#appareils-de-dictée-speechmike)
   - [Transcription en direct](#transcription-en-direct)
@@ -71,6 +72,7 @@ Les trois figurent, avec le reste de la chaîne, dans [Dépôts liés](#dépôts
 | 🎯 **Renforcement de phrases** | Oriente le décodeur vers votre propre liste de phrases (noms, jargon, noms de médicaments, acronymes), avec des poids optionnels par phrase. Fonctionne entièrement côté client |
 | 🔦 **Recherche en faisceau (beam search)** | Décodage multi-hypothèses optionnel (transcription de fichier) qui permet au renforcement de phrases de récupérer des mots que le décodage glouton aurait écartés ; la valeur par défaut s'adapte à votre appareil (glouton sur téléphone, jusqu'à une largeur de 5 sur ordinateur de bureau) |
 | 📝 **Mode dictée** | Post-traite les transcriptions avec des règles regex (vocabulaire médical français, ponctuation, unités) |
+| 💊 **Correction des noms de médicaments** | Affichage optionnel qui répare les noms de médicaments que le modèle entend mal (« l'ananas de l'umab » devient « lanadelumab »), avec 9 807 règles apprises sur les erreurs d'UltiMed et de parakeet-ultra |
 | 🔢 **Nombres en chiffres** | Les nombres dictés en toutes lettres sont écrits en chiffres (« vingt-cinq milligrammes » devient « 25 milligrammes », « un virgule cinq » devient « 1.5 »), en français et en anglais. Activé par défaut, avec une case à décocher dans les paramètres |
 | 🗣️ **Identification des locuteurs** | Vue optionnelle « qui parle quand » : regroupe la transcription en tours `Premier :`/`Deuxième :`/... colorés, entièrement côté client via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (dans un worker en arrière-plan, donc sans jamais figer l'interface). Le nombre de locuteurs est détecté automatiquement ; renommez un locuteur avec l'étiquette d'un autre pour les fusionner |
 | 🕐 **Horodatage des mots** | Horodatage par mot |
@@ -116,6 +118,19 @@ Cette fonctionnalité est très précoce et s'améliorera rapidement.
 - **Docker** : le script d'entrée télécharge l'unique fichier combiné `regex.csv` depuis le [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) à chaque démarrage du conteneur.
 - **Frontend** : l'application charge les règles CSV au démarrage via un fichier manifeste et les applique comme des remplacements JavaScript `RegExp`. Après le traitement regex, chaque ligne est débarrassée des espaces de début/fin et sa première lettre est mise en majuscule. Deux modes d'affichage sont disponibles par transcription : **Brut** et **Dictée** (nettoyé par regex).
 - **Source regex personnalisée** : définissez la variable d'environnement `DICTATION_REGEX_SOURCE` pour remplacer l'URL Murmure par défaut. Il peut s'agir d'une URL de dépôt compatible GitLab (par ex. `https://framagit.org/interhop/murmure-regex`) ou d'un chemin de dossier local contenant des fichiers regex CSV (par ex. `/path/to/my/regex-csvs`). Cela vous permet d'itérer sur les règles regex localement sans attendre les changements en amont.
+
+</details>
+
+### Correction des noms de médicaments
+
+<details>
+<summary><strong>Détails</strong></summary>
+
+Le modèle entend parfois un nom de médicament comme des mots ordinaires (« l'ananas de l'umab » au lieu de « lanadelumab », « jy c'est le cas » au lieu de « Jyseleca »). La case **Corriger les noms de médicaments mal entendus**, dans la section Général des paramètres, ajoute un affichage **Médicaments**, à droite de **Brut**, sur chaque transcription : il réécrit ces erreurs avec 9 807 règles apprises sur les erreurs de noms de médicaments des modèles UltiMed et parakeet-ultra, sur les splits d'entraînement et de validation médicaments d'UltiMed. Appliquées aux 59 151 étiquettes correctes du split de test d'UltiMed, les règles en ont modifié 3, chacune un nom de médicament que l'étiquette écrit autrement. Le mode dictée médicale active ce réglage, et l'application s'en souvient sinon.
+
+- L'affichage s'applique au texte brut **avant** les regex de la Dictée, car les règles ont été apprises sur la sortie brute du modèle. Chaque affichage se bascule par transcription : désactiver Médicaments montre ce que le modèle a réellement entendu. La copie, la copie automatique et l'aperçu en direct utilisent les mêmes couches que l'affichage.
+- Les règles sont livrées avec l'application (`app/ui/public/drug-rules/`, provenance dans son `SOURCE.md`), elles fonctionnent donc quel que soit le modèle chargé. Elles viennent du [dépôt du modèle UltiMed](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) ; leur construction est décrite dans [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules).
+- Le fichier de 3 Mo n'est téléchargé qu'une fois le réglage activé. Les règles sont indexées par leur mot le plus long, une transcription n'exécute donc que la poignée dont elle contient le mot : environ 0,14 ms par texte au lieu de 20 ms pour toutes dans l'ordre, pour le même résultat.
 
 </details>
 
@@ -465,7 +480,7 @@ deux appliquent le même préréglage :
 - la **liste de phrases médicales françaises** (`french_medical.txt`) à son
   intensité et sa garde min-p par défaut ;
 - des **segments de 30 secondes** pour l'audio long, au lieu des 60 habituelles ;
-- l'**affichage dictée** comme vue par défaut des transcriptions ;
+- l'**affichage dictée** comme vue par défaut des transcriptions, et l'affichage de **correction des noms de médicaments** ;
 - la **copie automatique dans le presse-papiers**, pour que chaque énoncé
   terminé soit prêt à coller dans un dossier. C'est le seul réglage que le
   préréglage *active* au lieu de le réinitialiser : il est désactivé d'origine
