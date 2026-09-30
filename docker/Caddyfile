@@ -255,8 +255,9 @@
 	header @dictation_regex Cache-Control "no-cache, must-revalidate"
 	@boost_phrases path /boost-phrases/*
 	header @boost_phrases Cache-Control "no-cache, must-revalidate"
-	# Drug-name fix rules (~3 MB, vendored with the app): revalidate like the
-	# other rule sources so a refreshed rule set reaches users on next load.
+	# Compiled drug-name fix rules (1.9 MB, ~130 KB as the brotli sidecar the
+	# /drug-rules/ handle below serves): revalidate like the other rule
+	# sources so a refreshed rule set reaches users on next load.
 	@drug_rules path /drug-rules/*
 	header @drug_rules Cache-Control "no-cache, must-revalidate"
 	@local_models path /models/*
@@ -401,7 +402,7 @@
 	# brotli, or a file with no sidecar, falls through to `encode` exactly as
 	# before. The bytes the browser ends up with are identical, so the SRI /
 	# asset-integrity hash checks are unaffected.
-	@asset_path path /assets/* /ort/* /js/* /pcm-recorder-worklet.js
+	@asset_path path /assets/* /ort/* /js/* /pcm-recorder-worklet.js /drug-rules/*
 	handle @asset_path {
 		root * /srv
 		file_server {
