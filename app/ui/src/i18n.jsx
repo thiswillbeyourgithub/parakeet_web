@@ -65,7 +65,7 @@ const translations = {
     drugFixView: 'Drugs',
     drugFixHint: 'Correct misheard drug names ({n} rules, applied before Dictation)',
     drugFixSetting: 'Correct misheard drug names',
-    tooltipDrugFix: 'Adds a "Drugs" view, right of Raw, that repairs French drug names the model tends to mishear ("l\u2019ananas de l\u2019umab" becomes "lanadelumab"). About 10,000 rules learned from the drug-name errors of the UltiMed and parakeet-ultra models, applied to the raw text before the Dictation cleanup. On test transcripts they changed 3 of 59,151 correct labels, but ordinary speech can still occasionally be rewritten, so switch the view off on any entry to see what the model actually heard.',
+    tooltipDrugFix: 'Adds a "Drugs" view, right of Raw, that repairs French drug names the model tends to mishear ("l\u2019ananas de l\u2019umab" becomes "lanadelumab"). About 14,000 rules learned from the drug-name errors of the UltiMed and parakeet-ultra models, applied to the raw text before the Dictation cleanup. They changed none of 602,813 correct labels, but ordinary speech can still occasionally be rewritten, so switch the view off on any entry to see what the model actually heard.',
     speakers: 'Speakers',
     speaker: 'Speaker',
     // Gap-free default speaker labels: positions 0..11 use these ordinals; a
@@ -559,7 +559,7 @@ const translations = {
     drugFixView: 'M\u00e9dicaments',
     drugFixHint: 'Corriger les noms de m\u00e9dicaments mal entendus ({n} r\u00e8gles, appliqu\u00e9es avant la Dict\u00e9e)',
     drugFixSetting: 'Corriger les noms de m\u00e9dicaments mal entendus',
-    tooltipDrugFix: 'Ajoute un affichage \u00ab M\u00e9dicaments \u00bb, \u00e0 droite de Brut, qui r\u00e9pare les noms de m\u00e9dicaments que le mod\u00e8le entend mal (\u00ab l\u2019ananas de l\u2019umab \u00bb devient \u00ab lanadelumab \u00bb). Environ 10 000 r\u00e8gles apprises sur les erreurs de noms de m\u00e9dicaments des mod\u00e8les UltiMed et parakeet-ultra, appliqu\u00e9es au texte brut avant le nettoyage Dict\u00e9e. Sur les transcriptions de test elles ont modifi\u00e9 3 \u00e9tiquettes correctes sur 59 151, mais un propos ordinaire peut encore \u00eatre r\u00e9\u00e9crit de temps en temps : d\u00e9sactivez l\u2019affichage sur une entr\u00e9e pour voir ce que le mod\u00e8le a r\u00e9ellement entendu.',
+    tooltipDrugFix: 'Ajoute un affichage \u00ab M\u00e9dicaments \u00bb, \u00e0 droite de Brut, qui r\u00e9pare les noms de m\u00e9dicaments que le mod\u00e8le entend mal (\u00ab l\u2019ananas de l\u2019umab \u00bb devient \u00ab lanadelumab \u00bb). Environ 14 000 r\u00e8gles apprises sur les erreurs de noms de m\u00e9dicaments des mod\u00e8les UltiMed et parakeet-ultra, appliqu\u00e9es au texte brut avant le nettoyage Dict\u00e9e. Elles n\u2019ont modifi\u00e9 aucune de 602 813 \u00e9tiquettes correctes, mais un propos ordinaire peut encore \u00eatre r\u00e9\u00e9crit de temps en temps : d\u00e9sactivez l\u2019affichage sur une entr\u00e9e pour voir ce que le mod\u00e8le a r\u00e9ellement entendu.',
     speakers: 'Locuteurs',
     speaker: 'Locuteur',
     speakerOrdinals: 'Premier,Deuxième,Troisième,Quatrième,Cinquième,Sixième,Septième,Huitième,Neuvième,Dixième,Onzième,Douzième',
