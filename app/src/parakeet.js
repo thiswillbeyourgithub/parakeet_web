@@ -2710,6 +2710,51 @@ export class ParakeetModel {
   }
 
   /**
+   * Whether this encoder graph encodes a MIXED-LENGTH batch correctly, probed
+   * once per instance and memoized. Encoders exported with the key-padding
+   * bias (NeMo fork `export_key_pad_mask`, 2026-10-02 onward) mask the padded
+   * frames out of attention, so a short chunk batched with a longer one encodes
+   * the same as alone. Older mask-free web exports leak (or, with the padded-
+   * batch tripwire, emit NaN) on ragged batches, and the file name cannot tell
+   * the two apart, so the graph is asked directly: encode a 1.0 s and a 0.7 s
+   * deterministic noise clip as one batch and compare the short one with its
+   * solo encode(). Ragged batching is enabled only if every value is finite
+   * and the worst difference is below 1e-2 (fp32 gives ~1e-5, fp16 ~1e-3, the
+   * old mask-free leak ~3e-2). Costs two tiny encoder runs, once.
+   * @returns {Promise<boolean>}
+   */
+  raggedBatchOk() {
+    if (!this._raggedBatchProbe) {
+      this._raggedBatchProbe = (async () => {
+        let seed = 12345;
+        const noise = (n) => Float32Array.from({ length: n }, () => {
+          seed = (seed * 1103515245 + 12345) >>> 0;
+          return (seed / 0xffffffff - 0.5) * 0.2;
+        });
+        const long = noise(16000);
+        const short = noise(11200);
+        try {
+          const [, batched] = await this.encodeBatch([long, short], 16000, { _allowRagged: true });
+          const solo = await this.encode(short, 16000);
+          const n = Math.min(batched.Tenc, solo.Tenc) * solo.D;
+          let worst = 0;
+          for (let i = 0; i < n; i++) {
+            const d = Math.abs(batched.transposed[i] - solo.transposed[i]);
+            if (!(d <= worst)) worst = d; // NaN lands here too and fails the check below
+          }
+          const ok = Number.isFinite(worst) && worst < 1e-2;
+          if (this.verbose) console.log(`[Parakeet] ragged encoder batch probe: maxAbsDiff=${worst} -> ${ok ? 'enabled' : 'equal-length only'}`);
+          return ok;
+        } catch (e) {
+          if (this.verbose) console.warn('[Parakeet] ragged encoder batch probe failed, equal-length only:', e);
+          return false;
+        }
+      })();
+    }
+    return this._raggedBatchProbe;
+  }
+
+  /**
    * Batched encode: fold N EQUAL-LENGTH chunks into ONE encoderSession.run and
    * return an index-aligned array of the same `{ transposed, D, Tenc,
    * preprocess_ms, encode_ms }` objects encode() returns, each ready to feed
@@ -2718,22 +2763,19 @@ export class ParakeetModel {
    * better occupancy). On WASM the caller keeps maxEncoderBatch=1 and never
    * groups, so encode() stays the only path there, byte-for-byte unchanged.
    *
-   * ALL CHUNKS MUST HAVE THE SAME feature length (same PCM sample count). This
-   * is a hard requirement, enforced with a throw: an ablation on the real int8
-   * encoder (test/unit/encode-batch-equivalence.test.mjs) showed equal-length
-   * batches are byte-IDENTICAL to standalone encode() (maxAbsDiff 0), but a
-   * padded, unequal-length batch diverges ~0.03 across ALL output frames because
-   * the conformer's subsampling/normalization layers leak the zero-padding
-   * despite the `length` mask (`length` only masks attention, not the convs). So
-   * the caller (transcribeChunked) groups only runs of equal-length chunks and
-   * encodes any ragged remainder alone. Silence snapping makes raw chunk lengths
-   * ragged, so on batching backends planChunks aligns seams to equal lengths
-   * (see its `lengthAlignSlack`) precisely so these runs form. Never pass mixed
-   * lengths: it would silently degrade quality.
+   * Mixed lengths are allowed only when raggedBatchOk() says this encoder graph
+   * masks padding (key-padding-bias exports); otherwise ALL CHUNKS MUST HAVE THE
+   * SAME feature length, enforced with a throw. Equal-length batches are byte-
+   * IDENTICAL to standalone encode() (test/unit/encode-batch-equivalence.test.mjs,
+   * maxAbsDiff 0), but on the older mask-free exports a padded, unequal-length
+   * batch diverges ~0.03 across ALL output frames (or turns NaN with the
+   * tripwire). For those, the caller (transcribeChunked) groups only runs of
+   * equal-length chunks and planChunks aligns seams to equal lengths (see its
+   * `lengthAlignSlack`) so these runs form.
    *
-   * @param {Float32Array[]} chunksPcm  Mono 16-kHz PCM per chunk, all same length.
+   * @param {Float32Array[]} chunksPcm  Mono 16-kHz PCM per chunk (equal lengths unless raggedBatchOk()).
    * @param {number} sampleRate
-   * @param {{enableProfiling?: boolean}} [opts]
+   * @param {{enableProfiling?: boolean, _allowRagged?: boolean}} [opts]  `_allowRagged` is raggedBatchOk()'s own bypass.
    * @returns {Promise<Array<{transposed: Float32Array, D: number, Tenc: number, preprocess_ms: number, encode_ms: number}>>}
    */
   async encodeBatch(chunksPcm, sampleRate = 16000, opts = {}) {
@@ -2763,21 +2805,18 @@ export class ParakeetModel {
         Ts[n] = T;
         melBins = mb;
       }
-      // Hard equal-length guard: mixed lengths would need zero-padding, which the
-      // encoder leaks (see method doc). The caller must group by equal length.
-      const T0 = Ts[0];
-      for (let n = 1; n < N; n++) {
-        if (Ts[n] !== T0) {
-          throw new Error(
-            `encodeBatch requires equal-length chunks (got T=${Ts[n]} vs ${T0} at index ${n}); ` +
-            `group by feature length or encode the remainder alone`,
-          );
-        }
+      // Equal-length guard for encoders that leak zero-padding (see method doc).
+      const Tmax = Math.max(...Ts);
+      const ragged = Ts.some((t) => t !== Tmax);
+      if (ragged && !opts._allowRagged && !(await this.raggedBatchOk())) {
+        throw new Error(
+          `encodeBatch: this encoder needs equal-length chunks (got T=${Ts.join(',')}); ` +
+          `group by feature length or encode the remainder alone`,
+        );
       }
-      const Tmax = T0; // all equal, so no padding actually occurs below
 
-      // 2. Pack each chunk's [melBins, T] into a shared [N, melBins, T] buffer.
-      // With equal lengths this is a straight copy (Tmax === T_i, zero padding).
+      // 2. Pack each chunk's [melBins, T] into a shared zero-padded
+      // [N, melBins, Tmax] buffer (a straight copy when lengths are equal).
       const padded = new Float32Array(N * melBins * Tmax);
       for (let n = 0; n < N; n++) {
         const src = feats[n];
@@ -3508,17 +3547,25 @@ export class ParakeetModel {
     // Plan every chunk window up front (silence-snapped when enabled). Iterating
     // the plan makes totalChunks exact, so the per-chunk progress callback's
     // totalChunks matches the number of chunks actually produced.
+    // Encoder batching (see ensureEncoded below). Encoders that mask padding
+    // batch ragged chunks as-is; the rest need equal-length runs. An injected
+    // encodeChunk pool encodes chunk by chunk and must never touch this
+    // model's encoder, so it skips the probe.
+    const batchEncode = this.maxEncoderBatch > 1;
+    const raggedBatch = batchEncode && typeof transcribeOpts.encodeChunk !== 'function'
+      && await this.raggedBatchOk();
     const chunkPlan = planChunks(audio.length, {
       maxChunkSamples,
       overlapSamples,
       snapRadiusSamples,
       snapStepSamples,
       energyAt: snapRadiusSamples > 0 ? energyAt : null,
-      // Length-alignment only helps backends that actually batch the encoder
-      // (WebGPU, maxEncoderBatch > 1): it nudges silence-snapped seams toward
-      // equal chunk lengths so encodeBatch can group them. On WASM (batch == 1)
-      // pass 0 so seams (and transcripts) stay byte-identical to before.
-      lengthAlignSlack: this.maxEncoderBatch > 1 ? DEFAULT_LENGTH_ALIGN_SLACK : 0,
+      // Length-alignment only helps backends that batch the encoder (WebGPU,
+      // maxEncoderBatch > 1) with an encoder that needs equal lengths: it
+      // nudges silence-snapped seams toward equal chunk lengths so encodeBatch
+      // can group them. Otherwise (WASM, or a ragged-capable encoder) pass 0 so
+      // seams land in the quietest point, byte-identical to the unbatched plan.
+      lengthAlignSlack: batchEncode && !raggedBatch ? DEFAULT_LENGTH_ALIGN_SLACK : 0,
     });
     const totalChunks = chunkPlan.length;
 
@@ -3562,29 +3609,28 @@ export class ParakeetModel {
       : combinedTextParts.join(' '));
 
     // Encoder batching (WebGPU throughput lever). When this.maxEncoderBatch > 1
-    // we group consecutive EQUAL-LENGTH chunks into one encodeBatch() call, then
-    // feed each chunk's precomputed encoder output to transcribe() via
-    // opts.encoded so the decode/stitch path below is byte-for-byte the same.
-    // Only equal-length chunks are grouped (unequal padding leaks, see
-    // encodeBatch). Silence snapping makes raw chunk lengths ragged, so on
-    // batching backends planChunks runs with lengthAlignSlack > 0 (see its doc):
-    // it nudges seams toward equal lengths so consecutive chunks share a length
-    // and this greedy run groups them; a ragged remainder just forms a group of
-    // 1. On WASM (maxEncoderBatch == 1, lengthAlignSlack 0) this is fully
-    // disabled and transcribe() encodes each chunk itself,
-    // exactly as before. The encoder's own preprocess_ms/encode_ms ride through
-    // encoded.* into transcribe()'s metrics, so the totals below are unchanged.
-    const batchEncode = this.maxEncoderBatch > 1;
+    // we group up to maxEncoderBatch consecutive chunks into one encodeBatch()
+    // call, then feed each chunk's precomputed encoder output to transcribe()
+    // via opts.encoded so the decode/stitch path below is byte-for-byte the
+    // same. With a ragged-capable encoder (raggedBatchOk) any consecutive chunks
+    // group. Otherwise only EQUAL-LENGTH ones do (unequal padding leaks, see
+    // encodeBatch): planChunks then runs with lengthAlignSlack > 0 so
+    // consecutive chunks share a length, and a ragged remainder forms a group
+    // of 1. On WASM (maxEncoderBatch == 1) this is fully disabled and
+    // transcribe() encodes each chunk itself, exactly as before. The encoder's
+    // own preprocess_ms/encode_ms ride through encoded.* into transcribe()'s
+    // metrics, so the totals below are unchanged.
     const perfEnabled = this.verbose || !!transcribeOpts.enableProfiling;
     const chunkLen = (p) => p.end - p.start;
     const encodedCache = new Array(chunkPlan.length).fill(null);
     const ensureEncoded = async (ci) => {
       if (encodedCache[ci]) return encodedCache[ci];
-      // Greedily grow an equal-length group [ci, ci+g) up to maxEncoderBatch.
+      // Greedily grow a group [ci, ci+g) up to maxEncoderBatch (equal-length
+      // only unless the encoder batches ragged chunks).
       const base = chunkPlan[ci];
       const group = [ci];
       for (let j = ci + 1; j < chunkPlan.length && group.length < this.maxEncoderBatch; j += 1) {
-        if (chunkLen(chunkPlan[j]) !== chunkLen(base)) break;
+        if (!raggedBatch && chunkLen(chunkPlan[j]) !== chunkLen(base)) break;
         group.push(j);
       }
       const pcms = group.map((gi) => audio.subarray(chunkPlan[gi].start, chunkPlan[gi].end));

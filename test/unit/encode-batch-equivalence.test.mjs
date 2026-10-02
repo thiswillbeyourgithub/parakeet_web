@@ -87,7 +87,7 @@ describe('encodeBatch numeric equivalence', () => {
   // encode() EXACTLY. Two same-length, different-content chunks exercise it.
   const chunkA = makePcm(Math.round(4.3 * SR), 12345);
   const chunkB = makePcm(Math.round(4.3 * SR), 67890); // same length, different noise
-  // A deliberately shorter chunk to prove the equal-length guard actually fires.
+  // A deliberately shorter chunk for the mixed-length test.
   const shorterPcm = makePcm(Math.round(1.7 * SR), 555);
 
   test('equal-length batch is byte-identical to standalone encode() per item', async (t) => {
@@ -127,14 +127,24 @@ describe('encodeBatch numeric equivalence', () => {
     assert.equal(maxAbsDiff(bAB.transposed, bBA.transposed), 0, 'B position-invariant');
   });
 
-  test('mixed-length batch throws (padding would leak, so it is forbidden)', async (t) => {
+  test('mixed-length batch: matches solo encode() on masked encoders, throws on mask-free ones', async (t) => {
     if (skipReason) return t.skip(skipReason);
 
-    await assert.rejects(
-      () => model.encodeBatch([chunkA, shorterPcm], SR),
-      /equal-length/,
-      'encodeBatch must reject unequal-length chunks',
-    );
+    // Mask-free web exports (before 2026-10-02) leak the padding, so they must
+    // refuse; key-padding-bias exports must reproduce each item's solo encode.
+    if (!(await model.raggedBatchOk())) {
+      await assert.rejects(
+        () => model.encodeBatch([chunkA, shorterPcm], SR),
+        /equal-length/,
+        'encodeBatch must reject unequal-length chunks on a mask-free encoder',
+      );
+      return;
+    }
+    const [aBatch, sBatch] = await model.encodeBatch([chunkA, shorterPcm], SR);
+    const [aSolo, sSolo] = [await model.encode(chunkA, SR), await model.encode(shorterPcm, SR)];
+    assert.equal(sBatch.Tenc, sSolo.Tenc, 'short item keeps its own Tenc (padding trimmed)');
+    assert.ok(maxAbsDiff(aBatch.transposed, aSolo.transposed) < 1e-2, 'long item ~ solo');
+    assert.ok(maxAbsDiff(sBatch.transposed, sSolo.transposed) < 1e-2, 'short item ~ solo');
   });
 });
 
