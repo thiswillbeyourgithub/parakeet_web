@@ -64,6 +64,9 @@ function makeModel(script) {
     transcribe: proto.transcribe,
     transcribeChunked: proto.transcribeChunked,
     _debugEmitRecord: proto._debugEmitRecord,
+    _newGreedyHyp: proto._newGreedyHyp,
+    _greedyConsumeStep: proto._greedyConsumeStep,
+    decodeGreedyBatch: proto.decodeGreedyBatch,
     // The stub's _runCombinedStep below always returns a full logit row, so the
     // in-graph top-K fast path must stay off: the real probe reads the session's
     // outputNames, which this fake joiner does not declare.
@@ -339,5 +342,73 @@ describe('collectDecodeDebug: transcribeChunked aggregation', () => {
       temperature: 1.0, chunkDurationSec: 1, overlapSec: 0,
     });
     assert.equal(res.decodeDebug, undefined);
+  });
+});
+
+describe('decodeGreedyBatch: batched greedy equals per-chunk greedy', () => {
+  // The fake joiner reads frame index = encoder_outputs[b * D], so each chunk
+  // below is a window [off, off + Tenc) of one longer script and the batch
+  // rows really decode different frames (and finish at different steps).
+  const LONG = [
+    { logits: [0.5, 1.0, 3.0, 0.0, 0.0, 0.2], step: 1 }, // 2
+    { logits: [2.5, 1.5, 0.0, 0.0, 0.0, 0.3], step: 2 }, // 0, skips a frame
+    { logits: [0.0, 0.0, 0.0, 0.0, 0.0, 4.0], step: 1 }, // blank
+    { logits: [0.0, 2.9, 0.0, 3.0, 0.0, 0.1], step: 1 }, // 3 (1 a close runner-up)
+    { logits: [1.0, 0.0, 0.0, 0.0, 2.0, 0.0], step: 1 }, // 4
+    { logits: [0.0, 0.0, 0.0, 0.0, 0.0, 4.0], step: 3 }, // blank
+    { logits: [0.0, 0.0, 3.0, 0.0, 0.0, 0.0], step: 1 }, // 2
+    { logits: [0.0, 0.9, 0.0, 1.0, 0.0, 0.5], step: 1 }, // 3 (1 a close runner-up)
+    { logits: [0.0, 0.0, 0.0, 0.0, 0.0, 4.0], step: 1 }, // blank
+    { logits: [2.0, 0.0, 0.0, 0.0, 0.0, 0.0], step: 1 }, // 0
+  ];
+  const window = (off, Tenc) => {
+    const transposed = new Float32Array(Tenc * D);
+    for (let t = 0; t < Tenc; t++) transposed[t * D] = off + t;
+    return { transposed, D, Tenc };
+  };
+  const encs = [window(0, 10), window(3, 5), window(6, 1), window(0, 0), window(2, 8)];
+  // Boost [3, 1]: after a row emits 3, token 1 is boosted, which flips frame 4
+  // only in rows that just emitted 3, so a match state leaking across rows shows.
+  const makeTrie = () => {
+    const trie = new BoostingTrie({ strength: 1 });
+    trie.insert([3, 1], 5);
+    return trie;
+  };
+
+  for (const [name, extra] of [
+    ['plain', {}],
+    ['confidences + debug', { returnConfidences: true, collectDecodeDebug: true, temperature: 0 }],
+    ['phrase boost', { phraseBoostFactory: makeTrie, collectDecodeDebug: true }],
+  ]) {
+    test(name, async () => {
+      const { phraseBoostFactory, ...rest } = extra;
+      const opts = { ...baseOpts, ...rest };
+      const model = makeModel(LONG);
+      const solo = [];
+      for (const enc of encs) {
+        solo.push(await model.transcribe(new Float32Array(0), 16000,
+          { ...opts, encoded: enc, phraseBoost: phraseBoostFactory?.() ?? null }));
+      }
+      const decoded = await model.decodeGreedyBatch(encs, { ...opts, phraseBoost: phraseBoostFactory?.() ?? null });
+      for (let i = 0; i < encs.length; i++) {
+        const batched = await model.transcribe(new Float32Array(0), 16000,
+          { ...opts, encoded: encs[i], decoded: decoded[i] });
+        delete batched.metrics; delete solo[i].metrics;
+        assert.deepEqual(batched, solo[i], `chunk ${i}`);
+      }
+      assert.ok(solo.some((r) => r.words.length > 1), 'script emits words');
+      if (phraseBoostFactory) {
+        // The boost must actually flip a choice, or this case tests nothing.
+        const plain = await model.transcribe(new Float32Array(0), 16000, { ...baseOpts, encoded: encs[0] });
+        assert.notEqual(solo[0].utterance_text, plain.utterance_text, 'boost changes chunk 0');
+      }
+    });
+  }
+
+  test('opts.decoded refuses beam / state continuity', async () => {
+    const model = makeModel(LONG);
+    const [dec] = await model.decodeGreedyBatch([encs[0]], baseOpts);
+    await assert.rejects(model.transcribe(new Float32Array(0), 16000,
+      { ...baseOpts, encoded: encs[0], decoded: dec, beamWidth: 2 }), /plain greedy only/);
   });
 });

@@ -1415,17 +1415,20 @@ export class ParakeetModel {
    * `sharedLogits`, so callers dispose per-row handles as they consume rows
    * AND the shared handle at the end.
    *
-   * @param {Array<object>} hyps - Hypotheses to expand ({t, lastTok, state}).
-   * @param {Float32Array} transposed - Encoder output, [Tenc, D] row-major.
+   * @param {Array<object>} hyps - Hypotheses to expand ({t, lastTok, state}, plus
+   *   an optional `enc` ({transposed}) when rows decode different chunks, see
+   *   decodeGreedyBatch).
+   * @param {Float32Array|null} transposed - Encoder output, [Tenc, D] row-major,
+   *   for every hyp without its own `enc`.
    * @param {number} D - Encoder feature dim.
-   * @returns {Promise<Array<{tokenLogits: Float32Array, durLogits: Float32Array, newState: object}>>}
+   * @returns {Promise<Array<{tokenLogits: Float32Array, durLogits: Float32Array, step: number, newState: object}>>}
    *   Index-aligned with `hyps`; carries a `sharedLogits` property on the
    *   array when the rows view a shared batched buffer.
    */
   async _runCombinedStepBatch(hyps, transposed, D) {
     if (hyps.length === 1) {
       const hyp = hyps[0];
-      const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
+      const frameBuf = (hyp.enc?.transposed ?? transposed).subarray(hyp.t * D, (hyp.t + 1) * D);
       const encTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
       const out = await this._runCombinedStep(encTensor, hyp.lastTok, hyp.state);
       encTensor.dispose?.();
@@ -1462,7 +1465,7 @@ export class ParakeetModel {
     const s2 = sc.s2.subarray(0, L * B * H);
     for (let b = 0; b < B; b++) {
       const h = hyps[b];
-      encData.set(transposed.subarray(h.t * D, (h.t + 1) * D), b * D);
+      encData.set((h.enc?.transposed ?? transposed).subarray(h.t * D, (h.t + 1) * D), b * D);
       targetIds[b] = typeof h.lastTok === 'number' ? h.lastTok : this.blankId;
       const st1 = h.state?.state1 || this._combState1;
       const st2 = h.state?.state2 || this._combState2;
@@ -1545,9 +1548,14 @@ export class ParakeetModel {
         n1.set(sd1.subarray((l * B + b) * H, (l * B + b + 1) * H), l * H);
         n2.set(sd2.subarray((l * B + b) * H, (l * B + b + 1) * H), l * H);
       }
+      const durLogits = data.subarray(b * total + vocab, (b + 1) * total);
+      // Duration argmax, as _runCombinedStep's `step` (the greedy path reads it).
+      let step = 0;
+      for (let i = 1; i < durLogits.length; ++i) if (durLogits[i] > durLogits[step]) step = i;
       results.push({
         tokenLogits: data.subarray(b * total, b * total + vocab),
-        durLogits: data.subarray(b * total + vocab, (b + 1) * total),
+        durLogits,
+        step,
         logZ: lseTok ? lseTok[b] : undefined,
         durZ: lseDur ? lseDur[b] : undefined,
         newState: {
@@ -2906,6 +2914,204 @@ export class ParakeetModel {
   }
 
   /**
+   * Fresh greedy hypothesis: frame pointer, decoder state, last emitted token,
+   * emitted ids and per-frame accumulators. `enc` ({transposed, D, Tenc}) is
+   * only set by decodeGreedyBatch, whose rows decode different chunks.
+   * `dbgTokens` is an array when decode-debug records are collected, and
+   * `boostActive` the row's own phrase-boost match set (batched decode only).
+   */
+  _newGreedyHyp(state = null, enc = null) {
+    return {
+      ids: [], lastTok: this.blankId, state, t: 0, emittedAtFrame: 0,
+      tokenTimes: [], tokenConfs: [], frameConfs: [], overallLogProb: 0,
+      dbgTokens: null, boostActive: null, enc,
+    };
+  }
+
+  /**
+   * Consume ONE joiner step for a greedy hypothesis: phrase boost, argmax,
+   * confidence, TDT frame advance, emit bookkeeping, decoder-state adoption and
+   * the per-row logits tensor. Shared by transcribe()'s greedy loop and
+   * decodeGreedyBatch() so unbatched and batched greedy decode run the same
+   * code (bit-for-bit identical to the original inline greedy loop).
+   * @param {object} hyp  From _newGreedyHyp; mutated in place.
+   * @param {object} stepOut  A _runCombinedStep result or _runCombinedStepBatch row.
+   * @param {{phraseBoost: object|null, temperature: number, frameStride: number, returnTimestamps: boolean, returnConfidences: boolean, timeStride: number, keepState: object|null}} ctx
+   *   `keepState` is a caller-owned decoder state that must never be disposed.
+   */
+  _greedyConsumeStep(hyp, stepOut, ctx) {
+    const { tokenLogits, topkLogits, topkIds, step, newState, logZ, _logitsTensor } = stepOut;
+
+    // `tokenLogits === null` means the joint returned only its top-K row
+    // (see _readTopkStep); anything that needs the full vocab row branches
+    // on this. transcribe()'s top-K plan guarantees nothing here does.
+    const topkStep = tokenLogits === null;
+    if (topkStep && !this._topkEngagedLogged) {
+      this._topkEngagedLogged = true;
+      console.log(`[Parakeet.js] TopK decoder outputs engaged (k=${topkIds.length})`);
+    }
+
+    // Phrase boosting (shallow fusion): add the trie's rewards into the
+    // token logits before the argmax so the per-step choice is biased
+    // toward continuing/starting a boost phrase. Restore right after so
+    // confidence/log-prob below stay computed on the true distribution.
+    // Argmax is invariant to a positive temperature divide, so we argmax
+    // the raw logits directly (avoids the Infinity/NaN trap at temp 0).
+    const boostSaved = ctx.phraseBoost ? ctx.phraseBoost.applyBoost(tokenLogits) : null;
+    // The graph's top-K row is sorted descending, so its first entry IS the
+    // argmax; only the ORDER of exactly-equal logits may differ from the JS
+    // scan's lowest-index-wins tie-break (accepted divergence).
+    let maxId, maxLogit;
+    if (topkStep) {
+      maxId = topkIds[0];
+      maxLogit = topkLogits[0];
+    } else {
+      ({ maxId, maxLogit } = this._pickArgmax(tokenLogits));
+    }
+
+    // Decode-debug: the boosted values only exist between applyBoost and
+    // restore, so capture them here (id -> boosted logit) for the emit
+    // record below; per-candidate bonus = boosted - true after restore.
+    let dbgBoosted = null;
+    if (hyp.dbgTokens && boostSaved) {
+      dbgBoosted = new Map();
+      for (let i = 0; i < boostSaved.length; i += 2) {
+        dbgBoosted.set(boostSaved[i], tokenLogits[boostSaved[i]]);
+      }
+    }
+
+    // _frameConfidence assumes maxLogit == tokenLogits[maxId] (chosen
+    // token's numerator is 1), so reset maxLogit to the true logit.
+    if (boostSaved) {
+      ctx.phraseBoost.restore(tokenLogits, boostSaved);
+      maxLogit = tokenLogits[maxId];
+    }
+
+    // The top-K path is gated on temperature 0, where _frameConfidence is a
+    // constant 1.0 and never touches the (absent) full row; spelled out
+    // here rather than relying on that guard from the outside.
+    const confVal = topkStep ? 1.0 : this._frameConfidence(tokenLogits, maxLogit, ctx.temperature);
+    hyp.frameConfs.push(confVal);
+    hyp.overallLogProb += Math.log(confVal);
+
+    const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, maxId, step, ctx.frameStride);
+
+    if (dec.emit) {
+      hyp.ids.push(maxId);
+      hyp.lastTok = maxId;
+      // Advance the boosting trie by the emitted token (blank leaves it
+      // unchanged, so no advance in the else branch below).
+      ctx.phraseBoost?.advance(maxId);
+      if (ctx.returnTimestamps) {
+        const durFrames = step > 0 ? step : 1;
+        const start = hyp.t * ctx.timeStride;
+        const end = (hyp.t + durFrames) * ctx.timeStride;
+        hyp.tokenTimes.push([start, end]);
+      }
+      if (ctx.returnConfidences) hyp.tokenConfs.push(confVal);
+      if (hyp.dbgTokens) {
+        hyp.dbgTokens.push(this._debugEmitRecord(tokenLogits, {
+          chosenId: maxId,
+          frame: hyp.t,
+          duration: step > 0 ? step : 1,
+          boosted: dbgBoosted,
+          // Top-K rows carry their own alternatives + log-partition; minK
+          // above guaranteed at least DEBUG_ALTERNATIVES_K of them.
+          topk: topkStep ? { ids: topkIds, logits: topkLogits, logZ } : null,
+        }));
+      }
+      // Only adopt the new decoder state when a non-blank token is emitted.
+      // Free the previous state (unless caller-owned) before reassigning.
+      if (hyp.state && hyp.state !== newState && hyp.state !== ctx.keepState) {
+        this._disposeDecoderState(hyp.state, newState);
+      }
+      hyp.state = newState;
+    } else {
+      // Blank token: keep the previous state and discard newState.
+      if (newState && newState !== hyp.state) {
+        this._disposeDecoderState(newState, hyp.state);
+      }
+    }
+
+    // Dispose the joiner logits tensor now that subarray views are consumed
+    // (batched rows carry none: their shared buffer is the caller's to free).
+    _logitsTensor?.dispose?.();
+
+    hyp.t = dec.nextT;
+    hyp.emittedAtFrame = dec.nextEmitted;
+  }
+
+  /**
+   * Greedy-decode several encoded chunks at once: each step runs ONE batched
+   * joiner call over the chunks still decoding (lockstep, one row per chunk,
+   * each row at its own frame) instead of one batch-1 call per frame per chunk.
+   * A batch-1 joiner call is mostly per-call overhead, so this is the decode
+   * throughput lever for long audio (fp32 decoder on WASM, measured 2026-10-02:
+   * one 8-row step 6.1 ms vs 8 x 2.7 ms serial). Per row it is the greedy loop
+   * of transcribe() (same _greedyConsumeStep). The fp32 decoder is batch-
+   * invariant; int8 decoders are not exactly (their dynamic quantization scale
+   * is per batch), so a few int8 transcripts can differ from batch 1.
+   *
+   * Plain full-file greedy only: full-row joiner outputs (no top-K fast path),
+   * no decoder-state continuity, no beam. Phrase boosting keeps a match set per
+   * chunk by swapping the trie's `active` set around each row.
+   *
+   * @param {Array<{transposed: Float32Array, D: number, Tenc: number}>} encodedList
+   * @param {object} [opts]  transcribe()'s greedy options: temperature,
+   *   frameStride, phraseBoost, returnTimestamps, returnConfidences,
+   *   collectDecodeDebug, enableProfiling.
+   * @returns {Promise<Array<{ids: number[], tokenTimes: number[][], tokenConfs: number[], frameConfs: number[], overallLogProb: number, dbgTokens: object[]|null, decode_ms: number}>>}
+   *   Index-aligned with encodedList, each ready for transcribe()'s `opts.decoded`.
+   */
+  async decodeGreedyBatch(encodedList, opts = {}) {
+    const {
+      temperature = 1.2, frameStride = 1, phraseBoost = null,
+      returnTimestamps = false, returnConfidences = false,
+      collectDecodeDebug = false, enableProfiling = false,
+    } = opts;
+    const perfEnabled = this.verbose || enableProfiling;
+    const s0 = perfEnabled ? performance.now() : 0;
+    const hyps = encodedList.map((enc) => {
+      const h = this._newGreedyHyp(null, enc);
+      h.dbgTokens = collectDecodeDebug ? [] : null;
+      if (phraseBoost) { phraseBoost.reset(); h.boostActive = phraseBoost.active; }
+      return h;
+    });
+    const ctx = {
+      phraseBoost, temperature, frameStride, returnTimestamps, returnConfidences,
+      timeStride: this.subsampling * this.windowStride, keepState: null,
+    };
+    let active = hyps.filter((h) => h.t < h.enc.Tenc);
+    try {
+      for (let iter = 0; active.length; iter++) {
+        // Yield to browser every ~50 steps to keep UI responsive
+        if (iter % 50 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+        const outs = await this._runCombinedStepBatch(active, null, active[0].enc.D);
+        try {
+          active.forEach((h, b) => {
+            if (phraseBoost) phraseBoost.active = h.boostActive;
+            this._greedyConsumeStep(h, outs[b], ctx);
+            if (phraseBoost) h.boostActive = phraseBoost.active;
+          });
+        } finally {
+          outs.sharedLogits?.dispose?.();
+        }
+        active = active.filter((h) => h.t < h.enc.Tenc);
+      }
+    } finally {
+      for (const h of hyps) this._disposeDecoderState(h.state);
+    }
+    // One wall-clock decode for the group: attribute it to the first item so
+    // SUM(decode_ms) stays real time (same convention as encodeBatch's encode_ms).
+    const decodeMs = perfEnabled ? performance.now() - s0 : 0;
+    return hyps.map((h, i) => ({
+      ids: h.ids, tokenTimes: h.tokenTimes, tokenConfs: h.tokenConfs,
+      frameConfs: h.frameConfs, overallLogProb: h.overallLogProb,
+      dbgTokens: h.dbgTokens, decode_ms: i === 0 ? decodeMs : 0,
+    }));
+  }
+
+  /**
    * Transcribe 16-kHz mono PCM. Returns full rich output (timestamps/confidences opt-in).
    *
    * Pass `opts.encoded` (the object returned by encode() for this same audio) to
@@ -3035,21 +3241,21 @@ export class ParakeetModel {
     let beamTimeline = null;
 
     let nbest = null; // beam n-best list (oracle), only when nBest > 1
-    if (!useBeam) {
+    if (opts.decoded) {
+      // Precomputed greedy decode (decodeGreedyBatch over several chunks):
+      // only the result assembly below runs.
+      if (useBeam || returnDecoderState || previousDecoderState) {
+        throw new Error('transcribe: opts.decoded is plain greedy only (no beam, nBest or decoder-state continuity)');
+      }
+      ({ ids, tokenTimes, tokenConfs, frameConfs, overallLogProb } = opts.decoded);
+      if (collectDecodeDebug) dbgTokens = opts.decoded.dbgTokens ?? [];
+    } else if (!useBeam) {
       // --- Greedy (= beam width 1) ------------------------------------
       // A single hypothesis carrying its own frame pointer, decoder state,
       // emitted ids and per-frame accumulators. Bit-for-bit identical to the
       // original greedy decoder.
-      const hyp = {
-        ids: [],
-        state: previousDecoderState || null,
-        t: 0,
-        emittedAtFrame: 0,
-        tokenTimes: [],
-        tokenConfs: [],
-        frameConfs: [],
-        overallLogProb: 0,
-      };
+      const hyp = this._newGreedyHyp(previousDecoderState || null);
+      hyp.dbgTokens = dbgTokens;
       decoderState = hyp.state; // keep the function-scope alias in sync for finally
 
       // --- In-graph top-K fast path (stage-2 decoder artifact) -----------
@@ -3078,6 +3284,11 @@ export class ParakeetModel {
         ? { topk: true, minK: collectDecodeDebug ? DEBUG_ALTERNATIVES_K : 1 }
         : null;
 
+      const stepCtx = {
+        phraseBoost, temperature, frameStride, returnTimestamps, returnConfidences,
+        timeStride: TIME_STRIDE, keepState: externalInitialState,
+      };
+
       while (hyp.t < Tenc) {
         // Yield to browser every ~50 frames to keep UI responsive
         if (hyp.t % 50 === 0) {
@@ -3086,112 +3297,15 @@ export class ParakeetModel {
 
         const frameBuf = transposed.subarray(hyp.t * D, (hyp.t + 1) * D);
         inFlightEncTensor = new this.ort.Tensor('float32', frameBuf, [1, D, 1]);
-
-        const prevTok = hyp.ids.length ? hyp.ids[hyp.ids.length - 1] : this.blankId;
-        const { tokenLogits, topkLogits, topkIds, step, newState, logZ, _logitsTensor } =
-          await this._runCombinedStep(inFlightEncTensor, prevTok, hyp.state, topkStepOpts);
-
-        // `tokenLogits === null` means the joint returned only its top-K row
-        // (see _readTopkStep); anything that needs the full vocab row branches
-        // on this. The plan above guarantees nothing in this loop does.
-        const topkStep = tokenLogits === null;
-        if (topkStep && !this._topkEngagedLogged) {
-          this._topkEngagedLogged = true;
-          console.log(`[Parakeet.js] TopK decoder outputs engaged (k=${topkIds.length})`);
-        }
-
-        // Phrase boosting (shallow fusion): add the trie's rewards into the
-        // token logits before the argmax so the per-step choice is biased
-        // toward continuing/starting a boost phrase. Restore right after so
-        // confidence/log-prob below stay computed on the true distribution.
-        // Argmax is invariant to a positive temperature divide, so we argmax
-        // the raw logits directly (avoids the Infinity/NaN trap at temp 0).
-        const boostSaved = phraseBoost ? phraseBoost.applyBoost(tokenLogits) : null;
-        // The graph's top-K row is sorted descending, so its first entry IS the
-        // argmax; only the ORDER of exactly-equal logits may differ from the JS
-        // scan's lowest-index-wins tie-break (accepted divergence).
-        let maxId, maxLogit;
-        if (topkStep) {
-          maxId = topkIds[0];
-          maxLogit = topkLogits[0];
-        } else {
-          ({ maxId, maxLogit } = this._pickArgmax(tokenLogits));
-        }
-
-        // Decode-debug: the boosted values only exist between applyBoost and
-        // restore, so capture them here (id -> boosted logit) for the emit
-        // record below; per-candidate bonus = boosted - true after restore.
-        let dbgBoosted = null;
-        if (dbgTokens && boostSaved) {
-          dbgBoosted = new Map();
-          for (let i = 0; i < boostSaved.length; i += 2) {
-            dbgBoosted.set(boostSaved[i], tokenLogits[boostSaved[i]]);
-          }
-        }
-
-        // _frameConfidence assumes maxLogit == tokenLogits[maxId] (chosen
-        // token's numerator is 1), so reset maxLogit to the true logit.
-        if (boostSaved) {
-          phraseBoost.restore(tokenLogits, boostSaved);
-          maxLogit = tokenLogits[maxId];
-        }
-
-        // The top-K path is gated on temperature 0, where _frameConfidence is a
-        // constant 1.0 and never touches the (absent) full row; spelled out
-        // here rather than relying on that guard from the outside.
-        const confVal = topkStep ? 1.0 : this._frameConfidence(tokenLogits, maxLogit, temperature);
-        hyp.frameConfs.push(confVal);
-        hyp.overallLogProb += Math.log(confVal);
-
-        const dec = this._advanceDecision(hyp.t, hyp.emittedAtFrame, maxId, step, frameStride);
-
-        if (dec.emit) {
-          hyp.ids.push(maxId);
-          // Advance the boosting trie by the emitted token (blank leaves it
-          // unchanged, so no advance in the else branch below).
-          phraseBoost?.advance(maxId);
-          if (returnTimestamps) {
-            const durFrames = step > 0 ? step : 1;
-            const start = hyp.t * TIME_STRIDE;
-            const end = (hyp.t + durFrames) * TIME_STRIDE;
-            hyp.tokenTimes.push([start, end]);
-          }
-          if (returnConfidences) hyp.tokenConfs.push(confVal);
-          if (dbgTokens) {
-            dbgTokens.push(this._debugEmitRecord(tokenLogits, {
-              chosenId: maxId,
-              frame: hyp.t,
-              duration: step > 0 ? step : 1,
-              boosted: dbgBoosted,
-              // Top-K rows carry their own alternatives + log-partition; minK
-              // above guaranteed at least DEBUG_ALTERNATIVES_K of them.
-              topk: topkStep ? { ids: topkIds, logits: topkLogits, logZ } : null,
-            }));
-          }
-          // Only adopt the new decoder state when a non-blank token is emitted.
-          // Free the previous state (unless caller-owned) before reassigning.
-          if (hyp.state && hyp.state !== newState && hyp.state !== externalInitialState) {
-            this._disposeDecoderState(hyp.state, newState);
-          }
-          hyp.state = newState;
-          decoderState = hyp.state;
-        } else {
-          // Blank token: keep the previous state and discard newState.
-          if (newState && newState !== hyp.state) {
-            this._disposeDecoderState(newState, hyp.state);
-          }
-        }
-
-        // Dispose the joiner logits tensor now that subarray views are consumed
-        _logitsTensor?.dispose?.();
+        const stepOut = await this._runCombinedStep(inFlightEncTensor, hyp.lastTok, hyp.state, topkStepOpts);
         // Dispose the per-frame encoder tensor. Without this, each decoded
         // frame leaks its WASM-side handle (~450k handles for a 1h audio at
         // sub=8/stride=0.01s).
         inFlightEncTensor.dispose?.();
         inFlightEncTensor = null;
 
-        hyp.t = dec.nextT;
-        hyp.emittedAtFrame = dec.nextEmitted;
+        this._greedyConsumeStep(hyp, stepOut, stepCtx);
+        decoderState = hyp.state;
       }
 
       // Dispose final decoder state unless the caller asked to keep it for a
@@ -3203,6 +3317,7 @@ export class ParakeetModel {
       decoderState = null;
 
       ids = hyp.ids;
+      dbgTokens = hyp.dbgTokens;
       tokenTimes = hyp.tokenTimes;
       tokenConfs = hyp.tokenConfs;
       frameConfs = hyp.frameConfs;
@@ -3247,7 +3362,7 @@ export class ParakeetModel {
     }
 
     if (perfEnabled) {
-      tDecode = performance.now() - decStartTime;
+      tDecode = opts.decoded ? (opts.decoded.decode_ms ?? 0) : performance.now() - decStartTime;
     }
 
     let tokenStart;
