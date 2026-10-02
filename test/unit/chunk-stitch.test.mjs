@@ -226,15 +226,21 @@ const spanResult = (startSec, endSec) => {
   };
 };
 
-function makePipelineModel({ failAt = -1 } = {}) {
+function makePipelineModel({ failAt = -1, ragged = false } = {}) {
+  const groups = [];
   return {
     maxEncoderBatch: 2,
+    groups, // chunk lengths of every encodeBatch() call, in call order
+    raggedBatchOk: async () => ragged,
     transcribeChunked: ParakeetModel.prototype.transcribeChunked,
     // chunk[0] === absolute start sample (audio[i] = i), matching makeModel.
     transcribe: async (chunk, sampleRate) =>
       spanResult(chunk[0] / sampleRate, (chunk[0] + chunk.length) / sampleRate),
     // Identity "encoder": carry the chunk's absolute start/len to the decoder.
-    encodeBatch: async (pcms) => pcms.map((p) => ({ __start: p[0], __len: p.length })),
+    encodeBatch: async (pcms) => {
+      groups.push(pcms.map((p) => p.length));
+      return pcms.map((p) => ({ __start: p[0], __len: p.length }));
+    },
     // Injected async decode; earlier chunkIndex waits longer -> out-of-order.
     // failAt rejects that chunk's decode (after its delay), for the
     // failure-path tests.
@@ -306,6 +312,20 @@ describe('transcribeChunked pipelined decode (injected decodeChunk)', () => {
       );
     });
     assert.deepEqual(unhandled, [], 'no unhandled rejections from in-flight decodes');
+  });
+
+  test('a ragged-capable encoder groups unequal-length chunks; others never do', async () => {
+    // Fixed-stride chunks are all equal except the shorter last one, so only a
+    // ragged-capable encoder may batch that last chunk with its neighbour.
+    for (const ragged of [false, true]) {
+      const model = makePipelineModel({ ragged });
+      const out = await model.transcribeChunked(AUDIO, SR, { ...PIPE_OPTS, decodeChunk: model.decodeChunk });
+      const mixed = model.groups.filter((g) => new Set(g).size > 1);
+      assert.equal(mixed.length > 0, ragged, `ragged=${ragged}: groups ${JSON.stringify(model.groups)}`);
+      assert.ok(model.groups.every((g) => g.length <= 2), 'groups respect maxEncoderBatch');
+      const seq = await makePipelineModel().transcribeChunked(AUDIO, SR, PIPE_OPTS);
+      assert.equal(out.utterance_text, seq.utterance_text, 'grouping must not change the text');
+    }
   });
 });
 
