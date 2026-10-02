@@ -146,6 +146,10 @@ function parseArgs(argv) {
     lengthNormPrune: false,
     forceBeam: false,
     oracleNbest: 1,
+    // Selective-beam study: greedy cells decode at temperature 1 (argmax, so
+    // transcript-neutral) and record the true per-token softmax confidences in
+    // the JSONL, which scripts/selective-beam-analyze.mjs gates on offline.
+    recordConfidences: false,
   };
   const need = (i, name) => {
     if (i + 1 >= argv.length) throw new Error(`Missing value for ${name}`);
@@ -207,6 +211,7 @@ function parseArgs(argv) {
       case '--length-norm-prune': a.lengthNormPrune = onOff(val(flag)); break;
       case '--force-beam': a.forceBeam = onOff(val(flag)); break;
       case '--oracle-nbest': a.oracleNbest = parseInt(val(flag), 10); break;
+      case '--record-confidences': a.recordConfidences = true; break;
       case '-v': case '--verbose': a.verbose = true; break;
       default:
         if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -510,6 +515,12 @@ Diagnostics (beam-vs-greedy study; single value each, constant across the run):
       --oracle-nbest N           Also return each beam decode's top-N distinct
                                  paths and score the best-achievable (oracle)
                                  WER/CER per utterance. 1 = off. Default 1.
+      --record-confidences       Greedy cells (beam 1) decode at temperature 1
+                                 (argmax, transcript-neutral) and write each
+                                 utterance's per-token softmax confidences to the
+                                 JSONL ("tokenConfs"), the input of
+                                 scripts/selective-beam-analyze.mjs. Off by
+                                 default (temperature 0 pins confidence to 1.0).
 
 WER:
       --strip-accents      Also fold accents (é -> e) when normalizing. By
@@ -1362,6 +1373,9 @@ async function main() {
     return enc;
   }
 
+  // Only greedy cells record confidences: greedy is a pure argmax so the
+  // temperature cannot move its transcript, whereas a beam's ranking would.
+  const wantsConfidences = (row) => args.recordConfidences && row.beamWidth === 1 && !args.forceBeam;
   const decodeOpts = (row) => ({
     // Chunking off (one pass, historical behaviour) unless this cell sweeps a
     // chunk duration; chunked cells run the REAL seam/overlap/snap path on the
@@ -1380,9 +1394,9 @@ async function main() {
     maesExpansionGamma: row.maesExpansionGamma,
     maesPrefixAlpha: row.maesPrefixAlpha,
     frameStride: args.frameStride,
-    temperature: 0,            // mirror the web UI (transcript-neutral)
+    temperature: wantsConfidences(row) ? 1 : 0, // 0 mirrors the web UI; argmax either way
     returnTimestamps: false,
-    returnConfidences: false,
+    returnConfidences: wantsConfidences(row),
     enableProfiling: true,     // populate result.metrics with per-phase timings
     collectBeamStats: true,    // populate result.beamStats with per-step expansion widths (beam runs only)
     // Diagnostic knobs, constant across the run (see parseArgs). nBest>1 makes
@@ -1712,6 +1726,7 @@ async function main() {
           // candidate text when it beat the 1-best. nbestSize=0 means greedy/no-nbest.
           oracleWordEdits, oracleCharEdits, nbestSize, oracleHyp,
           metrics, beamStats,
+          ...(wantsConfidences(row) ? { tokenConfs: result.confidence_scores?.token ?? [] } : {}),
         });
         // Two stacked progress bars: this run, then the whole grid (one line
         // each on a TTY; folded onto one \r line when piped).
