@@ -3,6 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #     "jiwer",
+#     "onnx-asr[cpu]==0.12.0",
 # ]
 # ///
 """Unit tests for the pure (model-free) helpers in scripts/wer-quants.py: the
@@ -345,8 +346,60 @@ def T18_relocate_finds_the_flat_plus_sharded_layout():
         assert wq.relocate_model_file(root, "encoder-model.onnx") == "encoder-model.onnx"
 
 
+class _FakeDecoderJoint:
+    """Stand-in for a TDT decoder_joint session whose rows do not interact (like the
+    fp32 decoder): each row's output depends only on that row's encoder frame,
+    previous token and state. Output layout matches the real one: V token logits
+    then 5 duration logits, shape (n, 1, 1, V + 5)."""
+
+    def __init__(self, vocab, hidden, dim, seed=0):
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        self.we, self.wt = rng.normal(size=(dim, vocab + 5)), rng.normal(size=(vocab, vocab + 5))
+        self.ws, self.wh = rng.normal(size=(hidden, vocab + 5)), rng.normal(size=(dim, hidden))
+        self.hidden = hidden
+
+    def get_inputs(self):
+        import types
+        return [types.SimpleNamespace(name=f"input_states_{i}", shape=[2, "batch", self.hidden]) for i in (1, 2)]
+
+    def run(self, names, feeds):
+        import numpy as np
+        enc = np.asarray(feeds["encoder_outputs"], np.float32)[:, :, 0]
+        tgt = np.asarray(feeds["targets"]).reshape(-1)
+        s1, s2 = feeds["input_states_1"], feeds["input_states_2"]
+        out = enc @ self.we + self.wt[tgt] + s1[0] @ self.ws
+        return (out[:, None, None].astype(np.float32), np.tanh(s1 + enc @ self.wh).astype(np.float32),
+                (s2 + 1).astype(np.float32))
+
+
+def T19_batched_tdt_decoding_matches_stock_per_clip_loop():
+    # The lockstep batch decode must give every clip exactly what onnx-asr's own
+    # one-clip-at-a-time loop gives it (tokens, frame stamps, logprobs), on a ragged
+    # batch that includes an empty clip and hits the max-tokens-per-frame cap.
+    import numpy as np
+    from onnx_asr.models.nemo import NemoConformerTdt
+
+    asr = NemoConformerTdt.__new__(NemoConformerTdt)
+    asr._decoder_joint = _FakeDecoderJoint(vocab=6, hidden=4, dim=8)
+    asr._vocab_size, asr._blank_idx = 6, 5
+    asr.config, asr.use_low_precision = {"max_tokens_per_step": 3}, False
+    rng = np.random.default_rng(1)
+    lens = np.array([40, 0, 25, 40, 7])
+    enc = rng.normal(size=(len(lens), 40, 8)).astype(np.float32)
+    stock = list(NemoConformerTdt._decoding(asr, enc, lens, need_logprobs=True))
+    batched = list(wq.batched_tdt_decoding(asr, enc, lens, need_logprobs=True))
+    assert len(batched) == len(stock) == len(lens)
+    assert sum(len(s[0]) for s in stock) > 20, "fake decoder emitted too few tokens to test anything"
+    for (st, ss, sl), (bt, bs, bl) in zip(stock, batched):
+        assert list(bt) == list(st) and list(bs) == list(ss)
+        assert np.allclose(bl, sl)
+    # need_logprobs off -> None, like the stock loop
+    assert all(r[2] is None for r in wq.batched_tdt_decoding(asr, enc, lens))
+
+
 def main():
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("T") and callable(v)]
+    tests =[v for k, v in sorted(globals().items()) if k.startswith("T") and callable(v)]
     for t in tests:
         t()
         print(f"ok  {t.__name__}")
