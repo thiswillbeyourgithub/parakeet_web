@@ -132,7 +132,7 @@ function parseArgs(argv) {
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',          // encoder quantisation
-    decoderQuant: 'int8',   // decoder/joiner quantisation, chosen independently (int8 matches fp32 quality here, smaller+faster)
+    decoderQuant: 'fp32',   // decoder/joiner quantisation, chosen independently (fp32: same transcript whatever --decode-batch; int8 uses one activation scale per batch)
     ortBackend: 'wasm',
     threads: 0,            // 0 => ORT default
     wasmPaths: null,       // alternative ORT WASM artifact dir (A/B an engine build)
@@ -337,10 +337,11 @@ Options:
                            (~1.2 GB encoder, lossless vs fp32).
       --decoder-quant int8|fp16|fp32
                            DECODER/joiner quantisation, chosen independently of
-                           --quant. Default int8: on this model the int8 joiner is
-                           as accurate as fp32 (measured) while being smaller
-                           (~18 MB vs ~70 MB) and faster, so int8 is the default
-                           here and in the web app. NOTE: this repo exports the
+                           --quant. Default fp32, as in the web app: it gives the
+                           same transcript whatever --decode-batch, whereas int8
+                           (~18 MB vs ~70 MB) quantizes activations with one scale
+                           per batch, so a chunk can decode differently next to
+                           other chunks. NOTE: this repo exports the
                            decoder and the joint network as a single fused
                            decoder_joint-model file, so this one knob covers BOTH
                            (there is no separate joint file to quantise on its

@@ -143,10 +143,10 @@ export const OPTIONS = [
         + 'need --ort node or cuda; see README).',
   },
   {
-    key: 'decoderQuant', cli: ['--decoder-quant'], env: 'PARAKEET_DECODER_QUANT', type: 'enum', def: 'int8',
+    key: 'decoderQuant', cli: ['--decoder-quant'], env: 'PARAKEET_DECODER_QUANT', type: 'enum', def: 'fp32',
     choices: ['int8', 'fp16', 'fp32'], section: 'Model',
-    help: 'DECODER/joiner precision, chosen independently of --quant. int8 is as accurate as '
-        + 'fp32 on this model while ~4x smaller.',
+    help: 'DECODER/joiner precision, chosen independently of --quant. fp32 gives the same '
+        + 'transcript whatever the decode batch; int8 is ~4x smaller but uses one activation scale per batch.',
   },
   {
     key: 'ort', cli: ['--ort'], env: 'PARAKEET_ORT', type: 'enum', def: 'wasm',
