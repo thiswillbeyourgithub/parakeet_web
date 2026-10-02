@@ -150,6 +150,7 @@ import resource
 import subprocess
 import sys
 import time
+import types
 import unicodedata
 from pathlib import Path
 
@@ -437,13 +438,65 @@ def load_mixed(model_name, model_dir, encoder_quant, decoder_quant, use_cuda=Fal
 
     model_type._get_model_files = staticmethod(mixed_model_files)
     try:
-        return onnx_asr.load_model(model_name, path=model_dir,
-                                   quantization=QUANT_ARG[encoder_quant], providers=providers)
+        model = onnx_asr.load_model(model_name, path=model_dir,
+                                    quantization=QUANT_ARG[encoder_quant], providers=providers)
+        from onnx_asr.models.nemo import NemoConformerTdt
+        if isinstance(model.asr, NemoConformerTdt):
+            model.asr._decoding = types.MethodType(batched_tdt_decoding, model.asr)
+        return model
     finally:
         if had_own:
             model_type._get_model_files = staticmethod(original)
         else:
             del model_type._get_model_files
+
+
+def batched_tdt_decoding(self, encoder_out, encoder_out_lens, /, **kwargs):
+    """Drop-in for onnx-asr's _AsrWithTransducerDecoding._decoding (0.12.0) on a TDT
+    model, bound per instance by load_mixed. The stock loop decodes one clip at a
+    time with one decoder_joint call per step; this one decodes the whole batch in
+    lockstep: each step feeds every clip still running as one row of a single call,
+    e.g. 8 clips -> encoder_outputs (8, 1024, 1), targets (8, 1), states (2, 8, 640).
+    Same rules per clip as the stock loop (argmax token, keep the state only on a
+    non-blank, advance by the predicted duration, else by 1 on blank or after
+    max_tokens_per_step), so batch 1 is exactly the stock loop. Batching only gives
+    the stock per-clip result if the decoder's rows do not interact: true for the
+    fp32 decoder; the dynamic-int8 one computes one activation scale per call, so a
+    clip can flip a near-tie word depending on its batch-mates."""
+    import numpy as np
+    from onnx_asr.utils import log_softmax
+
+    need_logprobs = kwargs.get("need_logprobs")
+    lens = np.minimum(encoder_out_lens, encoder_out.shape[1])
+    n, blank, vocab, max_tokens = len(lens), self._blank_idx, self._vocab_size, self._max_tokens_per_step
+    s1, s2 = (np.repeat(s, n, axis=1) for s in self._create_state())
+    last = np.full(n, blank, np.int32)  # previous emitted token, blank before the first one
+    t = np.zeros(n, np.int64)
+    emitted = np.zeros(n, np.int64)  # tokens emitted at the current frame
+    tokens, stamps, logprobs = ([[] for _ in range(n)] for _ in range(3))
+    act = np.flatnonzero(lens > 0)
+    while len(act):
+        out, n1, n2 = self._decoder_joint.run(["outputs", "output_states_1", "output_states_2"], {
+            "encoder_outputs": encoder_out[act, t[act]][:, :, None], "targets": last[act, None],
+            "target_length": np.ones(len(act), np.int32), "input_states_1": s1[:, act], "input_states_2": s2[:, act]})
+        out = out.reshape(len(act), -1)
+        tok, step = out[:, :vocab].argmax(1), out[:, vocab:].argmax(1)
+        emit = tok != blank
+        for k in np.flatnonzero(emit):
+            b = act[k]
+            tokens[b].append(int(tok[k]))
+            stamps[b].append(int(t[b]))
+            if need_logprobs:
+                logprobs[b].append(log_softmax(out[k, :vocab])[tok[k]])
+        e = act[emit]
+        last[e], s1[:, e], s2[:, e] = tok[emit], n1[:, emit], n2[:, emit]
+        emitted[e] += 1
+        adv = np.where(step > 0, step, (~emit | (emitted[act] == max_tokens)).astype(np.int64))
+        t[act] += adv
+        emitted[act[adv > 0]] = 0
+        act = act[t[act] < lens[act]]
+    for b in range(n):
+        yield tokens[b], stamps[b], logprobs[b] if need_logprobs else None
 
 
 def load_or_die(args):
