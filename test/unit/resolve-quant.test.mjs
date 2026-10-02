@@ -98,10 +98,18 @@ describe('resolveModelQuant: WASM is pinned to int8', () => {
       assert.equal(r.pinnedToInt8, true);
     });
 
-    test(`${backend} with an fp32 DECODER request is forced to int8 and flagged`, () => {
+    // The decoder never flags: a source without decoder_joint-model.onnx (the
+    // default fp32 request) quietly gets the int8 decoder, as before 2026-10-02.
+    test(`${backend} with an fp32 DECODER request and no fp32 decoder file falls back to int8, unflagged`, () => {
       const r = resolveModelQuant({ backend, encoderQuant: 'int8', decoderQuant: 'fp32', repoFiles: NO_SHARDS });
       assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
-      assert.equal(r.pinnedToInt8, true);
+      assert.equal(r.pinnedToInt8, false);
+    });
+
+    test(`${backend} with an fp32 DECODER request gets fp32 when the source ships it`, () => {
+      const r = resolveModelQuant({ backend, encoderQuant: 'int8', decoderQuant: 'fp32', repoFiles: [...NO_SHARDS, 'decoder_joint-model.onnx', 'decoder_joint-model.onnx.data'] });
+      assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'fp32']);
+      assert.equal(r.pinnedToInt8, false);
     });
   }
 });
@@ -158,16 +166,15 @@ describe('resolveModelQuant: WASM sharded-fp32 opt-in', () => {
     assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_WITHDRAWN_OPTIMIZED_NAMES_ONLY }), false);
   });
 
-  // Regression: both opt-in encoder branches return EARLY, so the decoder check
-  // has to happen before them. It used to sit only on the fallthrough, which
-  // meant an fp32 DECODER request paired with an encoder choice that succeeded
-  // came back pinnedToInt8:false: a downgrade (there is no fp32 decoder)
-  // reported as fully honoured, so no banner and no /models upgrade probe.
-  test('an fp32 DECODER request pins even when the fp32 ENCODER opt-in would succeed', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'fp32', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
-    assert.equal(r.pinnedToInt8, true);
-    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'fp32', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true }), false);
+  // Both opt-in encoder branches return EARLY, so the decoder has to be resolved
+  // before them, or an encoder opt-in would silently drop the fp32 decoder.
+  test('an fp32 DECODER request survives the fp32 ENCODER opt-in', () => {
+    const files = [...WITH_FP32_SHARDS, 'decoder_joint-model.onnx'];
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'fp32', repoFiles: files, allowWasmFp32: true });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'fp32']);
+    assert.equal(r.pinnedToInt8, false);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'fp32', repoFiles: WITH_FP32_SHARDS, allowWasmFp32: true }), true,
+      'a missing fp32 decoder does not make the encoder request unsatisfiable');
   });
 
   test('opt-in + fp32 request + the flat sidecar but NO shard set -> int8 pin', () => {
@@ -236,11 +243,11 @@ describe('resolveModelQuant: w4a8 opt-in', () => {
     assert.equal(r.pinnedToInt8, true);
   });
 
-  test('an fp32 DECODER request still pins, even with the w4a8 encoder present', () => {
-    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'fp32', repoFiles: WITH_W4A8 });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
-    assert.equal(r.pinnedToInt8, true);
-    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'fp32', repoFiles: WITH_W4A8 }), false);
+  test('an fp32 DECODER request survives the w4a8 encoder opt-in', () => {
+    const r = resolveModelQuant({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'fp32', repoFiles: [...WITH_W4A8, 'decoder_joint-model.onnx'] });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['w4a8', 'fp32']);
+    assert.equal(r.pinnedToInt8, false);
+    assert.equal(quantSatisfiable({ backend: 'wasm', encoderQuant: 'w4a8', decoderQuant: 'fp32', repoFiles: WITH_W4A8 }), true);
   });
 
   // Both opt-in encoders in one listing: each request must get its own build, so

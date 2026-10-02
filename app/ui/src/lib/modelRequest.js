@@ -67,10 +67,10 @@ export function buildDownloadOpts({
 
   const opts = {
     encoderQuant: wantWebgpu ? webgpuEncoderQuant : wasmEncoderRequest,
-    // The fused decoder_joint always runs int8 on both backends: on this model
-    // the int8 joiner is as accurate as fp32 (measured) while being smaller and
-    // faster, and the GPU EP runs it fine.
-    decoderQuant: 'int8',
+    // fp32 decoder_joint on both backends (it runs on the WASM EP either way):
+    // batch-invariant, so batched decoding gives the same transcript as one
+    // chunk at a time. hub.js falls back to int8 when a source lacks it.
+    decoderQuant: 'fp32',
     allowWasmFp32: wasmWantsFp32,
     // hub.js re-checks fp16 against this rather than trusting the caller: it is
     // the one quant that can load and then silently produce nothing.

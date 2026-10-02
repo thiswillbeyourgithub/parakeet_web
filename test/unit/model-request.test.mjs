@@ -26,9 +26,9 @@ describe('buildDownloadOpts: backend split', () => {
     assert.equal(build({ backend: undefined }).wantWebgpu, false);
   });
 
-  test('the decoder is int8 on every backend', () => {
-    assert.equal(build().opts.decoderQuant, 'int8');
-    assert.equal(build({ backend: 'webgpu-hybrid' }).opts.decoderQuant, 'int8');
+  test('the decoder is fp32 on every backend', () => {
+    assert.equal(build().opts.decoderQuant, 'fp32');
+    assert.equal(build({ backend: 'webgpu-hybrid' }).opts.decoderQuant, 'fp32');
   });
 
   test('the backend itself travels with the request', () => {

@@ -1483,6 +1483,26 @@ function hasEncoderFor(repoFiles, quant) {
 }
 
 /**
+ * The decoder quant a source can actually serve. fp32 is the default: the
+ * decoder always runs on the WASM EP (on the WebGPU backend too), where fp32 is
+ * as fast as int8 at the default decode batch, and it gives the same transcript
+ * whatever the batch, whereas int8 quantizes activations with one scale per
+ * batch, so a chunk's transcript could depend on its batch neighbours. A source
+ * that ships only the int8 decoder gets int8, deliberately NOT flagged: unlike a
+ * 2.35 GB encoder swap, the decoder is small and int8 was the default until
+ * 2026-10-02, so refusing the load would only break older mirrors.
+ *
+ * @param {string[]} repoFiles Filenames available in the repo.
+ * @param {('int8'|'fp32')} decoderQuant Requested decoder quant.
+ * @returns {('int8'|'fp32')}
+ */
+function resolveDecoderQuant(repoFiles, decoderQuant) {
+  return decoderQuant === 'fp32' && findRepoFile(repoFiles, `decoder_joint-model${QUANT_SUFFIX.fp32}`) !== null
+    ? 'fp32'
+    : 'int8';
+}
+
+/**
  * Resolve the effective encoder/decoder quantisation for a backend, given what
  * the repo actually ships. Pure (no I/O) so it can be unit-tested.
  *
@@ -1515,22 +1535,17 @@ function hasEncoderFor(repoFiles, quant) {
  */
 export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFiles, shaderF16 = false, allowWasmFp32 = false }) {
   if (!backend.startsWith('webgpu')) {
-    // The decoder is int8 on WASM, always: no fp32 decoder is shipped and the
-    // int8 one is as accurate on this model. A request for anything else cannot
-    // be honoured, so it has to flag NO MATTER WHICH ENCODER was picked. Both
-    // opt-in encoder branches below return early, so without this the flag was
-    // only raised on the pinned path: asking for an fp32 decoder alongside an
-    // encoder choice that DID succeed came back pinnedToInt8:false, reporting a
-    // downgrade as fully honoured.
-    const decoderHonoured = decoderQuant === 'int8';
+    // The decoder never flags (see resolveDecoderQuant), so pinnedToInt8 below
+    // is about the encoder alone.
+    const decoderQ = resolveDecoderQuant(repoFiles, decoderQuant);
     // Opt-in MatMulNBits builds (w4a8, w2a8) on WASM: one self-contained file
     // (int4 or 2-bit weights, int8 activations
     // in-kernel), no sidecar and no shards, so shipping it is the only condition.
     // Same deliberate fall-through to the pin when the repo lacks it.
-    if (decoderHonoured && isNbitsEncoder(encoderQuant) && hasEncoderFor(repoFiles, encoderQuant)) {
+    if (isNbitsEncoder(encoderQuant) && hasEncoderFor(repoFiles, encoderQuant)) {
       return {
         encoderQ: encoderQuant,
-        decoderQ: 'int8',
+        decoderQ,
         pinnedToInt8: false,
       };
     }
@@ -1540,24 +1555,24 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     // (fp32/, the flat root, or sharded/), so a request is not wrongly pinned
     // just because the shards are not at the root.
     const hasFp32Shards = hasFp32ShardSet(repoFiles);
-    if (decoderHonoured && allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
+    if (allowWasmFp32 && encoderQuant === 'fp32' && hasFp32Shards) {
       return {
         encoderQ: 'fp32',
-        decoderQ: 'int8',
+        decoderQ,
         pinnedToInt8: false,
       };
     }
     return {
       encoderQ: 'int8',
-      decoderQ: 'int8',
-      pinnedToInt8: encoderQuant !== 'int8' || decoderQuant !== 'int8',
+      decoderQ,
+      pinnedToInt8: encoderQuant !== 'int8',
     };
   }
   // fp32 is the GPU path's DEFAULT encoder precision. fp16 and the MatMulNBits
   // builds (w4a8, w2a8; "w4a8" below stands for both) are opt-in
   // alternatives to it, each with its own condition. An int8 request on WebGPU becomes
-  // fp32 (there is no GPU int8 encoder kernel either), and the decoder is always int8: it is as accurate as fp32 on
-  // this model while being smaller and faster.
+  // fp32 (there is no GPU int8 encoder kernel either). The decoder follows
+  // resolveDecoderQuant, as on WASM.
   //
   // w4a8 is NOT rewritten: MatMulNBits has a WebGPU kernel (it dequantizes the
   // int4 weights to fp16 in the shader, so the GPU gets no int8 arithmetic and
@@ -1595,7 +1610,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     || (encoderQuant === 'fp16' && !fp16Servable)
     ? 'fp32'
     : encoderQuant;
-  const decoderQ = 'int8';
+  const decoderQ = resolveDecoderQuant(repoFiles, decoderQuant);
   // A single-file fp32 encoder cannot load on WebGPU: the ~2.3 GB weights exceed
   // BOTH Chromium's ~2 GB IndexedDB Blob-readback wall AND V8's ArrayBuffer cap,
   // so neither the cached nor the stream-to-one-buffer path works (verified on a
@@ -1668,7 +1683,7 @@ export function shouldRetryLocally({ isHubError, alreadyLocal, localConfigured, 
  * @param {string} repoIdOrModelKey HF repo (e.g., 'nvidia/parakeet-tdt-1.1b') or model key (e.g., 'parakeet-tdt-0.6b-v3')
  * @param {Object} [options]
  * @param {('int8'|'w4a8'|'w2a8'|'fp16'|'fp32')} [options.encoderQuant='int8'] Requested encoder quant (resolved per backend/availability by resolveModelQuant).
- * @param {('int8'|'fp32')} [options.decoderQuant='int8'] Requested decoder quant
+ * @param {('int8'|'fp32')} [options.decoderQuant='fp32'] Requested decoder quant
  * @param {('nemo80'|'nemo128')} [options.preprocessor] Preprocessor variant (auto-detected from model config if not specified)
  * @param {('js'|'onnx')} [options.preprocessorBackend='js'] Preprocessor backend selection.
  *   'js' uses the pure-JS mel.js (no ONNX download needed, supports streaming).
@@ -1698,7 +1713,7 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
   // Use model config defaults if available (e.g. nemo128 vs nemo80)
   const defaultPreprocessor = modelConfig?.preprocessor || 'nemo128';
 
-  const { encoderQuant = 'int8', decoderQuant = 'int8', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, shaderF16 = false, allowWasmFp32 = false, allowFlatLocalFallback = true, protectCacheKeys = [] } = options;
+  const { encoderQuant = 'int8', decoderQuant = 'fp32', preprocessor = defaultPreprocessor, preprocessorBackend = 'js', backend = 'webgpu', progress, localFallbackBaseUrl, localUpgradeBaseUrl, shaderF16 = false, allowWasmFp32 = false, allowFlatLocalFallback = true, protectCacheKeys = [] } = options;
   // The base URL all files are actually fetched from. Starts as the explicit
   // local fallback (if any), but can flip to localUpgradeBaseUrl below when the
   // primary (HF) source cannot serve the requested quant and the local mirror
