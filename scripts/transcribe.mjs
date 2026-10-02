@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 import * as ortmod from '../app/ui/vendor/onnxruntime-web/dist/ort.node.min.mjs';
-import { ParakeetModel, DEFAULT_SNAP_TO_SILENCE_SEC } from '../app/src/parakeet.js';
+import { ParakeetModel, DEFAULT_SNAP_TO_SILENCE_SEC, DEFAULT_DECODE_BATCH } from '../app/src/parakeet.js';
 import { ParakeetTokenizer } from '../app/src/tokenizer.js';
 import { candidatePaths, QUANT_FILES, ENCODER_QUANTS, DECODER_QUANTS } from '../app/src/modelLayout.js';
 
@@ -128,6 +128,7 @@ function parseArgs(argv) {
     chunkDuration: DEFAULT_CHUNK_DURATION_SEC, // sidebar: max chunk length, seconds
     overlap: 2,            // overlap between chunks, seconds (UI hardcodes 2)
     snapToSilence: DEFAULT_SNAP_TO_SILENCE_SEC, // snap chunk seams to quietest point within this many s (0 = off); mirrors the app default
+    decodeBatch: DEFAULT_DECODE_BATCH, // chunks greedy-decoded per lockstep batch (1 = one chunk at a time); mirrors the app default
     model: DEFAULT_MODEL,
     modelDir: null,
     quant: 'int8',          // encoder quantisation
@@ -169,6 +170,7 @@ function parseArgs(argv) {
       case '--chunk-duration': a.chunkDuration = Number(val(flag)); break;
       case '--overlap': a.overlap = Number(val(flag)); break;
       case '--snap-to-silence': a.snapToSilence = Number(val(flag)); break;
+      case '--decode-batch': a.decodeBatch = parseInt(val(flag), 10); break;
       case '--no-chunking': a.chunking = false; break;
       case '--model': a.model = val(flag); break;
       case '--model-dir': a.modelDir = val(flag); break;
@@ -214,6 +216,7 @@ function parseArgs(argv) {
   if (!Number.isFinite(a.chunkDuration) || a.chunkDuration < MIN_CHUNK_DURATION_SEC || a.chunkDuration > MAX_CHUNK_DURATION_SEC) throw new Error(`--chunk-duration must be a number in [${MIN_CHUNK_DURATION_SEC}, ${MAX_CHUNK_DURATION_SEC}] seconds (larger windows measured better up to ~77 s; the cap bounds attention memory, see models.js)`);
   if (!Number.isFinite(a.overlap) || a.overlap < 0) throw new Error('--overlap must be a non-negative number');
   if (!Number.isFinite(a.snapToSilence) || a.snapToSilence < 0) throw new Error('--snap-to-silence must be a non-negative number (0 disables)');
+  if (!Number.isInteger(a.decodeBatch) || a.decodeBatch < 1) throw new Error('--decode-batch must be an integer >= 1 (1 disables batched decode)');
   return a;
 }
 
@@ -318,6 +321,10 @@ Options:
                            seconds before its nominal end, so seams land in
                            pauses not mid-word. Default ${DEFAULT_SNAP_TO_SILENCE_SEC} (matches the app); 0
                            disables.
+      --decode-batch N     Greedy-decode up to N chunks as one lockstep batch
+                           (groups ramp 1, 2, 4, ... N, so the first chunk still
+                           prints first). Default ${DEFAULT_DECODE_BATCH} (matches the app);
+                           1 decodes one chunk at a time. Beam runs never batch.
       --no-chunking        Disable chunking; transcribe the whole file in one
                            pass (matches unticking the sidebar's chunking box).
       --model KEY          Model key (${listModels().join(', ')}).
@@ -862,6 +869,7 @@ async function main() {
     chunkDurationSec: args.chunkDuration,
     overlapSec: args.overlap,
     snapToSilenceSec: args.snapToSilence,
+    decodeBatch: args.decodeBatch,
     phraseBoost,
     beamWidth: args.beamWidth,
     maesNumSteps: args.maesNumSteps,

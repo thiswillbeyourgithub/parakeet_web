@@ -63,6 +63,9 @@ function makeModel(script) {
     _combState2: fakeState(),
     transcribe: proto.transcribe,
     transcribeChunked: proto.transcribeChunked,
+    _wantsBeam: proto._wantsBeam,
+    greedyBatchable: proto.greedyBatchable,
+    transcribeEncodedBatch: proto.transcribeEncodedBatch,
     _debugEmitRecord: proto._debugEmitRecord,
     _newGreedyHyp: proto._newGreedyHyp,
     _greedyConsumeStep: proto._greedyConsumeStep,
@@ -410,5 +413,28 @@ describe('decodeGreedyBatch: batched greedy equals per-chunk greedy', () => {
     const [dec] = await model.decodeGreedyBatch([encs[0]], baseOpts);
     await assert.rejects(model.transcribe(new Float32Array(0), 16000,
       { ...baseOpts, encoded: encs[0], decoded: dec, beamWidth: 2 }), /plain greedy only/);
+  });
+});
+
+describe('transcribeChunked: batched greedy decode across chunks', () => {
+  test('decodeBatch 8 (groups 1, 2, 4) equals chunk-by-chunk decode, debug records included', async () => {
+    const audio = new Float32Array(7 * 16000); // seven 1 s chunks
+    const opts = { temperature: 1.0, chunkDurationSec: 1, overlapSec: 0, returnTimestamps: true, collectDecodeDebug: true };
+    const model = makeModel(SCRIPT);
+    let batchCalls = 0;
+    const orig = model.decodeGreedyBatch;
+    model.decodeGreedyBatch = async (...a) => { batchCalls += 1; return orig.apply(model, a); };
+    const batched = await model.transcribeChunked(audio, 16000, opts);
+    const serial = await model.transcribeChunked(audio, 16000, { ...opts, decodeBatch: 1 });
+    assert.equal(batchCalls, 2, 'groups [1,2] and [3..6] ran batched');
+    delete batched.metrics; delete serial.metrics;
+    assert.deepEqual(batched, serial);
+  });
+
+  test('beam options keep the chunk-by-chunk decode', async () => {
+    const model = makeModel(SCRIPT);
+    model.decodeGreedyBatch = async () => { throw new Error('must not batch a beam run'); };
+    await model.transcribeChunked(new Float32Array(3 * 16000), 16000,
+      { temperature: 1.0, chunkDurationSec: 1, overlapSec: 0, beamWidth: 2 });
   });
 });

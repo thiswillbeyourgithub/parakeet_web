@@ -1051,7 +1051,7 @@ export default function App() {
   const {
     decodeWorkerRef, decodeWorkerReadyRef, decodeWorkerInitParamsRef,
     composedDecodeEligibleRef, startDecodeWorker, stopDecodeWorker,
-    syncDecodeWorkerBoost, decodeChunkViaWorker,
+    syncDecodeWorkerBoost, decodeChunkViaWorker, decodeChunksViaWorker,
     encodePoolRef, encodePoolReadyRef, encodePoolInitParamsRef,
     startEncodePool, teardownEncodePool, encodeChunkViaPool,
     wasmDecodePipelineEnabled,
@@ -3407,7 +3407,7 @@ export default function App() {
         // Composed mode (WASM): pooled encodes feed worker decodes; a failure
         // anywhere retries the whole clip on the fully in-thread ground truth.
         try {
-          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk, encodeChunk: pipelineEncodeChunk }, onChunk);
+          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk, decodeChunks: decodeChunksViaWorker, encodeChunk: pipelineEncodeChunk }, onChunk);
         } catch (e) {
           console.warn('[Decode] composed run failed, retrying in-thread:', e);
           resetProgressCounters();
@@ -3415,7 +3415,7 @@ export default function App() {
         }
       } else if (pipelineDecodeChunk) {
         try {
-          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk }, onChunk);
+          res = await modelRef.current.transcribeChunked(pcm, 16000, { ...chunkedOpts, decodeChunk: pipelineDecodeChunk, decodeChunks: decodeChunksViaWorker }, onChunk);
         } catch (e) {
           console.warn('[Decode] pipelined run failed, retrying in-thread:', e);
           resetProgressCounters();

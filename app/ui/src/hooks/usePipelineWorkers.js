@@ -131,26 +131,34 @@ export function usePipelineWorkers({ cpuThreads, maxCores, parallelEncode, setti
       : { type: 'boost', encoded: null });
   }), []);
 
-  // Bridge handed to transcribeChunked as opts.decodeChunk: post the encoder
-  // output to the worker (transposed buffer TRANSFERRED, zero-copy) and resolve
-  // the decoded chunk. phraseBoost is dropped (not cloneable); the worker uses
-  // its own synced trie.
-  const decodeChunkViaWorker = useCallback((encoded, meta, decodeOpts) => {
+  // Bridge handed to transcribeChunked as opts.decodeChunks: post a group of
+  // encoder outputs to the worker (transposed buffers TRANSFERRED, zero-copy)
+  // and resolve one decoded result per chunk (greedy groups decode as one
+  // lockstep batch there). phraseBoost is dropped (not cloneable); the worker
+  // uses its own synced trie.
+  const decodeChunksViaWorker = useCallback((encodedList, metas, decodeOpts) => {
     const worker = decodeWorkerRef.current;
     const { phraseBoost, ...cloneableOpts } = decodeOpts || {};
-    const buf = encoded.transposed.buffer;
+    const bufs = encodedList.map((e) => e.transposed.buffer);
     return new Promise((resolve, reject) => {
       const id = ++decodeReqIdRef.current;
       decodePendingRef.current.set(id, { resolve, reject });
       worker.postMessage({
-        type: 'decode', id, chunkIndex: meta.chunkIndex,
-        transposed: buf, D: encoded.D, Tenc: encoded.Tenc,
-        audioLen: meta.audioLen,
-        encodeMs: encoded.encode_ms, preprocessMs: encoded.preprocess_ms,
+        type: 'decode', id, chunkIndex: metas[0].chunkIndex,
+        chunks: encodedList.map((e, k) => ({
+          transposed: bufs[k], D: e.D, Tenc: e.Tenc, audioLen: metas[k].audioLen,
+          encodeMs: e.encode_ms, preprocessMs: e.preprocess_ms,
+        })),
         opts: cloneableOpts,
-      }, [buf]);
+      }, bufs);
     });
   }, []);
+
+  // Single-chunk bridge (opts.decodeChunk): a group of one.
+  const decodeChunkViaWorker = useCallback(
+    (encoded, meta, decodeOpts) => decodeChunksViaWorker([encoded], [meta], decodeOpts).then((r) => r[0]),
+    [decodeChunksViaWorker],
+  );
 
   // ---- Chunk-parallel encode pool (WASM only; mirror of the decode worker) ----
 
@@ -352,6 +360,7 @@ export function usePipelineWorkers({ cpuThreads, maxCores, parallelEncode, setti
     stopDecodeWorker,
     syncDecodeWorkerBoost,
     decodeChunkViaWorker,
+    decodeChunksViaWorker,
     // --- Encode pool ---------------------------------------------------
     encodePoolRef,
     encodePoolReadyRef,

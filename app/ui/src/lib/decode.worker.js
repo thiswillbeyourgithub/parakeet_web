@@ -3,14 +3,16 @@
 // the WebGPU backend, where the encoder runs on the GPU and the decoder is
 // pinned to WASM anyway (per-step GPU dispatch stalls). transcribeChunked's
 // pipelined driver (app/src/parakeet.js) encodes each chunk on the main thread
-// and hands the encoder output here via `decode` messages; this worker decodes
-// them one at a time and posts the transcript back. On WASM the whole feature is
+// and hands the encoder output here via `decode` messages (one chunk, or a group
+// of chunks greedy-decoded as one lockstep batch, see transcribeEncodedBatch);
+// this worker decodes them one message at a time and posts the transcripts back. On WASM the whole feature is
 // off (no worker), so nothing here runs there.
 //
 // This is a MODULE worker (import ParakeetModel + BoostingTrie). It builds a
 // DECODE-ONLY ParakeetModel (joiner + tokenizer, no encoder, no preprocessor)
-// via ParakeetModel.decoderOnlyFromUrls and calls the SAME transcribe() the main
-// thread uses, fed `opts.encoded`, so no decode logic is duplicated.
+// via ParakeetModel.decoderOnlyFromUrls and calls the SAME transcribeEncodedBatch()
+// / transcribe() the main thread uses, fed `opts.encoded`, so no decode logic is
+// duplicated.
 //
 // Integrity posture mirrors diarizer.worker.js: the MAIN thread is expected to
 // fetch + verify the decoder/tokenizer bytes and hand pre-verified bytes in via
@@ -24,9 +26,10 @@
 //   <- {type:'ready'} | {type:'error', message}
 //   -> {type:'boost', encoded, strength, depthScaling, minpOverride}  // encoded:null clears
 //   <- {type:'boostReady'} | {type:'error', message}
-//   -> {type:'decode', id, chunkIndex, transposed:ArrayBuffer, D, Tenc,
-//                       audioLen, encodeMs, preprocessMs, opts}         // transposed TRANSFERRED
-//   <- {type:'result', id, chunkIndex, result} | {type:'error', id, chunkIndex, message}
+//   -> {type:'decode', id, chunkIndex, opts,
+//       chunks:[{transposed:ArrayBuffer, D, Tenc, audioLen, encodeMs, preprocessMs}]}  // transposed TRANSFERRED
+//   <- {type:'result', id, chunkIndex, result:[one transcribe result per chunk]}
+//    | {type:'error', id, chunkIndex, message}
 //
 // Built with Claude Code.
 
@@ -54,22 +57,17 @@ function initModel(msg) {
 }
 
 async function runDecode(msg, model) {
-  const { transposed, D, Tenc, audioLen, encodeMs, preprocessMs, opts } = msg;
-  // Rebuild the encoder-output object transcribe() expects. Fold the main
-  // thread's encode/preprocess timings back in so the transcript's metrics
-  // report them (transcribe reads encoded.encode_ms / .preprocess_ms).
-  const encoded = {
-    transposed: new Float32Array(transposed),
-    D, Tenc,
-    encode_ms: encodeMs || 0,
-    preprocess_ms: preprocessMs || 0,
-  };
-  // `audio` is used only for its `.length` when `encoded` is supplied.
-  const result = await model.transcribe({ length: audioLen }, 16000, {
-    ...opts,
-    encoded,
-    phraseBoost: boostTrie,
-  });
+  const { chunks, opts } = msg;
+  const items = chunks.map((c) => ({
+    audio: { length: c.audioLen },
+    encoded: {
+      transposed: new Float32Array(c.transposed),
+      D: c.D, Tenc: c.Tenc,
+      encode_ms: c.encodeMs || 0,
+      preprocess_ms: c.preprocessMs || 0,
+    },
+  }));
+  const result = await model.transcribeEncodedBatch(items, 16000, { ...opts, phraseBoost: boostTrie });
   return { payload: { result } };
 }
 
