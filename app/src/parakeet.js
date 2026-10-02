@@ -520,6 +520,33 @@ export const DEFAULT_SNAP_TO_SILENCE_SEC = 1.0;
 export const DEFAULT_LENGTH_ALIGN_SLACK = 0.15;
 
 /**
+ * Default largest group of chunks transcribeChunked greedy-decodes in one
+ * lockstep batch (decodeGreedyBatch). 8 rows cost one fp32 WASM joiner step of
+ * ~6.1 ms against 8 x 2.7 ms one chunk at a time (measured 2026-10-02), and 8
+ * one-minute chunks of encoder output are only ~25 MB. `decodeBatch: 1`
+ * restores one chunk per decode.
+ */
+export const DEFAULT_DECODE_BATCH = 8;
+
+/**
+ * Split chunk indices 0..n-1 into consecutive decode groups whose sizes ramp
+ * 1, 2, 4, ... up to `maxBatch` (then stay there), so the first partial
+ * transcript still arrives after one chunk while the bulk of a long file
+ * decodes in full batches. maxBatch 1 gives one group per chunk.
+ * @param {number} n
+ * @param {number} maxBatch
+ * @returns {number[][]}  e.g. n=20, maxBatch=8 -> sizes [1, 2, 4, 8, 5]
+ */
+export function planDecodeGroups(n, maxBatch) {
+  const cap = Math.max(1, Math.floor(maxBatch) || 1);
+  const groups = [];
+  for (let ci = 0, size = 1; ci < n; ci += size, size = Math.min(cap, size * 2)) {
+    groups.push(Array.from({ length: Math.min(size, n - ci) }, (_, k) => ci + k));
+  }
+  return groups;
+}
+
+/**
  * Factory for the short-window (mean-square) energy machinery used to locate
  * quiet points in audio. It exists so the "~150 ms mean-square" definition lives
  * in exactly ONE place, shared by its two consumers:
@@ -3112,6 +3139,50 @@ export class ParakeetModel {
   }
 
   /**
+   * Whether transcribe() runs the beam decoder for these options. forceBeam
+   * runs it even at width 1 (diagnostic: a width-1 beam vs the greedy loop) and
+   * nBest > 1 needs it too; never with decoder-state continuity, which the beam
+   * cannot serialize.
+   */
+  _wantsBeam({ beamWidth = 1, forceBeam = false, nBest = 1, returnDecoderState = false } = {}) {
+    return ((Math.floor(beamWidth) || 1) > 1 || forceBeam || nBest > 1) && !returnDecoderState;
+  }
+
+  /**
+   * Whether chunks decoded with these options may share one decodeGreedyBatch:
+   * plain full-file greedy (no beam, no decoder-state continuity in or out).
+   */
+  greedyBatchable(opts = {}) {
+    return !this._wantsBeam(opts) && !opts.returnDecoderState && !opts.previousDecoderState;
+  }
+
+  /**
+   * transcribe() several precomputed encoder outputs, one result per item, in
+   * order. When there is more than one item and the options allow it
+   * (greedyBatchable), the decode runs as ONE lockstep batch
+   * (decodeGreedyBatch) and each result is assembled by transcribe() from its
+   * share (`opts.decoded`); otherwise each item is transcribed on its own.
+   * Shared by transcribeChunked's in-thread drivers and the decode worker, so
+   * the batch decision lives in one place.
+   * @param {Array<{audio: {length: number}, encoded: object}>} items  `audio` is
+   *   only read for its length (transcribe()'s `opts.encoded` contract).
+   * @param {number} sampleRate
+   * @param {object} opts  transcribe() options.
+   * @returns {Promise<object[]>}
+   */
+  async transcribeEncodedBatch(items, sampleRate = 16000, opts = {}) {
+    const decoded = items.length > 1 && this.greedyBatchable(opts)
+      ? await this.decodeGreedyBatch(items.map((it) => it.encoded), opts)
+      : null;
+    const results = [];
+    for (let i = 0; i < items.length; i++) {
+      results.push(await this.transcribe(items[i].audio, sampleRate,
+        { ...opts, encoded: items[i].encoded, ...(decoded ? { decoded: decoded[i] } : {}) }));
+    }
+    return results;
+  }
+
+  /**
    * Transcribe 16-kHz mono PCM. Returns full rich output (timestamps/confidences opt-in).
    *
    * Pass `opts.encoded` (the object returned by encode() for this same audio) to
@@ -3188,10 +3259,7 @@ export class ParakeetModel {
       console.warn('[Parakeet] beamWidth>1 is unsupported with decoder-state continuity (streaming); forcing width 1.');
       effBeamWidth = 1;
     }
-    // forceBeam runs the beam decoder even at width 1 (diagnostic: a width-1
-    // beam vs the greedy loop). Not available with state continuity, which the
-    // beam path cannot serialize. nBest > 1 likewise needs the beam decoder.
-    const useBeam = (effBeamWidth > 1 || forceBeam || nBest > 1) && !returnDecoderState;
+    const useBeam = this._wantsBeam(opts);
 
     // Collect per-stage timings only when the caller opts in. Default off so a
     // production transcribe() doesn't spam the console; `verbose: true` at model
@@ -3599,6 +3667,9 @@ export class ParakeetModel {
       // value (see createEnergySampler); only the chunk-parameter grid sweeps
       // it, so the app/CLI never pass it.
       seamEnergyWindowSec = 0.15,
+      // Largest group of chunks greedy-decoded as one lockstep batch (see
+      // planDecodeGroups / transcribeEncodedBatch); 1 decodes chunk by chunk.
+      decodeBatch = DEFAULT_DECODE_BATCH,
       ...transcribeOpts
     } = opts;
 
@@ -3861,6 +3932,27 @@ export class ParakeetModel {
     const encodeChunk = typeof transcribeOpts.encodeChunk === 'function'
       ? transcribeOpts.encodeChunk : null;
 
+    // Optional injected BATCH decoder: an async fn (encodedList, metas,
+    // decodeOpts) -> one transcribe-shaped result per item, in order (App.jsx:
+    // the decode worker's transcribeEncodedBatch). With it, or in-thread with a
+    // joiner, greedy decode runs over groups of chunks (planDecodeGroups) in one
+    // lockstep batch each; otherwise every group is a single chunk, exactly the
+    // old one-chunk-at-a-time behaviour.
+    const decodeChunks = typeof transcribeOpts.decodeChunks === 'function'
+      ? transcribeOpts.decodeChunks : null;
+    const batchDecode = decodeBatch > 1 && this.greedyBatchable(transcribeOpts)
+      && (decodeChunk ? !!decodeChunks : !!this.joinerSession);
+    const groups = planDecodeGroups(chunkPlan.length, batchDecode ? decodeBatch : 1);
+    const metaOf = (ci) => ({
+      chunkIndex: ci, timeOffset: chunkPlan[ci].start / sampleRate,
+      audioLen: chunkPlan[ci].end - chunkPlan[ci].start,
+    });
+    // In-thread decode of one group: encoded outputs -> results, in order.
+    const transcribeGroup = (group, encs, chunkOpts) => this.transcribeEncodedBatch(
+      group.map((ci, k) => ({ audio: audio.subarray(chunkPlan[ci].start, chunkPlan[ci].end), encoded: encs[k] })),
+      sampleRate, chunkOpts,
+    );
+
     if (decodeChunk) {
       // Pipelined producer/consumer. Producer: encode ahead (on this thread,
       // or via the injected encode pool when encodeChunk is also present) and
@@ -3869,11 +3961,14 @@ export class ParakeetModel {
       // the decoder, bounding memory. Consumer: drain the OLDEST decode first,
       // so consume() always sees chunks in order regardless of completion
       // order.
-      const depth = Math.max(2, (this.maxEncoderBatch || 1) + 1);
+      // In flight counts groups: with batched decode one group decodes while
+      // the next one encodes.
+      const depth = batchDecode ? 2 : Math.max(2, (this.maxEncoderBatch || 1) + 1);
       const inflight = [];
-      // encodeChunk is stripped too: decodeOpts crosses a postMessage in the
-      // app's worker bridge, and a function would fail structured clone.
-      const { decodeChunk: _dc, encodeChunk: _ec, encoded: _enc, ...decodeOpts } = stitchOpts;
+      // encodeChunk/decodeChunks are stripped too: decodeOpts crosses a
+      // postMessage in the app's worker bridge, and a function would fail
+      // structured clone.
+      const { decodeChunk: _dc, decodeChunks: _dcs, encodeChunk: _ec, encoded: _enc, ...decodeOpts } = stitchOpts;
 
       // Composed mode: encodes come from the pool with the same bounded
       // look-ahead as the encode-pool driver below (dispatch without
@@ -3891,22 +3986,26 @@ export class ParakeetModel {
       );
       const drainOne = async () => {
         const item = inflight.shift();
-        const chunkRes = await item.promise;
-        await consume(item.ci, chunkRes, performance.now() - item.tStart);
+        const results = await item.promise;
+        for (let k = 0; k < item.group.length; k += 1) {
+          await consume(item.group[k], results[k], performance.now() - item.tStart);
+        }
       };
-      for (let ci = 0; ci < chunkPlan.length; ci += 1) {
-        const enc = await nextEncoded(ci);
-        const { start, end } = chunkPlan[ci];
-        const meta = { chunkIndex: ci, timeOffset: start / sampleRate, audioLen: end - start };
+      for (const group of groups) {
+        const encs = [];
+        for (const ci of group) encs.push(await nextEncoded(ci));
+        const metas = group.map(metaOf);
         const tStart = performance.now();
-        const promise = Promise.resolve(decodeChunk(enc, meta, decodeOpts));
+        const promise = group.length > 1
+          ? Promise.resolve(decodeChunks(encs, metas, decodeOpts))
+          : Promise.resolve(decodeChunk(encs[0], metas[0], decodeOpts)).then((r) => [r]);
         // Mark handled from birth: drainOne awaits strictly in order, so a
         // decode that rejects BEFORE its turn would otherwise surface as an
         // unhandled rejection (Node crashes on those; browsers log noise).
         // The drain still receives the rejection when it awaits.
         promise.catch(() => {});
-        encodedCache[ci] = null; // producer done with it; worker owns it now
-        inflight.push({ ci, promise, tStart });
+        for (const ci of group) encodedCache[ci] = null; // producer done with it; worker owns it now
+        inflight.push({ group, promise, tStart });
         if (inflight.length >= depth) await drainOne();
       }
       while (inflight.length) await drainOne();
@@ -3923,32 +4022,51 @@ export class ParakeetModel {
       // preprocess_ms ride through opts.encoded and stay per-chunk correct.
       // Memory bound: at most `encodeAhead` encoder outputs are alive
       // (~3 MB each at the default 60 s window), nothing like the weights.
-      const { encodeChunk: _ec2, decodeChunk: _dc2, encoded: _enc2, ...chunkOptsBase } = stitchOpts;
+      const { encodeChunk: _ec2, decodeChunk: _dc2, decodeChunks: _dcs2, encoded: _enc2, ...chunkOptsBase } = stitchOpts;
       const producer = createEncodeProducer({
         chunkPlan, audio, sampleRate, encodeChunk,
         ahead: Math.max(1, Math.floor(transcribeOpts.encodeAhead) || 3),
         enableProfiling: perfEnabled,
       });
-      for (let ci = 0; ci < chunkPlan.length; ci += 1) {
-        const { tStart, encoded } = await producer.next(ci);
-        const { start, end } = chunkPlan[ci];
-        const chunkRes = await this.transcribe(audio.subarray(start, end), sampleRate, { ...chunkOptsBase, encoded });
-        await consume(ci, chunkRes, performance.now() - tStart);
+      for (const group of groups) {
+        const encs = [];
+        let tStart = 0;
+        for (const ci of group) {
+          const got = await producer.next(ci);
+          if (!encs.length) tStart = got.tStart;
+          encs.push(got.encoded);
+        }
+        const results = await transcribeGroup(group, encs, chunkOptsBase);
+        for (let k = 0; k < group.length; k += 1) {
+          await consume(group[k], results[k], performance.now() - tStart);
+        }
       }
     } else {
-      for (let ci = 0; ci < chunkPlan.length; ci += 1) {
-        const { start, end } = chunkPlan[ci];
-        // subarray (zero-copy view); the model copies into its own ORT tensor.
-        const chunk = audio.subarray(start, end);
+      const { decodeChunks: _dcs3, ...serialOpts } = stitchOpts;
+      for (const group of groups) {
         const tChunk = performance.now();
-        // Batched path: reuse the group-encoded output; else let transcribe()
-        // encode this chunk itself (the unchanged WASM/CLI path).
-        const encoded = batchEncode ? await ensureEncoded(ci) : null;
-        const chunkOpts = encoded ? { ...stitchOpts, encoded } : stitchOpts;
-        const chunkRes = await this.transcribe(chunk, sampleRate, chunkOpts);
-        // Release the (large) encoder output now that it's decoded.
-        encodedCache[ci] = null;
-        await consume(ci, chunkRes, performance.now() - tChunk);
+        if (group.length === 1 && !batchEncode) {
+          // Let transcribe() encode this chunk itself (the unchanged WASM/CLI
+          // path); subarray is a zero-copy view, the model copies it into its
+          // own ORT tensor.
+          const [ci] = group;
+          const chunkRes = await this.transcribe(audio.subarray(chunkPlan[ci].start, chunkPlan[ci].end), sampleRate, serialOpts);
+          await consume(ci, chunkRes, performance.now() - tChunk);
+          continue;
+        }
+        // Reuse the group-encoded outputs (encoder batching), or encode each
+        // chunk now for a batched decode.
+        const encs = [];
+        for (const ci of group) {
+          encs.push(batchEncode ? await ensureEncoded(ci)
+            : await this.encode(audio.subarray(chunkPlan[ci].start, chunkPlan[ci].end), sampleRate, { enableProfiling: perfEnabled }));
+        }
+        const results = await transcribeGroup(group, encs, serialOpts);
+        // Release the (large) encoder outputs now that they're decoded.
+        for (const ci of group) encodedCache[ci] = null;
+        for (let k = 0; k < group.length; k += 1) {
+          await consume(group[k], results[k], performance.now() - tChunk);
+        }
       }
     }
 

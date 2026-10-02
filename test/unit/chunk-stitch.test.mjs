@@ -14,7 +14,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ParakeetModel, createEncodeProducer, lcsPairs, mergeOverlapWords, normalizeWordText, planChunks } from '../../app/src/parakeet.js';
+import { ParakeetModel, createEncodeProducer, lcsPairs, mergeOverlapWords, normalizeWordText, planChunks, planDecodeGroups } from '../../app/src/parakeet.js';
 
 const SR = 16000;
 
@@ -45,10 +45,17 @@ function makeAudio(nSamples) {
 // have the stub report no metrics at all (metrics: null), mirroring profiling
 // being off. Defaults to a constant { total_ms: 1 } for the stitching tests,
 // which don't inspect metrics.
+// transcribeChunked's decode-batching helpers (fake models copy what they use).
+const decodeHelpers = {
+  _wantsBeam: ParakeetModel.prototype._wantsBeam,
+  greedyBatchable: ParakeetModel.prototype.greedyBatchable,
+  transcribeEncodedBatch: ParakeetModel.prototype.transcribeEncodedBatch,
+};
+
 function makeModel({ withTimestamps = true, metricsPerCall } = {}) {
   let calls = 0;
   return {
-    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked, ...decodeHelpers,
     transcribe: async (chunk, sampleRate, opts) => {
       const callIndex = calls++;
       const startSec = chunk[0] / sampleRate;
@@ -232,7 +239,7 @@ function makePipelineModel({ failAt = -1, ragged = false } = {}) {
     maxEncoderBatch: 2,
     groups, // chunk lengths of every encodeBatch() call, in call order
     raggedBatchOk: async () => ragged,
-    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked, ...decodeHelpers,
     // chunk[0] === absolute start sample (audio[i] = i), matching makeModel.
     transcribe: async (chunk, sampleRate) =>
       spanResult(chunk[0] / sampleRate, (chunk[0] + chunk.length) / sampleRate),
@@ -240,6 +247,13 @@ function makePipelineModel({ failAt = -1, ragged = false } = {}) {
     encodeBatch: async (pcms) => {
       groups.push(pcms.map((p) => p.length));
       return pcms.map((p) => ({ __start: p[0], __len: p.length }));
+    },
+    // Injected batch decode (the worker's transcribeEncodedBatch): one result
+    // per item; records each call's chunk indices.
+    batchCalls: [],
+    decodeChunks(encs, metas) {
+      this.batchCalls.push(metas.map((m) => m.chunkIndex));
+      return Promise.all(encs.map((e, k) => this.decodeChunk(e, metas[k])));
     },
     // Injected async decode; earlier chunkIndex waits longer -> out-of-order.
     // failAt rejects that chunk's decode (after its delay), for the
@@ -314,6 +328,19 @@ describe('transcribeChunked pipelined decode (injected decodeChunk)', () => {
     assert.deepEqual(unhandled, [], 'no unhandled rejections from in-flight decodes');
   });
 
+  test('with decodeChunks, greedy runs dispatch ramped chunk groups and match the serial output', async () => {
+    const model = makePipelineModel();
+    const seq = await model.transcribeChunked(AUDIO, SR, PIPE_OPTS);
+    const piped = await model.transcribeChunked(AUDIO, SR,
+      { ...PIPE_OPTS, decodeChunk: model.decodeChunk, decodeChunks: model.decodeChunks.bind(model), decodeBatch: 2 });
+    assert.equal(piped.utterance_text, seq.utterance_text);
+    assert.ok(model.batchCalls.length > 0 && model.batchCalls.every((g) => g.length === 2), JSON.stringify(model.batchCalls));
+    const beam = makePipelineModel();
+    await beam.transcribeChunked(AUDIO, SR,
+      { ...PIPE_OPTS, beamWidth: 4, decodeChunk: beam.decodeChunk, decodeChunks: beam.decodeChunks.bind(beam) });
+    assert.deepEqual(beam.batchCalls, [], 'beam runs never batch');
+  });
+
   test('a ragged-capable encoder groups unequal-length chunks; others never do', async () => {
     // Fixed-stride chunks are all equal except the shorter last one, so only a
     // ragged-capable encoder may batch that last chunk with its neighbour.
@@ -342,7 +369,7 @@ function makeEncodePoolModel({ failAt = -1 } = {}) {
   const m = {
     maxEncoderBatch: 1, // WASM-like: the pool, not encoder batching, is the lever
     stats: { calls: 0, maxLive: 0, decoded: 0 },
-    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked, ...decodeHelpers,
     transcribe: async (chunk, sampleRate, opts) => {
       assert.ok(opts.encoded, 'pool path must feed transcribe() the precomputed encode');
       m.stats.decoded += 1;
@@ -380,7 +407,7 @@ function makeComposedModel({ failEncodeAt = -1, failDecodeAt = -1, maxEncoderBat
       encodeCalls: 0, decodeCalls: 0, maxLiveEncodes: 0, maxLiveDecodes: 0,
       produced: new Map(), received: new Map(), ownEncodePath: [],
     },
-    transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+    transcribeChunked: ParakeetModel.prototype.transcribeChunked, ...decodeHelpers,
     // Composed mode must never fall back to the model's own encode/decode.
     transcribe: async () => {
       m.stats.ownEncodePath.push('transcribe');
@@ -581,7 +608,7 @@ describe('transcribeChunked single-pass with injected encodeChunk', () => {
   function makeSoloModel() {
     const m = {
       stats: { encodes: 0, meta: null, pcmLen: 0, encodeOpts: null },
-      transcribeChunked: ParakeetModel.prototype.transcribeChunked,
+      transcribeChunked: ParakeetModel.prototype.transcribeChunked, ...decodeHelpers,
       transcribe: async (chunk, sampleRate, opts) => {
         assert.ok(opts.encoded, 'single pass must feed transcribe() the injected encode');
         assert.ok(!('encodeChunk' in opts) && !('decodeChunk' in opts),
@@ -1011,5 +1038,14 @@ describe('planChunks length-alignment (equal-length chunks for encoder batching)
     for (const c of interior) {
       assert.equal(c.end - c.start, 180, 'every interior chunk locks to the same length');
     }
+  });
+});
+
+describe('planDecodeGroups', () => {
+  test('ramps 1, 2, 4 up to the cap, consecutive and complete', () => {
+    assert.deepEqual(planDecodeGroups(20, 8).map((g) => g.length), [1, 2, 4, 8, 5]);
+    assert.deepEqual(planDecodeGroups(20, 8).flat(), Array.from({ length: 20 }, (_, i) => i));
+    assert.deepEqual(planDecodeGroups(3, 1), [[0], [1], [2]]);
+    assert.deepEqual(planDecodeGroups(0, 8), []);
   });
 });
