@@ -103,3 +103,12 @@ describe('grid bench --record-confidences', () => {
     assert.equal(parse('--record-confidences').recordConfidences, true);
   });
 });
+
+describe('module import', () => {
+  test('importing from an argv[1]-less context (node -e) does not crash the main guard', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const url = new URL('../../scripts/selective-beam-analyze.mjs', import.meta.url).href;
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(url)}).then((m) => console.log(typeof m.sweep))`], { encoding: 'utf-8' });
+    assert.equal(out.trim(), 'function');
+  });
+});
