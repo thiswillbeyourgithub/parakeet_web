@@ -306,7 +306,7 @@ export const OPTIONS = [
     key: 'numSpeakers', cli: ['--num-speakers'], env: 'PARAKEET_NUM_SPEAKERS', type: 'int',
     def: -1, min: -1, max: 100, req: 'num_speakers', section: 'Diarization',
     help: 'Most speakers to report: when more are heard, the least active are folded into the '
-        + 'likeliest remaining one. -1 (default) = no cap (the model tracks at most 4).',
+        + 'likeliest remaining one. -1 (default) = no cap (the model tracks at most 8).',
   },
   {
     key: 'diarizeThreshold', cli: ['--diarize-threshold'], env: 'PARAKEET_DIARIZE_THRESHOLD', type: 'float',

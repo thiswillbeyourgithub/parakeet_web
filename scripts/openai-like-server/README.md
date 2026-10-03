@@ -181,7 +181,7 @@ hf download Olicorne/Nemotron-3-Diarization-web-onnx --local-dir ./models/Nemotr
 
 It is looked for as `<model-dir>/Nemotron-3-Diarization-web-onnx`, then `<model-dir>` itself, then a sibling folder of that name; `--diarize-model` points anywhere else. `--diarize-precision` picks the step graph: `int8` (the default, ~100 MB, made for the CPU), `fp32` (~400 MB) or `fp16` (GPU only, the CPU backends have no fp16 kernels). With `--diarize` the files are checked at boot; without it, on the first `diarize=true` request, whose 400 names what is missing. The sessions themselves load on the first diarizing request.
 
-Diarization never runs unless asked. The model tracks at most 4 speakers; `--num-speakers` CAPS the count (extra speakers are folded into the likeliest kept one), the default `-1` reports all of them. `--diarize-threshold` is the speech probability above which a frame counts as someone talking (lower = more speech kept).
+Diarization never runs unless asked. The model tracks at most 8 speakers; `--num-speakers` CAPS the count (extra speakers are folded into the likeliest kept one), the default `-1` reports all of them. `--diarize-threshold` is the speech probability above which a frame counts as someone talking (lower = more speech kept).
 
 ## Backends and precision
 

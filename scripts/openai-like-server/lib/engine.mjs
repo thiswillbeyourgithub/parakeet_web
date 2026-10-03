@@ -208,7 +208,7 @@ export async function createEngine(options) {
     /** Speaker segments for the same PCM. */
     async diarize({ pcm, params }) {
       return diarizerInstance().run(pcm, {
-        // -1 = no cap: every speaker the model hears (at most its 4 slots)
+        // -1 = no cap: every speaker the model hears (at most its 8 slots)
         maxSpeakers: params.numSpeakers > 0 ? params.numSpeakers : 0,
         threshold: params.diarizeThreshold,
         minDurationOn: params.minDurationOn,
