@@ -5,7 +5,9 @@
 //
 // We force the failure deterministically by routing the CAM++ embedding model to
 // a 404, so this spec needs NO diarization weights (it never skips) and the ASR
-// model (a different repo/path) still loads normally. The background prefetch
+// model (a different repo/path) still loads normally. Speakers is seeded as the
+// default display, which is what arms the background prefetch (without it the
+// 100-396 MB Sortformer is only fetched on a Speakers click): the prefetch
 // fires the moment the ASR model is ready, hits the 404, and flips the Speakers
 // controls into their unavailable state.
 //
@@ -33,7 +35,7 @@ test('diarization model-load failure greys out the Speakers controls with a tool
   page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
 
   await page.goto('/');
-  await seedSettings(page, {});
+  await seedSettings(page, { transcriptDisplayMode: 'diarized' });
   await page.reload();
 
   // Load the ASR model; its ready check mark also means the diarization prefetch
@@ -71,7 +73,8 @@ test('diarization model-load failure greys out the Speakers controls with a tool
   await expect(speakersBtn).toHaveAttribute('aria-disabled', 'true');
   await expect(speakersBtn).toHaveAttribute('title', /Speaker diarization unavailable/);
 
-  // Clicking the greyed button must do nothing: no diarized view, no alert.
+  // The upload's auto-diarize (Speakers is the default) and a click on the
+  // greyed button must both do nothing: no diarized view, no alert.
   // The button is aria-disabled (not natively `disabled`) so pointer events stay
   // on and the click event still reaches the handler, which early-returns on the
   // model-error guard. Playwright treats aria-disabled as "not enabled" and would

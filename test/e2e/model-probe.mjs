@@ -43,6 +43,7 @@
 
 import { candidatePaths, findRepoFile, basenameOf } from '../../app/src/modelLayout.js';
 import { LOCAL_MANIFEST_FILE } from '../../app/src/hub.js';
+import { DIARIZATION_REPO, DIARIZATION_EMB_REPO } from '../../scripts/fetch-e2e-models.mjs';
 
 /**
  * The canary hub.js uses to decide a repo has its own root on this mirror.
@@ -154,4 +155,18 @@ async function manifestPath(request, base, basename) {
   const files = await res.json().catch(() => null);
   if (!Array.isArray(files) || files.length === 0) return undefined;
   return findRepoFile(files, basenameOf(basename));
+}
+
+/**
+ * Whether the mirror serves what a WASM diarization loads: the int8 Sortformer
+ * step and the CAM++ embedding model. They come from two repos and a mirror can
+ * carry one without the other, so both are probed; the step stands for its
+ * repo's small files (e2e:models fetches them together).
+ *
+ * @param {import('@playwright/test').APIRequestContext} request
+ * @returns {Promise<boolean>}
+ */
+export async function diarizationModelsServed(request) {
+  return !!(await probeModelUrl(request, DIARIZATION_REPO, 'step.int8.onnx')
+    && await probeModelUrl(request, DIARIZATION_EMB_REPO, '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx'));
 }
