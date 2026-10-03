@@ -1,12 +1,14 @@
-// Tier-1 tests for the pure Sortformer file helpers
-// (app/ui/src/lib/diarizationFiles.js): which step precision each backend
-// downloads, and the checks on the repo's config + silence files.
+// Tier-1 tests for the pure Sortformer file helpers: which step precision each
+// backend downloads (app/ui/src/lib/diarizationFiles.js), where each precision
+// lives in the repo and the checks on its config + silence files
+// (app/src/sortformer.js, shared with the server).
 //
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { diarizationPrecision, parseDiarizationData, DIARIZATION_STEP_FILES } from '../../app/ui/src/lib/diarizationFiles.js';
+import { diarizationPrecision } from '../../app/ui/src/lib/diarizationFiles.js';
+import { parseSortformerData, SORTFORMER_STEP_FILES } from '../../app/src/sortformer.js';
 
 const enc = (obj) => new TextEncoder().encode(JSON.stringify(obj));
 const CONFIG = {
@@ -27,28 +29,36 @@ describe('diarizationPrecision', () => {
     }
   });
   test('every precision it can return has a step file', () => {
-    for (const p of ['int8', 'fp16', 'fp32']) assert.ok(DIARIZATION_STEP_FILES[p]);
+    for (const p of ['int8', 'fp16', 'fp32']) assert.ok(SORTFORMER_STEP_FILES[p]);
   });
 });
 
-describe('parseDiarizationData', () => {
+describe('parseSortformerData', () => {
   test('parses a valid pair, silence values intact', () => {
     const silence = new Float32Array([0.5, -1, 2, 3.25]);
-    const { config, silenceEmbeds } = parseDiarizationData(enc(CONFIG), new Uint8Array(silence.buffer));
+    const { config, silenceEmbeds } = parseSortformerData(enc(CONFIG), new Uint8Array(silence.buffer));
     assert.equal(config.num_speakers, 8);
     assert.deepEqual([...silenceEmbeds], [0.5, -1, 2, 3.25]);
   });
   test('reads silence from an unaligned view into a larger buffer', () => {
     const big = new Uint8Array(1 + 16 + 3);
     big.set(new Uint8Array(new Float32Array([1, 2, 3, 4]).buffer), 1);
-    const { silenceEmbeds } = parseDiarizationData(enc(CONFIG), big.subarray(1, 17));
+    const { silenceEmbeds } = parseSortformerData(enc(CONFIG), big.subarray(1, 17));
+    assert.deepEqual([...silenceEmbeds], [1, 2, 3, 4]);
+  });
+  test('reads silence from a Node Buffer view, as the server passes it', () => {
+    // Buffer.slice() is a view, not a copy: the first version took the whole
+    // pooled ArrayBuffer and handed the model garbage silence embeddings
+    const pool = Buffer.alloc(64, 0xff);
+    Buffer.from(new Float32Array([1, 2, 3, 4]).buffer).copy(pool, 8);
+    const { silenceEmbeds } = parseSortformerData(enc(CONFIG), pool.subarray(8, 24));
     assert.deepEqual([...silenceEmbeds], [1, 2, 3, 4]);
   });
   test('a config missing a required key throws, naming it', () => {
     const { speaker_cache: _, ...partial } = CONFIG;
-    assert.throws(() => parseDiarizationData(enc(partial), new Uint8Array(16)), /speaker_cache/);
+    assert.throws(() => parseSortformerData(enc(partial), new Uint8Array(16)), /speaker_cache/);
   });
   test('a silence file of the wrong length throws', () => {
-    assert.throws(() => parseDiarizationData(enc(CONFIG), new Uint8Array(12)), /expected 16/);
+    assert.throws(() => parseSortformerData(enc(CONFIG), new Uint8Array(12)), /expected 16/);
   });
 });

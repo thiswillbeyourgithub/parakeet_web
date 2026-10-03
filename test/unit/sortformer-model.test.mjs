@@ -18,11 +18,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { readWavMono16 } from '../../scripts/lib/wav.mjs';
-import { createSortformerRunner, diarizeProbs, probsToSegments } from '../../app/src/sortformer.js';
+import { openSortformer, parseSortformerData, diarizeProbs, probsToSegments, SORTFORMER_STEP_FILES } from '../../app/src/sortformer.js';
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const MODEL_DIR = process.env.PARAKEET_DIAR_MODEL_DIR || here('../../fallback_models/Olicorne/Nemotron-3-Diarization-web-onnx');
-const STEP = join(MODEL_DIR, 'fp32/step.onnx');
+const STEP = join(MODEL_DIR, SORTFORMER_STEP_FILES.fp32);
 const skip = existsSync(STEP) ? false : `model repo not found at ${MODEL_DIR}`;
 
 function clip() {
@@ -37,15 +37,15 @@ function clip() {
 describe('sortformer port vs transformers, real model', { skip }, () => {
   test('two-speakers.wav x3: probabilities and segments', async () => {
     const ort = (await import('onnxruntime-node')).default;
-    const config = JSON.parse(readFileSync(join(MODEL_DIR, 'diarization-config.json'), 'utf8'));
-    const sil = readFileSync(join(MODEL_DIR, 'silence_embeds.bin'));
-    const silenceEmbeds = new Float32Array(sil.buffer.slice(sil.byteOffset, sil.byteOffset + sil.length));
-    const embedSession = await ort.InferenceSession.create(join(MODEL_DIR, 'embed.onnx'));
-    const stepSession = await ort.InferenceSession.create(STEP);
-    const runner = createSortformerRunner(ort, embedSession, stepSession, { hidden: config.hidden_size, mels: config.num_mel_bins });
-
+    // the same helpers the app and the server load the repo with
+    const { config, silenceEmbeds } = parseSortformerData(
+      readFileSync(join(MODEL_DIR, 'diarization-config.json')), readFileSync(join(MODEL_DIR, 'silence_embeds.bin')));
+    const runner = await openSortformer(ort, {
+      embed: join(MODEL_DIR, 'embed.onnx'), step: join(MODEL_DIR, SORTFORMER_STEP_FILES.fp32), config,
+    });
     const pcm = clip();
     const got = await diarizeProbs(pcm, { config, silenceEmbeds, ...runner });
+    await runner.release();
 
     const raw = readFileSync(here('../fixtures/sortformer-two-speakers-x3.bin'));
     const ref = new Uint16Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.length));
