@@ -8,6 +8,16 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Unreleased
+
+### Speaker identification now uses NVIDIA's Streaming Sortformer
+
+**Speakers** no longer uses sherpa-onnx (pyannote segmentation plus CAM++ clustering). It now runs NVIDIA's [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization), exported for the browser as [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx), on the same ONNX Runtime as the transcription. A second ML runtime and its integrity pins have been removed from the app. The model tracks up to 8 speakers, numbered in order of first appearance. The speaker count you set is now a cap: the most active speakers are kept and each moment of a dropped one goes to the kept speaker the model rates most likely then, and changing it only regroups the existing result. Each backend downloads only its own precision: int8 (~100 MB) on the CPU, fp16 (~200 MB) or fp32 (~400 MB) on WebGPU. The ONNX graphs were checked against NVIDIA's reference forward, with 100% agreement on speech decisions for fp32 and 99.97% for int8 on a 114 s, 5-speaker clip. CAM++ is kept, but only to recognise a voice across recordings.
+
+The diarization model is now prefetched only when **Speakers** is the default display. Otherwise it downloads on the first click.
+
+The OpenAI-compatible server diarizes with the same model on its own ONNX Runtime. `PARAKEET_DIARIZE_SEG_MODEL` and `PARAKEET_DIARIZE_EMB_MODEL` are gone, so old configurations that set them are now silently ignored. They are replaced by `PARAKEET_DIARIZE_MODEL` and `PARAKEET_DIARIZE_PRECISION`. `max_speakers` is a cap, and `min_speakers` is ignored with a warning. Self-hosters: `VITE_DIARIZATION_REPO` now actually works (it was read but never wired), and the diarization variables now reach the Docker container. Written with Claude Code.
+
 ## 11.4.0 (2026-09-30)
 
 ### Misheard drug names can be corrected

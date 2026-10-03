@@ -74,7 +74,7 @@ Les trois figurent, avec le reste de la chaîne, dans [Dépôts liés](#dépôts
 | 📝 **Mode dictée** | Post-traite les transcriptions avec des règles regex (vocabulaire médical français, ponctuation, unités) |
 | 💊 **Correction des noms de médicaments** | Affichage optionnel qui répare les noms de médicaments que le modèle entend mal (« l'ananas de l'umab » devient « lanadelumab »), avec 14 377 règles apprises sur les erreurs d'UltiMed et de parakeet-ultra |
 | 🔢 **Nombres en chiffres** | Les nombres dictés en toutes lettres sont écrits en chiffres (« vingt-cinq milligrammes » devient « 25 milligrammes », « un virgule cinq » devient « 1.5 »), en français et en anglais. Activé par défaut, avec une case à décocher dans les paramètres |
-| 🗣️ **Identification des locuteurs** | Vue optionnelle « qui parle quand » : regroupe la transcription en tours `Premier :`/`Deuxième :`/... colorés, entièrement côté client via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (dans un worker en arrière-plan, donc sans jamais figer l'interface). Le nombre de locuteurs est détecté automatiquement ; renommez un locuteur avec l'étiquette d'un autre pour les fusionner |
+| 🗣️ **Identification des locuteurs** | Vue optionnelle « qui parle quand » : regroupe la transcription en tours `Premier :`/`Deuxième :`/... colorés, entièrement côté client avec le [Streaming Sortformer](https://huggingface.co/nvidia/Nemotron-3-Diarization) de NVIDIA (dans un worker en arrière-plan sur le CPU, donc sans jamais figer l'interface). Le nombre de locuteurs est détecté automatiquement (jusqu'à 8) et peut être plafonné, les locuteurs en trop étant fusionnés ; renommez un locuteur avec l'étiquette d'un autre pour les fusionner |
 | 🕐 **Horodatage des mots** | Horodatage par mot |
 | 📁 **Fichier ou micro** | Transcrivez des fichiers audio téléversés ou enregistrez directement depuis votre microphone. Les fichiers téléversés sont décodés en PCM par un **ffmpeg.wasm** intégré localement (chargé à la demande au premier téléversement), afin que le navigateur reproduise à l'octet près le décodage de l'outil en ligne de commande, y compris le rognage du délai/amorçage d'encodeur AAC que le décodeur natif du navigateur ignore (ce qui faisait autrement mal entendre p. ex. « Venlafaxine »). Repli sur le décodeur Web Audio si ffmpeg ne peut pas se charger. Chaque entrée conserve l'audio à partir duquel elle a été transcrite : son menu **⋮** permet donc de le réécouter et de l'enregistrer en WAV mono 16 kHz (en mémoire seulement, il ne survit donc pas à un rechargement) |
 | 🎚️ **Contrôles de capture** | Bascules par enregistrement pour la suppression de bruit et le contrôle automatique du gain |
@@ -160,15 +160,12 @@ Le **nombre de locuteurs est détecté automatiquement** par défaut, vous n'ave
 
 #### Comment ça marche
 
-L'identification des locuteurs s'appuie sur [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), dont le moteur de diarisation WebAssembly précompilé est intégré à l'application (il embarque son propre ONNX Runtime, distinct du moteur de transcription). Il exécute un pipeline hors ligne à deux modèles sur le même audio 16 kHz déjà en mémoire :
-
-1. un modèle de segmentation [pyannote](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0) repère les zones de parole et les changements de locuteur, puis
-2. un modèle d'empreinte vocale [3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models) (~28 Mo) encode chaque zone, et les empreintes sont regroupées par locuteur.
+L'identification des locuteurs utilise [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) de NVIDIA (un Streaming Sortformer), exporté pour le navigateur sous [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx), sur le même ONNX Runtime que la transcription. Il lit l'audio 16 kHz déjà en mémoire et donne, toutes les 80 ms, la probabilité que chacun des 8 locuteurs au plus soit en train de parler ; les locuteurs sont numérotés par ordre d'apparition, sans étape de regroupement. Le modèle se compose d'un petit graphe de caractéristiques et d'un graphe d'encodeur par précision, et seule la précision exécutée par votre moteur est téléchargée : int8 (~100 Mo) sur le CPU, fp16 (~200 Mo) sur un GPU avec `shader-f16`, fp32 (~400 Mo) sur les autres GPU. Sur le CPU il tourne dans un worker en arrière-plan ; en WebGPU il tourne sur le GPU. Un modèle d'empreinte vocale [3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models) (~28 Mo) sert uniquement à reconnaître une voix d'un enregistrement à l'autre.
 
 Les segments de locuteurs obtenus sont mis en correspondance avec les horodatages de mots existants (chaque mot reçoit le locuteur dont le segment le chevauche le plus), et les mots consécutifs d'un même locuteur sont regroupés en tours de parole.
 
-- Les deux modèles (~34 Mo au total) sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli local `/models`) et mis en cache dans IndexedDB. Ils sont préchargés en arrière-plan dès que le modèle ASR a fini de se charger, pour que la première identification soit instantanée. Si ce téléchargement échoue, le bouton **Locuteurs** et l'option d'affichage par défaut **Locuteurs** sont grisés et affichent la raison au survol (au lieu d'une fenêtre d'erreur).
-- Le moteur WebAssembly ne se charge qu'à la première identification effective, donc il ne coûte rien si vous n'utilisez jamais la fonctionnalité.
+- Les modèles sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli local `/models`) et mis en cache dans IndexedDB. Ils ne sont préchargés en arrière-plan, une fois le modèle ASR chargé, que si **Locuteurs** est votre affichage par défaut ; sinon ils se téléchargent à votre premier clic sur **Locuteurs**, donc la fonctionnalité ne coûte rien si vous ne l'utilisez jamais. Si ce téléchargement échoue, le bouton **Locuteurs** et l'option d'affichage par défaut **Locuteurs** sont grisés et affichent la raison au survol (au lieu d'une fenêtre d'erreur).
+- Changer le nombre de locuteurs d'une entrée ne fait que regrouper à nouveau le résultat déjà calculé, sans relancer le modèle.
 
 Cette fonctionnalité a été mise en place avec [Claude Code](https://www.anthropic.com/claude-code).
 
@@ -744,9 +741,8 @@ Certaines listes de phrase boosting fournies incluent des noms de bactéries dé
   - Cela a été essentiel pour me permettre de réaliser ma propre quantization améliorée, disponible sur [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Implémentation de référence en Python
 - **ONNX Runtime Web** – Rend l'inférence dans le navigateur possible
-- **[sherpa-onnx (k2-fsa)](https://github.com/k2-fsa/sherpa-onnx)** – Moteur WebAssembly précompilé d'identification des locuteurs (Apache-2.0)
-- **[pyannote segmentation 3.0](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0)** – Modèle de segmentation de la parole utilisé pour la diarisation (MIT)
-- **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Modèle d'empreinte vocale utilisé pour la diarisation (Apache-2.0)
+- **[nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)** – Modèle d'identification des locuteurs Streaming Sortformer de NVIDIA (OpenMDW-1.1), exporté pour le navigateur avec Claude Code
+- **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Modèle d'empreinte vocale servant à reconnaître une voix d'un enregistrement à l'autre (Apache-2.0)
 
 ### Crédits
 
