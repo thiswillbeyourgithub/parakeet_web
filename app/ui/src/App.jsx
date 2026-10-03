@@ -46,6 +46,7 @@ import { usePipelineWorkers } from './hooks/usePipelineWorkers.js';
 import { turnsToLabeledText } from './lib/speakerAssign.js';
 import { createSerialQueue } from './lib/writeQueue.js';
 import { restoreCpuThreads, encodePoolPlan } from './lib/cpuThreads.js';
+import { acquireGpuRun } from './lib/gpuRun.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
@@ -826,9 +827,6 @@ export default function App() {
   // built once per session) read the latest user setting.
   const liveTranscriptionEnabledRef = useRef(false);
   const liveContextWindowRef = useRef('auto');
-  // Depth of in-flight WebGPU transcription runs holding the html.gpu-run
-  // animation pause (see runTranscription); the class drops only at 0.
-  const gpuRunDepthRef = useRef(0);
   const maxCores = navigator.hardwareConcurrency || 8;
   // ORT-style default (min(4, ceil(cores/2))): hardwareConcurrency counts
   // hyperthreads and ORT-WASM's spin-waiting pool makes oversubscription
@@ -3254,10 +3252,9 @@ export default function App() {
     // encoder to a worker does NOT escape this (workers stall even harder
     // while the page animates), so pausing the page's own animations is the
     // fix. Depth-counted so overlapping runs never unpause each other early.
-    const gpuRun = backend.startsWith('webgpu');
-    if (gpuRun) {
-      gpuRunDepthRef.current += 1;
-      document.documentElement.classList.add('gpu-run');
+    // Depth-counted in lib/gpuRun.js, shared with the probe and diarization.
+    const releaseGpuRun = backend.startsWith('webgpu') ? acquireGpuRun() : null;
+    if (releaseGpuRun) {
       // Positive marker asserted by scripts/webgpu-check.mjs.
       console.log('[Transcribe] animations paused (WebGPU rendering-coupling guard)');
     }
@@ -3559,10 +3556,7 @@ export default function App() {
       if (benchmark) throw error;
       alert(`Failed to transcribe "${safeName}": ${transcribeErrorMessage(error)}`);
     } finally {
-      if (gpuRun) {
-        gpuRunDepthRef.current = Math.max(0, gpuRunDepthRef.current - 1);
-        if (gpuRunDepthRef.current === 0) document.documentElement.classList.remove('gpu-run');
-      }
+      releaseGpuRun?.();
       setTranscribing(false);
       // The final transcription has now been pushed (or the run failed and
       // the user has been alerted). Either way, drop the awaiting indicator.
@@ -4651,8 +4645,7 @@ export default function App() {
     // Same WebGPU rendering-coupling guard the real runs use: an animating page
     // gates JSEP callback delivery process-wide, which would tax every yield in
     // the GPU arm and make this measurement a measurement of the spinner.
-    gpuRunDepthRef.current += 1;
-    document.documentElement.classList.add('gpu-run');
+    const releaseGpuRun = acquireGpuRun();
     console.log('[Probe] animations paused (WebGPU rendering-coupling guard)');
     let arms = [];
     try {
@@ -4712,8 +4705,7 @@ export default function App() {
     } finally {
       for (const a of arms) a.dispose();
       probeRunningRef.current = false;
-      gpuRunDepthRef.current -= 1;
-      if (gpuRunDepthRef.current === 0) document.documentElement.classList.remove('gpu-run');
+      releaseGpuRun();
     }
   }
 
