@@ -20,11 +20,11 @@
 //
 // Built with Claude Code.
 
-import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ort from 'onnxruntime-node';
 import { computeFbank, FBANK_NUM_BINS, FBANK_SAMPLE_RATE } from '../app/src/fbank.js';
+import { readWavMono16 } from './lib/wav.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -32,43 +32,6 @@ const ROOT = resolve(HERE, '..');
 function arg(name, dflt) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : dflt;
-}
-
-// --- WAV (pcm_s16le mono) -> Float32 [-1,1] @ its sample rate -------------------
-function readWavMono16(path) {
-  const buf = readFileSync(path);
-  if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
-    throw new Error(`${path}: not a RIFF/WAVE file`);
-  }
-  let off = 12;
-  let fmt = null;
-  let dataOff = -1;
-  let dataLen = 0;
-  while (off + 8 <= buf.length) {
-    const id = buf.toString('ascii', off, off + 4);
-    const size = buf.readUInt32LE(off + 4);
-    const body = off + 8;
-    if (id === 'fmt ') {
-      fmt = {
-        audioFormat: buf.readUInt16LE(body),
-        channels: buf.readUInt16LE(body + 2),
-        sampleRate: buf.readUInt32LE(body + 4),
-        bitsPerSample: buf.readUInt16LE(body + 14),
-      };
-    } else if (id === 'data') {
-      dataOff = body;
-      dataLen = size;
-    }
-    off = body + size + (size & 1); // chunks are word-aligned
-  }
-  if (!fmt || dataOff < 0) throw new Error(`${path}: missing fmt/data chunk`);
-  if (fmt.audioFormat !== 1 || fmt.bitsPerSample !== 16 || fmt.channels !== 1) {
-    throw new Error(`${path}: expected mono pcm_s16le, got fmt=${JSON.stringify(fmt)}`);
-  }
-  const n = Math.floor(dataLen / 2);
-  const pcm = new Float32Array(n);
-  for (let i = 0; i < n; i++) pcm[i] = buf.readInt16LE(dataOff + i * 2) / 32768;
-  return { pcm, sampleRate: fmt.sampleRate };
 }
 
 // The 80-dim kaldi fbank front-end is the shared app/src/fbank.js (also used by
