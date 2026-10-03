@@ -31,8 +31,8 @@ const ALIASES = new Map([
   ['word_timestamps', { to: '#word_timestamps', why: 'whisper-asr-webservice spelling' }],
   ['output', { to: '#output', why: 'whisper-asr-webservice spelling of response_format' }],
   ['task', { to: '#task', why: 'transcribe|translate selector' }],
-  ['min_speakers', { to: '#speaker_bounds', why: 'exact counts only; min==max sets num_speakers' }],
-  ['max_speakers', { to: '#speaker_bounds', why: 'exact counts only; min==max sets num_speakers' }],
+  ['min_speakers', { to: '#speaker_bounds', why: 'num_speakers is a cap; a lower bound has no equivalent' }],
+  ['max_speakers', { to: '#speaker_bounds', why: 'it is the num_speakers cap' }],
   ['stream', { to: '#stream', why: 'SSE responses are not implemented' }],
 ]);
 
@@ -170,9 +170,15 @@ export function resolveRequestParams({ form, options }) {
 
   if (Object.keys(speakerBounds).length) {
     const { min_speakers: lo, max_speakers: hi } = speakerBounds;
-    if (lo != null && hi != null && lo === hi) params.numSpeakers = lo;
-    else warnings.push('ignoring min_speakers/max_speakers: only an exact count is supported (num_speakers), '
-      + 'or leave it out for automatic clustering');
+    // num_speakers is a CAP (Sortformer finds the speakers itself and only
+    // ever merges extras), so max_speakers is the same knob and a lower bound
+    // has nothing to act on.
+    // An explicit num_speakers is the canonical field and wins.
+    if (hi != null && !form.has('num_speakers')) params.numSpeakers = hi;
+    if (lo != null) {
+      warnings.push('ignoring min_speakers: the speaker count is found automatically, '
+        + 'only an upper bound (max_speakers or num_speakers) is supported');
+    }
   }
 
   params.responseFormat = explicitFormat || options.responseFormat;
