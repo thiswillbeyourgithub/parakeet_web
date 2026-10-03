@@ -14,7 +14,7 @@
 // / transcribe() the main thread uses, fed `opts.encoded`, so no decode logic is
 // duplicated.
 //
-// Integrity posture mirrors diarizer.worker.js: the MAIN thread is expected to
+// Integrity posture mirrors diarize.worker.js: the MAIN thread is expected to
 // fetch + verify the decoder/tokenizer bytes and hand pre-verified bytes in via
 // `init` (decoderUrl/decoderDataUrl may be Uint8Array). The worker never does a
 // second unverified model fetch. ORT WASM assets are still integrity-checked by

@@ -105,16 +105,9 @@ async function emitOrtManifest() {
 //   - /pcm-recorder-worklet.js: AudioWorklet.addModule() runs the worklet
 //     in the AudioWorkletGlobalScope with full access to raw PCM samples,
 //     and a tampered worklet would leak audio undetected.
-//   - /sherpa-onnx/*: the lazily-loaded speaker-diarization engine (a full
-//     ML runtime + its emscripten glue), fetch-verified by lib/diarizer.js
-//     before it is evaluated, same posture as the ORT wasm. Keyed by their
-//     `sherpa-onnx/<name>` subpath so they never collide with bare names.
 async function emitAssetIntegrity() {
   const targets = [
     'pcm-recorder-worklet.js',
-    'sherpa-onnx/sherpa-onnx-wasm-main-speaker-diarization.js',
-    'sherpa-onnx/sherpa-onnx-speaker-diarization.js',
-    'sherpa-onnx/sherpa-onnx-wasm-main-speaker-diarization.wasm',
   ];
   const manifest = {};
   for (const name of targets) {

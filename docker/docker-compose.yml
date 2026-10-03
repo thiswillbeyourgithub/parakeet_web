@@ -117,6 +117,11 @@ services:
       # Defaults to the shipped french_medical list. Per-link override:
       # ?phrase_boost=<name>. Neither overrides a saved choice.
       - VITE_PHRASE_BOOST_DEFAULT=${VITE_PHRASE_BOOST_DEFAULT:-french_medical}
+      # Speaker-diarization model repos (see env.example). Empty = the built-in
+      # HuggingFace defaults.
+      - VITE_DIARIZATION_REPO=${VITE_DIARIZATION_REPO:-}
+      - VITE_DIARIZATION_EMB_REPO=${VITE_DIARIZATION_EMB_REPO:-}
+      - VITE_DIARIZATION_EMB_FILE=${VITE_DIARIZATION_EMB_FILE:-}
       # Opt into the composed WASM decode pipeline (decode worker running
       # alongside the encode pool). Unset leaves the decode worker WebGPU-only,
       # which is the default because composed measured as a wash on wall clock.

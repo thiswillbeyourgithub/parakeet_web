@@ -55,19 +55,17 @@ function loadManifest() {
 
 /**
  * Fetch a loose runtime asset and sha384-verify its bytes against the
- * build-time pin before the caller evaluates them. Shared by
- * `verifiedAddModule` (the PCM worklet) and `lib/diarizer.js` (the
- * lazily-loaded sherpa diarization engine, a second ML runtime that must
- * not be evaluated unverified).
+ * build-time pin before the caller evaluates them. `verifiedAddModule` (the
+ * PCM worklet) is built on it.
  *
  * Same fall-open-in-dev / hard-fail-in-prod policy as the worklet path: a
  * production build with no pin (or no WebCrypto) throws an IntegrityError;
  * a dev build warns and returns the unverified bytes so the vite dev
  * server and integration tests still work.
  *
- * @param {string} path absolute same-origin path (e.g. '/sherpa-onnx/x.wasm')
+ * @param {string} path absolute same-origin path (e.g. '/pcm-recorder-worklet.js')
  * @param {string} [manifestKey] key in asset-integrity.json; defaults to the
- *   basename, but diarization assets are pinned under 'sherpa-onnx/<name>'.
+ *   basename.
  * @returns {Promise<{ bytes: Uint8Array, blob: Blob, verified: boolean }>}
  */
 export async function fetchVerifiedAsset(path, manifestKey = path.split('/').pop()) {
@@ -100,7 +98,7 @@ export async function fetchVerifiedAsset(path, manifestKey = path.split('/').pop
  * The verification itself is `fetchVerifiedAsset`; this function only adds
  * the blob-URL handoff. It used to inline its own copy of the manifest
  * lookup, hard-fail branch, fetch, hash, compare and IntegrityError throw,
- * so the worklet's pin and the sherpa engine's pin could drift apart.
+ * which could drift apart from the shared one.
  *
  * @param {AudioWorklet} audioWorklet
  * @param {string} path absolute path (e.g. '/pcm-recorder-worklet.js')

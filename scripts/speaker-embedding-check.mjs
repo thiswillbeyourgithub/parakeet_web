@@ -1,7 +1,8 @@
 // Validation spike for cross-recording speaker matching (session-only feature).
 //
-// The vendored sherpa-onnx diarization WASM returns only {start,end,speaker}
-// segments, never embeddings, and does not export the embedding-extractor API.
+// Written when diarization ran on sherpa-onnx's WASM build, which returned only
+// {start,end,speaker} segments, never embeddings (the Sortformer that replaced
+// it numbers speakers per recording only, so the same need remains).
 // To label the same voice with the same name across recordings we must produce
 // our own CAM++ speaker embeddings. CAM++ takes 80-dim kaldi fbank features
 // (input x=[N,T,80] -> embedding=[N,192], feature_normalize_type=global-mean),
