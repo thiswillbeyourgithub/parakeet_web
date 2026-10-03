@@ -17,10 +17,11 @@
 // Built with Claude Code.
 
 import { useState, useRef, useEffect } from 'react';
-import { runDiarization, cancelDiarization, createDiarizerClient } from '../lib/diarizer.js';
+import { runDiarization, cancelDiarization } from '../lib/diarizer.js';
 import { findSilenceCuts, excisePcm, remapSegments } from '../lib/silenceCut.js';
-import { shouldPiecewise, runPiecewiseDiarization } from '../lib/diarizePiecewise.js';
 import { getDiarizationModels } from '../lib/diarizationModels.js';
+import { diarizationPrecision } from '../lib/diarizationFiles.js';
+import { probsToSegments } from '../../../src/sortformer.js';
 import { assignSpeakersToWords, groupWordsIntoTurns, canonicalizeTurns } from '../lib/speakerAssign.js';
 import { embedSpeakers } from '../lib/speakerEmbedding.js';
 import { autoNameSpeakers, DEFAULT_MATCH_THRESHOLD } from '../lib/speakerMatch.js';
@@ -37,6 +38,10 @@ import { transcribeErrorMessage } from '../lib/format.js';
  * @param {string} deps.transcriptDisplayMode           the global default display (an auto-run trigger).
  * @param {(id:string)=>string} deps.getEntryBase       effective base view for an entry.
  * @param {(id:string, base:string)=>void} deps.setEntryBase
+ * @param {string} deps.backend                         app backend; diarization follows it (WASM worker or WebGPU).
+ * @param {boolean|null} deps.webgpuShaderF16           adapter probe, picks the fp16 or fp32 step on WebGPU.
+ * @param {number} deps.cpuThreads                      WASM thread budget for the diarization worker.
+ * @param {string} [deps.ortVariant]                    the main thread's ORT runtime, mirrored into the worker.
  */
 export function useDiarization({
   t,
@@ -48,6 +53,10 @@ export function useDiarization({
   transcriptDisplayMode,
   getEntryBase,
   setEntryBase,
+  backend,
+  webgpuShaderF16,
+  cpuThreads,
+  ortVariant,
 }) {
   // Speaker diarization (optional "Speakers" view). diarizationCache maps an
   // entry id -> its [{start,end,speaker}] segments; diarizingId is the entry a
@@ -55,9 +64,8 @@ export function useDiarization({
   const [diarizationCache, setDiarizationCache] = useState({});
   const [diarizingId, setDiarizingId] = useState(null);
   // Progress of the in-flight diarization (the one on diarizingId), or null.
-  // Only the long "piecewise" path can report progress (a single sherpa
-  // process() is one synchronous WASM call with no intra-run signal); short
-  // clips stay a bare spinner. Shape: {phase:'diarize'|'embed', done, total}.
+  // Shape: {phase:'diarize'|'embed', done, total}: one 'diarize' tick per
+  // Sortformer chunk, then 'embed' while the speakers' voices are embedded.
   const [diarProgress, setDiarProgress] = useState(null);
   // Set to a human-readable reason when the diarization MODELS fail to download
   // (background prefetch or an on-demand run). Non-null greys out the Speakers
@@ -73,8 +81,9 @@ export function useDiarization({
   // the start of loadModel.
   const diarPrefetchDoneRef = useRef(false);
   // Default speaker count for diarization: 0 (or any value <= 0) means
-  // auto-detect (threshold clustering); a positive integer forces that many
-  // speakers. Persisted; the per-entry kebab can override it for one entry.
+  // whatever the model detects (up to its 8 slots); a positive integer is a
+  // CAP, the least active speakers beyond it are merged into the likeliest
+  // kept one (probsToSegments). Persisted; the per-entry kebab can override it.
   const [diarizationNumSpeakers, setDiarizationNumSpeakers] = useState(0);
   // Per-entry speaker-count override (id -> count) set from the entry's kebab;
   // re-segments that entry on change. Falls back to diarizationNumSpeakers.
@@ -116,6 +125,11 @@ export function useDiarization({
   // immutable, so a numSpeakers-change re-run of diarizeEntry reuses these instead
   // of rescanning the whole clip's energy (the scan is O(N) over every sample).
   const silenceCutsRef = useRef({});
+  // The network's output per entry (id -> {probs, map}): per-frame speaker
+  // probabilities on the condensed timeline plus the excision map. A speaker
+  // count change only re-segments these (milliseconds) instead of re-running
+  // the model. Memory: 8 floats per 10 ms frame, ~11 MB for an hour.
+  const diarProbsRef = useRef({});
 
   // Mirror the latest embeddings/names into refs so a run that started earlier
   // still matches against entries diarized or renamed since it began.
@@ -126,6 +140,19 @@ export function useDiarization({
   // Offline diarization needs the whole clip's PCM, which lives only on
   // in-memory entries (trans.pcm), so this is gated the same way as
   // "Transcribe again": unavailable on entries restored after a reload.
+  // The download request: the step precision the current backend runs, from
+  // the same model source (and the same HuggingFace preflight answer) as the
+  // ASR weights. localFirst REORDERS rather than skips, so a mirror that does
+  // not carry these files still falls back to HuggingFace.
+  function modelRequest() {
+    return {
+      precision: diarizationPrecision(backend, webgpuShaderF16),
+      localBaseUrl: '/models',
+      localOnly: forceLocalFallback,
+      localFirst: localFirstRef.current,
+    };
+  }
+
   async function diarizeEntry(trans, numSpeakersOverride) {
     if (!trans?.pcm || !trans.words?.length || diarizingId) return;
     // Per-entry kebab override wins; else the sidebar default. <= 0 means auto.
@@ -134,109 +161,61 @@ export function useDiarization({
       : (diarizationNumByEntry[trans.id] ?? diarizationNumSpeakers);
     setDiarizingId(trans.id);
     setDiarProgress(null);
-    // Load the models first, in their own guard: a download failure here is not
-    // a transcript-level error, so instead of a browser alert we record the
-    // reason (greys out the Speakers controls with a hover tooltip) and bail.
-    let models;
-    try {
-      models = await getDiarizationModels({
-        localBaseUrl: '/models',
-        localOnly: forceLocalFallback,
-        // Same preflight answer the ASR weights use. These models live in their
-        // own repos and had their own HF-first order, so on a network that
-        // blocks HuggingFace they went on paying the connect timeout after the
-        // ASR load had learned better. localFirst REORDERS rather than skips,
-        // so a mirror that does not carry them still falls back to HuggingFace.
-        localFirst: localFirstRef.current,
-      });
-      setDiarizationModelError(null);
-    } catch (e) {
-      console.error('[Diarize] model load failed:', e);
-      setDiarizationModelError(transcribeErrorMessage(e));
-      setDiarizingId(null);
-      return;
-    }
     const t0 = performance.now();
+    const DIAR_SR = 16000;
+    // A count change on an entry already through the network re-segments its
+    // cached probabilities; only a first run needs the models at all.
+    let cached = diarProbsRef.current[trans.id];
+    let models = null;
+    if (!cached) {
+      // Load the models first, in their own guard: a download failure here is
+      // not a transcript-level error, so instead of a browser alert we record
+      // the reason (greys out the Speakers controls with a hover tooltip) and bail.
+      try {
+        models = await getDiarizationModels(modelRequest());
+        setDiarizationModelError(null);
+      } catch (e) {
+        console.error('[Diarize] model load failed:', e);
+        setDiarizationModelError(transcribeErrorMessage(e));
+        setDiarizingId(null);
+        return;
+      }
+    }
     try {
-      // trans.pcm is a mono 16 kHz Float32Array (see the transcribeChunked call,
-      // which hardcodes 16000). Excise long silences so the diarizer sees a
-      // shorter clip; segments come back on the CONDENSED timeline and are remapped
-      // to the original before anything downstream (embeddings, word assignment,
-      // persistence) sees them. Only bother when there is a meaningful amount to
-      // remove, so short/dense clips take exactly the old path.
-      const DIAR_SR = 16000;
-      let cuts = silenceCutsRef.current[trans.id];
-      if (!cuts) {
-        cuts = findSilenceCuts(trans.pcm, DIAR_SR);
-        silenceCutsRef.current[trans.id] = cuts;
-      }
-      const totalExcised = cuts.reduce((s, c) => s + (c.end - c.start), 0);
-      const worthExcising = totalExcised >= Math.max(5 * DIAR_SR, 0.10 * trans.pcm.length);
-      const { pcm: diarPcm, map } = worthExcising
-        ? excisePcm(trans.pcm, cuts, DIAR_SR)
-        : { pcm: trans.pcm, map: null };
-      if (worthExcising) {
-        console.log(`[Diarize] excised ${(totalExcised / DIAR_SR).toFixed(1)}s of silence (${cuts.length} runs); diarizing ${(diarPcm.length / DIAR_SR).toFixed(1)}s of ${(trans.pcm.length / DIAR_SR).toFixed(1)}s`);
-      }
-      // numSpeakers <= 0 -> auto-detect (threshold-based); > 0 forces a count.
-      const numSpk = requested > 0 ? requested : -1;
-      const durSec = diarPcm.length / DIAR_SR;
-      const piecewise = shouldPiecewise(durSec, numSpk);
-      console.log(`[Diarize] start: ${durSec.toFixed(1)}s audio, ${numSpk > 0 ? `${numSpk} speakers (fixed)` : 'auto speaker count'}, ${piecewise ? 'piecewise' : 'single'} path`);
-      const singleRun = () => runDiarization(diarPcm, {
-        segmentationBytes: models.segmentationBytes,
-        embeddingBytes: models.embeddingBytes,
-        numSpeakers: numSpk,
-      });
-      let rawSegments;
-      if (!piecewise) {
-        rawSegments = await singleRun();
-      } else {
-        // Long, auto-detect clip: diarize silence-aligned pieces on a small pool of
-        // workers concurrently, then reconcile speaker labels across pieces. Pool is
-        // capped so K workers never oversubscribe the box (each runs its own ORT
-        // threads), and the raised per-worker thread default (2a: cores-1) is DIVIDED
-        // across the pool. Any non-cancel failure falls back to one full run (the
-        // single path stays ground truth); a user cancel unwinds without a fallback.
-        const hc = navigator.hardwareConcurrency || 4;
-        const poolSize = Math.max(1, Math.min(3, Math.floor((hc - 1) / 4)));
-        const perWorkerThreads = Math.max(1, Math.floor((hc - 1) / poolSize));
-        const clients = Array.from({ length: poolSize }, () => createDiarizerClient());
-        try {
-          console.log(`[Diarize] piecewise: ${poolSize} workers x ${perWorkerThreads} threads over ${(diarPcm.length / DIAR_SR).toFixed(0)}s`);
-          rawSegments = await runPiecewiseDiarization({
-            pcm: diarPcm,
-            sampleRate: DIAR_SR,
-            clients,
-            embed: embedSpeakers,
-            embeddingBytes: models.embeddingBytes,
-            diarOpts: {
-              segmentationBytes: models.segmentationBytes,
-              embeddingBytes: models.embeddingBytes,
-              numThreads: perWorkerThreads,
-            },
-            onProgress: ({ phase, done, total }) => {
-              setDiarProgress({ phase, done, total });
-              if (phase === 'diarize' && done > 0) {
-                console.log(`[Diarize] piece ${done}/${total} diarized`);
-              } else if (phase === 'embed' && done === 0) {
-                console.log(`[Diarize] reconciling speakers across ${total} pieces`);
-              }
-            },
-          });
-        } catch (err) {
-          if (err && err.cancelled) throw err; // user cancelled: do NOT fall back
-          console.warn('[Diarize] piecewise failed, falling back to single run:', err);
-          setDiarProgress(null); // single run reports no progress; drop the stale %
-          rawSegments = await singleRun();
-        } finally {
-          for (const c of clients) c.dispose();
+      if (!cached) {
+        // trans.pcm is a mono 16 kHz Float32Array (see the transcribeChunked
+        // call, which hardcodes 16000). Excise long silences so the network sees
+        // a shorter clip; segments come back on the CONDENSED timeline and are
+        // remapped to the original before anything downstream (embeddings, word
+        // assignment, persistence) sees them. Only bother when there is a
+        // meaningful amount to remove, so short/dense clips take the plain path.
+        let cuts = silenceCutsRef.current[trans.id];
+        if (!cuts) {
+          cuts = findSilenceCuts(trans.pcm, DIAR_SR);
+          silenceCutsRef.current[trans.id] = cuts;
         }
+        const totalExcised = cuts.reduce((s, c) => s + (c.end - c.start), 0);
+        const worthExcising = totalExcised >= Math.max(5 * DIAR_SR, 0.10 * trans.pcm.length);
+        const { pcm: diarPcm, map } = worthExcising
+          ? excisePcm(trans.pcm, cuts, DIAR_SR)
+          : { pcm: trans.pcm, map: null };
+        if (worthExcising) {
+          console.log(`[Diarize] excised ${(totalExcised / DIAR_SR).toFixed(1)}s of silence (${cuts.length} runs); diarizing ${(diarPcm.length / DIAR_SR).toFixed(1)}s of ${(trans.pcm.length / DIAR_SR).toFixed(1)}s`);
+        }
+        console.log(`[Diarize] start: ${(diarPcm.length / DIAR_SR).toFixed(1)}s audio, Sortformer ${models.precision} on ${backend}`);
+        const out = await runDiarization(diarPcm, {
+          models, backend, numThreads: cpuThreads, ortVariant,
+          onProgress: ({ done, total }) => setDiarProgress({ phase: 'diarize', done, total }),
+        });
+        cached = { out, map };
+        diarProbsRef.current[trans.id] = cached;
       }
+      // requested <= 0: every speaker the model found; > 0: a cap.
+      const rawSegments = probsToSegments(cached.out, { maxSpeakers: requested > 0 ? requested : 0 });
       // Remap condensed-timeline segments back to the original timeline (identity
       // when nothing was excised). remapSegments splits any segment that bridges an
       // excised gap so it never inflates across the removed silence.
-      const segments = map ? remapSegments(rawSegments, map, DIAR_SR) : rawSegments;
+      const segments = cached.map ? remapSegments(rawSegments, cached.map, DIAR_SR) : rawSegments;
       const speakerCount = new Set(segments.map(s => s.speaker)).size;
       console.log(`[Diarize] done in ${((performance.now() - t0) / 1000).toFixed(1)}s: ${speakerCount} speaker(s), ${segments.length} segments`);
       setDiarizationCache(prev => ({ ...prev, [trans.id]: segments }));
@@ -247,6 +226,9 @@ export function useDiarization({
       // recording. The diarized view already showed above, so an embedding
       // failure (or no prior names) is non-fatal: it just means no auto-naming.
       try {
+        setDiarProgress({ phase: 'embed', done: 0, total: 1 });
+        // the CAM++ bytes ride in the same memoised download as the network's
+        models = models || await getDiarizationModels(modelRequest());
         const embs = await embedSpeakers(trans.pcm, segments, models.embeddingBytes);
         if (Object.keys(embs).length > 0) {
           // Read the freshest embeddings/names via refs (other entries may have
@@ -276,8 +258,9 @@ export function useDiarization({
     }
   }
 
-  // Abort the in-flight diarization (hard-terminates its worker). The pending
-  // runDiarization rejects with `cancelled`, unwinding diarizeEntry quietly. When
+  // Abort the in-flight diarization (terminates the WASM worker, or stops the
+  // WebGPU loop at the next chunk). The pending runDiarization rejects with
+  // `cancelled`, unwinding diarizeEntry quietly. When
   // nothing is cached to show, also drop the entry out of 'diarized' mode so the
   // auto-diarize effect doesn't immediately restart it (e.g. when "Speakers" is
   // the default display); a re-segmentation keeps its previous cached view.
@@ -302,21 +285,26 @@ export function useDiarization({
   }, [transcriptions, entryDisplayModes, transcriptDisplayMode, diarizationCache, diarizingId]);
 
   // Background prefetch: once the ASR model has finished loading, warm the
-  // ~34 MB of diarization models into the hub cache so the first Speakers run
-  // is instant. Fire-and-forget so it never blocks recording or transcription;
-  // getDiarizationModels is memoised, so this dedups with the on-click download
-  // (and any earlier prefetch) and only fetches once. A failed prefetch is
-  // non-fatal: the models then download lazily on the first Speakers click.
+  // diarization models into the hub cache so the first Speakers run does not
+  // wait on a download. Only when Speakers is the default display: the
+  // Sortformer step is 100 MB (int8) to 396 MB (fp32 on WebGPU), too much to
+  // fetch for every visitor who never diarizes (the old sherpa pair was 34 MB
+  // and was always prefetched). Fire-and-forget so it never blocks recording
+  // or transcription; getDiarizationModels is memoised, so this dedups with the
+  // on-click download. A failed prefetch is non-fatal: the models then
+  // download lazily on the first Speakers click.
   useEffect(() => {
     if (status !== 'modelReady' || diarPrefetchDoneRef.current) return;
+    if (!String(transcriptDisplayMode).includes('diarized')) return;
     diarPrefetchDoneRef.current = true;
-    getDiarizationModels({ localBaseUrl: '/models', localOnly: forceLocalFallback, localFirst: localFirstRef.current })
+    getDiarizationModels(modelRequest())
       .then(() => setDiarizationModelError(null))
       .catch((e) => {
         console.warn('[Diarize] background model prefetch failed (non-fatal):', e);
         setDiarizationModelError(transcribeErrorMessage(e));
       });
-  }, [status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, transcriptDisplayMode]);
 
   // Gap-free default speaker label for a display position: ordinal words for the
   // first twelve speakers ("First".."Twelfth"), then "Speaker N" beyond that.

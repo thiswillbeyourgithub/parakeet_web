@@ -1,257 +1,185 @@
-// Main-thread client for offline speaker diarization. The heavy, synchronous
-// sherpa-onnx WASM `process()` runs in a dedicated Web Worker (diarizer.worker.js)
-// so it never freezes the UI; this module fetches + integrity-verifies the engine
-// and model bytes, spins up that worker, and brokers the request/response.
+// Main-thread client for offline speaker diarization with the Streaming
+// Sortformer (app/src/sortformer.js). It returns per-frame speaker
+// probabilities, not segments: the caller turns those into turns with
+// probsToSegments and keeps them, so changing the speaker count re-segments
+// instantly instead of re-running the network.
 //
-// sherpa-onnx ships a self-contained WASM build that bundles its OWN ONNX Runtime
-// (compiled C++), separate from the app's onnxruntime-web. We load it LAZILY: the
-// ~11 MB engine and the ~34 MB of models are fetched only when the user actually
-// diarizes, so they never touch the transcription path.
+// Where it runs follows the app backend (owner decision):
+//   WASM    a dedicated module worker (diarize.worker.js) so a long clip never
+//           freezes the UI. The worker is kept between runs and rebuilt only
+//           when the model bytes change (another precision) or after a cancel.
+//   WebGPU  the main thread, under the html.gpu-run animation pause (gpuRun.js).
+//           A worker's WebGPU awaits stall even harder than the page's (measured
+//           ~3x worse for the ASR encoder, see CLAUDE.md), so there is no worker
+//           to gain. A GPU failure surfaces as an error; it is not silently
+//           retried on the CPU.
 //
-// Loading is integrity-preserving, the same posture as the ORT wasm and the PCM
-// worklet: every byte the browser evaluates (emscripten glue, JS API wrapper,
-// wasm binary) is sha384-verified against the build-time pin in
-// /.well-known/asset-integrity.json before it runs (see asset-integrity.js +
-// postbuild.mjs). We verify HERE, on the main thread, then hand the verified
-// bytes to the worker, which evaluates only those bytes (importScripts of the
-// glue/wrapper from blob: URLs, wasm via Module.wasmBinary) -- never a second,
-// unverified fetch. pthread workers spawn from the verified glue blob.
+// Cancel: the WASM worker is terminated (an ORT run cannot be interrupted any
+// other way); the WebGPU loop stops at the next chunk boundary. Either way the
+// pending run rejects with an error carrying `cancelled === true`.
 //
-// The models are NOT vendored: the caller passes the segmentation + embedding
-// ONNX bytes (downloaded through the hub, see App.jsx wiring) and the worker
-// writes them into the WASM in-memory FS. To avoid re-cloning ~34 MB every run we
-// send the model bytes only when they CHANGE; a count-change re-run reuses the
-// worker's cached diarizer and only re-applies the clustering knobs.
-//
-// CLIENTS. A page usually needs one worker, but parallel piecewise diarization
-// (diarizePiecewise.js) runs a small POOL of workers concurrently. So the state is
-// factored into createDiarizerClient() (one worker's worth), and the exported
-// runDiarization/cancelDiarization delegate to a lazily-built default client. The
-// ~11 MB engine bytes are verified ONCE per page and shared by every client
-// (verify once, spawn many). cancelDiarization() aborts EVERY live client.
+// Built with Claude Code.
 
-import { fetchVerifiedAsset } from './asset-integrity.js';
 import { workerReady } from './workerInit.js';
+import { acquireGpuRun } from './gpuRun.js';
+import { openSortformer } from './sortformerSession.js';
+import { loadOrtModule } from '../../../src/backend.js';
+import { diarizeProbs } from '../../../src/sortformer.js';
 
-const BASE = '/sherpa-onnx/';
-const GLUE = 'sherpa-onnx-wasm-main-speaker-diarization.js';
-const WRAPPER = 'sherpa-onnx-speaker-diarization.js';
-const WASM = 'sherpa-onnx-wasm-main-speaker-diarization.wasm';
-
-/** The sample rate the engine expects (16 kHz). For callers that resample. */
-export const DIARIZATION_SAMPLE_RATE = 16000;
-
-// The ~11 MB engine bytes are fetched + sha384-verified ONCE per page and shared
-// by every client. On failure the promise is cleared so a later run can retry.
-let _engineBytesPromise = null;
-function engineBytes() {
-  if (_engineBytesPromise) return _engineBytesPromise;
-  _engineBytesPromise = Promise.all([
-    fetchVerifiedAsset(BASE + GLUE, `sherpa-onnx/${GLUE}`),
-    fetchVerifiedAsset(BASE + WRAPPER, `sherpa-onnx/${WRAPPER}`),
-    fetchVerifiedAsset(BASE + WASM, `sherpa-onnx/${WASM}`),
-  ]).then(([glue, wrapper, wasm]) => ({ glue: glue.bytes, wrapper: wrapper.bytes, wasm: wasm.bytes }))
-    .catch((err) => { _engineBytesPromise = null; throw err; });
-  return _engineBytesPromise;
+function cancelledError() {
+  const err = new Error('diarization cancelled');
+  err.cancelled = true;
+  return err;
 }
 
-// Every live client, so cancelDiarization() can abort the default AND any
-// piecewise-pool clients in one call.
-const _clients = new Set();
+// ---- WASM: one worker, one run at a time --------------------------------
 
-/**
- * Create one diarizer client: a single lazily-spawned worker with its own model
- * cache and single in-flight run. Reusable across runs (a cancel resets it and the
- * next run rebuilds). Registered for global cancel until dispose()d.
- *
- * @returns {{run:(pcm16k:Float32Array, opts:object)=>Promise<Array>, cancel:()=>void, dispose:()=>void}}
- */
-export function createDiarizerClient() {
-  let worker = null;
-  let readyPromise = null;      // Promise<Worker>, resolves when initialised
-  let lastModelIdentity = null; // identity of the models the live worker holds
-  let runId = 0;
-  let pending = null;           // { id, resolve, reject } for the single in-flight run
-  let busy = false;             // set from run()'s first line, so the re-entry guard
-                                // below cannot be raced through the awaits
+let worker = null;
+let workerReadyPromise = null; // Promise<Worker>
+let workerModels = null;       // the models object the live worker was built from
+let pending = null;            // { id, resolve, reject, onProgress }
+let runId = 0;
+let cancelGen = 0;             // bumped by cancelDiarization, so a cancel during
+                               // worker init still stops the run it belongs to
 
-  function reset() {
-    if (worker) { try { worker.terminate(); } catch (_) { /* ignore */ } }
-    worker = null;
-    readyPromise = null;
-    lastModelIdentity = null;
-  }
+function resetWorker() {
+  if (worker) { try { worker.terminate(); } catch (_) { /* ignore */ } }
+  worker = null;
+  workerReadyPromise = null;
+  workerModels = null;
+}
 
-  // Reject the in-flight run, if any, and tear the worker down so the next run
-  // rebuilds. Used by the worker `error` handler below.
-  function failPending(message) {
-    const p = pending;
-    pending = null;
-    reset();
-    if (p) p.reject(new Error(message));
-  }
+function failPending(err) {
+  const p = pending;
+  pending = null;
+  resetWorker();
+  if (p) p.reject(err);
+}
 
-  // Spawn + initialise the worker from the shared verified engine bytes.
-  // Idempotent: concurrent callers share the same in-flight promise.
-  function ensureWorker() {
-    if (readyPromise) return readyPromise;
-    readyPromise = (async () => {
-      const { glue, wrapper, wasm } = await engineBytes();
-      const w = new Worker(new URL('./diarizer.worker.js', import.meta.url), { type: 'classic' });
-      worker = w;
-      // Route run results to the matching in-flight run by id. Init messages
-      // ('ready', and errors carrying no id) belong to the handshake below.
-      w.onmessage = (ev) => {
-        const m = ev.data || {};
-        if ((m.type === 'result' || m.type === 'error') && pending && m.id === pending.id) {
-          const p = pending; pending = null;
-          if (m.type === 'result') p.resolve(m.segments);
-          else p.reject(new Error(m.message));
-        }
-      };
-      // PERSISTENT, unlike the handshake's own error listener, which is removed
-      // once init settles. A worker that dies AFTER init (uncaught throw, WASM
-      // OOM, pthread failure) posts no message at all, so without this the run's
-      // `pending` slot never settles and diarization hangs forever with no
-      // watchdog anywhere in the path.
-      w.onerror = (e) => failPending((e && e.message) || 'diarizer worker error');
-      // Send the verified bytes; the worker copies them (no transfer) so a later
-      // rebuild can re-init cleanly. workerReady() is the same handshake the
-      // model workers use: it folds the init error message, the worker `error`
-      // event and a watchdog into one promise that always settles.
-      const ok = await workerReady(
-        w,
-        { type: 'init', glueBytes: glue, wrapperBytes: wrapper, wasmBytes: wasm },
-        { label: 'Diarizer' },
-      );
-      if (!ok) throw new Error('diarizer worker init failed');
-      return w;
-    })().catch((err) => {
-      // Failed init: tear down so a retry rebuilds from scratch.
-      reset();
-      throw err;
-    });
-    return readyPromise;
-  }
-
-  async function run(pcm16k, {
-    segmentationBytes,
-    embeddingBytes,
-    numSpeakers = -1,
-    threshold = 0.5,
-    minDurationOn = 0.3,
-    minDurationOff = 0.5,
-    numThreads,
-  } = {}) {
-    if (!(pcm16k instanceof Float32Array) || pcm16k.length === 0) {
-      throw new Error('runDiarization: pcm16k must be a non-empty Float32Array');
-    }
-    if (!segmentationBytes || !embeddingBytes) {
-      throw new Error('runDiarization: segmentationBytes and embeddingBytes are required');
-    }
-    // One worker, one `pending` slot: a second concurrent run() on the same
-    // client would overwrite it and orphan the first caller's promise FOREVER
-    // (nothing ever settles it). The piecewise pool is safe because its
-    // clientLoop awaits each run before dispatching the next, but the default
-    // client backing runDiarization() is shared by every caller of it, so fail
-    // loudly instead of hanging. Set synchronously, before any await, or two
-    // callers race straight past the check.
-    if (busy) {
-      throw new Error('diarizer client busy: one run at a time (use createDiarizerClient for a parallel run)');
-    }
-    busy = true;
-    try {
-      const w = await ensureWorker();
-
-      // Send the (large) model bytes only when they differ from what the worker
-      // already holds; a count-change re-run then ships just the pcm + new knobs.
-      const identity = `${segmentationBytes.byteLength}:${embeddingBytes.byteLength}`;
-      const sendModels = identity !== lastModelIdentity;
-
-      const id = ++runId;
-      const opts = { numSpeakers, threshold, minDurationOn, minDurationOff, numThreads };
-      const settled = new Promise((resolve, reject) => { pending = { id, resolve, reject }; });
-
-      // Copy the pcm so the caller keeps its buffer (App.jsx reuses trans.pcm across
-      // re-segmentations, and the piecewise pool passes SUBARRAY VIEWS of one shared
-      // buffer); transfer the throwaway copy to skip the structured clone. Never
-      // transfer the caller's buffer: it would detach every other piece's view.
-      const pcmCopy = pcm16k.slice();
-      const payload = { type: 'run', id, pcm: pcmCopy, opts };
-      if (sendModels) {
-        payload.segBytes = segmentationBytes;
-        payload.embBytes = embeddingBytes;
+function ensureWorker(models, { numThreads, ortVariant }) {
+  // getDiarizationModels memoises one object per precision, so identity says
+  // whether the live worker holds these exact bytes.
+  if (workerReadyPromise && workerModels === models) return workerReadyPromise;
+  resetWorker();
+  workerModels = models;
+  workerReadyPromise = (async () => {
+    const w = new Worker(new URL('./diarize.worker.js', import.meta.url), { type: 'module' });
+    worker = w;
+    w.onmessage = (ev) => {
+      const m = ev.data || {};
+      if (!pending || m.id !== pending.id) return; // init traffic belongs to workerReady
+      if (m.type === 'progress') {
+        pending.onProgress?.({ done: m.done, total: m.total });
+      } else if (m.type === 'result') {
+        const p = pending; pending = null;
+        p.resolve({ probs: new Float32Array(m.probs), numFrames: m.numFrames, numSpeakers: m.numSpeakers, frameSec: m.frameSec });
+      } else if (m.type === 'error') {
+        const p = pending; pending = null;
+        p.reject(new Error(m.message));
       }
-      w.postMessage(payload, [pcmCopy.buffer]);
-
-      const segments = await settled;
-      // Mark models as held only AFTER success: a cancel/terminate before completion
-      // discards the worker, so the next run must re-send them.
-      lastModelIdentity = identity;
-      return segments;
-    } finally {
-      busy = false;
-    }
-  }
-
-  // Abort an in-flight run (hard-terminate the worker, reject pending as
-  // cancelled). The client stays reusable: the next run() rebuilds the worker.
-  function cancel() {
-    const p = pending;
-    pending = null;
-    reset();
-    if (p) {
-      const err = new Error('diarization cancelled');
-      err.cancelled = true;
-      p.reject(err);
-    }
-  }
-
-  // cancel() + drop from the global registry. Used by the piecewise pool to retire
-  // its extra clients when a run finishes.
-  function dispose() {
-    cancel();
-    _clients.delete(client);
-  }
-
-  const client = { run, cancel, dispose };
-  _clients.add(client);
-  return client;
+    };
+    // Persistent: a worker that dies after init (WASM OOM, uncaught throw)
+    // posts no message, so without this the run would hang forever.
+    w.onerror = (e) => failPending(new Error((e && e.message) || 'diarization worker error'));
+    const ok = await workerReady(w, {
+      type: 'init',
+      embedBytes: models.embedBytes, stepBytes: models.stepBytes,
+      config: models.config, silenceEmbeds: models.silenceEmbeds,
+      numThreads, ortVariant,
+    }, { label: 'Diarize' });
+    if (!ok) throw new Error('diarization worker init failed');
+    return w;
+  })().catch((err) => { resetWorker(); throw err; });
+  return workerReadyPromise;
 }
 
-// Lazily-built default client backing the single-run convenience API.
-let _defaultClient = null;
-function defaultClient() {
-  if (!_defaultClient) _defaultClient = createDiarizerClient();
-  return _defaultClient;
+async function runInWorker(pcm16k, models, { numThreads, ortVariant, onProgress }) {
+  const gen = cancelGen;
+  const w = await ensureWorker(models, { numThreads, ortVariant });
+  if (gen !== cancelGen) throw cancelledError();
+  const id = ++runId;
+  const settled = new Promise((resolve, reject) => { pending = { id, resolve, reject, onProgress }; });
+  // Copy so the caller keeps its pcm (the entry reuses it), then transfer the copy.
+  const pcm = pcm16k.slice();
+  w.postMessage({ type: 'diarize', id, pcm: pcm.buffer }, [pcm.buffer]);
+  return settled;
 }
+
+// ---- WebGPU: main thread ------------------------------------------------
+
+let gpu = null; // { models, backend, sessionPromise }
+let gpuCancelled = false;
+
+function gpuSessions(models, backend) {
+  if (gpu && gpu.models === models && gpu.backend === backend) return gpu.sessionPromise;
+  const previous = gpu;
+  gpu = {
+    models, backend,
+    sessionPromise: (async () => {
+      if (previous) await previous.sessionPromise.then((s) => s.release(), () => {});
+      const ort = await loadOrtModule();
+      return openSortformer(ort, { backend, embedBytes: models.embedBytes, stepBytes: models.stepBytes, config: models.config });
+    })(),
+  };
+  const mine = gpu;
+  mine.sessionPromise.catch(() => { if (gpu === mine) gpu = null; });
+  return mine.sessionPromise;
+}
+
+async function runOnGpu(pcm16k, models, backend, onProgress) {
+  gpuCancelled = false;
+  const release = acquireGpuRun();
+  try {
+    const runner = await gpuSessions(models, backend);
+    return await diarizeProbs(pcm16k, {
+      config: models.config, silenceEmbeds: models.silenceEmbeds, ...runner,
+      onProgress: (p) => {
+        // throwing here stops chunkProbs between two chunks
+        if (gpuCancelled) throw cancelledError();
+        onProgress?.(p);
+      },
+    });
+  } finally {
+    release();
+  }
+}
+
+// ---- API ----------------------------------------------------------------
+
+let busy = false;
 
 /**
- * Run offline speaker diarization on 16 kHz mono Float32 PCM, in the worker.
+ * Speaker-activity probabilities for a whole clip.
  *
- * @param {Float32Array} pcm16k mono samples at 16 kHz
+ * @param {Float32Array} pcm16k  mono 16 kHz
  * @param {object} opts
- * @param {Uint8Array} opts.segmentationBytes pyannote segmentation-3.0 onnx
- * @param {Uint8Array} opts.embeddingBytes speaker-embedding (CAM++) onnx
- * @param {number} [opts.numSpeakers=-1] exact speaker count, or -1 to auto-detect
- * @param {number} [opts.threshold=0.5] clustering distance threshold (auto mode only)
- * @param {number} [opts.minDurationOn=0.3] drop speech turns shorter than this (s)
- * @param {number} [opts.minDurationOff=0.5] bridge silences shorter than this (s)
- * @param {number} [opts.numThreads] worker threads (default: cores - 1)
- * @returns {Promise<Array<{start:number,end:number,speaker:number}>>} segments
- *   sorted by start time; `speaker` is a 0-based integer label. Rejects with an
- *   error carrying `cancelled === true` when {@link cancelDiarization} aborts it.
+ * @param {object} opts.models  getDiarizationModels() result
+ * @param {string} opts.backend  the app backend; 'webgpu*' runs on the main thread
+ * @param {number} [opts.numThreads]  WASM worker threads
+ * @param {string} [opts.ortVariant]  the main thread's ORT runtime variant
+ * @param {(p:{done:number,total:number})=>void} [opts.onProgress]  per chunk
+ * @returns {Promise<{probs:Float32Array, numFrames:number, numSpeakers:number, frameSec:number}>}
  */
-export function runDiarization(pcm16k, opts = {}) {
-  return defaultClient().run(pcm16k, opts);
+export async function runDiarization(pcm16k, { models, backend, numThreads, ortVariant, onProgress }) {
+  if (!(pcm16k instanceof Float32Array) || pcm16k.length === 0) {
+    throw new Error('runDiarization: pcm16k must be a non-empty Float32Array');
+  }
+  // One pending slot per path: a second concurrent run would orphan the
+  // first caller's promise. Set before any await or two callers race past it.
+  if (busy) throw new Error('diarization already running: one run at a time');
+  busy = true;
+  try {
+    return String(backend).startsWith('webgpu')
+      ? await runOnGpu(pcm16k, models, backend, onProgress)
+      : await runInWorker(pcm16k, models, { numThreads, ortVariant, onProgress });
+  } finally {
+    busy = false;
+  }
 }
 
-/**
- * Abort every in-flight diarization. A synchronous `process()` cannot observe a
- * message mid-run, so each client hard-terminates its worker (killing the WASM
- * compute) and rejects its pending run with an error flagged `cancelled`. The next
- * {@link runDiarization} (and any new pool) lazily rebuilds.
- */
+/** Abort the in-flight diarization, if any (see the header for how). */
 export function cancelDiarization() {
-  for (const c of Array.from(_clients)) c.cancel();
+  cancelGen++;
+  gpuCancelled = true;
+  if (pending) failPending(cancelledError());
 }
