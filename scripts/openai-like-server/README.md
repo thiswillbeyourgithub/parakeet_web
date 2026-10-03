@@ -75,10 +75,9 @@ The directory must contain, for the precision you asked for:
 | `int8/encoder-model.int8.onnx` / `fp16/encoder-model.fp16.onnx` / `fp32/encoder-model.onnx` | `--quant int8\|fp16\|fp32` |
 | `int8/decoder_joint-model.int8.onnx` / … | `--decoder-quant` |
 | `vocab.txt` | always |
-| `model.onnx` (pyannote segmentation) | only with `--diarize` |
-| `*campplus*.onnx` (CAM++ embeddings) | only with `--diarize` |
+| `Nemotron-3-Diarization-web-onnx/` (the Sortformer repo) | only with `--diarize` |
 
-Each weight sits in the folder its precision names, which is how the model repo ships (`int8/`, `w4a8/`, `fp16/`, `fp32/`), with `vocab.txt` and the diarization models at the root. A folder with everything flat still works, and so does the older layout that kept the fp32 shards in `sharded/`: the lookup tries the precision folder, then the root, then `sharded/`.
+Each weight sits in the folder its precision names, which is how the model repo ships (`int8/`, `w4a8/`, `fp16/`, `fp32/`), with `vocab.txt` at the root and the diarization repo in its own subfolder. A folder with everything flat still works, and so does the older layout that kept the fp32 shards in `sharded/`: the lookup tries the precision folder, then the root, then `sharded/`.
 
 `--model-dir` also accepts a path to one of the `.onnx` files and walks up to the repo root, so `-m /models/int8/encoder-model.int8.onnx` works the way whisper.cpp's `-m` does.
 
@@ -123,7 +122,7 @@ Errors use the OpenAI envelope, always:
 
 **Honoured** (this pipeline's knobs, all optional): `beam_size`, `chunking`, `chunk_duration`, `overlap`, `snap_to_silence`, `phrase_boost`, `boost_strength`, `diarize`, `num_speakers`, `diarize_threshold`, `min_duration_on`, `min_duration_off`, `max_segment_chars`, `segment_gap`. Every one of them is also a launch flag; `--help` marks the overridable ones with `[field]`, and `--lock-params` turns all per-request overrides into 400s so one instance provably produces one kind of transcript.
 
-**Aliases** for other servers' spellings: `initial_prompt` and `hotwords` → `prompt`, `beam_width` → `beam_size`, `output` → `response_format`, `word_timestamps=true` → `timestamp_granularities=word`, `task=transcribe` (accepted; `translate` is a 501), `min_speakers`/`max_speakers` (only an exact `min == max` becomes `num_speakers`).
+**Aliases** for other servers' spellings: `initial_prompt` and `hotwords` → `prompt`, `beam_width` → `beam_size`, `output` → `response_format`, `word_timestamps=true` → `timestamp_granularities=word`, `task=transcribe` (accepted; `translate` is a 501), `max_speakers` → `num_speakers` (an explicit `num_speakers` wins), `min_speakers` (ignored with a warning: the count is found automatically and can only be capped).
 
 **Accepted and ignored** with a warning in the log, because they cannot change our output: `temperature_inc`, `encode`, `vad_filter`, `suppress_tokens`, `condition_on_previous_text`, `compression_ratio_threshold`, `logprob_threshold`, `no_speech_threshold`.
 
@@ -174,16 +173,15 @@ curl -F file=@consult.ogg -F phrase_boost=french_medical \
 
 An **extension**, not part of the OpenAI API: `diarize=true` adds a `speaker` integer to `verbose_json` words/segments, `[Speaker N]` prefixes in `srt`/`vtt`/`text`, and a `speakers` count.
 
-It runs the same vendored sherpa-onnx engine (pyannote segmentation + CAM++ embeddings) the browser app uses, so labels match. Two extra models are needed in the model directory:
+It runs NVIDIA's Streaming Sortformer (Nemotron-3-Diarization) through the browser app's own pipeline (`app/src/sortformer.js`) on the same ONNX Runtime as the transcription, so labels match the app and there is no second engine. It needs the web export of the model, by default in a subfolder of the model directory:
 
 ```bash
-hf download csukuangfj/sherpa-onnx-pyannote-segmentation-3-0   # model.onnx
-hf download csukuangfj/speaker-embedding-models                # *campplus*.onnx
+hf download Olicorne/Nemotron-3-Diarization-web-onnx --local-dir ./models/Nemotron-3-Diarization-web-onnx
 ```
 
-Point `--diarize-seg-model`/`--diarize-emb-model` elsewhere if you keep them apart. With `--diarize` they are checked at boot; without it, they are checked on the first `diarize=true` request and their absence is a 400 that names them.
+It is looked for as `<model-dir>/Nemotron-3-Diarization-web-onnx`, then `<model-dir>` itself, then a sibling folder of that name; `--diarize-model` points anywhere else. `--diarize-precision` picks the step graph: `int8` (the default, ~100 MB, made for the CPU), `fp32` (~400 MB) or `fp16` (GPU only, the CPU backends have no fp16 kernels). With `--diarize` the files are checked at boot; without it, on the first `diarize=true` request, whose 400 names what is missing. The sessions themselves load on the first diarizing request.
 
-Diarization is the dominant cost on long audio, so it never runs unless asked. `--num-speakers` pins an exact count; the default `-1` clusters with `--diarize-threshold` (lower = more speakers).
+Diarization never runs unless asked. The model tracks at most 4 speakers; `--num-speakers` CAPS the count (extra speakers are folded into the likeliest kept one), the default `-1` reports all of them. `--diarize-threshold` is the speech probability above which a frame counts as someone talking (lower = more speech kept).
 
 ## Backends and precision
 
@@ -283,7 +281,7 @@ curl -sS -F audio_file=@clip.wav -F output=txt http://127.0.0.1:8002/inference
 | `refusing to listen on the non-loopback address…` | See [Auth and exposure](#auth-and-exposure). |
 | `fp16/fp32 cannot load on the wasm backend` | Use `--ort node`, or `--quant int8`. |
 | 400 `unknown field "…"` | A typo, or a client field this server does not know. `--ignore-unsupported` only covers the *documented* rejected set, not unknown names. |
-| 400 `diarization is enabled but …` | The pyannote/CAM++ models are not in the model directory. |
+| 400 `diarization is enabled but …` | The Sortformer repo is not where the message says it looked; fetch it or set `--diarize-model`. |
 | Everything is slow | Check `--ort` (wasm is the portable default, not the fast one), `--beam-width` (8 costs real CPU), and whether diarization is on. `/health` shows the queue depth. |
 | `ffmpeg` errors on upload | The container installs it; outside the container put it on `PATH` or set `--ffmpeg`. |
 
@@ -316,6 +314,6 @@ curl -sS -F file=@test/fixtures/jfk.mp3 http://127.0.0.1:8099/v1/audio/transcrip
 | `lib/queue.mjs` | Single-slot FIFO queue with 429/504. |
 | `lib/wordlists.mjs` | Wordlist directory snapshot + trie cache. |
 | `lib/multipart.mjs` | Capped body read, multipart parse, temp-file handling. |
-| `lib/diarize.mjs`, `lib/diarize.worker.mjs` | sherpa-onnx diarization under Node (`worker_threads`). |
+| `lib/diarize.mjs` | Finds the Sortformer repo and runs `app/src/sortformer.js` on the server's ORT. |
 | `lib/errors.mjs`, `lib/constants.mjs` | OpenAI error envelope; shared constants. |
 | `Dockerfile`, `docker-compose.yml`, `env.example` | The hardened container. |

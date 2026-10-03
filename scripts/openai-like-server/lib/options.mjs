@@ -279,34 +279,39 @@ export const OPTIONS = [
   {
     key: 'diarize', cli: ['--diarize', '-di'], negCli: ['--no-diarize'], env: 'PARAKEET_DIARIZE',
     type: 'bool', def: false, req: 'diarize', section: 'Diarization',
-    help: 'Label speakers (sherpa-onnx pyannote segmentation + CAM++ embeddings). Adds a '
+    help: 'Label speakers (NVIDIA Streaming Sortformer, Nemotron-3-Diarization). Adds a '
         + '`speaker` field to verbose_json segments and "[Speaker N]" prefixes to srt/vtt/text. '
         + 'A documented extension: not part of the OpenAI API.',
   },
   {
-    key: 'diarizeSegModel', cli: ['--diarize-seg-model'], env: 'PARAKEET_DIARIZE_SEG_MODEL', type: 'string',
+    key: 'diarizeModel', cli: ['--diarize-model'], env: 'PARAKEET_DIARIZE_MODEL', type: 'string',
     def: '', section: 'Diarization',
-    help: 'Pyannote segmentation ONNX. Defaults to <model-dir>/model.onnx.',
+    help: 'Directory of Olicorne/Nemotron-3-Diarization-web-onnx. Defaults to the first of '
+        + '<model-dir>/Nemotron-3-Diarization-web-onnx, <model-dir>, or a sibling of <model-dir> '
+        + 'with that name, that holds diarization-config.json.',
   },
   {
-    key: 'diarizeEmbModel', cli: ['--diarize-emb-model'], env: 'PARAKEET_DIARIZE_EMB_MODEL', type: 'string',
-    def: '', section: 'Diarization',
-    help: 'CAM++ speaker-embedding ONNX. Defaults to the 3dspeaker_*campplus*.onnx found in <model-dir>.',
+    key: 'diarizePrecision', cli: ['--diarize-precision'], env: 'PARAKEET_DIARIZE_PRECISION', type: 'enum',
+    def: 'int8', choices: ['int8', 'fp16', 'fp32'], section: 'Diarization',
+    help: 'Sortformer step graph: int8 (~100 MB, CPU), fp32 (~400 MB), fp16 (~200 MB, GPU only: '
+        + 'the CPU backends have no fp16 kernels).',
   },
   {
     key: 'diarizeThreads', cli: ['--diarize-threads'], env: 'PARAKEET_DIARIZE_THREADS', type: 'int',
     def: 1, min: 1, max: 256, section: 'Diarization',
-    help: 'Threads for the diarization engine (it is the dominant cost on long audio).',
+    help: 'Intra-op threads for the diarization sessions on --ort node/cuda. The wasm backend has '
+        + 'one process-wide thread pool, sized by --threads.',
   },
   {
     key: 'numSpeakers', cli: ['--num-speakers'], env: 'PARAKEET_NUM_SPEAKERS', type: 'int',
     def: -1, min: -1, max: 100, req: 'num_speakers', section: 'Diarization',
-    help: 'Exact speaker count. -1 (default) clusters automatically using --diarize-threshold.',
+    help: 'Most speakers to report: when more are heard, the least active are folded into the '
+        + 'likeliest remaining one. -1 (default) = no cap (the model tracks at most 4).',
   },
   {
     key: 'diarizeThreshold', cli: ['--diarize-threshold'], env: 'PARAKEET_DIARIZE_THRESHOLD', type: 'float',
-    def: 0.5, min: 0.01, max: 2, req: 'diarize_threshold', section: 'Diarization',
-    help: 'Clustering distance threshold used when the speaker count is automatic. Lower = more speakers.',
+    def: 0.5, min: 0.01, max: 0.99, req: 'diarize_threshold', section: 'Diarization',
+    help: 'Speech probability above which a frame counts as a speaker talking. Lower = more speech kept.',
   },
   {
     key: 'minDurationOn', cli: ['--min-duration-on'], env: 'PARAKEET_MIN_DURATION_ON', type: 'float',
@@ -418,7 +423,7 @@ export const UNSUPPORTED = [
   {
     cli: ['-tdrz', '--tinydiarize'], req: ['tinydiarize'], takesValue: false,
     why: 'that is a whisper-specific model variant',
-    alt: '--diarize (sherpa-onnx pyannote + CAM++)',
+    alt: '--diarize (NVIDIA Streaming Sortformer)',
   },
   {
     cli: ['--suppress-nst', '--suppress-non-speech-tokens'], req: ['suppress_nst'], takesValue: false,

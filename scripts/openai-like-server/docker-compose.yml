@@ -17,7 +17,7 @@ services:
   parakeet-openai-api:
     build:
       # The repository ROOT: the server imports app/src, scripts/transcribe.mjs and
-      # the vendored ORT + sherpa-onnx engines instead of duplicating them.
+      # the vendored ORT engine instead of duplicating them.
       context: ../..
       dockerfile: scripts/openai-like-server/Dockerfile
       args:
@@ -48,8 +48,7 @@ services:
     read_only: true
     tmpfs:
       # Uploads land here before ffmpeg reads them (a random name per request,
-      # deleted immediately after), and the diarization engine writes its one
-      # CommonJS bootstrap copy here. Sized for the largest upload you allow:
+      # deleted immediately after). Sized for the largest upload you allow:
       # PARAKEET_MAX_UPLOAD_MB plus ~64 MB of headroom.
       # noexec/nosuid/nodev: this holds attacker-supplied bytes, so make sure they
       # can never be executed even if something else goes wrong.
@@ -167,10 +166,10 @@ services:
       - PARAKEET_BOOST_MINP=${PARAKEET_BOOST_MINP:-}
       - PARAKEET_DEPTH_SCALING=${PARAKEET_DEPTH_SCALING:-}
 
-      # ── diarization (needs model.onnx + *campplus*.onnx in the model dir) ────
+      # ── diarization (needs Nemotron-3-Diarization-web-onnx in the model dir) ─
       - PARAKEET_DIARIZE=${PARAKEET_DIARIZE:-false}
-      - PARAKEET_DIARIZE_SEG_MODEL=${PARAKEET_DIARIZE_SEG_MODEL:-}
-      - PARAKEET_DIARIZE_EMB_MODEL=${PARAKEET_DIARIZE_EMB_MODEL:-}
+      - PARAKEET_DIARIZE_MODEL=${PARAKEET_DIARIZE_MODEL:-}
+      - PARAKEET_DIARIZE_PRECISION=${PARAKEET_DIARIZE_PRECISION:-int8}
       - PARAKEET_DIARIZE_THREADS=${PARAKEET_DIARIZE_THREADS:-1}
       - PARAKEET_NUM_SPEAKERS=${PARAKEET_NUM_SPEAKERS:--1}
       - PARAKEET_DIARIZE_THRESHOLD=${PARAKEET_DIARIZE_THRESHOLD:-0.5}

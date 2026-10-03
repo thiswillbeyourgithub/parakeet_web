@@ -2,7 +2,7 @@
 //
 // WHY SERIALISE AT ALL: the pipeline holds ONE ParakeetModel, whose joiner
 // session is stateful (the TDT decoder feeds its own decoder state back in), and
-// one sherpa diarization engine. Two concurrent transcriptions would interleave
+// one pair of Sortformer diarization sessions. Two concurrent transcriptions would interleave
 // on the same session and corrupt both. So exactly one job runs at a time and
 // the rest wait in arrival order; parallelism, if wanted, comes from running
 // several containers behind a load balancer (documented in the README) rather
@@ -10,8 +10,7 @@
 //
 // TIMEOUT SEMANTICS, stated plainly because they are not what they look like:
 // the deadline covers queue wait + run, but a job that has already STARTED
-// cannot be cancelled -- neither an in-flight ORT `run()` nor sherpa's
-// synchronous `process()` is interruptible. So on expiry we stop waiting and
+// cannot be cancelled -- an in-flight ORT `run()` is not interruptible. So on expiry we stop waiting and
 // reject the caller (the route turns that into 504), while the job keeps running
 // to completion in the background and only then frees the slot. A waiting job,
 // by contrast, is genuinely removed and never runs.

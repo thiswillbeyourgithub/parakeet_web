@@ -1,196 +1,123 @@
-// Parent-side client for the diarization worker: locates the two ONNX models,
-// prepares the engine's CJS bootstrap copy, and brokers one run at a time.
+// Speaker diarization for the API server: NVIDIA's Streaming Sortformer
+// (Nemotron-3-Diarization, exported as Olicorne/Nemotron-3-Diarization-web-onnx)
+// run by the browser app's own pipeline, app/src/sortformer.js, on the SAME ONNX
+// Runtime the transcription model uses (owner decision: diarization shares the
+// server's core, it gets no engine of its own). Nothing here re-implements the
+// model: this file only finds the files, opens the sessions and calls
+// diarizeProbs + probsToSegments.
 //
-// The engine bytes are the ones the browser app already vendors
-// (app/ui/public/sherpa-onnx/): a self-contained sherpa-onnx WASM build with its
-// own ONNX Runtime inside. Nothing is duplicated here -- the .cjs copy this
-// module writes is a runtime copy of those exact vendored bytes, needed only
-// because emscripten's pthread bootstrap must be loadable as CommonJS (see the
-// long note in diarize.worker.mjs).
-//
-// The worker is started LAZILY on the first diarizing request, so an instance
-// that never diarizes never pays the ~11 MB engine + ~34 MB model load.
+// The sessions are opened LAZILY on the first diarizing request, so an instance
+// that never diarizes never pays the step graph's load (int8 ~100 MB).
 //
 // Built with Claude Code.
 
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { Worker } from 'node:worker_threads';
+import {
+  openSortformer, parseSortformerData, diarizeProbs, probsToSegments, SORTFORMER_STEP_FILES,
+} from '../../../app/src/sortformer.js';
+import { getOrt, ortRuntimeConfig, sessionOptionsFor } from '../../transcribe.mjs';
 import { unavailable } from './errors.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-// app/ui/public/sherpa-onnx/, relative to scripts/openai-like-server/lib/
-const ENGINE_DIR = join(HERE, '..', '..', '..', 'app', 'ui', 'public', 'sherpa-onnx');
-const GLUE = 'sherpa-onnx-wasm-main-speaker-diarization.js';
-const WRAPPER = 'sherpa-onnx-speaker-diarization.js';
-const WASM = 'sherpa-onnx-wasm-main-speaker-diarization.wasm';
-
-/** Sherpa's default pyannote segmentation filename in the model repos. */
-const SEG_DEFAULT = 'model.onnx';
-/** CAM++ embedding models are published with this shape of name. */
-const EMB_PATTERN = /campplus.*\.onnx$/i;
+/** Repo name, also the folder name looked for next to / inside the ASR model dir. */
+export const DIARIZATION_REPO_DIR = 'Nemotron-3-Diarization-web-onnx';
+const CONFIG_FILE = 'diarization-config.json';
+const SILENCE_FILE = 'silence_embeds.bin';
+const EMBED_FILE = 'embed.onnx';
 
 /**
- * Resolve the diarization model paths, preferring explicit options and falling
- * back to well-known names inside the main model directory.
+ * Find the Sortformer model directory and check every file it needs is there.
  *
- * @returns {{segPath:string, embPath:string}}
- * @throws {Error} naming exactly what is missing and how to fetch it
+ * Without an explicit `dir`, these are tried in order (the first holding
+ * diarization-config.json wins):
+ *   <modelDir>/Nemotron-3-Diarization-web-onnx   one mount carrying both repos
+ *   <modelDir>                                   a flat tree
+ *   <modelDir>/../Nemotron-3-Diarization-web-onnx  sibling checkouts (local dev)
+ *
+ * @param {object} a
+ * @param {string} [a.dir] explicit --diarize-model directory
+ * @param {string} a.modelDir the ASR model directory
+ * @param {'int8'|'fp16'|'fp32'} a.precision step graph to use
+ * @returns {{dir:string, embedPath:string, stepPath:string, config:object, silenceEmbeds:Float32Array}}
  */
-export function resolveDiarizationModels({ modelDir, segModel, embModel }) {
-  const segPath = segModel || join(modelDir, SEG_DEFAULT);
-  let embPath = embModel;
-  if (!embPath) {
-    const hit = safeReaddir(modelDir).find((f) => EMB_PATTERN.test(f));
-    embPath = hit ? join(modelDir, hit) : '';
+export function resolveDiarizationModel({ dir, modelDir, precision }) {
+  const stepFile = SORTFORMER_STEP_FILES[precision];
+  if (!stepFile) throw new Error(`unknown diarization precision "${precision}"`);
+  const candidates = dir
+    ? [dir]
+    : [join(modelDir, DIARIZATION_REPO_DIR), modelDir, join(dirname(modelDir), DIARIZATION_REPO_DIR)];
+  const found = candidates.find((d) => existsSync(join(d, CONFIG_FILE)));
+  if (!found) {
+    throw new Error(`diarization is enabled but no ${CONFIG_FILE} was found in ${candidates.join(', ')} `
+      + `(set --diarize-model, or fetch it with: hf download Olicorne/${DIARIZATION_REPO_DIR})`);
   }
-  const missing = [];
-  if (!segPath || !existsSync(segPath)) {
-    missing.push(`pyannote segmentation model (looked for ${segPath || `${modelDir}/${SEG_DEFAULT}`}; `
-      + 'set --diarize-seg-model, or fetch csukuangfj/sherpa-onnx-pyannote-segmentation-3-0)');
+  const missing = [SILENCE_FILE, EMBED_FILE, stepFile].filter((f) => !existsSync(join(found, f)));
+  if (missing.length) {
+    throw new Error(`diarization model ${found} lacks ${missing.join(', ')}`
+      + (missing.includes(stepFile) ? ` (the ${precision} step; see --diarize-precision)` : ''));
   }
-  if (!embPath || !existsSync(embPath)) {
-    missing.push(`CAM++ speaker-embedding model (looked for ${modelDir}/*campplus*.onnx; `
-      + 'set --diarize-emb-model, or fetch it from csukuangfj/speaker-embedding-models)');
-  }
-  if (missing.length) throw new Error(`diarization is enabled but ${missing.join(' and ')}`);
-  return { segPath, embPath };
-}
-
-function safeReaddir(dir) {
-  try { return readdirSync(dir); } catch { return []; }
-}
-
-/** Check the vendored engine files are present (they are git-tracked, so this only fails on a broken checkout). */
-export function assertEnginePresent() {
-  for (const f of [GLUE, WRAPPER, WASM]) {
-    const p = join(ENGINE_DIR, f);
-    if (!existsSync(p)) throw new Error(`missing vendored diarization engine file ${p}`);
-  }
+  const { config, silenceEmbeds } = parseSortformerData(
+    readFileSync(join(found, CONFIG_FILE)), readFileSync(join(found, SILENCE_FILE)));
+  return { dir: found, embedPath: join(found, EMBED_FILE), stepPath: join(found, stepFile), config, silenceEmbeds };
 }
 
 /**
- * Create the diarizer client.
+ * Create the diarizer.
  *
- * @param {object} opts
- * @param {string} opts.segPath pyannote segmentation ONNX
- * @param {string} opts.embPath CAM++ embedding ONNX
- * @param {number} opts.threads engine thread count
- * @param {boolean} [opts.verbose]
+ * @param {object} a
+ * @param {object} a.model resolveDiarizationModel() result
+ * @param {string} a.ort the server's --ort backend (wasm | node | cuda)
+ * @param {number} [a.threads] intra-op threads on the native backends; the
+ *   WASM backend's pool is process-wide and already sized by --threads
+ * @param {boolean} [a.verbose]
  */
-export function createDiarizer({ segPath, embPath, threads = 1, verbose = false }) {
-  let worker = null;
-  let ready = null;
-  let bootstrapDir = null;
-  let nextId = 1;
-  const pending = new Map();
+export function createDiarizer({ model, ort: ortBackend, threads = 0, verbose = false }) {
+  let runner = null; // Promise of the openSortformer() result
 
-  // One .cjs copy of the vendored glue per process (see module header).
-  function bootstrapGlue() {
-    if (bootstrapDir) return join(bootstrapDir, 'sherpa-glue.cjs');
-    bootstrapDir = mkdtempSync(join(tmpdir(), 'parakeet-diarize-'));
-    const dest = join(bootstrapDir, 'sherpa-glue.cjs');
-    // Read + write rather than copyFile so it is obvious this is a byte copy of
-    // the vendored, git-tracked engine and not a second source of truth.
-    writeFileSync(dest, readFileSync(join(ENGINE_DIR, GLUE)));
-    return dest;
-  }
-
-  function start() {
-    if (ready) return ready;
-    assertEnginePresent();
-    ready = new Promise((resolve, reject) => {
-      const w = new Worker(new URL('./diarize.worker.mjs', import.meta.url), {
-        workerData: {
-          gluePathCjs: bootstrapGlue(),
-          wrapperPath: join(ENGINE_DIR, WRAPPER),
-          wasmPath: join(ENGINE_DIR, WASM),
-          segPath,
-          embPath,
-          threads,
-        },
+  function open() {
+    if (runner) return runner;
+    runner = (async () => {
+      const ortMod = await getOrt(ortBackend);
+      const { fromPath, executionProviders } = ortRuntimeConfig(ortBackend);
+      // Native bindings read the graph from disk themselves; the WASM build
+      // needs the bytes. No Sortformer graph has external data.
+      const load = (p) => (fromPath ? p : readFileSync(p));
+      return openSortformer(ortMod, {
+        embed: load(model.embedPath),
+        step: load(model.stepPath),
+        config: model.config,
+        sessionOptions: sessionOptionsFor({ executionProviders, verbose, threads, ortBackend }),
       });
-      let initialised = false;
-      w.on('message', (msg) => {
-        if (msg.type === 'ready') {
-          initialised = true;
-          if (verbose) console.error('[diarize] engine ready');
-          resolve(w);
-          return;
-        }
-        if (msg.type === 'result' || msg.type === 'error') {
-          if (msg.id === undefined) {                    // init-time failure
-            reject(new Error(msg.message));
-            return;
-          }
-          const entry = pending.get(msg.id);
-          if (!entry) return;
-          pending.delete(msg.id);
-          if (msg.type === 'result') entry.resolve(msg.segments);
-          else entry.reject(new Error(msg.message));
-        }
-      });
-      w.on('error', (err) => {
-        if (!initialised) reject(err);
-        failAll(err);
-      });
-      w.on('exit', (code) => {
-        const err = new Error(`diarization worker exited (code ${code})`);
-        if (!initialised) reject(err);
-        failAll(err);
-        // Drop the handle so the NEXT request rebuilds the engine from scratch
-        // instead of posting into a dead worker forever.
-        worker = null;
-        ready = null;
-      });
-      worker = w;
-    });
-    return ready;
-  }
-
-  function failAll(err) {
-    for (const [, entry] of pending) entry.reject(err);
-    pending.clear();
+    })();
+    // a failed open is retried by the next request rather than cached forever
+    runner.catch(() => { runner = null; });
+    return runner;
   }
 
   /**
    * Diarize 16 kHz mono PCM.
    *
-   * The PCM is CLONED into the worker rather than transferred: the caller's
-   * Float32Array stays valid, so the order of the transcribe/diarize steps in
-   * engine.mjs is free to change without a detached-buffer bug appearing at a
-   * distance. At 16 kHz the copy is ~3.8 MB per audio minute, far below the cost
-   * of the diarization itself.
-   *
+   * @param {Float32Array} pcm
+   * @param {object} [opts] probsToSegments options (threshold, maxSpeakers,
+   *   minDurationOn, minDurationOff)
    * @returns {Promise<Array<{start:number,end:number,speaker:number}>>}
    */
   async function run(pcm, opts = {}) {
-    let w;
+    let r;
     try {
-      w = await start();
+      r = await open();
     } catch (err) {
-      throw unavailable(`diarization engine failed to start: ${err.message}`);
+      throw unavailable(`diarization model failed to load: ${err.message}`);
     }
-    const id = nextId++;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      w.postMessage({ type: 'run', id, pcm, opts });
-    });
+    const out = await diarizeProbs(pcm, { config: model.config, silenceEmbeds: model.silenceEmbeds, ...r });
+    return probsToSegments(out, opts);
   }
 
   async function dispose() {
-    if (worker) {
-      await worker.terminate().catch(() => { /* going away regardless */ });
-      worker = null;
-      ready = null;
-    }
-    if (bootstrapDir) {
-      try { rmSync(bootstrapDir, { recursive: true, force: true }); } catch { /* tmpfs */ }
-      bootstrapDir = null;
-    }
+    const r = runner;
+    runner = null;
+    if (r) await r.then((x) => x.release(), () => {});
   }
 
-  return { run, dispose, get started() { return ready !== null; } };
+  return { run, dispose, get started() { return runner !== null; } };
 }

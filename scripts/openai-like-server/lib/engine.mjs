@@ -15,7 +15,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadParakeetModel, decodePcm, findFfmpeg } from '../../transcribe.mjs';
 import { createWordlistRegistry } from './wordlists.mjs';
-import { createDiarizer, resolveDiarizationModels } from './diarize.mjs';
+import { createDiarizer, resolveDiarizationModel } from './diarize.mjs';
 import { badRequest } from './errors.mjs';
 import { SAMPLE_RATE } from './constants.mjs';
 
@@ -102,10 +102,10 @@ export async function createEngine(options) {
   let diarizer = null;
   let diarizationModels = null;
   try {
-    diarizationModels = resolveDiarizationModels({
+    diarizationModels = resolveDiarizationModel({
+      dir: options.diarizeModel,
       modelDir,
-      segModel: options.diarizeSegModel,
-      embModel: options.diarizeEmbModel,
+      precision: options.diarizePrecision,
     });
   } catch (err) {
     if (options.diarize) throw err;
@@ -118,8 +118,8 @@ export async function createEngine(options) {
     if (diarizationModels.error) throw badRequest(diarizationModels.error, { param: 'diarize' });
     if (!diarizer) {
       diarizer = createDiarizer({
-        segPath: diarizationModels.segPath,
-        embPath: diarizationModels.embPath,
+        model: diarizationModels,
+        ort: options.ort,
         threads: options.diarizeThreads,
         verbose: options.verbose,
       });
@@ -154,7 +154,7 @@ export async function createEngine(options) {
         wordlists: wordlists.list(),
         diarization: diarizationModels.error
           ? { available: false, reason: diarizationModels.error }
-          : { available: true, segModel: diarizationModels.segPath, embModel: diarizationModels.embPath },
+          : { available: true, model: diarizationModels.dir, precision: options.diarizePrecision },
       };
     },
 
@@ -208,7 +208,8 @@ export async function createEngine(options) {
     /** Speaker segments for the same PCM. */
     async diarize({ pcm, params }) {
       return diarizerInstance().run(pcm, {
-        numSpeakers: params.numSpeakers,
+        // -1 = no cap: every speaker the model hears (at most its 4 slots)
+        maxSpeakers: params.numSpeakers > 0 ? params.numSpeakers : 0,
         threshold: params.diarizeThreshold,
         minDurationOn: params.minDurationOn,
         minDurationOff: params.minDurationOff,

@@ -177,12 +177,16 @@ test('language is validated against the model, and echoed', () => {
   assert.equal(assertThrows(() => resolve({ language: 'zz' })).status, 400);
 });
 
-test('min_speakers/max_speakers collapse to an exact count only when equal', () => {
-  const equal = resolve({ diarize: 'true', min_speakers: '2', max_speakers: '2' });
-  assert.equal(equal.params.numSpeakers, 2);
-  const range = resolve({ diarize: 'true', min_speakers: '2', max_speakers: '5' });
-  assert.equal(range.params.numSpeakers, -1, 'a range must fall back to automatic clustering');
-  assert.match(range.warnings.join('\n'), /only an exact count is supported/);
+test('max_speakers is the num_speakers cap; min_speakers is ignored with a warning', () => {
+  // Sortformer finds the speakers itself and the count only ever caps them, so
+  // a whisper-style speaker range maps onto its upper end.
+  const range = resolve({ diarize: 'true', min_speakers: '2', max_speakers: '3' });
+  assert.equal(range.params.numSpeakers, 3);
+  assert.match(range.warnings.join('\n'), /ignoring min_speakers/);
+  const onlyMin = resolve({ diarize: 'true', min_speakers: '2' });
+  assert.equal(onlyMin.params.numSpeakers, -1, 'a lower bound alone must not become a cap');
+  const both = resolve({ diarize: 'true', num_speakers: '2', max_speakers: '4' });
+  assert.equal(both.params.numSpeakers, 2, 'an explicit num_speakers wins over the alias');
 });
 
 test('the audio part may be named file, audio_file or audio', () => {

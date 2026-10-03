@@ -5,7 +5,7 @@
 # Build context is the REPOSITORY ROOT (docker-compose.yml sets `context: ../..`),
 # because the server imports the repo's own modules rather than duplicating them:
 # app/src (the pipeline), scripts/transcribe.mjs (model/boost/ffmpeg glue), the
-# vendored onnxruntime-web build, the vendored sherpa-onnx diarization engine, and
+# vendored onnxruntime-web build (which also runs the Sortformer diarizer), and
 # app/ui/src/lib/speakerAssign.js. Nothing here is a copy of them.
 #
 # ── base image pinning ────────────────────────────────────────────────────────
@@ -146,9 +146,6 @@ COPY --chown=1000:1000 app/ui/src/lib/speakerAssign.js ./app/ui/src/lib/speakerA
 COPY --chown=1000:1000 app/ui/vendor/onnxruntime-web/dist ./app/ui/vendor/onnxruntime-web/dist
 # BPE merges, needed to encode phrase-boost text into token ids.
 COPY --chown=1000:1000 app/ui/public/tokenizer/bpe-merges.json ./app/ui/public/tokenizer/bpe-merges.json
-# Vendored sherpa-onnx speaker-diarization engine (~11 MB wasm), used only when a
-# request asks for diarize=true.
-COPY --chown=1000:1000 app/ui/public/sherpa-onnx ./app/ui/public/sherpa-onnx
 # The CLI harness whose exported helpers do the model loading, phrase-boost trie
 # building and ffmpeg decoding for the server (see lib/engine.mjs).
 COPY --chown=1000:1000 scripts/transcribe.mjs ./scripts/transcribe.mjs

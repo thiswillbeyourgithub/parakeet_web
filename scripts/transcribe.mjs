@@ -54,7 +54,7 @@ const ort = ortmod.default || ortmod;
 // NVIDIA GPU (needs a working CUDA/cuDNN install matching the onnxruntime-node
 // build), with real fp16 kernels. Lazy-imported so the default path never
 // requires the native package.
-async function getOrt(backend) {
+export async function getOrt(backend) {
   if (backend === 'node' || backend === 'cuda') {
     const m = await import('onnxruntime-node');
     return m.default || m;
