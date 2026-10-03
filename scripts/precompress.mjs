@@ -9,7 +9,7 @@
 //                    then ./fallback_models)                   -> `<file>.zst`
 //
 // Why static uses brotli. dist is 138 MB, 130 MB of which is WASM
-// (ffmpeg-core 32 MB, the four ORT builds, sherpa 18 MB). Caddy compresses
+// (ffmpeg-core 32 MB, the four ORT builds; sherpa's 18 MB is gone since 2026-10). Caddy compresses
 // those on the fly today, per request, for every visitor. Brotli q11 takes the
 // 13.5 MB ORT build to 2.2 MB (16.3%) against 2.5 MB for q9, and it is paid
 // once at build time, so the slowest setting is the right one here. Node has

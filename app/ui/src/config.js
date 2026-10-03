@@ -38,11 +38,11 @@ export const CONFIG = {
   // ?phrase_boost= query param. Never overrides a returning user's saved choice.
   // The container fails to start if this names a list it isn't serving.
   VITE_PHRASE_BOOST_DEFAULT: runtime.VITE_PHRASE_BOOST_DEFAULT ?? import.meta.env.VITE_PHRASE_BOOST_DEFAULT,
-  // Speaker-diarization models (lib/diarizationModels.js). The two ONNX models
-  // ride the same hub + /models fallback as the Parakeet weights. Defaults are
-  // un-gated, hub-resolvable HF mirrors; override to self-host or swap models.
-  VITE_DIARIZATION_SEG_REPO: runtime.VITE_DIARIZATION_SEG_REPO ?? import.meta.env.VITE_DIARIZATION_SEG_REPO,
-  VITE_DIARIZATION_SEG_FILE: runtime.VITE_DIARIZATION_SEG_FILE ?? import.meta.env.VITE_DIARIZATION_SEG_FILE,
+  // Speaker-diarization models (lib/diarizationModels.js): the Streaming
+  // Sortformer repo and the CAM++ voice model, on the same hub + /models
+  // fallback as the Parakeet weights. Defaults are un-gated HF repos; override
+  // to self-host or swap models.
+  VITE_DIARIZATION_REPO: runtime.VITE_DIARIZATION_REPO ?? import.meta.env.VITE_DIARIZATION_REPO,
   VITE_DIARIZATION_EMB_REPO: runtime.VITE_DIARIZATION_EMB_REPO ?? import.meta.env.VITE_DIARIZATION_EMB_REPO,
   VITE_DIARIZATION_EMB_FILE: runtime.VITE_DIARIZATION_EMB_FILE ?? import.meta.env.VITE_DIARIZATION_EMB_FILE,
   // Not operator-settable: the docker entrypoint stamps this with the container

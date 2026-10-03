@@ -5049,8 +5049,7 @@ export default function App() {
           </p>
           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('diarizationCredit')}:</strong>{' '}
-            <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noopener noreferrer">sherpa-onnx</a> (Apache-2.0),{' '}
-            <a href="https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0" target="_blank" rel="noopener noreferrer">pyannote</a> (MIT),{' '}
+            <a href="https://huggingface.co/nvidia/Nemotron-3-Diarization" target="_blank" rel="noopener noreferrer">NVIDIA Nemotron-3-Diarization</a> (OpenMDW-1.1),{' '}
             <a href="https://huggingface.co/csukuangfj/speaker-embedding-models" target="_blank" rel="noopener noreferrer">3D-Speaker CAM++</a> (Apache-2.0).
           </p>
         </Modal>

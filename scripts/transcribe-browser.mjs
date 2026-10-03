@@ -9,8 +9,8 @@
 // This exists because scripts/transcribe.mjs (the pure-Node CLI) CANNOT do two
 // things this needs: (1) WebGPU is a browser API with no Node equivalent (Node's
 // onnxruntime-web is WASM/CPU only; the closest is the CUDA EP), and (2) speaker
-// diarization lives entirely in the browser app (the sherpa-onnx WASM engine +
-// the pyannote/CAM++ models, driven by diarizer.js). Driving the actual app in a
+// diarization lives entirely in the browser app (the Streaming Sortformer +
+// the CAM++ voice model, driven by diarizer.js). Driving the actual app in a
 // browser gives BOTH for free, with zero re-implementation and no drift from
 // what users see.
 //

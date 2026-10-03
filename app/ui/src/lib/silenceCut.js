@@ -1,5 +1,4 @@
-// Silence excision for the diarization pipeline. sherpa's pyannote segmentation
-// cost scales with audio length, so long recordings with dead air are cheaper to
+// Silence excision for the diarization pipeline. The Sortformer's cost scales with audio length, so long recordings with dead air are cheaper to
 // diarize after their long silences are cut out. This module finds those
 // silences, produces a condensed PCM buffer, and (critically) remaps the
 // diarizer's condensed-timeline segments back onto the ORIGINAL timeline so
@@ -33,7 +32,7 @@ export const SILENCE_MAX_FRAC = 0.3;
 // Only silences at least this long are worth excising.
 export const DEFAULT_MIN_SILENCE_SEC = 2.0;
 // Keep this much real silence at each edge of an excised run. 2*pad (0.7 s) stays
-// above sherpa's minDurationOff (0.5 s) bridge, so two speech regions that were
+// above probsToSegments' minDurationOff (0.5 s) bridge, so two speech regions that were
 // separate before excision stay separate after: no bridging regression by design.
 export const DEFAULT_PAD_SEC = 0.35;
 // In-place linear fade applied at each splice join (10 ms) to kill the step
@@ -179,7 +178,7 @@ export function excisePcm(pcm, cuts, sampleRate = 16000) {
 
 /**
  * Remap diarizer segments from the condensed timeline back to the original
- * timeline. A segment that spans an excised gap (possible if sherpa bridges
+ * timeline. A segment that spans an excised gap (possible if the diarizer bridges
  * across a splice) is SPLIT at kept-span boundaries into one same-speaker segment
  * per span, so it never inflates to cover the removed silence.
  *

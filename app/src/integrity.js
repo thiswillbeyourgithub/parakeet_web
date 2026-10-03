@@ -5,7 +5,7 @@
 // weakens one of them:
 //   - backend.js pins the ORT WASM/MJS runtime against /ort/manifest.json,
 //   - app/ui/src/lib/asset-integrity.js pins the loose assets that bypass the
-//     HTML SRI chain (the PCM AudioWorklet, the sherpa diarization engine)
+//     HTML SRI chain (the PCM AudioWorklet)
 //     against /.well-known/asset-integrity.json.
 // Both used to carry their own byte-identical copy of the digest function and
 // their own copy of the production hard-fail flag.

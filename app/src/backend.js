@@ -40,7 +40,7 @@ import { ASSET_INTEGRITY_HARD_FAIL, integrityError, sha384Base64 } from './integ
 
 // The digest and the hard-fail policy are shared with the app's other
 // verify-then-load path (app/ui/src/lib/asset-integrity.js, which pins the PCM
-// worklet and the sherpa engine). Both used to carry their own byte-identical
+// worklet). Both used to carry their own byte-identical
 // copy of each, which is how the two would eventually disagree about what
 // counts as production.
 function _integrityFailure(reason) {

@@ -1,8 +1,8 @@
 // Per-speaker CAM++ voice embeddings, computed in-browser for cross-recording
-// speaker matching (session-only feature). The vendored sherpa-onnx diarization
-// WASM returns only {start,end,speaker} segments and exposes no embedding API,
-// so we run the SAME CAM++ embedding model the diarizer uses (already downloaded
-// by diarizationModels.js) ourselves through the app's ONE ORT instance
+// speaker matching (session-only feature). The Sortformer diarizer numbers
+// speakers per recording only (by first appearance), so a voice is recognised
+// across recordings with a CAM++ embedding model (downloaded by
+// diarizationModels.js alongside the Sortformer), run through the app's ONE ORT instance
 // (backend.js loadOrtModule, never a direct onnxruntime-web import, or this
 // path silently loses voice matching whenever the runtime variant moves): gather
 // each speaker's segment audio, compute the shared 80-dim kaldi fbank
