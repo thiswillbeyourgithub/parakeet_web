@@ -1239,6 +1239,10 @@ export default function App() {
     transcriptDisplayMode,
     getEntryBase,
     setEntryBase,
+    backend,
+    webgpuShaderF16,
+    cpuThreads,
+    ortVariant: ORT_VARIANT,
   });
 
   // Ask the browser to keep our IndexedDB (where the multi-GB model weights
@@ -5781,11 +5785,10 @@ export default function App() {
                         >
                           {diarizingId === trans.id && <span className="spinner spinner--inline" aria-hidden="true" />}
                           {t('speakers')}
-                          {/* Piecewise diarization reports progress; fold its two
-                              phases into one monotonic 0-100% (diarize 0-90%,
-                              embed 90-100%) so the number never appears to
-                              restart. Short single-run clips report nothing, so
-                              this stays hidden and only the spinner shows. */}
+                          {/* Fold the two progress phases into one monotonic
+                              0-100% (Sortformer chunks 0-90%, voice embedding
+                              90-100%) so the number never appears to restart.
+                              Before the first chunk lands only the spinner shows. */}
                           {diarizingId === trans.id && diarProgress && diarProgress.total > 0 && (
                             <span className="diar-progress">
                               {' '}{diarProgress.phase === 'embed'
