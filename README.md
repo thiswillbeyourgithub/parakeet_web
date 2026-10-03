@@ -74,7 +74,7 @@ All three are listed with the rest of the stack under [Related repositories](#re
 | 📝 **Dictation Mode** | Post-processes transcriptions with regex rules (medical French vocabulary, punctuation, units) |
 | 💊 **Drug-Name Correction** | Optional view that repairs French drug names the model mishears ("l'ananas de l'umab" becomes "lanadelumab"), with 14,377 rules learned from UltiMed and parakeet-ultra errors |
 | 🔢 **Numbers as Digits** | Numbers dictated as words are written as digits ("twenty-five milligrams" becomes "25 milligrams", "one point five" becomes "1.5"), in English and French. On by default, with a switch in the settings |
-| 🗣️ **Speaker Diarization** | Optional "who spoke when" view: groups the transcript into colour-coded `First:`/`Second:`/... turns, fully client-side via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (in a background worker, so it never freezes the UI). The speaker count is detected automatically; rename a speaker to another's label to merge them |
+| 🗣️ **Speaker Diarization** | Optional "who spoke when" view: groups the transcript into colour-coded `First:`/`Second:`/... turns, fully client-side with NVIDIA's [Streaming Sortformer](https://huggingface.co/nvidia/Nemotron-3-Diarization) (in a background worker on the CPU, so it never freezes the UI). The speaker count is detected automatically (up to 8) and can be capped, extra speakers being merged; rename a speaker to another's label to merge them |
 | 🕐 **Word Timestamps** | Per-word timestamps |
 | 📁 **File or Mic** | Transcribe uploaded audio files or record directly from your microphone. Uploaded files are decoded to PCM by a locally-vendored **ffmpeg.wasm** (lazy-loaded on first upload), so the browser reproduces the command-line tool's decode byte-for-byte, including the AAC encoder-delay/priming trim the browser's native decoder skips (which otherwise mis-heard e.g. "Venlafaxine"). Falls back to the Web Audio decoder if ffmpeg cannot load. Every entry keeps the audio it was transcribed from, so its **⋮** menu can play it back and save it as a 16 kHz mono WAV (in-memory only, so it does not survive a reload) |
 | 🎚️ **Capture Controls** | Per-recording toggles for noise suppression and auto gain control |
@@ -160,15 +160,12 @@ The **number of speakers is detected automatically** by default, so you do not h
 
 #### How it works
 
-Diarization is powered by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), whose prebuilt WebAssembly speaker-diarization engine is vendored into the app (it bundles its own ONNX Runtime, separate from the transcription engine). It runs a two-model offline pipeline on the same 16 kHz audio already in memory:
-
-1. a [pyannote segmentation](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0) model finds speech regions and speaker-change points, then
-2. a [3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models) speaker-embedding model (~28 MB) embeds each region, and the embeddings are clustered into speakers.
+Diarization runs NVIDIA's [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (a Streaming Sortformer), exported for the browser as [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx), on the same ONNX Runtime as the transcription. It reads the 16 kHz audio already in memory and gives, every 80 ms, the probability that each of up to 8 speakers is talking; speakers are numbered in order of first appearance, so there is no clustering step. The model is one small feature graph plus one encoder graph per precision, and only the precision your backend runs is downloaded: int8 (~100 MB) on the CPU, fp16 (~200 MB) on a GPU with `shader-f16`, fp32 (~400 MB) on other GPUs. On the CPU it runs in a background worker; on WebGPU it runs on the GPU. A [3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models) voice model (~28 MB) is used only to recognise a voice across recordings.
 
 The resulting speaker segments are matched to the existing word timestamps (each word gets the speaker whose segment overlaps it most), and consecutive words from the same speaker are grouped into turns.
 
-- The two models (~34 MB total) are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with a local `/models` fallback) and cached in IndexedDB. They are prefetched in the background as soon as the ASR model finishes loading, so the first diarization is instant. If that download fails, the **Speakers** button and the **Speakers** default-display option are greyed out and show the reason on hover (instead of an error popup).
-- The WebAssembly engine loads lazily the first time you actually diarize, so it costs nothing if you never use the feature.
+- The models are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with a local `/models` fallback) and cached in IndexedDB. They are prefetched in the background once the ASR model has loaded only when **Speakers** is your default display; otherwise they download on your first click on **Speakers**, so the feature costs nothing if you never use it. If that download fails, the **Speakers** button and the **Speakers** default-display option are greyed out and show the reason on hover (instead of an error popup).
+- Changing the speaker count of an entry only regroups the result already computed, it does not run the model again.
 
 This feature was wired up with [Claude Code](https://www.anthropic.com/claude-code).
 
@@ -722,9 +719,8 @@ Some bundled phrase-boosting lists include bacterial names derived from LPSN (Li
   - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Python reference implementation
 - **ONNX Runtime Web** – Makes browser inference possible
-- **[sherpa-onnx (k2-fsa)](https://github.com/k2-fsa/sherpa-onnx)** – Prebuilt WebAssembly speaker-diarization engine (Apache-2.0)
-- **[pyannote segmentation 3.0](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0)** – Speech segmentation model used for diarization (MIT)
-- **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Speaker-embedding model used for diarization (Apache-2.0)
+- **[nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)** – Streaming Sortformer speaker-diarization model by NVIDIA (OpenMDW-1.1), exported for the browser with Claude Code
+- **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Speaker-embedding model used to recognise a voice across recordings (Apache-2.0)
 
 ### Credits
 

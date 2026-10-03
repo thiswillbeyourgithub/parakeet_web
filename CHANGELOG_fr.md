@@ -8,6 +8,16 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Non publié
+
+### L'identification des locuteurs utilise le Streaming Sortformer de NVIDIA
+
+**Locuteurs** n'utilise plus sherpa-onnx (segmentation pyannote et regroupement CAM++). Il utilise désormais [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) de NVIDIA, exporté pour le navigateur sous [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx), sur le même ONNX Runtime que la transcription. Un second moteur d'apprentissage automatique et ses empreintes d'intégrité ont été retirés de l'application. Le modèle suit jusqu'à 8 locuteurs, numérotés par ordre d'apparition. Le nombre de locuteurs choisi est désormais un plafond : les plus actifs sont conservés et chaque instant d'un locuteur écarté revient au locuteur conservé que le modèle juge alors le plus probable, et le changer ne fait que regrouper le résultat existant. Chaque moteur ne télécharge que sa propre précision : int8 (~100 Mo) sur le CPU, fp16 (~200 Mo) ou fp32 (~400 Mo) en WebGPU. Les graphes ONNX ont été comparés au calcul de référence de NVIDIA sur un extrait de 114 s à 5 locuteurs : 100 % d'accord sur les décisions de parole en fp32 et 99,97 % en int8. CAM++ est conservé, uniquement pour reconnaître une voix d'un enregistrement à l'autre.
+
+Le modèle n'est désormais préchargé que si **Locuteurs** est l'affichage par défaut. Sinon, il se télécharge au premier clic.
+
+Le serveur compatible OpenAI identifie les locuteurs avec le même modèle, sur son propre ONNX Runtime. `PARAKEET_DIARIZE_SEG_MODEL` et `PARAKEET_DIARIZE_EMB_MODEL` disparaissent, si bien qu'une ancienne configuration qui les définit est désormais ignorée sans avertissement. Ils sont remplacés par `PARAKEET_DIARIZE_MODEL` et `PARAKEET_DIARIZE_PRECISION`. `max_speakers` est un plafond, et `min_speakers` est ignoré avec un avertissement. Auto-hébergement : `VITE_DIARIZATION_REPO` fonctionne enfin (elle était lue mais jamais transmise), et les variables de diarisation atteignent maintenant le conteneur Docker. Rédigé avec Claude Code.
+
 ## 11.4.0 (2026-09-30)
 
 ### Les noms de médicaments mal entendus peuvent être corrigés
