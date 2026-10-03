@@ -421,3 +421,54 @@ export function createSortformerRunner(ort, embedSession, stepSession, { hidden 
     },
   };
 }
+
+/**
+ * Open the two graphs as ORT sessions and wrap them in the runner. `embed` and
+ * `step` are whatever the caller's ORT accepts (bytes, or a file path on
+ * onnxruntime-node); `sessionOptions` are the caller's, so the browser keeps
+ * its app-wide session contract and the server its own.
+ *
+ * @returns {Promise<{runEmbed:Function, runStep:Function, release:()=>Promise<void>}>}
+ */
+export async function openSortformer(ort, { embed, step, config, sessionOptions = {} }) {
+  const embedSession = await ort.InferenceSession.create(embed, sessionOptions);
+  let stepSession;
+  try {
+    stepSession = await ort.InferenceSession.create(step, sessionOptions);
+  } catch (err) {
+    await embedSession.release();
+    throw err;
+  }
+  return {
+    ...createSortformerRunner(ort, embedSession, stepSession, { hidden: config.hidden_size, mels: config.num_mel_bins }),
+    release: async () => { await embedSession.release(); await stepSession.release(); },
+  };
+}
+
+/** The step graph for each precision, as laid out in the model repo. */
+export const SORTFORMER_STEP_FILES = {
+  int8: 'int8/step.int8.onnx',
+  fp16: 'fp16/step.fp16.onnx',
+  fp32: 'fp32/step.onnx',
+};
+
+/**
+ * Parse the model repo's two data files.
+ * @param {Uint8Array} configBytes diarization-config.json
+ * @param {Uint8Array} silenceBytes silence_embeds.bin
+ * @returns {{config: object, silenceEmbeds: Float32Array}}
+ */
+export function parseSortformerData(configBytes, silenceBytes) {
+  const config = JSON.parse(new TextDecoder().decode(configBytes));
+  for (const k of ['hidden_size', 'num_mel_bins', 'num_speakers', 'subsampling_factor', 'offline', 'speaker_cache']) {
+    if (config[k] == null) throw new Error(`diarization-config.json lacks "${k}"`);
+  }
+  if (silenceBytes.byteLength !== config.hidden_size * 4) {
+    throw new Error(`silence_embeds.bin is ${silenceBytes.byteLength} bytes, expected ${config.hidden_size * 4}`);
+  }
+  // Copy through the Uint8Array constructor: the bytes may be a view into a
+  // larger, unaligned buffer, and `.slice()` does not copy on a Node Buffer
+  // (its `.buffer` is then the whole shared pool).
+  const silenceEmbeds = new Float32Array(new Uint8Array(silenceBytes).buffer);
+  return { config, silenceEmbeds };
+}

@@ -22,7 +22,7 @@
 
 import { workerReady } from './workerInit.js';
 import { acquireGpuRun } from './gpuRun.js';
-import { openSortformer } from './sortformerSession.js';
+import { openBrowserSortformer } from './sortformerSession.js';
 import { loadOrtModule } from '../../../src/backend.js';
 import { diarizeProbs } from '../../../src/sortformer.js';
 
@@ -118,7 +118,7 @@ function gpuSessions(models, backend) {
     sessionPromise: (async () => {
       if (previous) await previous.sessionPromise.then((s) => s.release(), () => {});
       const ort = await loadOrtModule();
-      return openSortformer(ort, { backend, embedBytes: models.embedBytes, stepBytes: models.stepBytes, config: models.config });
+      return openBrowserSortformer(ort, { backend, embedBytes: models.embedBytes, stepBytes: models.stepBytes, config: models.config });
     })(),
   };
   const mine = gpu;

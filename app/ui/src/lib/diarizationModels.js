@@ -28,7 +28,7 @@
 import { getModelFile, getLocalModelFile, resolveLocalModelBase, HubDownloadError, modelFileCacheKeys } from 'parakeet.js';
 import { CONFIG } from '../config.js';
 import { diarizationFileName } from './modelRepos.js';
-import { DIARIZATION_STEP_FILES, parseDiarizationData } from './diarizationFiles.js';
+import { SORTFORMER_STEP_FILES, parseSortformerData } from '../../../src/sortformer.js';
 
 export const DIAR_REPO = CONFIG.VITE_DIARIZATION_REPO || 'Olicorne/Nemotron-3-Diarization-web-onnx';
 const EMB_REPO = CONFIG.VITE_DIARIZATION_EMB_REPO || 'csukuangfj/speaker-embedding-models';
@@ -110,7 +110,7 @@ async function fetchBytes(repo, file, canary, { localBaseUrl, localOnly, localFi
  *   embedBytes:Uint8Array, stepBytes:Uint8Array, embeddingBytes:Uint8Array}>}
  */
 export function getDiarizationModels({ precision = 'int8', localBaseUrl = null, localOnly = false, localFirst = false, onProgress } = {}) {
-  const stepFile = DIARIZATION_STEP_FILES[precision];
+  const stepFile = SORTFORMER_STEP_FILES[precision];
   if (!stepFile) throw new Error(`unknown diarization precision "${precision}"`);
   if (_models.has(precision)) return _models.get(precision);
   const files = [
@@ -132,7 +132,7 @@ export function getDiarizationModels({ precision = 'int8', localBaseUrl = null, 
         progress: onProgress ? ({ loaded, total }) => { acc[slot] = { loaded: loaded || 0, total: total || 0 }; report(); } : undefined,
       })));
     const by = Object.fromEntries(files.map(([slot], i) => [slot, bytes[i]]));
-    const { config, silenceEmbeds } = parseDiarizationData(by.config, by.silence);
+    const { config, silenceEmbeds } = parseSortformerData(by.config, by.silence);
     return { precision, config, silenceEmbeds, embedBytes: by.embed, stepBytes: by.step, embeddingBytes: by.embedding };
   })().catch((err) => {
     _models.delete(precision); // let a failed download be retried
@@ -150,7 +150,7 @@ export function getDiarizationModels({ precision = 'int8', localBaseUrl = null, 
  */
 export function diarizationModelProtectKeys() {
   return [
-    ...[CONFIG_FILE, SILENCE_FILE, EMBED_FILE, ...Object.values(DIARIZATION_STEP_FILES)]
+    ...[CONFIG_FILE, SILENCE_FILE, EMBED_FILE, ...Object.values(SORTFORMER_STEP_FILES)]
       .map((file) => modelFileCacheKeys(DIAR_REPO, file).blob),
     modelFileCacheKeys(EMB_REPO, EMB_FILE).blob,
   ];

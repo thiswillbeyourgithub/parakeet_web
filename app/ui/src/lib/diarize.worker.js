@@ -24,13 +24,13 @@
 import { initOrt } from '../../../src/backend.js';
 import { diarizeProbs } from '../../../src/sortformer.js';
 import { createModelWorker } from './modelWorker.js';
-import { openSortformer } from './sortformerSession.js';
+import { openBrowserSortformer } from './sortformerSession.js';
 
 async function initModel({ embedBytes, stepBytes, config, silenceEmbeds, numThreads, ortVariant, wasmPaths }) {
   // ortVariant mirrors the main thread's: ORT pins one runtime per JS context,
   // and this one must be the runtime the app verified and benchmarked.
   const ort = await initOrt({ backend: 'wasm', wasmPaths, numThreads, ortVariant });
-  const runner = await openSortformer(ort, { backend: 'wasm', embedBytes, stepBytes, config });
+  const runner = await openBrowserSortformer(ort, { backend: 'wasm', embedBytes, stepBytes, config });
   return { runner, config, silenceEmbeds };
 }
 
