@@ -5,7 +5,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { FEATURES, pairRecords, scoreGate, sweep } from '../../scripts/selective-beam-analyze.mjs';
+import { FEATURES, pairRecords, scoreGate, sweep, significance } from '../../scripts/selective-beam-analyze.mjs';
 import { parseArgs } from '../../scripts/grid_search_benchmark.mjs';
 
 const utt = (beam, audio, wordEdits, decodeMs, extra = {}) => ({
@@ -110,5 +110,38 @@ describe('module import', () => {
     const url = new URL('../../scripts/selective-beam-analyze.mjs', import.meta.url).href;
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(url)}).then((m) => console.log(typeof m.sweep))`], { encoding: 'utf-8' });
     assert.equal(out.trim(), 'function');
+  });
+});
+
+describe('multi-quant JSONL', () => {
+  test('one quant greedy is never paired with another quant beam', () => {
+    const tag = (q) => (r) => ({ ...r, quant: q, decoderQuant: 'int8' });
+    const mixed = [...records.map(tag('int8')), ...records.map(tag('w4a8')).map((r) => (r.beam === 8 ? { ...r, wordEdits: 9 } : r))];
+    const pairs = pairRecords(mixed, 8);
+    assert.equal(pairs.length, 6);
+    assert.ok(pairs.every((p) => p.greedy.quant === p.beam.quant));
+    assert.ok(pairs.filter((p) => p.quant === 'w4a8/int8').every((p) => p.beam.wordEdits === 9));
+  });
+});
+
+describe('significance', () => {
+  const pairs = pairRecords(records, 8);
+
+  test('counts helped/hurt and the paired WER delta', () => {
+    const s = significance(pairs, { resamples: 200 });
+    assert.equal(s.helped, 1);
+    assert.equal(s.hurt, 1);
+    assert.equal(s.changed, 2);
+    assert.equal(s.dWer, (100 * (1 + 0 + 2 - 4 - 0 - 1)) / 30);
+    assert.ok(s.ci[0] <= s.dWer && s.dWer <= s.ci[1]);
+  });
+
+  test('the gate counts changed utterances among the least confident', () => {
+    // 1/3 gated by min = 'a' only, which beam changed.
+    assert.equal(significance(pairs, { gateFraction: 1 / 3, resamples: 10 }).inGate, 1);
+  });
+
+  test('is reproducible for a given seed', () => {
+    assert.deepEqual(significance(pairs, { seed: 7 }).ci, significance(pairs, { seed: 7 }).ci);
   });
 });

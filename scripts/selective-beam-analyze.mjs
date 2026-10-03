@@ -39,10 +39,13 @@ export const FEATURES = {
 };
 
 // Pair each greedy utterance (beam 1, carrying tokenConfs) with the same
-// utterance's beam-`beam` record. Keyed by dataset + audio so a file reused
-// across manifests stays distinct. Utterances missing either side are dropped.
+// utterance's beam-`beam` record. Keyed by encoder/decoder quant + dataset +
+// audio, so a file reused across manifests stays distinct and a multi-quant
+// JSONL never pairs one quant's greedy with another's beam. Utterances missing
+// either side are dropped.
+export const quantOf = (r) => `${r.quant}/${r.decoderQuant}`;
 export function pairRecords(records, beam) {
-  const key = (r) => `${r.dataset}\u0000${r.audio}`;
+  const key = (r) => `${quantOf(r)}\u0000${r.dataset}\u0000${r.audio}`;
   const greedy = new Map();
   for (const r of records) {
     if (r.type === 'utterance' && r.beam === 1 && Array.isArray(r.tokenConfs)) greedy.set(key(r), r);
@@ -51,7 +54,7 @@ export function pairRecords(records, beam) {
   for (const r of records) {
     if (r.type !== 'utterance' || r.beam !== beam) continue;
     const g = greedy.get(key(r));
-    if (g) pairs.push({ dataset: r.dataset, greedy: g, beam: r });
+    if (g) pairs.push({ quant: quantOf(r), dataset: r.dataset, greedy: g, beam: r });
   }
   return pairs;
 }
@@ -93,6 +96,40 @@ export function sweep(pairs, feature, fractions) {
   });
 }
 
+// Is beam's gain over greedy real, and does the gate find it? Paired per
+// utterance: `helped`/`hurt` count utterances whose word edits beam lowered or
+// raised, `dWer` is beam minus greedy in WER points (negative = beam better),
+// `ci` its 95% bootstrap interval (resampling utterances, seeded so a report
+// is reproducible). `inGate` counts how many of the changed utterances the
+// least-confident `gateFraction` by `feature` contains: a gate that knows
+// nothing catches gateFraction of them.
+export function significance(pairs, { feature = 'min', gateFraction = 0.15, resamples = 4000, seed = 1 } = {}) {
+  const d = pairs.map((p) => p.beam.wordEdits - p.greedy.wordEdits);
+  const words = pairs.map((p) => p.greedy.refWords);
+  const dWer = rate(d.reduce((a, x) => a + x, 0), words.reduce((a, x) => a + x, 0));
+  let state = seed;
+  const rnd = () => (state = (state * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const boot = [];
+  for (let k = 0; k < resamples; k++) {
+    let s = 0, w = 0;
+    for (let j = 0; j < pairs.length; j++) { const i = Math.floor(rnd() * pairs.length); s += d[i]; w += words[i]; }
+    boot.push(rate(s, w));
+  }
+  boot.sort((a, b) => a - b);
+  const ci = boot.length ? [boot[Math.floor(0.025 * boot.length)], boot[Math.ceil(0.975 * boot.length) - 1]] : [0, 0];
+  const vals = pairs.map((p) => FEATURES[feature](p.greedy.tokenConfs));
+  const order = vals.map((v, i) => i).sort((a, b) => vals[a] - vals[b]);
+  const gate = new Set(order.slice(0, Math.round(gateFraction * pairs.length)));
+  const changed = d.map((x, i) => i).filter((i) => d[i] !== 0);
+  return {
+    helped: d.filter((x) => x < 0).length,
+    hurt: d.filter((x) => x > 0).length,
+    dWer, ci,
+    changed: changed.length,
+    inGate: changed.filter((i) => gate.has(i)).length,
+  };
+}
+
 function parseArgs(argv) {
   const a = { jsonl: null, beam: null, fractions: [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1] };
   for (let i = 0; i < argv.length; i++) {
@@ -124,17 +161,24 @@ function main() {
   const records = readFileSync(args.jsonl, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const beams = [...new Set(records.filter((r) => r.type === 'utterance' && r.beam > 1).map((r) => r.beam))].sort((a, b) => a - b);
   if (!beams.length) throw new Error('no beam (>1) cell in the JSONL');
+  const summary = (pairs) => {
+    const s = significance(pairs);
+    return `beam ${s.dWer >= 0 ? '+' : ''}${s.dWer.toFixed(3)} WER pts vs greedy (95% CI [${s.ci[0].toFixed(3)}, ${s.ci[1].toFixed(3)}]), helped ${s.helped} / hurt ${s.hurt}; least-confident 15% by min holds ${s.inGate} of the ${s.changed} changed utterances`;
+  };
   for (const beam of args.beam ? [args.beam] : beams) {
-    const pairs = pairRecords(records, beam);
-    if (!pairs.length) throw new Error(`no greedy/beam-${beam} pairs: was the greedy cell run with --record-confidences?`);
-    const datasets = [...new Set(pairs.map((p) => p.dataset))];
-    console.log(`\n# Selective beam: greedy vs beam ${beam} (${pairs.length} utterances, ${datasets.join(', ')})\n`);
-    for (const feature of Object.keys(FEATURES)) {
-      console.log(`\n## Feature: ${feature}\n\n${table(pairs, feature, args.fractions)}`);
-    }
-    for (const ds of datasets) {
-      const sub = pairs.filter((p) => p.dataset === ds);
-      console.log(`\n## ${ds} (${sub.length} utterances), feature meanLog\n\n${table(sub, 'meanLog', args.fractions)}`);
+    const all = pairRecords(records, beam);
+    if (!all.length) throw new Error(`no greedy/beam-${beam} pairs: was the greedy cell run with --record-confidences?`);
+    for (const quant of [...new Set(all.map((p) => p.quant))]) {
+      const pairs = all.filter((p) => p.quant === quant);
+      const datasets = [...new Set(pairs.map((p) => p.dataset))];
+      console.log(`\n# Selective beam: greedy vs beam ${beam}, quant ${quant} (${pairs.length} utterances, ${datasets.join(', ')})\n\n${summary(pairs)}`);
+      for (const feature of Object.keys(FEATURES)) {
+        console.log(`\n## Feature: ${feature}\n\n${table(pairs, feature, args.fractions)}`);
+      }
+      for (const ds of datasets) {
+        const sub = pairs.filter((p) => p.dataset === ds);
+        console.log(`\n## ${ds} (${sub.length} utterances), feature min\n\n${summary(sub)}\n\n${table(sub, 'min', args.fractions)}`);
+      }
     }
   }
 }
