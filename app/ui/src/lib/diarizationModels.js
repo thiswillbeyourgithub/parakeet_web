@@ -1,23 +1,36 @@
-// Download + cache the two ONNX models the sherpa-onnx diarization engine needs:
-// a pyannote segmentation model and a CAM++ speaker-embedding model. Reuses the
-// app's hub (HuggingFace + IndexedDB cache) and its local-/models fallback, so
-// diarization weights ride the exact same supply chain as the Parakeet weights.
+// Download + cache what speaker diarization needs: the Streaming Sortformer
+// model (NVIDIA Nemotron-3-Diarization, exported for the browser as
+// Olicorne/Nemotron-3-Diarization-web-onnx) and the CAM++ speaker-embedding
+// model that cross-recording voice matching runs (speakerEmbedding.js). Reuses
+// the app's hub (HuggingFace + IndexedDB cache) and its local-/models
+// fallback, so diarization weights ride the exact same supply chain as the
+// Parakeet weights.
 //
-// Defaults point at un-gated, hub-resolvable HF mirrors (the canonical
-// pyannote/segmentation-3.0 repo is gated, so we use csukuangfj's mirror). All
-// four pieces are operator-overridable via VITE_DIARIZATION_* (see config.js).
+// The Sortformer repo ships the network as two graphs plus two small data
+// files (app/src/sortformer.js runs the rest):
+//   embed.onnx               2 MB, feature stacking + projection, every backend
+//   <precision>/step...onnx  the encoder: int8 100 MB (WASM), fp16 198 MB
+//                            (WebGPU with shader-f16), fp32 396 MB (WebGPU without)
+//   silence_embeds.bin       2 KB, float32 [512]
+//   diarization-config.json  chunking + speaker-cache constants
+// Only ONE step precision is downloaded, the one the backend runs
+// (diarizationPrecision), the same rule the ASR encoder follows.
 //
-// These models live in a DIFFERENT repo than the Parakeet model, so the
+// Repos are operator-overridable via VITE_DIARIZATION_REPO and
+// VITE_DIARIZATION_EMB_REPO/_FILE (see config.js, docker/env.example).
+//
+// These models live in DIFFERENT repos than the Parakeet model, so the
 // generational cache sweep at the end of getParakeetModel would treat them as
 // orphans and delete them. diarizationModelProtectKeys() exposes their base
-// cache keys so App.jsx can pass them as getParakeetModel's protectCacheKeys.
+// cache keys (every precision, so switching backend never sweeps the other)
+// so App.jsx can pass them as getParakeetModel's protectCacheKeys.
 
 import { getModelFile, getLocalModelFile, resolveLocalModelBase, HubDownloadError, modelFileCacheKeys } from 'parakeet.js';
 import { CONFIG } from '../config.js';
 import { diarizationFileName } from './modelRepos.js';
+import { DIARIZATION_STEP_FILES, parseDiarizationData } from './diarizationFiles.js';
 
-const SEG_REPO = CONFIG.VITE_DIARIZATION_SEG_REPO || 'csukuangfj/sherpa-onnx-pyannote-segmentation-3-0';
-const SEG_FILE = diarizationFileName(CONFIG.VITE_DIARIZATION_SEG_FILE, 'model.onnx');
+export const DIAR_REPO = CONFIG.VITE_DIARIZATION_REPO || 'Olicorne/Nemotron-3-Diarization-web-onnx';
 const EMB_REPO = CONFIG.VITE_DIARIZATION_EMB_REPO || 'csukuangfj/speaker-embedding-models';
 // Multilingual (zh+en "advanced common") CAM++: speaker embeddings transfer
 // across languages, and this is the broadest CAM++, a better default for the
@@ -27,50 +40,37 @@ const EMB_FILE = diarizationFileName(
   '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
 );
 
-/** The (repo, file) descriptors for the two diarization models. */
-export const DIARIZATION_MODELS = [
-  { kind: 'segmentation', repo: SEG_REPO, file: SEG_FILE },
-  { kind: 'embedding', repo: EMB_REPO, file: EMB_FILE },
-];
-
-// Memoised so concurrent callers (background prefetch + a click) share one
-// download, and a second diarization reuses the bytes already in memory.
-let _modelsPromise = null;
+const CONFIG_FILE = 'diarization-config.json';
+const EMBED_FILE = 'embed.onnx';
+const SILENCE_FILE = 'silence_embeds.bin';
+// Memoised per precision so concurrent callers (background prefetch + a
+// click) share one download, and a second diarization reuses the bytes.
+const _models = new Map();
 
 // A local mirror can be flat (<base>/<file>) or nested by repo
 // (<base>/<repo>/<file>). getLocalModelFile builds `<base>/<filename>` and uses
-// repoId only for the cache key, so without this step these two files are
-// addressed by bare basename and can only ever live at the mirror root -- which
-// is why a mount serving several repos still had to keep them loose at the top
-// alongside the repo folders. Resolving the base per repo first, exactly as
-// getParakeetModel does for the ASR weights, lets them sit in their own
-// csukuangfj/<repo>/ folders like everything else.
+// repoId only for the cache key, so resolve the base per repo first, exactly as
+// getParakeetModel does for the ASR weights.
 //
 // The flat fallback is deliberately NOT guarded the way the ASR one is. There
 // the visitor picks the repo, so an unattributed flat tree could be served
-// under a different model's name; here both repos are fixed (operator-set at
+// under a different model's name; here the repos are fixed (operator-set at
 // build time at most), so there is no other model for a flat tree to be
-// mistaken for. Refusing it would break existing flat mounts and the CI mirror
-// for no safety gained.
-async function localBase(baseUrl, repo, file) {
-  // The wanted file doubles as the canary: these repos have no vocab.txt, and a
-  // layout that serves the file is by definition the layout to read it from.
-  return (await resolveLocalModelBase(baseUrl, repo, { canary: file })) || baseUrl;
+// mistaken for.
+async function localBase(baseUrl, repo, canary) {
+  return (await resolveLocalModelBase(baseUrl, repo, { canary })) || baseUrl;
 }
 
-async function fetchBytes(repo, file, { localBaseUrl, localOnly, localFirst, progress }) {
+async function fetchBytes(repo, file, canary, { localBaseUrl, localOnly, localFirst, progress }) {
   const fromLocal = async () => getLocalModelFile(
-    await localBase(localBaseUrl, repo, file), repo, file, { asBytes: true, progress });
+    await localBase(localBaseUrl, repo, canary), repo, file, { asBytes: true, progress });
   if (localOnly) {
     return fromLocal();
   }
   // The background reachability preflight (lib/hubReachability.js) says this
-  // machine cannot reach HuggingFace. These two models had their own HF-first
-  // order, so on a blocked network they went on paying a full connect timeout
-  // each even after the ASR load had learned better, and a visitor's only clue
-  // was two more failed huggingface.co requests in the console. Reordering, not
-  // skipping: a mirror that does not carry them still ends up at HuggingFace,
-  // which is what keeps a false negative from breaking diarization outright.
+  // machine cannot reach HuggingFace. Reordering, not skipping: a mirror that
+  // does not carry these files still ends up at HuggingFace, which is what
+  // keeps a false negative from breaking diarization outright.
   if (localFirst && localBaseUrl) {
     try {
       return await fromLocal();
@@ -92,10 +92,12 @@ async function fetchBytes(repo, file, { localBaseUrl, localOnly, localFirst, pro
 }
 
 /**
- * Download (or read from cache) the segmentation + embedding models. Memoised:
- * the first call wins, the rest await it.
+ * Download (or read from cache) the Sortformer files for one precision plus
+ * the CAM++ embedding model. Memoised per precision: the first call wins, the
+ * rest await it; a failure clears the memo so a retry can succeed.
  *
  * @param {object} [opts]
+ * @param {'int8'|'fp16'|'fp32'} [opts.precision='int8'] step graph to fetch
  * @param {string|null} [opts.localBaseUrl] local mirror base (e.g. '/models')
  *   to fall back to when HF is unreachable; null to disable the fallback.
  * @param {boolean} [opts.localOnly=false] skip HF entirely, serve from localBaseUrl.
@@ -103,39 +105,53 @@ async function fetchBytes(repo, file, { localBaseUrl, localOnly, localFirst, pro
  *   back to HF if it misses), for when the reachability preflight has found HF
  *   unreachable from this machine.
  * @param {(p:{loaded:number,total:number})=>void} [opts.onProgress] aggregate
- *   byte progress across both files.
- * @returns {Promise<{segmentationBytes:Uint8Array, embeddingBytes:Uint8Array}>}
+ *   byte progress across all files.
+ * @returns {Promise<{precision:string, config:object, silenceEmbeds:Float32Array,
+ *   embedBytes:Uint8Array, stepBytes:Uint8Array, embeddingBytes:Uint8Array}>}
  */
-export function getDiarizationModels({ localBaseUrl = null, localOnly = false, localFirst = false, onProgress } = {}) {
-  if (_modelsPromise) return _modelsPromise;
-  _modelsPromise = (async () => {
-    // Aggregate progress across the two parallel downloads.
-    const acc = { seg: { loaded: 0, total: 0 }, emb: { loaded: 0, total: 0 } };
-    const report = () => onProgress && onProgress({
-      loaded: acc.seg.loaded + acc.emb.loaded,
-      total: acc.seg.total + acc.emb.total,
-    });
-    const mkProgress = (slot) => onProgress
-      ? ({ loaded, total }) => { acc[slot] = { loaded: loaded || 0, total: total || 0 }; report(); }
-      : undefined;
-
-    const [segmentationBytes, embeddingBytes] = await Promise.all([
-      fetchBytes(SEG_REPO, SEG_FILE, { localBaseUrl, localOnly, localFirst, progress: mkProgress('seg') }),
-      fetchBytes(EMB_REPO, EMB_FILE, { localBaseUrl, localOnly, localFirst, progress: mkProgress('emb') }),
-    ]);
-    return { segmentationBytes, embeddingBytes };
+export function getDiarizationModels({ precision = 'int8', localBaseUrl = null, localOnly = false, localFirst = false, onProgress } = {}) {
+  const stepFile = DIARIZATION_STEP_FILES[precision];
+  if (!stepFile) throw new Error(`unknown diarization precision "${precision}"`);
+  if (_models.has(precision)) return _models.get(precision);
+  const files = [
+    ['config', DIAR_REPO, CONFIG_FILE],
+    ['silence', DIAR_REPO, SILENCE_FILE],
+    ['embed', DIAR_REPO, EMBED_FILE],
+    ['step', DIAR_REPO, stepFile],
+    ['embedding', EMB_REPO, EMB_FILE],
+  ];
+  const promise = (async () => {
+    const acc = Object.fromEntries(files.map(([slot]) => [slot, { loaded: 0, total: 0 }]));
+    const report = () => onProgress && onProgress(Object.values(acc).reduce(
+      (sum, p) => ({ loaded: sum.loaded + p.loaded, total: sum.total + p.total }), { loaded: 0, total: 0 }));
+    const bytes = await Promise.all(files.map(([slot, repo, file]) => fetchBytes(repo, file,
+      // canary: a file every layout of that repo serves
+      repo === DIAR_REPO ? CONFIG_FILE : EMB_FILE,
+      {
+        localBaseUrl, localOnly, localFirst,
+        progress: onProgress ? ({ loaded, total }) => { acc[slot] = { loaded: loaded || 0, total: total || 0 }; report(); } : undefined,
+      })));
+    const by = Object.fromEntries(files.map(([slot], i) => [slot, bytes[i]]));
+    const { config, silenceEmbeds } = parseDiarizationData(by.config, by.silence);
+    return { precision, config, silenceEmbeds, embedBytes: by.embed, stepBytes: by.step, embeddingBytes: by.embedding };
   })().catch((err) => {
-    _modelsPromise = null; // let a failed download be retried
+    _models.delete(precision); // let a failed download be retried
     throw err;
   });
-  return _modelsPromise;
+  _models.set(precision, promise);
+  return promise;
 }
 
 /**
- * Base IndexedDB cache keys for both diarization models, so the Parakeet model
- * sweep can be told to keep them (getParakeetModel protectCacheKeys).
+ * Base IndexedDB cache keys for every diarization file (all step precisions),
+ * so the Parakeet model sweep can be told to keep them (getParakeetModel
+ * protectCacheKeys).
  * @returns {string[]}
  */
 export function diarizationModelProtectKeys() {
-  return DIARIZATION_MODELS.map(({ repo, file }) => modelFileCacheKeys(repo, file).blob);
+  return [
+    ...[CONFIG_FILE, SILENCE_FILE, EMBED_FILE, ...Object.values(DIARIZATION_STEP_FILES)]
+      .map((file) => modelFileCacheKeys(DIAR_REPO, file).blob),
+    modelFileCacheKeys(EMB_REPO, EMB_FILE).blob,
+  ];
 }
