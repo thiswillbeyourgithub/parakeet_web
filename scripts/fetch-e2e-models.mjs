@@ -8,13 +8,13 @@
 //   - the int8 ASR weights (encoder + decoder + vocab), keeping the repo's
 //     own precision folder (int8/) under the repo prefix, which is
 //     what app/src/modelLayout.js resolves and serve.mjs serves,
-//   - the two speaker-diarization models (pyannote segmentation + CAM++
-//     embedding) that transcription-diarization.spec.js needs; that spec
-//     self-skips when they are absent, so this download is what gives it CI
-//     coverage. They come from two OTHER repos and now sit under their own
-//     prefixes too, which diarizationModels.js reaches by resolving its base per
-//     repo. Before that they had to sit loose at the mirror root, since the
-//     local fetch addressed them by bare basename.
+//   - the speaker-diarization files the diarization specs need: the WASM
+//     (int8) Streaming Sortformer from Olicorne/Nemotron-3-Diarization-web-onnx
+//     plus the CAM++ embedding model for voice matching. Those specs self-skip
+//     when the files are absent, so this download is what gives them CI
+//     coverage. They come from two OTHER repos and sit under their own
+//     prefixes, which diarizationModels.js reaches by resolving its base per
+//     repo.
 //
 // The flat layout (everything at the root) is still supported everywhere it was
 // -- it is the single-repo LOCAL_MODEL_PATH contract, and plenty of checkouts
@@ -52,13 +52,13 @@ import { writeMirrorManifests, MANIFEST_FILE } from './model-manifest.mjs';
 // rather than a flattened one. The int8 set comes from the app's default model
 // repo (DEFAULT_MODEL_REPO in app/ui/src/lib/modelRepos.js, now the ultra
 // repo), so the tier-3 e2e exercises the same weights users get by default. The diarization
-// set matches diarizationModels.js's un-gated csukuangfj defaults, whose repos
-// keep their single model at the root.
+// set matches diarizationModels.js's defaults: the Sortformer files a WASM
+// diarization loads (its int8 step) plus the CAM++ model at its repo's root.
 const REVISION = 'main';
 export const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
 // The two diarization repos, named so the specs that probe for their weights
 // share this list's idea of where they came from instead of restating the ids.
-export const DIARIZATION_SEG_REPO = 'csukuangfj/sherpa-onnx-pyannote-segmentation-3-0';
+export const DIARIZATION_REPO = 'Olicorne/Nemotron-3-Diarization-web-onnx';
 export const DIARIZATION_EMB_REPO = 'csukuangfj/speaker-embedding-models';
 export const MODELS = [
   { repo: ASR_REPO, file: 'int8/encoder-model.int8.onnx' },
@@ -69,7 +69,11 @@ export const MODELS = [
   // above. Whether the fetched revision actually carries the decoder outputs is
   // reported by parakeet.js at load, and the two specs that depend on them skip
   // against a revision that predates the promotion.
-  { repo: DIARIZATION_SEG_REPO, file: 'model.onnx' },
+  // the Sortformer files a WASM diarization loads (diarizationModels.js)
+  { repo: DIARIZATION_REPO, file: 'diarization-config.json' },
+  { repo: DIARIZATION_REPO, file: 'silence_embeds.bin' },
+  { repo: DIARIZATION_REPO, file: 'embed.onnx' },
+  { repo: DIARIZATION_REPO, file: 'int8/step.int8.onnx' },
   { repo: DIARIZATION_EMB_REPO, file: '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx' },
 ];
 

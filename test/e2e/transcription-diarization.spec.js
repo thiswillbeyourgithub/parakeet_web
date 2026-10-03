@@ -1,5 +1,5 @@
-// Tier-3 E2E proving the sherpa-onnx speaker-diarization path actually loads and
-// runs in a real headless Chromium: load the WASM int8 ASR model, transcribe a
+// Tier-3 E2E proving the Streaming Sortformer speaker-diarization path actually
+// loads and runs in a real headless Chromium: load the WASM int8 ASR model, transcribe a
 // two-speaker clip, click the per-entry "Speakers" button, and assert the
 // transcript regroups into colour-coded Speaker turns with >= 2 distinct
 // speakers. It then exercises the interactive controls: forcing a speaker count
@@ -9,21 +9,23 @@
 // name are written to the transcripts DB (and ONLY those, no per-word timings or
 // raw segments, per F-130) and survive a full page reload, where the Speakers
 // view + "Alice" reappear from disk even though the in-memory audio is gone.
-// This is the in-browser proof the vendored WASM engine (its own ONNX Runtime),
-// the two diarization models, and the word->speaker assignment all work end to
-// end; the pure pieces are unit-tested (test/unit/speaker-assign).
+// This is the in-browser proof that the diarization worker (diarize.worker.js on
+// the app's own ONNX Runtime), the int8 Sortformer, the CAM++ voice embedding
+// and the word->speaker assignment all work end to end; the pure pieces are
+// unit-tested (test/unit/sortformer-*, speaker-assign).
 //
 // The fixture two-speakers.wav is JFK's English excerpt (~11 s) followed by a
 // FLEURS English clip read by a different speaker (~5 s), two acoustically very
 // different voices, so the diarizer must split it into at least two speakers and
 // the first turn's speaker must differ from the last turn's. It is a
 // loudness-normalised lossless WAV: the browser's MP3 decoder degraded the
-// quieter second speaker enough that the ASR dropped its words (segmentation,
-// which is more sensitive, still fired), so an equal-loudness WAV is what makes
-// BOTH speakers reliably transcribe in-browser.
+// quieter second speaker enough that the ASR dropped its words (the pyannote
+// segmentation this spec first ran against, being more sensitive, still fired),
+// so an equal-loudness WAV is what makes BOTH speakers reliably transcribe
+// in-browser.
 //
-// The two models (pyannote segmentation + CAM++ embedding) are served locally at
-// /models by serve.mjs (flat layout). They are NOT committed; CI fetches them
+// The models (the int8 Sortformer + CAM++ embedding) are served locally at
+// /models by serve.mjs. They are NOT committed; CI fetches them
 // with `npm run e2e:models` and local dev gets them the same way. When they are
 // absent the spec SKIPS itself (HEAD-probe), mirroring transcription-fp32-wasm.
 //
@@ -34,20 +36,13 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings } from './seed.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
-import { probeModelUrl } from './model-probe.mjs';
-import { DIARIZATION_EMB_REPO } from '../../scripts/fetch-e2e-models.mjs';
+import { diarizationModelsServed } from './model-probe.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
 
-// The CAM++ embedding model is the largest, most diagnostic of the two model
-// files: if it is served, both are (e2e:models fetches them together). Absent
-// means no diarization coverage is possible, so skip rather than fail.
-const EMB_MODEL = '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
-
 test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async ({ page, request, baseURL }) => {
-  const probed = await probeModelUrl(request, DIARIZATION_EMB_REPO, EMB_MODEL);
-  requireWeightsOrSkip(test, !probed,
+  requireWeightsOrSkip(test, !(await diarizationModelsServed(request)),
     `no diarization models under ${baseURL}/models (run \`npm run e2e:models\` to fetch them)`);
 
   const FIXTURE_AUDIO = fixture('two-speakers.wav');
@@ -57,11 +52,13 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  // Track requests for the CAM++ embedding model so we can prove the background
-  // prefetch fires as soon as the ASR model is ready, BEFORE any Speakers click.
-  const embModelRequests = [];
+  // Track every Sortformer step request: none may happen before the Speakers
+  // click (the 100-396 MB step is only prefetched when Speakers is the default
+  // display, and this spec keeps the default Raw view), and the WASM backend
+  // must fetch the int8 step, never a GPU precision.
+  const stepRequests = [];
   page.on('request', (req) => {
-    if (req.url().includes('3dspeaker_speech_campplus')) embModelRequests.push(req.url());
+    if (/\/step(\.[a-z0-9]+)?\.onnx/.test(req.url())) stepRequests.push(req.url());
   });
 
   // First boot creates the settings DB; seed local model source + wasm backend,
@@ -78,11 +75,6 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   await page.locator('[data-umami-event="load_model_button"]').click();
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
 
-  // The diarization models prefetch in the background the moment the ASR model
-  // is ready, so the user can record and the first Speakers run is instant. The
-  // embedding model must therefore already have been requested HERE, before we
-  // upload anything or ever open the Speakers view.
-  await expect.poll(() => embModelRequests.length, { timeout: 60 * 1000 }).toBeGreaterThan(0);
 
   // Upload the clip; uploads transcribe immediately.
   await page.locator('#audio-file-input').setInputFiles(FIXTURE_AUDIO);
@@ -95,12 +87,16 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   const speakersBtn = page.locator('.history-modes button', { hasText: 'Speakers' }).first();
   await expect(speakersBtn).toBeVisible({ timeout: 30 * 1000 });
   await expect(speakersBtn).toBeEnabled();
+  expect(stepRequests, 'no Sortformer download before the first Speakers click').toEqual([]);
   await speakersBtn.click();
 
-  // Diarization runs on the WASM engine (loads glue + wasm + both models the
+  // Diarization runs in the WASM worker (downloads the Sortformer + CAM++ the
   // first time). The diarized view renders .diar-turns when it completes.
   const turns = page.locator('.diar-turns .diar-turn');
   await expect(turns.first()).toBeVisible({ timeout: 3 * 60 * 1000 });
+
+  expect(stepRequests.length, 'the Speakers click fetched a step graph').toBeGreaterThan(0);
+  expect(stepRequests.every((u) => u.includes('step.int8.onnx')), `WASM fetched only the int8 step: ${stepRequests}`).toBe(true);
 
   // At least two turns, and at least two DISTINCT speakers across them.
   const turnCount = await turns.count();
@@ -129,8 +125,9 @@ test('diarizes a two-speaker clip into colour-coded speaker turns (WASM)', async
   // --- Force a single speaker from the entry kebab: it must re-segment to 1 turn. ---
   await page.getByRole('button', { name: 'More actions' }).first().click();
   await page.locator('.kebab-speakers select').selectOption('1');
-  // Re-segmentation runs on the already-loaded engine; the diarized view collapses
-  // to a single speaker turn (numClusters=1 puts every word in one cluster).
+  // Re-segmentation reuses the entry's cached Sortformer probabilities (no new
+  // network run); a cap of 1 folds every other speaker into the kept one, so the
+  // diarized view collapses to a single turn.
   await expect.poll(() => page.locator('.diar-turns .diar-turn').count(), { timeout: 60 * 1000 }).toBe(1);
 
   // --- Back to Auto from the kebab: it must re-segment to >= 2 turns again. ---

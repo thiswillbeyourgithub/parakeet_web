@@ -1,7 +1,7 @@
 // Tier-3 E2E proving cross-recording speaker matching (session-only): when the
 // user names a speaker in one recording, the SAME voice in a later recording is
-// auto-labelled with that name. The vendored diarization WASM returns no
-// embeddings, so the app computes CAM++ voice embeddings itself (shared
+// auto-labelled with that name. The diarizer returns no embeddings, so the
+// app computes CAM++ voice embeddings itself (shared
 // app/src/fbank.js + onnxruntime-web) and matches them by cosine similarity
 // (app/ui/src/lib/speakerMatch.js). The pure pieces are unit-tested (fbank,
 // speaker-match) and the embedding quality is validated by
@@ -16,8 +16,9 @@
 // Embeddings live in memory only (voiceprints are biometric, never persisted),
 // so this works within one session, which is exactly what is asserted here.
 //
-// The two diarization models are served locally at /models by serve.mjs; absent,
-// the spec SKIPS itself (HEAD-probe), mirroring transcription-diarization.
+// The diarization models (Sortformer + CAM++) are served locally at /models by
+// serve.mjs; absent, the spec SKIPS itself (HEAD-probe), mirroring
+// transcription-diarization.
 //
 // Built with Claude Code.
 
@@ -26,17 +27,13 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { seedSettings } from './seed.mjs';
 import { requireWeightsOrSkip } from './strict-weights.mjs';
-import { probeModelUrl } from './model-probe.mjs';
-import { DIARIZATION_EMB_REPO } from '../../scripts/fetch-e2e-models.mjs';
+import { diarizationModelsServed } from './model-probe.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => resolve(here, '../fixtures', name);
 
-const EMB_MODEL = '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
-
 test('reuses a renamed speaker label across recordings by voice match (WASM)', async ({ page, request, baseURL }) => {
-  const probed = await probeModelUrl(request, DIARIZATION_EMB_REPO, EMB_MODEL);
-  requireWeightsOrSkip(test, !probed,
+  requireWeightsOrSkip(test, !(await diarizationModelsServed(request)),
     `no diarization models under ${baseURL}/models (run \`npm run e2e:models\` to fetch them)`);
 
   const FIXTURE_AUDIO = fixture('two-speakers.wav');

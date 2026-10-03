@@ -12,7 +12,7 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { MODELS, download, destPath, remotePathFor, asrRootIn, ASR_REPO, DIARIZATION_SEG_REPO, DIARIZATION_EMB_REPO } from '../../scripts/fetch-e2e-models.mjs';
+import { MODELS, download, destPath, remotePathFor, asrRootIn, ASR_REPO, DIARIZATION_REPO, DIARIZATION_EMB_REPO } from '../../scripts/fetch-e2e-models.mjs';
 import { layoutDirFor, basenameOf } from '../../app/src/modelLayout.js';
 
 const realFetch = globalThis.fetch;
@@ -83,7 +83,7 @@ describe('fetch-e2e-models: optional vs required download entries', () => {
     }
     // And the ids the specs import for their probes are the ones actually used.
     const repos = new Set(MODELS.map((m) => m.repo));
-    for (const r of [ASR_REPO, DIARIZATION_SEG_REPO, DIARIZATION_EMB_REPO]) {
+    for (const r of [ASR_REPO, DIARIZATION_REPO, DIARIZATION_EMB_REPO]) {
       assert.ok(repos.has(r), `${r} is exported for the specs but nothing fetches it`);
     }
   });
