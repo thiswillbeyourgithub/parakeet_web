@@ -1,21 +1,22 @@
-// Drug-name fix rules: regexes learned from the drug-name errors of the
-// UltiMed and parakeet-ultra models ("l'ananas de l'umab" -> "lanadelumab").
+// Drug-name and medical-term fix rules: regexes learned from the errors of
+// the UltiMed and parakeet-ultra models ("l'ananas de l'umab" -> "lanadelumab",
+// "ostéophite" -> "ostéophyte").
 //
 // Two stages, so the browser does as little as possible:
 //  - BUILD (compileDrugRuleSource, run by scripts/compile-drug-rules.mjs):
-//    the model repo's drug_fix_rules.jsonl becomes the committed
-//    public/drug-rules/drug_rules.json, keeping only [pattern, replacement]
-//    per rule plus a prebuilt anchor index and the SHA-256 of its source
-//    (which deploy.sh checks against the model repo).
+//    the model repo's regex-fixes/ drug then term rule files become the
+//    committed public/drug-rules/drug_rules.json, keeping only
+//    [pattern, replacement] per rule plus a prebuilt anchor index and the
+//    SHA-256 of each source (which deploy.sh checks against the model repo).
 //  - RUNTIME (loadDrugRules + applyDrugRules): parse that JSON and build each
 //    RegExp only the first time a text contains its anchor, since most rules
 //    never fire for a given speaker.
 //
 // The reference semantics are "every rule, in file order, on the whole text"
-// (applyDrugRulesNaive, ~20 ms per text). applyDrugRules runs the same rules
+// (applyDrugRulesNaive, ~120 ms per text). applyDrugRules runs the same rules
 // through the anchor index: a rule only runs when its anchor (the longest
 // accent-folded word of a variant it fixes) is one of the text's words.
-// Same output, ~140x faster. Port of compile_rules() from the rule builder
+// Same output, ~400x faster. Port of compile_rules() from the rule builder
 // (UltiMed-ASR-FR-v1-scripts, 08_drug_asr_rules/02_build_fix_rules.py).
 //
 // Kept free of DOM/React so all of it is unit-testable
