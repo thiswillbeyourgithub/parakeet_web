@@ -44,7 +44,10 @@ test('a file uploaded while the model is loading is queued and transcribed once 
   // vocab.txt came after the weights); once they really used the local mirror,
   // holding it parked the load before a single byte, exactly the state the
   // comment above rules out.
-  await page.route('**/decoder_joint-model.int8.onnx', async (route) => {
+  //
+  // Either decoder precision: the app loads the fp32 one when the source ships
+  // it and the int8 one otherwise.
+  await page.route('**/decoder_joint-model*.onnx', async (route) => {
     await new Promise((r) => setTimeout(r, 15000));
     await route.continue();
   });

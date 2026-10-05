@@ -128,8 +128,8 @@ function parseArgs(argv) {
   --crop-sec N        Seconds to crop from the start for the chunk fixture (default: ${CROP_SEC})
   --model-dir D       int8 weights dir (default: ./fallback_models)
   --decoder-quant Q   decoder_joint quant int8/fp16/fp32 (default: fp32; encoder stays int8).
-                      NOTE: the browser/e2e app decodes with an int8 decoder, so a
-                      non-int8 decoder can shift the golden away from the e2e runtime.
+                      NOTE: the browser/e2e app decodes with the fp32 decoder when the
+                      source ships it, so another decoder can shift the golden away from the e2e runtime.
   --ffmpeg PATH       ffmpeg binary (else auto-detected; or set FFMPEG)`);
         process.exit(0);
     }
@@ -160,8 +160,8 @@ async function main() {
   // (STITCH_STRESS_CHUNK_SEC) so the golden carries many seams. The chunk e2e then
   // asserts the live app recovers this content across those seams.
   console.error(`[gen-jfk-moon] loading model from ${args.modelDir} (encoder int8 / decoder ${args.decoderQuant}) ...`);
-  if (args.decoderQuant !== 'int8') {
-    console.error(`[gen-jfk-moon] WARNING: the browser/e2e app decodes with an int8 decoder; a golden built with a ${args.decoderQuant} decoder may diverge from what the e2e produces.`);
+  if (args.decoderQuant !== 'fp32') {
+    console.error(`[gen-jfk-moon] WARNING: the browser/e2e app decodes with the fp32 decoder; a golden built with a ${args.decoderQuant} decoder may diverge from what the e2e produces.`);
   }
   const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8', decoderQuant: args.decoderQuant });
   const pcm = await decodePcm(ffmpeg, FIXTURE_MP3);
