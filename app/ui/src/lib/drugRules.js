@@ -14,7 +14,7 @@
 // The reference semantics are "every rule, in file order, on the whole text"
 // (applyDrugRulesNaive, ~20 ms per text). applyDrugRules runs the same rules
 // through the anchor index: a rule only runs when its anchor (the longest
-// accent-folded word of the variant it fixes) is one of the text's words.
+// accent-folded word of a variant it fixes) is one of the text's words.
 // Same output, ~140x faster. Port of compile_rules() from the rule builder
 // (UltiMed-ASR-FR-v1-scripts, 08_drug_asr_rules/02_build_fix_rules.py).
 //
@@ -70,16 +70,21 @@ export function compileDrugRuleSource(jsonl, meta = {}) {
   const anchors = {};
   const always = [];
   kept.forEach((r, i) => {
-    const words = fold(r.variant || '').trim().split(/[\s'’-]+/u);
-    // A variant with an empty word or a non-word character inside a word
-    // cannot be anchored on the tokenizer's words, so that rule runs on every
-    // text.
-    if (words.every((w) => w && !TOKEN_SPLIT.test(w))) {
-      const anchor = words.reduce((x, y) => (y.length > x.length ? y : x));
-      (Object.hasOwn(anchors, anchor) ? anchors[anchor] : (anchors[anchor] = [])).push(i);
-    } else {
-      always.push(i);
+    // A merged rule (03_merge_rules.py) lists several variants and is indexed
+    // under each one's anchor.
+    const ruleAnchors = new Set();
+    for (const v of (Array.isArray(r.variants) && r.variants.length ? r.variants : [r.variant || ''])) {
+      const words = fold(String(v)).trim().split(/[\s'’-]+/u);
+      // A variant with an empty word or a non-word character inside a word
+      // cannot be anchored on the tokenizer's words, so that rule runs on
+      // every text.
+      if (!words.every((w) => w && !TOKEN_SPLIT.test(w))) {
+        always.push(i);
+        return;
+      }
+      ruleAnchors.add(words.reduce((x, y) => (y.length > x.length ? y : x)));
     }
+    for (const a of ruleAnchors) (Object.hasOwn(anchors, a) ? anchors[a] : (anchors[a] = [])).push(i);
   });
   return {
     format: DRUG_RULES_FORMAT,
