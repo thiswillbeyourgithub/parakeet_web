@@ -96,9 +96,9 @@ describe('compileDrugRuleSource (build stage)', () => {
   });
 
   test('keeps only [pattern, replacement] and records the metadata it is given', () => {
-    const c = compileDrugRuleSource(rule('foo', 'bar'), { source_sha256: 'abc' });
+    const c = compileDrugRuleSource(rule('foo', 'bar'), { sources: [{ sha256: 'abc' }] });
     assert.equal(c.format, DRUG_RULES_FORMAT);
-    assert.equal(c.source_sha256, 'abc');
+    assert.deepEqual(c.sources, [{ sha256: 'abc' }]);
     assert.equal(c.rules[0].length, 2);
     assert.deepEqual(c.anchors, { foo: [0] });
   });
@@ -183,7 +183,9 @@ describe('committed drug_rules.json', () => {
     // 03_merge_rules.py folds same-replacement rules, ~13.8k variants ship as
     // ~3.4k rules.
     assert.ok(c.rules.length > 3000, `only ${c.rules.length} rules`);
-    assert.match(data.source_sha256, /^[0-9a-f]{64}$/);
+    // The drug rules, then the medical-term rules, each with its own hash.
+    assert.equal(data.sources.length, 2);
+    for (const s of data.sources) assert.match(s.sha256, /^[0-9a-f]{64}$/);
     const indexed = new Set([...c.always, ...Object.keys(data.anchors).flatMap((t) => anchorRuleIds(c, t))]);
     assert.equal(indexed.size, c.rules.length, 'every rule must be reachable through the index');
   });
@@ -198,14 +200,25 @@ describe('committed drug_rules.json', () => {
       applyDrugRules("Traitement par l'ananas de l'umab et jy c'est le cas.", c),
       'Traitement par lanadelumab et Jyseleca.',
     );
+    // A medical-term rule, which runs after the drug rules.
+    assert.equal(applyDrugRules('Une ostéophite au niveau L4.', c), 'Une ostéophyte au niveau L4.');
   });
 
   test('indexed output equals the in-order pass on a sample of the real rules', () => {
-    // Every 40th rule's own variant, embedded in a sentence (the naive pass
-    // costs ~20 ms per text, so the whole file would take minutes).
-    for (let i = 0; i < c.rules.length; i += 40) {
-      both(`Le patient prend du ${c.rules[i].variant} depuis hier.`, c);
+    // The compiled file keeps no variants, so sample its anchor words instead:
+    // each one is what makes the index queue its rules, and pairing two of
+    // them lets a fix feed a later rule. Sampled because the naive pass runs
+    // every rule on every text.
+    const words = Object.keys(data.anchors);
+    const step = Math.ceil(words.length / 60);
+    let changed = 0;
+    for (let i = 0; i + 1 < words.length; i += step) {
+      const text = `Le patient prend du ${words[i]} et ${words[i + 1]} depuis hier.`;
+      if (both(text, c) !== text) changed++;
     }
+    // Guard against a sample that never fires a rule, which would make the
+    // equality above vacuous (the first version embedded `undefined`).
+    assert.ok(changed > 10, `only ${changed} sampled texts were rewritten`);
     both('Rien à signaler, bonne tolérance.', c);
   });
 });

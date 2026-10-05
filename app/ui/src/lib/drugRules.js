@@ -33,8 +33,8 @@ const UNSAFE_REPLACEMENT = /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/;
 
 /** Where the app serves the compiled rules (app/ui/public/drug-rules/). */
 export const DRUG_RULES_URL = '/drug-rules/drug_rules.json';
-/** Fetch cap: the compiled file is ~2.5 MB, so leave room for the rule set to grow. */
-export const DRUG_RULES_MAX_BYTES = 16 * 1024 * 1024;
+/** Fetch cap: the compiled drug + term rules are ~13.4 MB, so leave room for them to grow. */
+export const DRUG_RULES_MAX_BYTES = 48 * 1024 * 1024;
 /** Bumped whenever the compiled layout changes; loadDrugRules refuses others. */
 export const DRUG_RULES_FORMAT = 1;
 
@@ -50,7 +50,7 @@ const usableRule = (pattern, replacement) => typeof pattern === 'string'
  * rule never takes the others down with it.
  *
  * @param {string} jsonl
- * @param {object} [meta] Extra fields to record (source_sha256, source...).
+ * @param {object} [meta] Extra fields to record (the `sources` provenance list).
  * @returns {{format: number, rules: Array<[string, string]>, anchors: Record<string, number[]>, always: number[], skipped: number}}
  */
 export function compileDrugRuleSource(jsonl, meta = {}) {
