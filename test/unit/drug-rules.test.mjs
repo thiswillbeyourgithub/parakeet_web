@@ -15,6 +15,7 @@ import {
   loadDrugRules,
   applyDrugRules,
   applyDrugRulesNaive,
+  anchorRuleIds,
   DRUG_RULES_FORMAT,
 } from '../../app/ui/src/lib/drugRules.js';
 
@@ -63,7 +64,7 @@ describe('applyDrugRules', () => {
   test('an unanchorable variant still runs on every text', () => {
     const c = compileDrugRules(rule('a.b', 'Abc', 'a\\.b'));
     assert.deepEqual(c.always, [0]);
-    assert.deepEqual([...c.byAnchor.keys()], []);
+    assert.deepEqual(Object.keys(c.anchors), []);
     assert.equal(both('prendre a.b demain', c), 'prendre Abc demain');
   });
 
@@ -149,8 +150,9 @@ describe('loadDrugRules (runtime stage)', () => {
       anchors: { foo: [0], bar: [1, 7, -1, 2] },
       always: [0, 1.5],
     });
-    assert.deepEqual(c.byAnchor.get('foo'), []);
-    assert.deepEqual(c.byAnchor.get('bar'), [1]);
+    assert.deepEqual(anchorRuleIds(c, 'foo'), []);
+    assert.deepEqual(anchorRuleIds(c, 'bar'), [1]);
+    assert.deepEqual(anchorRuleIds(c, 'constructor'), []);
     assert.deepEqual(c.always, []);
     assert.equal(applyDrugRules('foo bar', c), 'foo ok');
   });
@@ -182,7 +184,7 @@ describe('committed drug_rules.json', () => {
     // ~3.4k rules.
     assert.ok(c.rules.length > 3000, `only ${c.rules.length} rules`);
     assert.match(data.source_sha256, /^[0-9a-f]{64}$/);
-    const indexed = new Set([...c.always, ...[...c.byAnchor.values()].flat()]);
+    const indexed = new Set([...c.always, ...Object.keys(data.anchors).flatMap((t) => anchorRuleIds(c, t))]);
     assert.equal(indexed.size, c.rules.length, 'every rule must be reachable through the index');
   });
 

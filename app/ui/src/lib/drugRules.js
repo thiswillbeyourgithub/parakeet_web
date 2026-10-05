@@ -110,18 +110,39 @@ export function loadDrugRules(data) {
   if (!data || data.format !== DRUG_RULES_FORMAT || !Array.isArray(data.rules)
     || !data.anchors || typeof data.anchors !== 'object' || !Array.isArray(data.always)) return null;
   const n = data.rules.length;
-  const ok = (i) => Number.isInteger(i) && i >= 0 && i < n
-    && Array.isArray(data.rules[i]) && usableRule(data.rules[i][0], data.rules[i][1]);
-  const byAnchor = new Map();
-  for (const [anchor, ids] of Object.entries(data.anchors)) {
-    if (Array.isArray(ids)) byAnchor.set(anchor, ids.filter(ok));
-  }
+  // Validated once per rule: a merged rule sits under many anchors.
+  const usable = new Uint8Array(n);
+  data.rules.forEach((r, i) => { usable[i] = Array.isArray(r) && usableRule(r[0], r[1]) ? 1 : 0; });
+  const ok = (i) => Number.isInteger(i) && i >= 0 && i < n && usable[i] === 1;
   return {
     rules: data.rules,
     res: new Array(n),
-    byAnchor,
+    // Raw served index; each anchor's ids are checked on first lookup
+    // (anchorRuleIds), because validating ~84k anchors up front blocked the
+    // page for ~0.5 s with the term rules merged in.
+    anchors: data.anchors,
+    byAnchor: new Map(),
+    ok,
     always: data.always.filter(ok),
   };
+}
+
+/**
+ * The usable rule ids indexed under one anchor word, validated against the
+ * served file on first lookup and cached.
+ *
+ * @param {ReturnType<typeof loadDrugRules>} compiled
+ * @param {string} token An accent-folded word.
+ * @returns {number[]}
+ */
+export function anchorRuleIds(compiled, token) {
+  let ids = compiled.byAnchor.get(token);
+  if (ids === undefined) {
+    const raw = Object.hasOwn(compiled.anchors, token) ? compiled.anchors[token] : null;
+    ids = Array.isArray(raw) ? raw.filter(compiled.ok) : [];
+    compiled.byAnchor.set(token, ids);
+  }
+  return ids;
 }
 
 // The rule's RegExp, built on first use and kept (null when this engine
@@ -172,7 +193,7 @@ export function applyDrugRules(text, compiled) {
   if (!text || !compiled?.rules.length) return text;
   const candidates = (toks, after) => {
     const out = [];
-    for (const t of toks) for (const j of compiled.byAnchor.get(t) ?? []) if (j > after) out.push(j);
+    for (const t of toks) for (const j of anchorRuleIds(compiled, t)) if (j > after) out.push(j);
     return out;
   };
   const todo = new Set([...candidates(tokens(text), -1), ...compiled.always]);
