@@ -102,6 +102,32 @@ describe('compileDrugRuleSource (build stage)', () => {
     assert.deepEqual(c.anchors, { foo: [0] });
   });
 
+  // 03_merge_rules.py folds the rules sharing a replacement into one rule with
+  // `variants` (and `variant: null`). Indexing only `variant` sent every merged
+  // rule to `always`: right output, but every rule on every text.
+  test('a merged rule is indexed under the anchor of each of its variants', () => {
+    const merged = JSON.stringify({
+      pattern: `${WB}(?:mire[\\s-]+taz[\\s-]+apine|myrtazapine)${WE}`,
+      replacement: 'mirtazapine',
+      variant: null,
+      variants: ['mire taz apine', 'myrtazapine'],
+    });
+    const c = compileDrugRuleSource(merged);
+    assert.deepEqual(c.anchors, { apine: [0], myrtazapine: [0] });
+    assert.deepEqual(c.always, []);
+    const loaded = compileDrugRules(merged);
+    assert.equal(both('Myrtazapine le soir', loaded), 'Mirtazapine le soir');
+    assert.equal(both('mire taz apine le soir', loaded), 'mirtazapine le soir');
+  });
+
+  test('a merged rule with one unanchorable variant runs on every text', () => {
+    const c = compileDrugRuleSource(JSON.stringify({
+      pattern: `${WB}(?:foo|b\\.r)${WE}`, replacement: 'x', variant: null, variants: ['foo', 'b.r'],
+    }));
+    assert.deepEqual(c.anchors, {});
+    assert.deepEqual(c.always, [0]);
+  });
+
   test('a variant word that collides with an Object.prototype key still anchors', () => {
     const c = compileDrugRules(rule('constructor', 'Kontructor'));
     assert.equal(applyDrugRules('le constructor', c), 'le Kontructor');
