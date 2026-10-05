@@ -177,7 +177,10 @@ describe('committed drug_rules.json', () => {
 
   test('loads whole, with its provenance', () => {
     assert.ok(c, 'loadDrugRules refused the committed file');
-    assert.ok(c.rules.length > 9000, `only ${c.rules.length} rules`);
+    // A truncated or half-written compile, not a count to track: since
+    // 03_merge_rules.py folds same-replacement rules, ~13.8k variants ship as
+    // ~3.4k rules.
+    assert.ok(c.rules.length > 3000, `only ${c.rules.length} rules`);
     assert.match(data.source_sha256, /^[0-9a-f]{64}$/);
     const indexed = new Set([...c.always, ...[...c.byAnchor.values()].flat()]);
     assert.equal(indexed.size, c.rules.length, 'every rule must be reachable through the index');

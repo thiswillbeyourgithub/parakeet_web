@@ -23,7 +23,7 @@ import { compileDrugRuleSource, loadDrugRules } from '../app/ui/src/lib/drugRule
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'app/ui/public/drug-rules/drug_rules.json');
-const DEFAULT_SOURCE = resolve(root, 'fallback_models/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/drug_fix_rules.jsonl');
+const DEFAULT_SOURCE = resolve(root, 'fallback_models/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/regex-fixes/drug_fix_rules.jsonl');
 
 const args = process.argv.slice(2);
 const check = args.includes('--check');
@@ -80,7 +80,7 @@ const srcDir = dirname(source);
 const commit = git(srcDir, 'log', '-1', '--format=%H', '--', source);
 const dirty = git(srcDir, 'status', '--porcelain', '--', source);
 const compiled = compileDrugRuleSource(text, {
-  source: 'https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/blob/main/drug_fix_rules.jsonl',
+  source: 'https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/blob/main/regex-fixes/drug_fix_rules.jsonl',
   source_commit: commit ? `${commit}${dirty ? ' (plus uncommitted changes)' : ''}` : 'unknown',
   source_sha256: sha,
 });
