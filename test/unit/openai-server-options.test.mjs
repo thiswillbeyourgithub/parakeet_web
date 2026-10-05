@@ -241,6 +241,21 @@ test('every option env var is passed through docker-compose.yml', () => {
   assert.deepEqual(missing, [], 'env vars read by the server but never passed into the container');
 });
 
+// A non-empty `${VAR:-x}` fallback in compose IS the container's default, so
+// one that disagrees with the option table silently overrides the code's
+// default (PARAKEET_DECODER_QUANT stayed int8 in compose after the code
+// moved to fp32). Empty fallbacks defer to the code and are fine.
+test('docker-compose.yml fallbacks match the option defaults', () => {
+  const compose = read('docker-compose.yml');
+  const wrong = [];
+  for (const o of OPTIONS) {
+    const m = compose.match(new RegExp(`\\$\\{${o.env}:-([^}]*)\\}`));
+    if (!m || m[1] === '') continue;
+    if (String(coerceValue(o, m[1])) !== String(o.def)) wrong.push(`${o.env}: compose ${m[1]}, code ${o.def}`);
+  }
+  assert.deepEqual(wrong, []);
+});
+
 test('every option env var is documented in env.example', () => {
   const example = read('env.example');
   const missing = OPTIONS.filter((o) => !example.includes(o.env)).map((o) => o.env);

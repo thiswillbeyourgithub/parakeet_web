@@ -134,7 +134,7 @@ services:
       # int8 is the only precision the wasm backend can load. fp16/fp32 need
       # PARAKEET_ORT=node (and ORT_NODE_VARIANT=cpu or cuda at build time).
       - PARAKEET_QUANT=${PARAKEET_QUANT:-int8}
-      - PARAKEET_DECODER_QUANT=${PARAKEET_DECODER_QUANT:-int8}
+      - PARAKEET_DECODER_QUANT=${PARAKEET_DECODER_QUANT:-fp32}
       # wasm (default, vendored onnxruntime-web, byte-identical to the browser app)
       # | node (native CPU EP) | cuda (native CUDA EP, see the GPU block below)
       - PARAKEET_ORT=${PARAKEET_ORT:-wasm}
@@ -152,7 +152,7 @@ services:
       - PARAKEET_FRAME_STRIDE=${PARAKEET_FRAME_STRIDE:-1}
       - PARAKEET_TEMPERATURE=${PARAKEET_TEMPERATURE:-0}
       - PARAKEET_CHUNKING=${PARAKEET_CHUNKING:-true}
-      - PARAKEET_CHUNK_DURATION=${PARAKEET_CHUNK_DURATION:-20}
+      - PARAKEET_CHUNK_DURATION=${PARAKEET_CHUNK_DURATION:-60}
       - PARAKEET_OVERLAP=${PARAKEET_OVERLAP:-2}
       - PARAKEET_SNAP_TO_SILENCE=${PARAKEET_SNAP_TO_SILENCE:-1}
 
