@@ -5,8 +5,10 @@
 // one a deployment offering a choice of models must use. Local dev already has
 // the ASR weights in ./fallback_models; this exists so CI can populate a cached
 // dir without the full 3 GB weight set. Two model sets:
-//   - the int8 ASR weights (encoder + decoder + vocab), keeping the repo's
-//     own precision folder (int8/) under the repo prefix, which is
+//   - the int8 ASR weights (encoder + decoder + vocab) plus the fp32 decoder
+//     the app prefers when the source ships it (so CI decodes with the
+//     default, not the int8 fallback), keeping the repo's own precision
+//     folders (int8/, fp32/) under the repo prefix, which is
 //     what app/src/modelLayout.js resolves and serve.mjs serves,
 //   - the speaker-diarization files the diarization specs need: the WASM
 //     (int8) Streaming Sortformer from Olicorne/Nemotron-3-Diarization-web-onnx
@@ -63,9 +65,11 @@ export const DIARIZATION_EMB_REPO = 'csukuangfj/speaker-embedding-models';
 export const MODELS = [
   { repo: ASR_REPO, file: 'int8/encoder-model.int8.onnx' },
   { repo: ASR_REPO, file: 'int8/decoder_joint-model.int8.onnx' },
+  { repo: ASR_REPO, file: 'fp32/decoder_joint-model.onnx' },
+  { repo: ASR_REPO, file: 'fp32/decoder_joint-model.onnx.data' },
   { repo: ASR_REPO, file: 'vocab.txt' },
   // No variant filenames: the model repo's graph work (folded encoder, decoder
-  // with the in-graph log-partition + top-K outputs) ships INSIDE the two files
+  // with the in-graph log-partition + top-K outputs) ships INSIDE the decoder files
   // above. Whether the fetched revision actually carries the decoder outputs is
   // reported by parakeet.js at load, and the two specs that depend on them skip
   // against a revision that predates the promotion.

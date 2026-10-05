@@ -95,9 +95,9 @@ Options:
   --per-lang N        Clips to keep per language (default: 10)
   --model-dir DIR     int8 weights dir (default: ./fallback_models)
   --decoder-quant Q   decoder_joint quant int8/fp16/fp32 (default: fp32; encoder
-                      stays int8). NOTE: the browser/e2e app decodes with an int8
-                      decoder, so regenerating the goldens with a non-int8 decoder
-                      can shift them away from what the e2e actually produces.
+                      stays int8). NOTE: the browser/e2e app decodes with the fp32
+                      decoder when the source ships it, so goldens built with
+                      another decoder can shift them away from what the e2e actually produces.
   --seed N            RNG seed for the shuffle (default: 1234)
   --min-overlap F     Keep a clip only if overlap(reference, model) >= F (default: 0.85)
   --min-duration S    Skip clips shorter than S seconds (default: 4)
@@ -137,8 +137,8 @@ async function main() {
   const ffmpeg = findFfmpeg(args.ffmpeg);
   console.error(`[gen-fleurs] ffmpeg: ${ffmpeg}`);
   console.error(`[gen-fleurs] loading model from ${args.modelDir} (encoder int8 / decoder ${args.decoderQuant}) ...`);
-  if (args.decoderQuant !== 'int8') {
-    console.error(`[gen-fleurs] WARNING: the browser/e2e app decodes with an int8 decoder; goldens built with a ${args.decoderQuant} decoder may diverge from what the e2e produces.`);
+  if (args.decoderQuant !== 'fp32') {
+    console.error(`[gen-fleurs] WARNING: the browser/e2e app decodes with the fp32 decoder; goldens built with a ${args.decoderQuant} decoder may diverge from what the e2e produces.`);
   }
   const { model } = await loadParakeetModel({ modelDir: args.modelDir, quant: 'int8', decoderQuant: args.decoderQuant });
 

@@ -23,14 +23,19 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'fetch-e2e-'));
 describe('fetch-e2e-models: optional vs required download entries', () => {
   test('every listed file is required, at its in-repo path', () => {
     const byFile = Object.fromEntries(MODELS.map((m) => [m.file, m]));
-    // The ASR set is the canonical pair plus the vocab: the model repo's graph
-    // work ships INSIDE those two files, so there is no variant filename to
+    // The ASR set is the canonical files plus the vocab: the model repo's graph
+    // work ships INSIDE the decoder files, so there is no variant filename to
     // fetch alongside them any more. The paths carry the repo's precision
     // folders, so the mirror CI builds has the same shape as the repo and
     // exercises the same resolution hub.js does in production.
     assert.ok(!byFile['int8/encoder-model.int8.onnx'].optional);
     assert.ok(!byFile['int8/decoder_joint-model.int8.onnx'].optional);
     assert.ok(!byFile['vocab.txt'].optional);
+    // The fp32 decoder and its external data: the app prefers it whenever the
+    // source ships it, so without it CI would only ever decode with the int8
+    // fallback, never with what visitors run.
+    assert.ok(!byFile['fp32/decoder_joint-model.onnx'].optional);
+    assert.ok(!byFile['fp32/decoder_joint-model.onnx.data'].optional);
     // No `optional` creep anywhere: a 404 on ANY entry must fail the fetch, not
     // warn and leave a spec to discover the gap.
     assert.deepEqual(MODELS.filter((m) => m.optional).map((m) => m.file), []);
