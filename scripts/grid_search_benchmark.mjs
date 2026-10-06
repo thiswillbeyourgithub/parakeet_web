@@ -1718,6 +1718,8 @@ async function main() {
           dataset: e.dataset,
           audio: e.audioPath, duration: e.duration, audioSec: +audioSec.toFixed(3),
           ref: e.text, hyp, refNorm, hypNorm,
+          // <unk> tokens the decoder emitted (dropped from hyp, so invisible there).
+          unkTokens: result.unk_tokens ?? null,
           wordEdits: sc.wordEdits, refWords: sc.refWords,
           charEdits: sc.charEdits, refChars: sc.refChars,
           // NIST S/D/I split of the 1-best word edits (does a wider beam delete more?).
