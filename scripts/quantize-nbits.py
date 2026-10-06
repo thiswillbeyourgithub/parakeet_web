@@ -27,7 +27,13 @@ bits up represents losslessly. A MatMul whose weight is not ternary (the
 subsampling projection) is left fp32 rather than rounded, and the result is
 checked by dequantizing every packed tensor back against its source.
 
-Usage: quantize-nbits.py <src.onnx> <dst.onnx> [--bits {2,4,8}] [--ternary]
+--dense-bits N (with --ternary) packs those non-ternary MatMuls too, in a second
+pass at N bits and --dense-block-size, instead of leaving them fp32. Built for a
+mixed encoder: parakeet-redux with the UltiMed finetune's delta added to its last
+4 layers (the only ones the finetune trained), so layers 0-19 stay exact 2-bit
+ternary and the dense layers 20-23 get 8 bits (2026-10-06).
+
+Usage: quantize-nbits.py <src.onnx> <dst.onnx> [--bits {2,4,8}] [--ternary [--dense-bits {4,8}]]
 Verify the result with check-nbits.py before shipping it. Written with Claude Code.
 """
 import argparse
@@ -70,7 +76,13 @@ ap.add_argument("--block-size", type=int, default=32,
 ap.add_argument("--ternary", action="store_true",
                 help="pack already-ternary weights exactly instead of rounding them; non-ternary "
                      "MatMuls stay fp32 (see the module docstring)")
+ap.add_argument("--dense-bits", type=int, choices=(4, 8),
+                help="with --ternary: pack the non-ternary MatMuls at this width instead of leaving them fp32")
+ap.add_argument("--dense-block-size", type=int, default=64,
+                help="block size of the --dense-bits pass (default 64, as the shipped int8 encoders)")
 args = ap.parse_args()
+if args.dense_bits and not args.ternary:
+    raise SystemExit("--dense-bits only makes sense with --ternary")
 
 if args.block_size < 16 or args.block_size & (args.block_size - 1):
     raise SystemExit(f"--block-size must be a power of two >= 16, got {args.block_size}")
@@ -160,6 +172,14 @@ if ternary:
         if not np.array_equal(dq, ref):
             raise SystemExit(f"ternary: {src} does not decode back exactly")
     print(f"ternary: {done} weights packed and verified bit-exact", flush=True)
+if args.dense_bits and exclude:
+    # The ternary pass turned its MatMuls into MatMulNBits, so the only MatMuls with a
+    # constant weight left are the excluded dense ones.
+    dk = dict(kwargs, bits=args.dense_bits, block_size=args.dense_block_size)
+    dk.pop("nodes_to_exclude", None)
+    q = Quantizer(q.model.model, **dk)
+    q.process()
+    print(f"dense: {len(exclude)} non-ternary MatMuls packed at {args.dense_bits} bits, block {args.dense_block_size}", flush=True)
 q.model.save_model_to_file(str(dst), use_external_data_format=True)
 
 data = dst.parent / (dst.name + ".data")
