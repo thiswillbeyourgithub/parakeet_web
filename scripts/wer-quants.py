@@ -1092,10 +1092,13 @@ def print_cross_file_summary(summaries, quants):
 
 def score_one_manifest(m, normalize):
     """Turn ONE streamed manifest (one language's {label, items, missing}) into its
-    rowdict {wer, cer, clips, scored, dropped, missing, ref_words, ref_chars} via
+    rowdict {wer, cer, clips, scored, dropped, missing, ref_words, ref_chars, unk_hyps} via
     corpus_wer + corpus_cer (WER and CER over the identical scorable pairs). Called
     per language as analyze_manifest receives each __MANIFEST__, so every language is
-    scored (and emitted) the moment its transcription finishes."""
+    scored (and emitted) the moment its transcription finishes. unk_hyps counts the
+    hypotheses holding the "<unk>" token: a model emitting it (a quantised or blended
+    decoder writing "d<unk>une" for "d'une") is broken even when its WER looks fine,
+    so the bench gate refuses any count above zero."""
     refs = [i["ref"] for i in m["items"]]
     hyps = [i["hyp"] for i in m["items"]]
     wer_val, scored, dropped = corpus_wer(refs, hyps, normalize)
@@ -1106,6 +1109,7 @@ def score_one_manifest(m, normalize):
         "wer": wer_val, "cer": cer_val, "clips": len(m["items"]), "scored": scored,
         "dropped": dropped, "missing": m["missing"],
         "ref_words": ref_words, "ref_chars": ref_chars,
+        "unk_hyps": sum("<unk>" in h for h in hyps),
     }
 
 

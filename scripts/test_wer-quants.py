@@ -169,6 +169,17 @@ def T9_score_one_manifest_rowdict():
     assert row["missing"] == 2
     assert row["ref_words"] == 5, row
     assert abs(row["wer"] - 0.2) < 1e-9, row
+    assert row["unk_hyps"] == 0, row
+
+
+def T9b_score_one_manifest_counts_unk_hyps():
+    # Hypotheses holding the <unk> token are counted once each, however many they hold.
+    m = {"label": "fr", "missing": 0, "items": [
+        {"ref": "d'une", "hyp": "d<unk>une"},
+        {"ref": "39 °C", "hyp": "39<unk>C <unk>"},
+        {"ref": "ok", "hyp": "ok"},
+    ]}
+    assert wq.score_one_manifest(m, normalize=True)["unk_hyps"] == 2
 
 
 def T10_consume_stream_dispatches_each_manifest_then_returns_summary():
