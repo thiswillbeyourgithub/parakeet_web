@@ -3436,6 +3436,9 @@ export class ParakeetModel {
     let tokenStart;
     if (perfEnabled) tokenStart = performance.now();
     const rawText = this.tokenizer.decode(ids);
+    // decode() drops <unk> silently ("d<unk>une" reads "dune"); count them so a
+    // benchmark can refuse a model that emits any (a broken quantised/blended decoder).
+    const unkTokens = ids.reduce((n, id) => n + (this.tokenizer.id2token[id] === this.tokenizer.unkToken), 0);
     if (this.verbose) console.log('[Parakeet.js] Raw decoded text:', rawText);
     const text = this._normalizer(rawText);
     if (this.verbose) console.log('[Parakeet.js] Normalized text (final):', text);
@@ -3499,7 +3502,7 @@ export class ParakeetModel {
         t0, audioSec: audio.length / sampleRate,
         preprocessMs: tPreproc, encodeMs: tEncode, decodeMs: tDecode, tokenizeMs: tToken,
       }, { log: this.verbose || debug });
-      const earlyOut = { utterance_text: text, words: [], metrics, is_final: !returnDecoderState };
+      const earlyOut = { utterance_text: text, unk_tokens: unkTokens, words: [], metrics, is_final: !returnDecoderState };
       if (returnDecoderState) earlyOut.decoderState = finalDecoderState;
       if (beamStats) earlyOut.beamStats = beamStats;
       if (nbestTexts) earlyOut.nbest = nbestTexts;
@@ -3560,6 +3563,7 @@ export class ParakeetModel {
 
     const fullOut = {
       utterance_text: text,
+      unk_tokens: unkTokens,
       words,
       tokens: tokensDetailed,
       confidence_scores: returnConfidences ? {
@@ -3778,6 +3782,7 @@ export class ParakeetModel {
     let totalDecodeMs = 0;
     let totalTokenizeMs = 0;
     let totalProcessingTime = 0;
+    let totalUnkTokens = 0;
     let anyMetrics = false;
     let prevEnd = null; // absolute sample index where the previous chunk ended
     // Opt-in decode-debug: one entry per chunk, kept UNSTITCHED on purpose. The
@@ -3833,6 +3838,7 @@ export class ParakeetModel {
     const consume = async (ci, chunkRes, elapsedMs) => {
       const { start, end } = chunkPlan[ci];
       const chunkNum = ci + 1;
+      totalUnkTokens += chunkRes.unk_tokens || 0;
 
       // Shift word timestamps from chunk-local to absolute time.
       const timeOffset = start / sampleRate;
@@ -4074,6 +4080,7 @@ export class ParakeetModel {
     const totalDuration = audio.length / sampleRate;
     return {
       utterance_text: combinedText,
+      unk_tokens: totalUnkTokens,
       // Words were force-requested per chunk for the seam dedup (stitchOpts);
       // the caller only receives them if they asked.
       words: transcribeOpts.returnTimestamps ? combinedWords : [],

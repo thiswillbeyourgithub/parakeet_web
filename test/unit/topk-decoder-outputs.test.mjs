@@ -420,3 +420,21 @@ describe('top-K decoder outputs: numeric equivalence with the full-row path', ()
     assert.ok(fastRes.words.length > 0);
   });
 });
+
+describe('unk_tokens: <unk> emissions are counted though decode() drops them', () => {
+  // Rename piece 1 ('b') to <unk>: SCRIPT emits ids 0, 1, 2, so one <unk>. Both result
+  // shapes (early exit without extras, full with timestamps) must report it, since a
+  // benchmark refuses any model that emits <unk> ("d<unk>une" otherwise reads "dune").
+  for (const returnTimestamps of [false, true]) {
+    test(`returnTimestamps=${returnTimestamps}`, async () => {
+      const { model } = makeModel({ script: SCRIPT });
+      model.tokenizer.id2token[1] = '<unk>';
+      const res = await runTranscribe(model, SCRIPT, { returnTimestamps, returnConfidences: returnTimestamps });
+      assert.equal(res.unk_tokens, 1);
+    });
+  }
+  test('no <unk> emitted reports 0', async () => {
+    const { model } = makeModel({ script: SCRIPT });
+    assert.equal((await runTranscribe(model, SCRIPT)).unk_tokens, 0);
+  });
+});
