@@ -158,14 +158,20 @@ function ruleRe(compiled, i) {
 }
 
 // Replace every match; a match that starts with a capital keeps a capital
-// ("Myrtazapine" -> "Mirtazapine", not "mirtazapine").
-function applyRule(text, compiled, i) {
+// ("Myrtazapine" -> "Mirtazapine", not "mirtazapine"). `matches`, when given,
+// collects each replacement as {start, end, to} in the text it was given.
+function applyRule(text, compiled, i, matches) {
   const re = ruleRe(compiled, i);
   if (!re) return text;
   const rep = compiled.rules[i][1];
-  return text.replace(re, (m) => (m[0] !== m[0].toLowerCase() && rep[0] !== rep[0].toUpperCase()
-    ? rep[0].toUpperCase() + rep.slice(1)
-    : rep));
+  return text.replace(re, (m, ...rest) => {
+    const to = m[0] !== m[0].toLowerCase() && rep[0] !== rep[0].toUpperCase()
+      ? rep[0].toUpperCase() + rep.slice(1)
+      : rep;
+    // The offset is the first numeric argument after the capture groups.
+    if (matches) { const at = rest.find((x) => typeof x === 'number'); matches.push({ start: at, end: at + m.length, to }); }
+    return to;
+  });
 }
 
 /**
@@ -188,9 +194,12 @@ export function applyDrugRulesNaive(text, compiled) {
  *
  * @param {string} text
  * @param {ReturnType<typeof loadDrugRules>} compiled
+ * @param {(i: number, before: string, matches: Array<{start: number, end: number, to: string}>) => void} [onRule]
+ *   Called after each rule that changed the text, with the text it was
+ *   applied to and its replacements (see traceDrugRules).
  * @returns {string}
  */
-export function applyDrugRules(text, compiled) {
+export function applyDrugRules(text, compiled, onRule) {
   if (!text || !compiled?.rules.length) return text;
   const candidates = (toks, after) => {
     const out = [];
@@ -201,11 +210,66 @@ export function applyDrugRules(text, compiled) {
   while (todo.size) {
     const i = Math.min(...todo);
     todo.delete(i);
-    const next = applyRule(text, compiled, i);
+    const matches = onRule ? [] : undefined;
+    const next = applyRule(text, compiled, i, matches);
     if (next !== text) {
+      if (onRule) onRule(i, text, matches);
       text = next;
       for (const j of candidates(tokens(text), i)) todo.add(j);
     }
   }
   return text;
+}
+
+/**
+ * applyDrugRules, plus what it changed, in terms of the ORIGINAL text, so a
+ * debug view can point at the words a rule rewrote. Overlapping or chained
+ * rewrites (a fix that a later rule fixes again) are merged into one span.
+ *
+ *   traceDrugRules("sous myrtazapine le soir", c)
+ *   // {text: "sous mirtazapine le soir",
+ *   //  rewrites: [{start: 5, end: 16, from: "myrtazapine", to: "mirtazapine", rules: [12]}]}
+ *
+ * @param {string} text
+ * @param {ReturnType<typeof loadDrugRules>} compiled
+ * @returns {{text: string, rewrites: Array<{start: number, end: number, from: string, to: string, rules: number[]}>}}
+ */
+export function traceDrugRules(text, compiled) {
+  // For each character of the current text, the span of the original text it
+  // stands for: an untouched character stands for itself, a replacement's
+  // characters for the whole span they replaced.
+  let lo = Array.from({ length: (text || '').length }, (_, k) => k);
+  let hi = lo.map((k) => k + 1);
+  const spans = [];
+  const out = applyDrugRules(text, compiled, (i, before, matches) => {
+    const nlo = []; const nhi = [];
+    let k = 0;
+    for (const { start, end, to } of matches) {
+      for (; k < start; k++) { nlo.push(lo[k]); nhi.push(hi[k]); }
+      // An empty match has no characters of its own: borrow its neighbour's.
+      const a = start < end ? Math.min(...lo.slice(start, end)) : (lo[start] ?? before.length);
+      const b = start < end ? Math.max(...hi.slice(start, end)) : a;
+      for (let c = 0; c < to.length; c++) { nlo.push(a); nhi.push(b); }
+      spans.push({ start: a, end: b, rules: [i] });
+      k = end;
+    }
+    for (; k < before.length; k++) { nlo.push(lo[k]); nhi.push(hi[k]); }
+    lo = nlo; hi = nhi;
+  });
+  // Merge overlapping spans, then read each one's result back off the final text.
+  spans.sort((x, y) => x.start - y.start);
+  const merged = [];
+  for (const sp of spans) {
+    const last = merged[merged.length - 1];
+    if (last && sp.start < last.end) {
+      last.end = Math.max(last.end, sp.end);
+      for (const r of sp.rules) if (!last.rules.includes(r)) last.rules.push(r);
+    } else merged.push({ ...sp, rules: [...sp.rules] });
+  }
+  const rewrites = merged.map((m) => {
+    let to = '';
+    for (let c = 0; c < out.length; c++) if (lo[c] >= m.start && hi[c] <= m.end) to += out[c];
+    return { start: m.start, end: m.end, from: text.slice(m.start, m.end), to, rules: m.rules.sort((x, y) => x - y) };
+  }).filter((r) => r.from !== r.to);
+  return { text: out, rewrites };
 }

@@ -16,6 +16,7 @@ import {
   applyDrugRules,
   applyDrugRulesNaive,
   anchorRuleIds,
+  traceDrugRules,
   DRUG_RULES_FORMAT,
 } from '../../app/ui/src/lib/drugRules.js';
 
@@ -78,6 +79,41 @@ describe('applyDrugRules', () => {
     assert.equal(applyDrugRules('', c), '');
     assert.equal(applyDrugRules('foo', compileDrugRules('')), 'foo');
     assert.equal(applyDrugRules('foo', null), 'foo');
+  });
+});
+
+describe('traceDrugRules (what the debug view shows)', () => {
+  test('points at the original words a rule rewrote, and returns the same text', () => {
+    const c = compileDrugRules([rule('foo', 'x'), rule('myrtazapine', 'mirtazapine')].join('\n'));
+    const text = 'Sous Myrtazapine et myrtazapine.';
+    const { text: out, rewrites } = traceDrugRules(text, c);
+    assert.equal(out, applyDrugRules(text, c));
+    assert.deepEqual(rewrites, [
+      { start: 5, end: 16, from: 'Myrtazapine', to: 'Mirtazapine', rules: [1] },
+      { start: 20, end: 31, from: 'myrtazapine', to: 'mirtazapine', rules: [1] },
+    ]);
+  });
+
+  test('a chained rewrite is ONE span, from the original words to the final ones', () => {
+    // rule 0 makes "baz qux", rule 1 then fixes its "qux".
+    const c = compileDrugRules([rule('foo bar', 'baz qux'), rule('qux', 'quux')].join('\n'));
+    const { text, rewrites } = traceDrugRules('un foo bar ici', c);
+    assert.equal(text, 'un baz quux ici');
+    assert.deepEqual(rewrites, [{ start: 3, end: 10, from: 'foo bar', to: 'baz quux', rules: [0, 1] }]);
+  });
+
+  test('a rule that changes the length shifts the later spans correctly', () => {
+    const c = compileDrugRules([rule('a b c', 'Z'), rule('tim', 'Timolol')].join('\n'));
+    const { text, rewrites } = traceDrugRules('a b c puis tim', c);
+    assert.equal(text, 'Z puis Timolol');
+    assert.deepEqual(rewrites.map((r) => [r.from, r.to, r.start]), [['a b c', 'Z', 0], ['tim', 'Timolol', 11]]);
+  });
+
+  test('nothing to rewrite, no rules, or no text: no rewrites', () => {
+    const c = compileDrugRules(rule('foo', 'bar'));
+    assert.deepEqual(traceDrugRules('rien ici', c), { text: 'rien ici', rewrites: [] });
+    assert.deepEqual(traceDrugRules('', c), { text: '', rewrites: [] });
+    assert.deepEqual(traceDrugRules('foo', null), { text: 'foo', rewrites: [] });
   });
 });
 
@@ -202,6 +238,9 @@ describe('committed drug_rules.json', () => {
     );
     // A medical-term rule, which runs after the drug rules.
     assert.equal(applyDrugRules('Une ostéophite au niveau L4.', c), 'Une ostéophyte au niveau L4.');
+    // And the trace names the misheard words, not just the fixed text.
+    const { rewrites } = traceDrugRules("Traitement par l'ananas de l'umab.", c);
+    assert.deepEqual(rewrites.map((r) => [r.from, r.to]), [["l'ananas de l'umab", 'lanadelumab']]);
   });
 
   test('indexed output equals the in-order pass on a sample of the real rules', () => {
