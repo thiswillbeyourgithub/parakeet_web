@@ -981,7 +981,7 @@ export function loadPairedRef(path, runTag = null) {
     if (r.type !== 'utterance') continue;
     if (!byRun.has(r.run)) byRun.set(r.run, new Map());
     byRun.get(r.run).set(`${r.dataset}|${r.audio}`,
-      { wordEdits: r.wordEdits, refWords: r.refWords, charEdits: r.charEdits, refChars: r.refChars });
+      { wordEdits: r.wordEdits, refWords: r.refWords, charEdits: r.charEdits, refChars: r.refChars, refNorm: r.refNorm });
   }
   const runs = [...byRun.keys()].join(', ');
   if (runTag != null) {
@@ -1375,6 +1375,10 @@ async function main() {
     for (const e of entries) {
       const r = pairedRef.get(`${e.dataset}|${e.audioPath}`);
       if (!r) throw new Error(`--paired-ref has no score for ${e.dataset} ${e.audioPath}`);
+      // A relabelled manifest would pair edits counted against two different texts.
+      if (r.refNorm != null && r.refNorm !== normalizeText(e.text, args.stripAccents)) {
+        throw new Error(`--paired-ref scored ${e.audioPath} against another label: "${r.refNorm}"`);
+      }
       const f = pairedFull.get(e.dataset) ?? { N: 0, wordEdits: 0, refWords: 0, charEdits: 0, refChars: 0 };
       f.N++; f.wordEdits += r.wordEdits; f.refWords += r.refWords; f.charEdits += r.charEdits; f.refChars += r.refChars;
       pairedFull.set(e.dataset, f);
