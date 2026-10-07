@@ -958,7 +958,10 @@ export function seededShuffle(arr, seed) {
 // samples: [{ d, w }], d = this cell's word edits minus the reference's on one clip,
 // w = that clip's reference word count; total = clips in the full set (finite
 // population correction). Ratio estimator: returns the WER delta and its 95% CI
-// half-width, both in percentage points.
+// half-width, both in percentage points. When no sampled clip differs at all the
+// sample variance is 0, which says nothing about rare differences: the half-width
+// is then floored by the rule of three (up to 3/n of the clips could still differ,
+// by one edit each), so a dataset of ~15-word clips needs ~400 clean clips to stop.
 export function pairedDelta(samples, total) {
   const n = samples.length;
   if (n < 2) return { n, delta: null, halfwidth: Infinity };
@@ -969,7 +972,9 @@ export function pairedDelta(samples, total) {
   for (const { d, w } of samples) ss += (d - D * w) ** 2;
   const fpc = total ? Math.max(0, 1 - n / total) : 1;
   const se = Math.sqrt(ss / (n - 1) / (mw * mw) / n * fpc);
-  return { n, delta: D * 100, halfwidth: 1.96 * se * 100 };
+  let halfwidth = 1.96 * se * 100;
+  if (samples.every(({ d }) => d === 0)) halfwidth = Math.max(halfwidth, (3 / (n * mw)) * 100 * fpc);
+  return { n, delta: D * 100, halfwidth };
 }
 
 // A reference run's per-clip scores from its grid jsonl, keyed "dataset|audio".

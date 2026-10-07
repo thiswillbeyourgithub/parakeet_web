@@ -21,10 +21,12 @@ describe('seededShuffle', () => {
 });
 
 describe('pairedDelta', () => {
-  test('identical configs give delta 0 and half-width 0', () => {
-    const st = pairedDelta(Array.from({ length: 10 }, () => ({ d: 0, w: 20 })), 100);
+  test('identical outputs give delta 0 but a rule-of-three half-width, not 0', () => {
+    // 100 identical 15-word clips of 2000: up to 3 could still differ by an edit each
+    const st = pairedDelta(Array.from({ length: 100 }, () => ({ d: 0, w: 15 })), 2000);
     assert.equal(st.delta, 0);
-    assert.equal(st.halfwidth, 0);
+    assert.ok(Math.abs(st.halfwidth - 100 * 3 / 1500 * 0.95) < 1e-9, String(st.halfwidth));
+    assert.equal(pairedDelta(Array.from({ length: 50 }, () => ({ d: 0, w: 15 })), 50).halfwidth, 0);
   });
   test('a constant one extra edit per 20-word clip is +5 pp exactly', () => {
     const st = pairedDelta(Array.from({ length: 10 }, () => ({ d: 1, w: 20 })), 0);
