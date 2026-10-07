@@ -5946,7 +5946,16 @@ export default function App() {
                   <div className="history-text-container">
                     <div className="history-text">
                       {entryBase === 'debug' && trans.decodeDebug
-                        ? <DecodeDebugView debug={trans.decodeDebug} t={t} />
+                        ? (
+                          <DecodeDebugView
+                            debug={trans.decodeDebug}
+                            /* Show the drug/term layer's rewrites over the tokens
+                               whenever that layer is on for this entry. */
+                            drugRules={entryDrugFixOn(trans.id) ? drugRules : null}
+                            layerName={t('drugFixView')}
+                            t={t}
+                          />
+                        )
                         : entryBase === 'diarized' && hasDiarization(trans)
                         ? renderDiarizedTranscript(trans)
                         /* Raw or dictation-cleaned text */

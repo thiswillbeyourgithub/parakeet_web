@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { tokenRewrites } from '../lib/decodeDebugRewrites.js';
 
 // Per-entry decode-debug view (the "Debug" base mode next to Raw/Speakers):
 // renders every decoded token as a clickable pill; clicking one opens an
@@ -7,6 +8,9 @@ import { useState } from 'react';
 // alternatives it beat, and, for beam runs, the surviving beam at that frame
 // from the MAES timeline. Data comes from transcribe()'s opt-in
 // `collectDecodeDebug` payload (in-memory only, never persisted).
+// When the drug/term layer is on for the entry (`drugRules`), the tokens a
+// rule rewrote are grouped under a label showing what they became, so a
+// misheard word and its fix read together.
 // Built with Claude Code.
 
 // Values arrive pre-rounded by the decoder; `null` means "not recorded".
@@ -27,7 +31,7 @@ const pieceLabel = (piece) => {
     return stripped === '' ? '␣' : stripped;
 };
 
-function TokenCard({ chunk, tok, t }) {
+function TokenCard({ chunk, tok, rewrite, layerName, t }) {
     const metrics = [
         [t('dbgToken'), `${pieceLabel(tok.piece)} (#${tok.id})`],
         [t('dbgTime'), tok.start == null ? '·' : `${fmt(chunk.startSec + tok.start, 2)} s`],
@@ -48,6 +52,12 @@ function TokenCard({ chunk, tok, t }) {
 
     return (
         <div className="decode-debug__card">
+            {rewrite && (
+                <div className="decode-debug__rewrite-note">
+                    {t('dbgRewrittenBy')} <strong>{layerName}</strong>: «{rewrite.from}» → «{rewrite.to}»
+                    {' '}({t('dbgRules')} {rewrite.rules.map(r => `#${r}`).join(', ')})
+                </div>
+            )}
             <div className="decode-debug__metrics">
                 {metrics.map(([label, value]) => (
                     <div key={label} className="decode-debug__metric">
@@ -119,12 +129,20 @@ function TokenCard({ chunk, tok, t }) {
     );
 }
 
-export default function DecodeDebugView({ debug, t }) {
+export default function DecodeDebugView({ debug, drugRules = null, layerName = '', t }) {
     // One selected pill across all chunks: "chunkIdx:tokenIdx".
     const [selected, setSelected] = useState(null);
 
     const chunks = debug?.chunks || [];
+    // Per chunk: the rewrites, and which one (if any) each token belongs to.
+    const rewritesByChunk = useMemo(() => chunks.map((c) => {
+        const rewrites = tokenRewrites(c.tokens, drugRules);
+        const ofToken = new Map();
+        for (const rw of rewrites) for (let i = rw.first; i <= rw.last; i++) ofToken.set(i, rw);
+        return { rewrites, ofToken };
+    }), [chunks, drugRules]);
     if (chunks.length === 0) return null;
+    const rewriteCount = rewritesByChunk.reduce((n, c) => n + c.rewrites.length, 0);
 
     const allTokens = chunks.flatMap(c => c.tokens || []);
     const boosted = allTokens.filter(tk => (tk.boostBonus || 0) > 0);
@@ -137,6 +155,7 @@ export default function DecodeDebugView({ debug, t }) {
                 {t('dbgDecoder')}: <strong>{strategy === 'beam' ? `${t('dbgBeam')} (${beamWidth})` : t('dbgGreedy')}</strong>
                 {' · '}{allTokens.length} {t('dbgTokens')}
                 {boosted.length > 0 && <> {' · '}{boosted.length} {t('dbgBoostedTokens')} (Σ +{fmt(boostSum, 1)})</>}
+                {rewriteCount > 0 && <> {' · '}{rewriteCount} {t('dbgRewrites')} <strong>{layerName}</strong></>}
             </div>
 
             {chunks.map((chunk, ci) => {
@@ -151,29 +170,63 @@ export default function DecodeDebugView({ debug, t }) {
                             </div>
                         )}
                         <div className="decode-debug__pills">
-                            {(chunk.tokens || []).map((tok, ti) => {
-                                const key = `${ci}:${ti}`;
-                                const wordStart = String(tok.piece ?? '').startsWith('▁');
-                                return (
-                                    <button
-                                        key={key}
-                                        type="button"
-                                        className={
-                                            'debug-pill'
-                                            + confClass(tok.conf)
-                                            + (wordStart ? ' debug-pill--wordstart' : '')
-                                            + ((tok.boostBonus || 0) > 0 ? ' debug-pill--boosted' : '')
-                                            + (selected === key ? ' active' : '')
-                                        }
-                                        aria-pressed={selected === key}
-                                        onClick={() => setSelected(selected === key ? null : key)}
-                                    >
-                                        {pieceLabel(tok.piece)}
-                                    </button>
-                                );
-                            })}
+                            {(() => {
+                                const { ofToken } = rewritesByChunk[ci];
+                                const pill = (tok, ti) => {
+                                    const key = `${ci}:${ti}`;
+                                    const wordStart = String(tok.piece ?? '').startsWith('▁');
+                                    return (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            className={
+                                                'debug-pill'
+                                                + confClass(tok.conf)
+                                                + (wordStart ? ' debug-pill--wordstart' : '')
+                                                + ((tok.boostBonus || 0) > 0 ? ' debug-pill--boosted' : '')
+                                                + (ofToken.has(ti) ? ' debug-pill--rewritten' : '')
+                                                + (selected === key ? ' active' : '')
+                                            }
+                                            aria-pressed={selected === key}
+                                            onClick={() => setSelected(selected === key ? null : key)}
+                                        >
+                                            {pieceLabel(tok.piece)}
+                                        </button>
+                                    );
+                                };
+                                const tokens = chunk.tokens || [];
+                                const out = [];
+                                for (let ti = 0; ti < tokens.length; ti++) {
+                                    const rw = ofToken.get(ti);
+                                    if (!rw) { out.push(pill(tokens[ti], ti)); continue; }
+                                    // The rewritten run: its pills under a label with the fix.
+                                    const startsWord = String(tokens[rw.first].piece ?? '').startsWith('▁');
+                                    out.push(
+                                        <span
+                                            key={`rw-${ci}:${rw.first}`}
+                                            className={'debug-rewrite' + (startsWord && rw.first > 0 ? ' debug-rewrite--wordstart' : '')}
+                                            title={`${layerName}: «${rw.from}» → «${rw.to}»`}
+                                        >
+                                            <span className="debug-rewrite__label">→ {rw.to}</span>
+                                            <span className="debug-rewrite__pills">
+                                                {tokens.slice(rw.first, rw.last + 1).map((tok, k) => pill(tok, rw.first + k))}
+                                            </span>
+                                        </span>,
+                                    );
+                                    ti = rw.last;
+                                }
+                                return out;
+                            })()}
                         </div>
-                        {selTok && <TokenCard chunk={chunk} tok={selTok} t={t} />}
+                        {selTok && (
+                            <TokenCard
+                                chunk={chunk}
+                                tok={selTok}
+                                rewrite={rewritesByChunk[ci].ofToken.get(Number(selected.split(':')[1])) || null}
+                                layerName={layerName}
+                                t={t}
+                            />
+                        )}
                     </div>
                 );
             })}
