@@ -219,8 +219,10 @@ describe('committed drug_rules.json', () => {
     // 03_merge_rules.py folds same-replacement rules, ~13.8k variants ship as
     // ~3.4k rules.
     assert.ok(c.rules.length > 3000, `only ${c.rules.length} rules`);
-    // The drug rules, then the medical-term rules, each with its own hash.
-    assert.equal(data.sources.length, 2);
+    // The hand-written rules, then the drug rules, then the medical-term
+    // rules, each with its own hash.
+    assert.deepEqual(data.sources.map((s) => s.source.split('/').pop()),
+      ['manual_fix_rules.jsonl', 'drug_fix_rules.jsonl', 'term_fix_rules.jsonl']);
     for (const s of data.sources) assert.match(s.sha256, /^[0-9a-f]{64}$/);
     const indexed = new Set([...c.always, ...Object.keys(data.anchors).flatMap((t) => anchorRuleIds(c, t))]);
     assert.equal(indexed.size, c.rules.length, 'every rule must be reachable through the index');
@@ -238,6 +240,9 @@ describe('committed drug_rules.json', () => {
     );
     // A medical-term rule, which runs after the drug rules.
     assert.equal(applyDrugRules('Une ostéophite au niveau L4.', c), 'Une ostéophyte au niveau L4.');
+    // A hand-written rule, which runs first: without it the drug rules would
+    // turn lodose into the brand Lodoz.
+    assert.equal(applyDrugRules('deux Lodoses et du ceresta.', c), 'deux Lowdose et du Seresta.');
     // And the trace names the misheard words, not just the fixed text.
     const { rewrites } = traceDrugRules("Traitement par l'ananas de l'umab.", c);
     assert.deepEqual(rewrites.map((r) => [r.from, r.to]), [["l'ananas de l'umab", 'lanadelumab']]);

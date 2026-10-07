@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Compile the UltiMed model repo's regex-fixes/ rule files (the drug rules,
-// then the medical-term rules) into the ONE committed
+// Compile the UltiMed model repo's regex-fixes/ rule files (the hand-written
+// rules, then the drug rules, then the medical-term rules) into the ONE committed
 // app/ui/public/drug-rules/drug_rules.json the app serves (see
 // app/ui/src/lib/drugRules.js for the format and why it is split in two).
 // The term rules are meant to run after the drug rules, and one ordered list
@@ -28,7 +28,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'app/ui/public/drug-rules/drug_rules.json');
 const REPO = 'fallback_models/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
 const HF = 'https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/blob/main';
-const DEFAULT_SOURCES = ['regex-fixes/drug_fix_rules.jsonl', 'regex-fixes/term_fix_rules.jsonl'];
+const DEFAULT_SOURCES = ['regex-fixes/manual_fix_rules.jsonl', 'regex-fixes/drug_fix_rules.jsonl', 'regex-fixes/term_fix_rules.jsonl'];
 
 const args = process.argv.slice(2);
 const check = args.includes('--check');
