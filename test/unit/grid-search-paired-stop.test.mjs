@@ -48,7 +48,7 @@ describe('loadPairedRef', () => {
   test('reads the single run, keyed dataset|audio, skipping other records', () => {
     const f = join(dir, 'one.jsonl');
     writeFileSync(f, [u('beam=5 none', 'a.flac', 2), JSON.stringify({ type: 'summary', run: 'beam=5 none' }), ''].join('\n'));
-    assert.deepEqual(loadPairedRef(f).get('ds|a.flac'), { wordEdits: 2, refWords: 10, charEdits: 6, refChars: 50 });
+    assert.deepEqual(loadPairedRef(f).get('ds|a.flac'), { wordEdits: 2, refWords: 10, charEdits: 6, refChars: 50, refNorm: undefined });
   });
   test('several runs need an explicit run tag', () => {
     const f = join(dir, 'two.jsonl');
