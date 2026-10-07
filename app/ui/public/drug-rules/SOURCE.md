@@ -1,6 +1,6 @@
 # Compiled drug-name and medical-term fix rules
 
-- File: `drug_rules.json`, compiled by `scripts/compile-drug-rules.mjs` from `regex-fixes/drug_fix_rules.jsonl` then `regex-fixes/term_fix_rules.jsonl`, in that order (3,428 + 25,045 = 28,473 rules at the last refresh)
+- File: `drug_rules.json`, compiled by `scripts/compile-drug-rules.mjs` from `regex-fixes/drug_fix_rules.jsonl` then `regex-fixes/term_fix_rules.jsonl`, in that order (3,428 + 25,041 = 28,469 rules at the last refresh)
 - Source: https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/tree/main/regex-fixes. The path, commit and SHA-256 of each source file are recorded in `drug_rules.json` itself (`sources`), so they cannot drift from the bytes.
 - License: CC BY 4.0, drug names from French open data (Licence Ouverte / Etalab 2.0: OPEN_MEDIC, RETROCEDAM, BDPM), medical terms drawn from public French sources (terms only, no definitions). See the "Licence and attribution" section of the model repo README.
 - How the rules are built: [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules)
