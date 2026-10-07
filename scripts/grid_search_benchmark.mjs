@@ -129,6 +129,11 @@ function parseArgs(argv) {
     frameStride: 1,
     threads: 0,
     limit: 0,               // 0 => all utterances
+    shuffleSeed: null,      // seeded clip order (null = manifest order)
+    pairedRef: null,        // grid jsonl of a full-split reference run (paired early stop)
+    pairedRefRun: null,     // run tag to read from pairedRef when it holds several
+    pairedHalfwidth: 0.05,  // stop a dataset once its paired 95% WER CI half-width (pp) is this or less
+    pairedMin: 100,         // never stop a dataset before this many clips
     sortBy: 'cer',          // rank the final table by corpus 'cer' or 'wer'
     stripAccents: false,    // WER normalization: fold accents (é -> e)
     jsonl: 'benchmark_results.jsonl', // per-utterance + per-run records (one JSON/line)
@@ -200,6 +205,11 @@ function parseArgs(argv) {
       case '--chunk-energy-ms': a.chunkEnergyMs = numList(val(flag)); break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
+      case '--shuffle-seed': a.shuffleSeed = parseInt(val(flag), 10); break;
+      case '--paired-ref': a.pairedRef = val(flag); break;
+      case '--paired-ref-run': a.pairedRefRun = val(flag); break;
+      case '--paired-halfwidth': a.pairedHalfwidth = parseFloat(val(flag)); break;
+      case '--paired-min': a.pairedMin = parseInt(val(flag), 10); break;
       case '--limit': a.limit = parseInt(val(flag), 10); break;
       case '--sort-by': a.sortBy = val(flag).toLowerCase(); break;
       case '--strip-accents': a.stripAccents = true; break;
@@ -530,6 +540,21 @@ WER:
 Output / misc:
       --limit N            Only the first N entries of EACH manifest (quick smoke
                            test).
+      --shuffle-seed N     Score the clips in a seeded random order instead of
+                           manifest order (applied after --limit).
+      --paired-ref FILE    Paired early stopping against a reference run's grid
+                           jsonl scored on the SAME clips (needs --shuffle-seed,
+                           not --resume). Each dataset stops once the 95% CI
+                           half-width of its WER difference to the reference is
+                           at most --paired-halfwidth (pp, default 0.05), after
+                           at least --paired-min clips (default 100), checked
+                           every 25 clips. The cell's edits are then the
+                           difference estimate over the full set: reference
+                           full-set edits + (N / n) x sampled edit differences,
+                           so its WER/CER cells compare with full-set runs. A
+                           "paired" jsonl record per dataset keeps n, N, delta
+                           and half-width. --paired-ref-run TAG picks one run
+                           when the file holds several.
       --sort-by cer|wer    Rank the final table (best config first) by the
                            word/char-weighted corpus CER or WER of each cell's
                            overall row, the same figure shown in the CER %/WER %
@@ -907,6 +932,79 @@ const OVERALL = 'overall';
 // corpus WER/CER come from the edit/ref totals. decodeMs / audioSec accumulate
 // this dataset's total decode time and audio length so the table can show the
 // decode-time-to-audio-length ratio (how the beam width moves decode speed).
+// Paired early stopping (--paired-ref). A cell's per-dataset WER is estimated as the
+// reference run's full-set WER plus the paired difference on a random sample of
+// clips (a difference estimator). Two configs' edits on the same clip are strongly
+// correlated, so the difference converges after a few hundred clips where an
+// absolute WER CI of +-0.05 pp would need tens of thousands.
+
+// Seeded Fisher-Yates over mulberry32, so a --shuffle-seed order is reproducible.
+export function seededShuffle(arr, seed) {
+  let t = seed >>> 0;
+  const rand = () => {
+    t = (t + 0x6D2B79F5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// samples: [{ d, w }], d = this cell's word edits minus the reference's on one clip,
+// w = that clip's reference word count; total = clips in the full set (finite
+// population correction). Ratio estimator: returns the WER delta and its 95% CI
+// half-width, both in percentage points.
+export function pairedDelta(samples, total) {
+  const n = samples.length;
+  if (n < 2) return { n, delta: null, halfwidth: Infinity };
+  let sd = 0, sw = 0;
+  for (const { d, w } of samples) { sd += d; sw += w; }
+  const D = sd / sw, mw = sw / n;
+  let ss = 0;
+  for (const { d, w } of samples) ss += (d - D * w) ** 2;
+  const fpc = total ? Math.max(0, 1 - n / total) : 1;
+  const se = Math.sqrt(ss / (n - 1) / (mw * mw) / n * fpc);
+  return { n, delta: D * 100, halfwidth: 1.96 * se * 100 };
+}
+
+// A reference run's per-clip scores from its grid jsonl, keyed "dataset|audio".
+export function loadPairedRef(path, runTag = null) {
+  const byRun = new Map();
+  for (const line of readFileSync(path, 'utf-8').split('\n')) {
+    if (!line.trim()) continue;
+    const r = JSON.parse(line);
+    if (r.type !== 'utterance') continue;
+    if (!byRun.has(r.run)) byRun.set(r.run, new Map());
+    byRun.get(r.run).set(`${r.dataset}|${r.audio}`,
+      { wordEdits: r.wordEdits, refWords: r.refWords, charEdits: r.charEdits, refChars: r.refChars });
+  }
+  const runs = [...byRun.keys()].join(', ');
+  if (runTag != null) {
+    if (!byRun.has(runTag)) throw new Error(`--paired-ref ${path}: no run "${runTag}" (has: ${runs})`);
+    return byRun.get(runTag);
+  }
+  if (byRun.size !== 1) throw new Error(`--paired-ref ${path} holds ${byRun.size} runs (${runs}): pick one with --paired-ref-run`);
+  return [...byRun.values()][0];
+}
+
+// Swap a dataset accumulator's edit and reference totals for the difference
+// estimate over the FULL set: reference full-set edits + (N / n) x the sampled edit
+// differences, over the full-set reference word and char counts. Every other field
+// (timings, S/D/I, per-utterance samples) stays the sampled clips' own.
+export function applyDifferenceEstimate(acc, refFull, sampledDiff, n, N) {
+  const k = N / n;
+  acc.wordEdits = refFull.wordEdits + k * sampledDiff.wordEdits;
+  acc.charEdits = refFull.charEdits + k * sampledDiff.charEdits;
+  acc.refWords = refFull.refWords;
+  acc.refChars = refFull.refChars;
+  return acc;
+}
+
 function newAcc() {
   return { refWords: 0, hypWords: 0, wordEdits: 0, refChars: 0, charEdits: 0,
     // NIST S/D/I decomposition of the 1-best word edits, and the oracle (best
@@ -1265,7 +1363,23 @@ async function main() {
   const pw = await import(pathToFileURL(transcribePath).href);
   const { loadParakeetModel, buildPhraseBoost, findFfmpeg, decodePcm } = pw;
 
-  const { entries, datasetNames } = loadManifests(args.manifests, args.audioRoot, args.limit);
+  let { entries, datasetNames } = loadManifests(args.manifests, args.audioRoot, args.limit);
+  if (args.shuffleSeed != null) entries = seededShuffle(entries, args.shuffleSeed);
+  // --paired-ref: the reference's per-clip scores and, per dataset, its totals over
+  // the full set (the base of the difference estimate).
+  const pairedRef = args.pairedRef ? loadPairedRef(args.pairedRef, args.pairedRefRun) : null;
+  const pairedFull = new Map();
+  if (pairedRef) {
+    if (args.shuffleSeed == null) throw new Error('--paired-ref needs --shuffle-seed: stopping early in manifest order scores the first clips, not a random sample');
+    if (args.resume) throw new Error('--paired-ref does not support --resume');
+    for (const e of entries) {
+      const r = pairedRef.get(`${e.dataset}|${e.audioPath}`);
+      if (!r) throw new Error(`--paired-ref has no score for ${e.dataset} ${e.audioPath}`);
+      const f = pairedFull.get(e.dataset) ?? { N: 0, wordEdits: 0, refWords: 0, charEdits: 0, refChars: 0 };
+      f.N++; f.wordEdits += r.wordEdits; f.refWords += r.refWords; f.charEdits += r.charEdits; f.refChars += r.refChars;
+      pairedFull.set(e.dataset, f);
+    }
+  }
   console.error(`[bench] ${args.manifests.length} manifest(s) / ${datasetNames.length} dataset(s): ${datasetNames.join(', ')} (${entries.length} utterances total)`);
   console.error(`[bench] audio root: ${args.audioRoot}`);
 
@@ -1667,8 +1781,12 @@ async function main() {
       // a spike that started and ended mid-cell; the mean/max over the cell do not.
       const loadSamples = [];
       const t0 = Date.now();
+      // --paired-ref state for this cell: per-dataset paired samples, summed edit
+      // differences, and the datasets whose CI is already narrow enough.
+      const pairedSamples = new Map(), pairedDiff = new Map(), stoppedDs = new Set();
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
+        if (stoppedDs.has(e.dataset)) { doneUtts++; continue; }
         const pcm = await getPcm(e.audioPath);
         // Chunked cells sweep the segmentation itself (duration/overlap/snap/energy
         // window), so the whole-clip encoder cache is meaningless for them: they must
@@ -1704,6 +1822,22 @@ async function main() {
         sc.oracleWordEdits = oracleWordEdits;
         sc.oracleCharEdits = oracleCharEdits;
         addScore(ensureDs(e.dataset), sc, metrics.decode_ms ?? 0, audioSec);
+        if (pairedRef) {
+          const r = pairedRef.get(`${e.dataset}|${e.audioPath}`);
+          if (!pairedSamples.has(e.dataset)) { pairedSamples.set(e.dataset, []); pairedDiff.set(e.dataset, { wordEdits: 0, charEdits: 0 }); }
+          const ps = pairedSamples.get(e.dataset), pd = pairedDiff.get(e.dataset);
+          ps.push({ d: sc.wordEdits - r.wordEdits, w: r.refWords });
+          pd.wordEdits += sc.wordEdits - r.wordEdits;
+          pd.charEdits += sc.charEdits - r.charEdits;
+          if (ps.length >= args.pairedMin && ps.length % 25 === 0) {
+            const N = pairedFull.get(e.dataset).N;
+            const st = pairedDelta(ps, N);
+            if (st.halfwidth <= args.pairedHalfwidth) {
+              stoppedDs.add(e.dataset);
+              console.error(`\n[bench] ${tag} ${e.dataset}: paired stop after ${st.n}/${N} clips, WER delta ${st.delta.toFixed(3)} +- ${st.halfwidth.toFixed(3)} pp`);
+            }
+          }
+        }
         // Accumulate per-phase timings for this run's mean/median.
         for (const [key] of PHASES) timings[key].push(metrics[key] ?? 0);
         // Recompute proc_t/dur_t from the raw total_ms rather than the pre-rounded
@@ -1744,6 +1878,13 @@ async function main() {
       }
       const timeMs = Date.now() - t0;
       commitProgress();
+      for (const [ds, ps] of pairedSamples) {
+        const full = pairedFull.get(ds);
+        const st = pairedDelta(ps, full.N);
+        applyDifferenceEstimate(perDs.get(ds), full, pairedDiff.get(ds), ps.length, full.N);
+        writeJsonl({ type: 'paired', run: tag, dataset: ds, n: st.n, total: full.N, deltaWer: st.delta,
+          halfwidth: st.halfwidth, stopped: stoppedDs.has(ds), ref: args.pairedRef });
+      }
       // OS 5-minute load average at the moment this cell finished: a trust flag
       // for the cell's decode timing. Rounded to 2 decimals so the JSONL value and
       // the (1-decimal) table render match between a live and a resumed cell.
