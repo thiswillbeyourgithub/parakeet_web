@@ -1572,6 +1572,36 @@ html.gpu-run *::after {
   border-color: var(--accent-soft-border);
   color: var(--accent-soft-text);
 }
+/* Tokens a text layer (drug/term rules) rewrote: struck through, grouped
+   under a label with what they became, so the mishearing and its fix read
+   together. */
+.debug-rewrite {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0 0.15rem 0.15rem;
+  border: 1px dashed var(--success);
+  border-radius: var(--radius-sm);
+  background: var(--success-soft-bg);
+}
+.debug-rewrite--wordstart { margin-left: 0.45rem; }
+.debug-rewrite__label {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--success);
+  text-align: center;
+  white-space: nowrap;
+}
+.debug-rewrite__pills { display: flex; flex-wrap: nowrap; gap: 2px; }
+.debug-rewrite__pills .debug-pill:first-child { margin-left: 0; }
+.debug-pill--rewritten { text-decoration: line-through; text-decoration-color: var(--text-subtle); }
+.decode-debug__rewrite-note {
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 3px solid var(--success);
+  background: var(--success-soft-bg);
+}
 .debug-pill:hover { border-color: var(--border-strong); }
 .debug-pill.active {
   outline: 2px solid var(--accent);
