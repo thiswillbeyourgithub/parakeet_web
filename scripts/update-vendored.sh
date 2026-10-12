@@ -1,5 +1,8 @@
 #!/bin/sh
-# Update locally vendored npm dependencies to their latest published versions.
+# Update locally vendored npm dependencies to the versions pinned in
+# app/ui/vendor/package.json. That manifest is the single source of truth for
+# vendored versions: Dependabot watches it (CVE alerts + bump PRs), so to
+# upgrade, bump the pin there (or merge the Dependabot PR) then run this.
 #
 # Usage:
 #   ./scripts/update-vendored.sh                  # update all npm-vendored deps
@@ -28,6 +31,7 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR_DIR="$REPO_ROOT/app/ui/vendor"
+VENDOR_MANIFEST="$VENDOR_DIR/package.json"
 ORT_PUBLIC_DIR="$REPO_ROOT/app/ui/public/ort"
 
 # Resolve required tools up front so failures are obvious.
@@ -42,17 +46,16 @@ if command -v jq >/dev/null 2>&1; then
 elif command -v node >/dev/null 2>&1; then
   JSON_TOOL="node"
 else
-  echo "ERROR: need jq or node to parse the npm registry response" >&2
+  echo "ERROR: need jq or node to parse JSON" >&2
   exit 1
 fi
 
-get_latest_version() {
+get_pinned_version() {
   pkg="$1"
-  url="https://registry.npmjs.org/$pkg/latest"
   if [ "$JSON_TOOL" = "jq" ]; then
-    curl -sfL "$url" | jq -r '.version'
+    jq -r --arg p "$pkg" '.dependencies[$p] // ""' "$VENDOR_MANIFEST"
   else
-    curl -sfL "$url" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).version))'
+    node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).dependencies[process.argv[2]]||"")' "$VENDOR_MANIFEST" "$pkg"
   fi
 }
 
@@ -130,13 +133,13 @@ update_npm_pkg() {
   fi
 
   echo "==> Refreshing $pkg"
-  version=$(get_latest_version "$pkg")
+  version=$(get_pinned_version "$pkg")
   if [ -z "$version" ]; then
-    echo "ERROR: could not resolve latest version for $pkg" >&2
+    echo "ERROR: $pkg is not pinned in $VENDOR_MANIFEST" >&2
     return 1
   fi
   tarball_url="https://registry.npmjs.org/$pkg/-/$pkg-$version.tgz"
-  echo "    latest = $version"
+  echo "    pinned = $version"
   echo "    url    = $tarball_url"
 
   tmp=$(mktemp -d)
