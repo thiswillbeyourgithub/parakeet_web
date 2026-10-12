@@ -5,6 +5,7 @@ updates:
       - /
       - /app
       - /app/ui
+      - /app/ui/vendor
       - /signaling
       - /scripts/openai-like-server
     schedule:
