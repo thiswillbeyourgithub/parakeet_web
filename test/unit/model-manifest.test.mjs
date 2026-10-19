@@ -154,7 +154,7 @@ describe('writeManifest', () => {
 
 describe('writeMirrorManifests', () => {
   const REPO_A = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-  const REPO_B = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+  const REPO_B = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 
   test('writes one manifest per repo on a shared mount', async () => {
     const dir = tmp();
@@ -257,7 +257,7 @@ describe('writeMirrorManifests', () => {
 // exists in three other places and would rot in this one.
 describe('discoverRepoRoots', () => {
   const REPO_A = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-  const REPO_B = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+  const REPO_B = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 
   test('finds every <owner>/<name> repo root', async () => {
     const dir = tmp();

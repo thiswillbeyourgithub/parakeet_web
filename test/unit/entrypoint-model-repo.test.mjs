@@ -51,7 +51,7 @@ function accepts(value) {
 }
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 
 describe('entrypoint _validate_model_repo', () => {
   test('accepts empty (the bundle falls back to its default repo)', () => {

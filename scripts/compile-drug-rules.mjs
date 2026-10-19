@@ -26,8 +26,8 @@ import { compileDrugRuleSource, loadDrugRules } from '../app/ui/src/lib/drugRule
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'app/ui/public/drug-rules/drug_rules.json');
-const REPO = 'fallback_models/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
-const HF = 'https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/blob/main';
+const REPO = 'fallback_models/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
+const HF = 'https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/blob/main';
 const DEFAULT_SOURCES = ['regex-fixes/manual_fix_rules.jsonl', 'regex-fixes/drug_fix_rules.jsonl', 'regex-fixes/term_fix_rules.jsonl'];
 
 const args = process.argv.slice(2);

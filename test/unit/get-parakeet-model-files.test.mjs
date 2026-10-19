@@ -604,7 +604,7 @@ describe('getParakeetModel file selection: canonical names only', () => {
 // effect is a visible fork rather than a subtle one: leaking loads fp32 from
 // the mirror, holding throws before a single weight byte is fetched.
 describe('getParakeetModel local mirror attribution', () => {
-  const SELECTED = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+  const SELECTED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
   // A mirror mounted FLAT (the documented single-repo contract) holding some
   // other repo's build, sharded fp32 included. It has no subfolder for
   // SELECTED, so nothing about it proves it is that repo, yet every path here

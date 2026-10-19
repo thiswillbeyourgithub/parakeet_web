@@ -16,11 +16,12 @@ import {
   parseModelRepos,
   shortRepoLabel,
   matchModelRepo,
+  migrateRepoId,
   diarizationFileName,
 } from '../../app/ui/src/lib/modelRepos.js';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 const BOTH = [BASE, ULTIMED];
 
 describe('parseModelRepos', () => {
@@ -57,12 +58,12 @@ describe('parseModelRepos', () => {
 describe('shortRepoLabel', () => {
   test('strips owner, shared model stem and the -onnx suffix', () => {
     assert.equal(shortRepoLabel(BASE), 'optimized');
-    assert.equal(shortRepoLabel(ULTIMED), 'UltiMed');
+    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed');
   });
 
   test('keeps the product casing intact', () => {
     // Lowercasing would make the picker read as a typo of the real name.
-    assert.equal(shortRepoLabel(ULTIMED), 'UltiMed');
+    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed');
   });
 
   test('falls back to the bare repo name when stripping would leave nothing', () => {
@@ -99,7 +100,7 @@ describe('matchModelRepo', () => {
   });
 
   test('the bare repo name matches', () => {
-    assert.equal(matchModelRepo('parakeet-tdt-0.6b-v3-UltiMed-onnx', BOTH), ULTIMED);
+    assert.equal(matchModelRepo('parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx', BOTH), ULTIMED);
   });
 
   test('a label prefix matches', () => {
@@ -153,6 +154,21 @@ describe('matchModelRepo', () => {
     assert.equal(matchModelRepo('ult', four), null);
   });
 
+  test('with redux-UltiMed-experimental offered too, only the full label picks the finetune', () => {
+    // Regression: the med-mode preset queried "ultimed", which is merely a
+    // substring of both UltiMed repo ids, so this list made it ambiguous
+    // (null) and ?mode=med silently kept the current model.
+    const ULTRA = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
+    const REDUX = 'Olicorne/parakeet-tdt-0.6b-v3-redux-onnx';
+    const REDUX_UM = 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx';
+    const five = [ULTRA, ULTIMED, REDUX, REDUX_UM, BASE];
+    assert.equal(matchModelRepo('ultimed', five), null);
+    assert.equal(matchModelRepo('ultra-ultimed', five), ULTIMED);
+    assert.equal(matchModelRepo('redux-ultimed', five), REDUX_UM);
+    assert.equal(matchModelRepo('ultra', five), ULTRA);
+    assert.equal(matchModelRepo('redux', five), REDUX);
+  });
+
   test('an empty repo list matches nothing', () => {
     assert.equal(matchModelRepo('ultimed', []), null);
     assert.equal(matchModelRepo('ultimed', null), null);
@@ -200,5 +216,17 @@ describe('diarizationFileName', () => {
     assert.equal(diarizationFileName('csukuangfj/speaker-embedding-models/', SEG), SEG);
     // Not a string at all: config plumbing hands over whatever it was given.
     assert.equal(diarizationFileName(42, SEG), SEG);
+  });
+});
+
+describe('migrateRepoId', () => {
+  test('maps the pre-rename UltiMed ids to their current ids', () => {
+    assert.equal(migrateRepoId('Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx'), ULTIMED);
+    assert.equal(migrateRepoId('Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-onnx'),
+      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx');
+  });
+
+  test('leaves every other value alone', () => {
+    for (const id of [ULTIMED, BASE, 'owner/x', null, undefined]) assert.equal(migrateRepoId(id), id);
   });
 });
