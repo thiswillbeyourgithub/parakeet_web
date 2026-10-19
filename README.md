@@ -53,7 +53,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 **The reference deployment offers three models**, and you switch between them from the model picker in the sidebar (see [Offering several models](#offering-several-models)):
 
 - [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) (the default): an ONNX export of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), a further-trained Parakeet TDT 0.6B v3. On the full 25-language FLEURS validation split (greedy, int8) it scores 11.57 % macro WER against 13.14 % for the plain v3 export ([Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), which it supersedes and which is no longer offered). `?model=ultra`.
-- [**Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx): NVIDIA's base Parakeet TDT 0.6B v3 fine-tuned on [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3,105 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultimed`.
+- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx): moondream's parakeet-ultra (a post-trained Parakeet TDT 0.6B v3) fine-tuned on [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3,105 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultra-ultimed`.
 - [**Olicorne/parakeet-tdt-0.6b-v3-redux-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx): an ONNX export of [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), whose encoder weights are ternary (each weight is -a, 0 or +a). That makes a 2-bit encoder lossless, so this repo also ships **w2a8**, a 190 MB encoder, about a third of the int8 download, which scores 12.64 % macro WER on the same split, identical to Redux int8 and fp32. `?model=redux`.
 
 All three are listed with the rest of the stack under [Related repositories](#related-repositories).
@@ -131,7 +131,7 @@ The model sometimes hears a French drug name as ordinary words ("l'ananas de l'u
 - The view applies to the raw text **before** the Dictation regexes, because the rules were learned on raw model output. Each view can be toggled per transcript, so switching Drugs off shows what the model actually heard. Copy, auto-copy and the live preview use the same layers as the display.
 - With the decoder debug view on (Debug settings), the **Debug** view of a transcript draws each rewrite over the tokens it replaced: the misheard pieces struck through under a "→ replacement" label, so you can tell whether a wrong word came from the decoder or from a rule.
 - The rules are for **French** only: on other languages they can rewrite an ordinary word that looks like a misspelled drug or term (Spanish `tienen` -> `Tyenne`, Portuguese `ocorre` -> `Zocor`).
-- The rules ship with the app, compiled (`app/ui/public/drug-rules/drug_rules.json`, provenance in its `SOURCE.md`), so they work whatever model is loaded. `node scripts/compile-drug-rules.mjs` recompiles both rule files into that one file, and `--check` fails when either of the model repo's files no longer matches the committed copy. They come from the [`regex-fixes/` folder of the UltiMed model repo](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/tree/main/regex-fixes); how they are built is in [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules).
+- The rules ship with the app, compiled (`app/ui/public/drug-rules/drug_rules.json`, provenance in its `SOURCE.md`), so they work whatever model is loaded. `node scripts/compile-drug-rules.mjs` recompiles both rule files into that one file, and `--check` fails when either of the model repo's files no longer matches the committed copy. They come from the [`regex-fixes/` folder of the UltiMed model repo](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/tree/main/regex-fixes); how they are built is in [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules).
 - The compiled file (about 1.6 MB as served, brotli; 20.8 MB once decompressed) is only downloaded once the setting is on, and each regex is only built the first time a transcript contains its word. The rules are indexed by their longest word, so a transcript only runs the handful whose word it contains: about 0.3 ms per text instead of 120 ms for all of them in order, with the same output (measured in Node on the shipped rules).
 
 </details>
@@ -435,7 +435,7 @@ gets:
 
 ```bash
 # In docker/.env:
-VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx
 ```
 
 That pair is what `docker/env.example` suggests: the multilingual default
@@ -450,8 +450,8 @@ downloads the new weights and drops the old ones from the browser cache, so
 switching back downloads again.
 
 A link can pin one of them with `?model=<query>`, matched loosely against
-the list, so `https://your-host/?model=ultimed` selects
-`Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Unlike `?phrase_boost=`, this
+the list, so `https://your-host/?model=ultra-ultimed` selects
+`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx`. Unlike `?phrase_boost=`, this
 one **does** override a returning visitor's saved choice, since a link that
 landed on whatever the recipient last used would not be worth sharing. It
 is deliberately not saved over their choice: their own pick is back on their
@@ -556,7 +556,7 @@ subfolder underneath:
 /host/path/
   Olicorne/
     parakeet-tdt-0.6b-v3-ultra-onnx/{vocab.txt,int8/,fp32/,...}
-    parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
+    parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
 ```
 
 Every listed repo needs its own subfolder. A flat tree at the root is
@@ -696,7 +696,7 @@ The models this app loads, and the French medical ASR stack behind them, are all
 | Repository | What it is |
 | --- | --- |
 | [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | The dataset the fine-tune was trained on: 601,338 clips / 3,105 h of synthesized French medical speech, plus an eval-only [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) subset. |
-| [Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
+| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) | [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), a ternary-weight model, exported to ONNX (fp32 / fp16 / int8 / w4a8 / w2a8, the last three packing the ternary weights exactly). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The plain v3 export the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. Superseded by the ultra export and no longer offered by the app; kept online so existing links keep working. |
