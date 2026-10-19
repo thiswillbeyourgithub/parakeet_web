@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 import { seedSettings, readSetting } from './seed.mjs';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 
 /** Boot the app with a two-repo instance config. */
 async function configureTwoRepos(page) {
@@ -54,7 +54,7 @@ test('the picker offers every configured repo and defaults to the first', async 
   await expect(options.nth(0)).toHaveAttribute('value', BASE);
   await expect(options.nth(1)).toHaveAttribute('value', ULTIMED);
   await expect(options.nth(0)).toHaveText('optimized');
-  await expect(options.nth(1)).toHaveText('UltiMed');
+  await expect(options.nth(1)).toHaveText('ultra-UltiMed');
   await expect(options.nth(1)).toHaveAttribute('title', ULTIMED);
 
   // A visitor who has never chosen gets the first entry.

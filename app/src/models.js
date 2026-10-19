@@ -81,9 +81,9 @@ export const MODELS = {
   // rides every code path the base model does. Listed here rather than left to
   // getModelConfig's null fallback so it gets a display name and the same
   // revision pin; the app offers it through the VITE_MODEL_REPO list.
-  'parakeet-tdt-0.6b-v3-ultimed': {
-    repoId: 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx',
-    displayName: 'Parakeet TDT 0.6B v3 UltiMed (French medical)',
+  'parakeet-tdt-0.6b-v3-ultra-ultimed': {
+    repoId: 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx',
+    displayName: 'Parakeet TDT 0.6B v3 ultra UltiMed (French medical)',
     languages: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'ru', 'uk', 'ja', 'ko', 'zh'],
     defaultLanguage: 'fr',
     vocabSize: 4097,

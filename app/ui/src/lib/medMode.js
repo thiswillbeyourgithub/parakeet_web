@@ -43,9 +43,12 @@ export const MED_MODE_ALIASES = Object.freeze([
  * Field notes:
  *  - modelQuery is fed to matchModelRepo() rather than being a hardcoded repo
  *    id, so the preset resolves against whatever the operator actually put in
- *    VITE_MODEL_REPO ("ultimed" -> Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx).
+ *    VITE_MODEL_REPO ("ultra-ultimed" -> Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx).
  *    An operator who offers no UltiMed repo gets a warning and keeps their
- *    model, rather than a 404 at download time.
+ *    model, rather than a 404 at download time. The query is the full short
+ *    label, not "ultimed": that is only a substring of it, and a substring
+ *    also matches the redux-UltiMed-experimental repo, so offering both made
+ *    the match ambiguous (null) and the preset silently kept the current model.
  *  - chunkDurationSec 30 is half the app-wide 60 s default: dictation is short
  *    bursts, and a shorter window returns the first text sooner.
  *  - wasmEncoderQuant / webgpuEncoderQuant are set as a PAIR, not as one value
@@ -84,7 +87,7 @@ export const MED_MODE_ALIASES = Object.freeze([
  *    those views are on, which this preset also switches on.
  */
 export const MED_MODE_PRESET = Object.freeze({
-  modelQuery: 'ultimed',
+  modelQuery: 'ultra-ultimed',
   boostSource: 'french_medical.txt',
   enableChunking: true,
   chunkDurationSec: 30,

@@ -18,6 +18,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { matchModelRepo } from '../../app/ui/src/lib/modelRepos.js';
 
 import {
   MED_MODE_ALIASES,
@@ -85,7 +86,17 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
   test('pins the medical model query, resolved against the offered repos', () => {
     // Deliberately a QUERY for matchModelRepo, not a repo id: the preset has to
     // resolve against whatever the operator put in VITE_MODEL_REPO.
-    assert.equal(MED_MODE_PRESET.modelQuery, 'ultimed');
+    assert.equal(MED_MODE_PRESET.modelQuery, 'ultra-ultimed');
+  });
+
+  test('resolves to the ultra finetune even when redux-UltiMed-experimental is offered too', () => {
+    const repos = [
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx',
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx',
+      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx',
+    ];
+    assert.equal(matchModelRepo(MED_MODE_PRESET.modelQuery, repos),
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx');
   });
 
   test('pins the French medical phrase list', () => {

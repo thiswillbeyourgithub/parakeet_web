@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError } from 'parakeet.js';
-import { parseModelRepos, matchModelRepo } from './lib/modelRepos.js';
+import { parseModelRepos, matchModelRepo, migrateRepoId } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -431,7 +431,7 @@ const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') 
 const BENCHMARK_UPLOAD_PATH = '/api/signal/benchmark-report';
 
 // A ?model=<query> query param lets a shareable link pin which model repo the
-// page loads, e.g. ?model=ultimed for Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx.
+// page loads, e.g. ?model=ultra-ultimed for Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx.
 // Read once at module load (the query string doesn't change within a session).
 //
 // UNLIKE ?phrase_boost above, this one DOES override a returning visitor's
@@ -1429,9 +1429,11 @@ export default function App() {
         // Model repo: the URL already decided at module scope if it had an
         // opinion, and it outranks the saved pick, so only fill in the saved
         // one otherwise. A saved repo the operator has since removed from
-        // VITE_MODEL_REPO is discarded rather than loaded.
-        if (!URL_MODEL_REPO && savedModelRepo && modelRepos.includes(savedModelRepo)) {
-          setRepoId(savedModelRepo);
+        // VITE_MODEL_REPO is discarded rather than loaded. A pick saved under
+        // a repo's pre-rename id is read as its current id.
+        const savedRepo = migrateRepoId(savedModelRepo);
+        if (!URL_MODEL_REPO && savedRepo && modelRepos.includes(savedRepo)) {
+          setRepoId(savedRepo);
         }
 
         // A saved value means the user previously picked a backend explicitly;

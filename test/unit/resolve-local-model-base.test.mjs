@@ -81,7 +81,7 @@ describe('resolveLocalModelBase', () => {
 // carries no repo identity, so it is only attributable when there is exactly
 // one candidate: that is what allowFlatFallback encodes.
 describe('resolveLocalModelBase allowFlatFallback', () => {
-  const OTHER = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
+  const OTHER = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 
   test('refuses an unattributed flat mirror for a repo it has no subfolder for', async () => {
     mockUrls(['/models/vocab.txt']);

@@ -4,7 +4,7 @@
 // The three fixtures under test/fixtures/repo-listings/ are verbatim captures of
 // the real HuggingFace file listings (2026-09-08), one per reference layout:
 //
-//   ultimed.json         Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
+//   ultimed.json         Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx
 //                        The REFERENCE v2 layout: fp16/ fp32/ int8/ w4a8/, with
 //                        vocab.txt and nemo128.onnx at the root.
 //   optimized.json       Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx

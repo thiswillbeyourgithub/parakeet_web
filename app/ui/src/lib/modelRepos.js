@@ -11,6 +11,27 @@
 /** Repo used when the operator configured nothing at all. */
 export const DEFAULT_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
 
+/**
+ * Repos renamed on the hub (2026-10-19), old id -> new id. The hub redirects
+ * the old URLs, but a visitor's SAVED pick is compared to the offered list by
+ * exact id, so without this a returning UltiMed user silently fell back to
+ * the default model.
+ */
+export const RENAMED_REPOS = Object.freeze({
+  'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx',
+  'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx',
+});
+
+/**
+ * Map a possibly pre-rename repo id to its current id (identity otherwise).
+ *
+ * @param {string|null|undefined} repoId
+ * @returns {string|null|undefined}
+ */
+export function migrateRepoId(repoId) {
+  return RENAMED_REPOS[repoId] ?? repoId;
+}
+
 // A HuggingFace repo id: `owner/name`, both segments limited to the characters
 // HF itself allows. Deliberately the same shape entrypoint.sh validates, so an
 // entry the container accepted cannot be dropped here (and vice versa).
@@ -68,7 +89,7 @@ export function shortRepoLabel(repoId) {
  *
  * The point of the param is shareable links, so it must tolerate what someone
  * would actually type: `?model=ultimed` rather than the full
- * `Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Matching runs in decreasing
+ * `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx`. Matching runs in decreasing
  * order of confidence and stops at the first tier that yields exactly one
  * candidate:
  *
