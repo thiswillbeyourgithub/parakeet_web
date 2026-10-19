@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### UltiMed repos renamed
+
+The French medical fine-tune is now [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) (was `parakeet-tdt-0.6b-v3-UltiMed-onnx`), and the redux hybrid is [Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx) (was `parakeet-tdt-0.6b-v3-redux-UltiMed-onnx`), since it is a weight blend rather than a proper fine-tune. Hugging Face redirects the old URLs, and a visitor whose saved model was the old UltiMed id keeps it. The picker label is now `ultra-UltiMed`, and medical mode looks it up by that full label, so it still finds the right model when the redux hybrid is offered too. Operators should update `VITE_MODEL_REPO` and rename their local mirror folder.
+
 ### Speaker identification now uses NVIDIA's Streaming Sortformer
 
 **Speakers** no longer uses sherpa-onnx (pyannote segmentation plus CAM++ clustering). It now runs NVIDIA's [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization), exported for the browser as [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx), on the same ONNX Runtime as the transcription. A second ML runtime and its integrity pins have been removed from the app. The model tracks up to 8 speakers, numbered in order of first appearance. The speaker count you set is now a cap: the most active speakers are kept and each moment of a dropped one goes to the kept speaker the model rates most likely then, and changing it only regroups the existing result. Each backend downloads only its own precision: int8 (~100 MB) on the CPU, fp16 (~200 MB) or fp32 (~400 MB) on WebGPU. The ONNX graphs were checked against NVIDIA's reference forward, with 100% agreement on speech decisions for fp32 and 99.97% for int8 on a 114 s, 5-speaker clip. CAM++ is kept, but only to recognise a voice across recordings.

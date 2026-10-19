@@ -53,7 +53,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 **Le déploiement de référence propose trois modèles**, et l'on passe de l'un à l'autre depuis le sélecteur de modèle de la barre latérale (voir [Proposer plusieurs modèles](#proposer-plusieurs-modèles)) :
 
 - [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) (celui par défaut) : un export ONNX de [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), un Parakeet TDT 0.6B v3 entraîné plus longuement. Sur la partition de validation FLEURS complète de 25 langues (glouton, int8), il obtient un WER macro de 11,57 % contre 13,14 % pour l'export v3 simple ([Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), qu'il remplace et qui n'est plus proposé). `?model=ultra`.
-- [**Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) : le Parakeet TDT 0.6B v3 de base de NVIDIA affiné sur [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3 105 h de parole médicale française synthétisée) afin de mieux transcrire les sujets médicaux. Tout s'exécutant dans votre navigateur, la dictée médicale ne quitte jamais votre machine. Un lien peut le sélectionner directement avec `?model=ultimed`.
+- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) : le parakeet-ultra de moondream (un Parakeet TDT 0.6B v3 post-entraîné) affiné sur [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) (3 105 h de parole médicale française synthétisée) afin de mieux transcrire les sujets médicaux. Tout s'exécutant dans votre navigateur, la dictée médicale ne quitte jamais votre machine. Un lien peut le sélectionner directement avec `?model=ultra-ultimed`.
 - [**Olicorne/parakeet-tdt-0.6b-v3-redux-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) : un export ONNX de [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), dont les poids de l'encodeur sont ternaires (chaque poids vaut -a, 0 ou +a). Un encodeur sur 2 bits y est donc sans perte, et ce dépôt fournit aussi **w2a8**, un encodeur de 190 Mo, environ un tiers du téléchargement int8, qui obtient un WER macro de 12,64 % sur la même partition, identique à Redux en int8 et en fp32. `?model=redux`.
 
 Les trois figurent, avec le reste de la chaîne, dans [Dépôts liés](#dépôts-liés).
@@ -131,7 +131,7 @@ Le modèle entend parfois un nom de médicament comme des mots ordinaires (« l'
 - L'affichage s'applique au texte brut **avant** les regex de la Dictée, car les règles ont été apprises sur la sortie brute du modèle. Chaque affichage se bascule par transcription : désactiver Médicaments montre ce que le modèle a réellement entendu. La copie, la copie automatique et l'aperçu en direct utilisent les mêmes couches que l'affichage.
 - Avec la vue de débogage du décodeur activée (paramètres Débogage), l'affichage **Debug** d'une transcription dessine chaque réécriture au-dessus des tokens qu'elle a remplacés : les morceaux mal entendus barrés sous une étiquette « → remplacement », pour savoir si un mot faux vient du décodeur ou d'une règle.
 - Les règles ne valent que pour le **français** : dans d'autres langues elles peuvent réécrire un mot ordinaire qui ressemble à un médicament ou un terme mal orthographié (espagnol `tienen` -> `Tyenne`, portugais `ocorre` -> `Zocor`).
-- Les règles sont livrées avec l'application, compilées (`app/ui/public/drug-rules/drug_rules.json`, provenance dans son `SOURCE.md`), elles fonctionnent donc quel que soit le modèle chargé. `node scripts/compile-drug-rules.mjs` recompile les deux fichiers de règles en ce seul fichier, et `--check` échoue quand l'un des fichiers du dépôt du modèle ne correspond plus à la copie commitée. Elles viennent du [dossier `regex-fixes/` du dépôt du modèle UltiMed](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx/tree/main/regex-fixes) ; leur construction est décrite dans [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules).
+- Les règles sont livrées avec l'application, compilées (`app/ui/public/drug-rules/drug_rules.json`, provenance dans son `SOURCE.md`), elles fonctionnent donc quel que soit le modèle chargé. `node scripts/compile-drug-rules.mjs` recompile les deux fichiers de règles en ce seul fichier, et `--check` échoue quand l'un des fichiers du dépôt du modèle ne correspond plus à la copie commitée. Elles viennent du [dossier `regex-fixes/` du dépôt du modèle UltiMed](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/tree/main/regex-fixes) ; leur construction est décrite dans [08_drug_asr_rules](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts/tree/public/08_drug_asr_rules).
 - Le fichier compilé (environ 1 Mo tel que servi, en brotli ; 13,5 Mo une fois décompressé) n'est téléchargé qu'une fois le réglage activé, et chaque regex n'est construite que la première fois qu'une transcription contient son mot. Les règles sont indexées par leur mot le plus long, une transcription n'exécute donc que la poignée dont elle contient le mot : environ 0,3 ms par texte au lieu de 120 ms pour toutes dans l'ordre, pour le même résultat (mesuré sous Node sur les règles livrées).
 
 </details>
@@ -440,7 +440,7 @@ première entrée est celle que reçoit un visiteur n'ayant jamais choisi :
 
 ```bash
 # Dans docker/.env :
-VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx
 ```
 
 C'est le couple que propose `docker/env.example` : le modèle multilingue par
@@ -455,8 +455,8 @@ visiteur est mémorisé, et changer de modèle télécharge les nouveaux poids e
 retire les anciens du cache du navigateur : revenir en arrière retéléchargera.
 
 Un lien peut en imposer un avec `?model=<requête>`, comparé de façon souple à
-la liste : `https://votre-hote/?model=ultimed` sélectionne donc
-`Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Contrairement à
+la liste : `https://votre-hote/?model=ultra-ultimed` sélectionne donc
+`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx`. Contrairement à
 `?phrase_boost=`, ce paramètre **remplace bel et bien** le choix enregistré
 d'un visiteur de retour, car un lien qui atterrirait sur ce que le
 destinataire a utilisé en dernier n'aurait aucun intérêt à être partagé. Il
@@ -570,7 +570,7 @@ sous-dossier `<propriétaire>/<nom>/` :
 /chemin/hote/
   Olicorne/
     parakeet-tdt-0.6b-v3-ultra-onnx/{vocab.txt,int8/,fp32/,...}
-    parakeet-tdt-0.6b-v3-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
+    parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
 ```
 
 Chaque dépôt listé a besoin de son propre sous-dossier. Une arborescence à
@@ -718,7 +718,7 @@ Les modèles chargés par cette application, ainsi que toute la chaîne ASR méd
 | Dépôt | Ce que c'est |
 | --- | --- |
 | [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | Le jeu de données sur lequel le fine-tune a été entraîné : 601 338 clips / 3 105 h de parole médicale française synthétisée, plus un sous-ensemble [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) réservé à l'évaluation. |
-| [Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx) | Le fine-tune médical français entraîné sur ce jeu de données, exporté en ONNX (fp32 / fp16 / int8 / w4a8). |
+| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) | Le fine-tune médical français entraîné sur ce jeu de données, exporté en ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) exporté en ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) | [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), un modèle à poids ternaires, exporté en ONNX (fp32 / fp16 / int8 / w4a8 / w2a8, les trois derniers encodant les poids ternaires exactement). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | L'export v3 simple dont dérive le fine-tune : l'ONNX amont re-quantifié pour la précision int8 sur les longs audios et optimisé au niveau du graphe pour la vitesse en navigateur. Remplacé par l'export ultra et plus proposé par l'application ; laissé en ligne pour que les liens existants fonctionnent encore. |
