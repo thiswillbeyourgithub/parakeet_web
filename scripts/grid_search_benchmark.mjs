@@ -128,6 +128,7 @@ function parseArgs(argv) {
     chunkEnergyMs: [null],   // swept: seam energy window ms (null = omit, engine default rules)
     frameStride: 1,
     threads: 0,
+    wasmPaths: null,   // --wasm-paths: directory of an alternative ORT WASM engine build
     limit: 0,               // 0 => all utterances
     shuffleSeed: null,      // seeded clip order (null = manifest order)
     pairedRef: null,        // grid jsonl of a full-split reference run (paired early stop)
@@ -205,6 +206,7 @@ function parseArgs(argv) {
       case '--chunk-energy-ms': a.chunkEnergyMs = numList(val(flag)); break;
       case '--frame-stride': a.frameStride = parseInt(val(flag), 10); break;
       case '--threads': a.threads = parseInt(val(flag), 10); break;
+      case '--wasm-paths': a.wasmPaths = val(flag); break;
       case '--shuffle-seed': a.shuffleSeed = parseInt(val(flag), 10); break;
       case '--paired-ref': a.pairedRef = val(flag); break;
       case '--paired-ref-run': a.pairedRefRun = val(flag); break;
@@ -289,6 +291,10 @@ function parseArgs(argv) {
       + `It CAN load ${WASM_ENCODER_QUANTS.join(' and ')}. Use --ort node or --ort cuda for the rest.`,
     );
   }
+  // An alternative engine changes the numbers but not the cell tags, so it must not be
+  // able to resume (and silently merge with) records written by another engine.
+  if (a.wasmPaths !== null && a.ort !== 'wasm') throw new Error('--wasm-paths only applies to --ort wasm');
+  if (a.wasmPaths !== null && a.resume) throw new Error('--wasm-paths does not support --resume: cell tags do not record the engine');
   if (!a.beamWidths.length || a.beamWidths.some((w) => !Number.isInteger(w) || w < 1 || w > 25)) {
     throw new Error('--beam-width must be a comma-separated list of integers in [1, 25]');
   }
@@ -581,6 +587,9 @@ Output / misc:
                            still shown in the final tables). Orphan records from
                            an interrupted, never-finished run are dropped.
       --threads N          WASM thread count (default: ORT chooses).
+      --wasm-paths DIR     Load the ORT WASM engine from DIR instead of the vendored
+                           one (e.g. a self-built ORT). --ort wasm only; not with
+                           --resume, since cell tags do not record the engine.
       --ffmpeg PATH        ffmpeg binary (else auto-detected).
   -v, --verbose            Verbose model + boost logs.
   -h, --help               Show this help.
@@ -1729,6 +1738,7 @@ async function main() {
       decoderQuant: decQuant,
       ortBackend,
       threads: args.threads,
+      wasmPaths: args.wasmPaths,
       verbose: args.verbose,
     });
     model = loaded.model;
