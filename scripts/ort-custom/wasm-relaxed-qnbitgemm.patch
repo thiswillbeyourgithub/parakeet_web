@@ -1,0 +1,670 @@
+diff --git a/cmake/onnxruntime_mlas.cmake b/cmake/onnxruntime_mlas.cmake
+index 56ec9f8..c7adf25 100644
+--- a/cmake/onnxruntime_mlas.cmake
++++ b/cmake/onnxruntime_mlas.cmake
+@@ -437,6 +437,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+       set(mlas_platform_srcs
+         ${mlas_platform_srcs}
+         ${MLAS_SRC_DIR}/qgemm_kernel_wasmrelaxedsimd.cpp
++        ${MLAS_SRC_DIR}/qnbitgemm_kernel_wasmrelaxedsimd.cpp
+       )
+     endif()
+   else()
+diff --git a/onnxruntime/contrib_ops/cpu/quantization/matmul_nbits.cc b/onnxruntime/contrib_ops/cpu/quantization/matmul_nbits.cc
+index b536eb8..a9282fc 100644
+--- a/onnxruntime/contrib_ops/cpu/quantization/matmul_nbits.cc
++++ b/onnxruntime/contrib_ops/cpu/quantization/matmul_nbits.cc
+@@ -896,8 +896,9 @@ Status MatMulNBits<T1>::UseSharedPrePackedBuffers(std::vector<BufferUniquePtr>&
+       const auto effective_compute_type = compute_type_ == HQNBIT_CompInt8 ? SQNBIT_CompInt8 : compute_type_;
+       bool shared_packed_b_finalized = effective_compute_type == SQNBIT_CompInt8 &&
+                                        OpKernel::Info().TryGetConstantInput(InputIndex::scales, &scales);
+-#if defined(MLAS_TARGET_ARM64)
+-      // 4-bit scales are folded into B only when MLAS reports backend support.
++#if !defined(MLAS_TARGET_AMD64_IX86)
++      // 4-bit scales are folded into B only when MLAS reports backend support. Same guard as the
++      // B PrePack finalize: every non-x86 target (not only ARM64) keeps 4-bit scales raw otherwise.
+       shared_packed_b_finalized =
+           shared_packed_b_finalized &&
+           (nbits_ == 8 || MlasQNBitGemmScalesPacked(K_, nbits_, block_size_, effective_compute_type,
+diff --git a/onnxruntime/core/mlas/lib/mlasi.h b/onnxruntime/core/mlas/lib/mlasi.h
+index 3abd7d9..0ef8322 100644
+--- a/onnxruntime/core/mlas/lib/mlasi.h
++++ b/onnxruntime/core/mlas/lib/mlasi.h
+@@ -1652,6 +1652,10 @@ extern const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchLasx;
+ 
+ extern const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchRvv;
+ 
++#if defined(MLAS_TARGET_WASM_RELAXED_SIMD)
++extern const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchWasmRelaxedSimd;
++#endif
++
+ struct MLAS_QNBIT_LUT_GEMM_DISPATCH;
+ 
+ extern const MLAS_QNBIT_LUT_GEMM_DISPATCH MlasLutGenKernelAvx2;
+diff --git a/onnxruntime/core/mlas/lib/platform.cpp b/onnxruntime/core/mlas/lib/platform.cpp
+index 0c24933..a22be86 100644
+--- a/onnxruntime/core/mlas/lib/platform.cpp
++++ b/onnxruntime/core/mlas/lib/platform.cpp
+@@ -1063,6 +1063,13 @@ Return Value:
+ 
+ #endif // MLAS_TARGET_LARCH64
+ 
++#if defined(MLAS_TARGET_WASM_RELAXED_SIMD)
++    // int8 x int8 MatMulNBits via relaxed_dot_i8x16_i7x16. Activations are quantized
++    // unsigned (u = aq + 64), so the packed B layout carries the extra correction buffer.
++    this->QNBitGemmDispatch = &MlasSQNBitGemmDispatchWasmRelaxedSimd;
++    this->ArmNeonIsQuantActivationsUnsigned = true;
++#endif
++
+ }
+ 
+ size_t
+diff --git a/onnxruntime/core/mlas/lib/qnbitgemm_kernel_wasmrelaxedsimd.cpp b/onnxruntime/core/mlas/lib/qnbitgemm_kernel_wasmrelaxedsimd.cpp
+new file mode 100644
+index 0000000..b67165f
+--- /dev/null
++++ b/onnxruntime/core/mlas/lib/qnbitgemm_kernel_wasmrelaxedsimd.cpp
+@@ -0,0 +1,603 @@
++/*++
++
++Licensed under the MIT License.
++
++Module Name:
++
++    qnbitgemm_kernel_wasmrelaxedsimd.cpp
++
++Abstract:
++
++    WebAssembly relaxed-SIMD SQNBIT_CompInt8 kernels for 8-bit and 4-bit MatMulNBits.
++
++    Without this dispatch, MatMulNBits on WASM dequantizes B to fp32 and runs
++    SGEMM. Here B stays integer and the inner product uses
++    i32x4.relaxed_dot_i8x16_i7x16_add_s:
++
++      - A is block-quantized symmetrically to [-63, 63] and stored as u = aq + 64
++        in [1, 127], so it always fits the i7 operand. The instruction is then
++        deterministic on every implementation (no pmaddubsw saturation).
++      - B goes in the i8 operand as a signed value s, and
++        dot(aq, s) = dot(u, s) - 64 * sum(s). The per (n, block) term
++        -64 * sum(s) seeds the accumulator.
++
++    8-bit (SQ8BitGemmKernel_BlkSum_CompInt8, PerGemmQuantAWorkspace A layout):
++      - s = q - 128, -64 * sum(s) precomputed at pack time.
++      - A zero point zp != 128 adds (sa * sum(aq)) * (sw * (128 - zp)) per block,
++        i.e. ABlockSum * QuantBBlkSum, applied only when zero points exist.
++      PackedQuantBData                       [N][BlockCountK][BlkLen] int8 (q ^ 0x80)
++      BlkUnsignedQuantAZeroPointCorrection   [N][BlockCountK] int32 bits, -64 * sum(s)
++      QuantBBlkSum                           [N][BlockCountK] float, sw * (128 - zp)
++      PackedQuantBScale                      [N][BlockCountK] float
++
++    4-bit (SQ4BitGemmKernel_CompInt8, interleaved Q8Blk A layout, raw scales and
++    zero points at compute time):
++      - s = q - zp in [-15, 15] (zp defaults to 8), so the zero point needs no
++        float term. -64 * sum(s) is computed at the start of each kernel call,
++        about 1 / CountM of the work, because this path has no packed side buffer.
++      PackedQuantBData   [N][BlockCountK][BlkLen / 2] bytes; within each group of
++                         G = min(BlkLen, 32) values, byte t holds value t in its low
++                         nibble and value t + G / 2 in its high nibble.
++
++--*/
++
++#include "mlasi.h"
++
++#if defined(MLAS_TARGET_WASM_RELAXED_SIMD)
++
++#include <wasm_simd128.h>
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <vector>
++
++#include "qnbitgemm.h"
++#include "sqnbitgemm_q8_block.h"
++
++namespace
++{
++
++constexpr int32_t kAOffset = 64;  // u = aq + 64
++constexpr float kAMax = 63.0f;
++
++size_t
++Q8BitGemmPackQuantBDataSize(
++    size_t N,
++    size_t K,
++    size_t BlkLen,
++    bool /*HasZeroPoint*/,
++    MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType,
++    const MLAS_BACKEND_KERNEL_SELECTOR_CONFIG* /*BackendKernelSelectorConfig*/
++)
++{
++    const size_t BlockCountK = MlasDivRoundup(K, BlkLen);
++    const size_t PackedQuantBDataSize = N * BlockCountK * MlasQNBitBlkDataSizeInBytes(8, BlkLen);
++    if (ComputeType != SQNBIT_CompInt8) {
++        return PackedQuantBDataSize;
++    }
++    const size_t ScaleSize = N * BlockCountK * sizeof(float);
++    // Must mirror PackedQuantBDataStruct with QuantAUnsigned = true: two aligned
++    // block-sum-sized regions (QuantBBlkSum, BlkUnsignedQuantAZeroPointCorrection).
++    const size_t BlkSumSize = MlasDivRoundup(N, 16) * BlockCountK * 16 * sizeof(float) +
++                              MlasQNBitQuantBBlkSumAlignment() - 1;
++    return PackedQuantBDataSize + BlkSumSize + BlkSumSize + ScaleSize;
++}
++
++void
++SQ8BitGemmPackQuantBDataAndBlkSum(
++    size_t N,
++    size_t K,
++    size_t BlkLen,
++    MLAS_QNBIT_GEMM_COMPUTE_TYPE /*ComputeType*/,
++    const std::byte* QuantBDataBegin,
++    const float* QuantBScaleBegin,
++    bool HasZeroPoint,
++    const std::byte* QuantBZPBegin,
++    PackedQuantBDataStruct<float, 8>& PackedQuantB,
++    MLAS_THREADPOOL* ThreadPool,
++    const MLAS_BACKEND_KERNEL_SELECTOR_CONFIG* /*BackendKernelSelectorConfig*/
++)
++{
++    const size_t BlockCountK = MlasDivRoundup(K, BlkLen);
++    int32_t* const WCorr = reinterpret_cast<int32_t*>(PackedQuantB.BlkUnsignedQuantAZeroPointCorrection);
++
++    // Same call protocol as the NEON 8-bit packer: the B-data call ignores scales and
++    // zero points, a later call (QuantBData == nullptr) folds scales and/or zero points.
++    if (QuantBDataBegin) {
++        MlasTrySimpleParallel(ThreadPool, static_cast<ptrdiff_t>(N), [&](ptrdiff_t n) {
++            for (size_t b = 0; b < BlockCountK; ++b) {
++                const size_t off = (static_cast<size_t>(n) * BlockCountK + b) * BlkLen;
++                const uint8_t* src = reinterpret_cast<const uint8_t*>(QuantBDataBegin) + off;
++                int8_t* dst = reinterpret_cast<int8_t*>(PackedQuantB.PackedQuantBData) + off;
++                int32_t sum = 0;
++                for (size_t k = 0; k < BlkLen; ++k) {
++                    const int8_t s = static_cast<int8_t>(src[k] ^ 0x80);
++                    dst[k] = s;
++                    sum += s;
++                }
++                WCorr[n * BlockCountK + b] = -kAOffset * sum;
++            }
++        });
++        return;
++    }
++
++    if (QuantBScaleBegin) {
++        std::copy(QuantBScaleBegin, QuantBScaleBegin + N * BlockCountK, PackedQuantB.PackedQuantBScale);
++    }
++
++    if ((QuantBScaleBegin && !HasZeroPoint) || QuantBZPBegin) {
++        const float* Scale = PackedQuantB.PackedQuantBScale;
++        const uint8_t* ZP = reinterpret_cast<const uint8_t*>(QuantBZPBegin);
++        for (size_t i = 0; i < N * BlockCountK; ++i) {
++            const int32_t zp = ZP ? ZP[i] : 128;
++            PackedQuantB.QuantBBlkSum[i] = Scale[i] * static_cast<float>(128 - zp);
++        }
++    }
++}
++
++size_t
++QNBitGemmPerGemmWorkspaceSize(
++    size_t M,
++    size_t /*N*/,
++    size_t K,
++    size_t BlkLen,
++    bool /*HasZeroPoint*/,
++    MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType,
++    size_t /*BlkBitWidth*/,
++    const MLAS_BACKEND_KERNEL_SELECTOR_CONFIG* /*BackendKernelSelectorConfig*/
++)
++{
++    if (ComputeType != SQNBIT_CompInt8) {
++        return 0;
++    }
++    // PerGemmQuantAWorkspace: QuantData + QuantScale + BlockSum
++    const size_t BlockCountK = MlasDivRoundup(K, BlkLen);
++    return M * BlockCountK * (Q8BlkSize(BlkLen) + sizeof(float));
++}
++
++size_t
++QNBitGemmPerGemmWorkspaceAlignment(
++    size_t /*BlkLen*/,
++    MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType
++)
++{
++    return ComputeType == SQNBIT_CompInt8 ? Q8BlkAlignment() : 1;
++}
++
++MLAS_FORCEINLINE float
++HMax(v128_t v)
++{
++    v = wasm_f32x4_max(v, wasm_i32x4_shuffle(v, v, 2, 3, 0, 1));
++    v = wasm_f32x4_max(v, wasm_i32x4_shuffle(v, v, 1, 0, 3, 2));
++    return wasm_f32x4_extract_lane(v, 0);
++}
++
++MLAS_FORCEINLINE float
++HSum(v128_t v)
++{
++    v = wasm_f32x4_add(v, wasm_i32x4_shuffle(v, v, 2, 3, 0, 1));
++    v = wasm_f32x4_add(v, wasm_i32x4_shuffle(v, v, 1, 0, 3, 2));
++    return wasm_f32x4_extract_lane(v, 0);
++}
++
++MLAS_FORCEINLINE int32_t
++HSumI32(v128_t v)
++{
++    v = wasm_i32x4_add(v, wasm_i32x4_shuffle(v, v, 2, 3, 0, 1));
++    v = wasm_i32x4_add(v, wasm_i32x4_shuffle(v, v, 1, 0, 3, 2));
++    return wasm_i32x4_extract_lane(v, 0);
++}
++
++// Quantizes the len (<= BlkLen) values at src to BlkLen bytes u = aq + 64 at dst and
++// returns the block scale; isum receives sum(aq). A partial trailing block is padded
++// with aq = 0 (u = 64), which the -64 * sum(s) term cancels exactly whatever the
++// padded weights are.
++MLAS_FORCEINLINE float
++QuantizeABlock(const float* src, size_t len, size_t BlkLen, uint8_t* dst, int32_t& isum)
++{
++    if (len < BlkLen) {
++        float amax = 0.0f;
++        for (size_t i = 0; i < len; ++i) amax = std::max(amax, std::fabs(src[i]));
++        const float scale = amax / kAMax;
++        const float inv = scale != 0.0f ? 1.0f / scale : 0.0f;
++        int32_t sum = 0;
++        for (size_t i = 0; i < BlkLen; ++i) {
++            const int32_t q = i < len ? static_cast<int32_t>(std::nearbyint(src[i] * inv)) : 0;
++            sum += q;
++            dst[i] = static_cast<uint8_t>(q + kAOffset);
++        }
++        isum = sum;
++        return scale;
++    }
++
++    v128_t vmax = wasm_f32x4_splat(0.0f);
++    for (size_t i = 0; i < BlkLen; i += 4) {
++        vmax = wasm_f32x4_max(vmax, wasm_f32x4_abs(wasm_v128_load(src + i)));
++    }
++    const float scale = HMax(vmax) / kAMax;
++    const v128_t inv = wasm_f32x4_splat(scale != 0.0f ? 1.0f / scale : 0.0f);
++    const v128_t offset = wasm_i8x16_splat(kAOffset);
++    v128_t vsum = wasm_i32x4_splat(0);
++    for (size_t i = 0; i < BlkLen; i += 16) {
++        const v128_t q0 = wasm_i32x4_trunc_sat_f32x4(wasm_f32x4_nearest(wasm_f32x4_mul(wasm_v128_load(src + i), inv)));
++        const v128_t q1 = wasm_i32x4_trunc_sat_f32x4(wasm_f32x4_nearest(wasm_f32x4_mul(wasm_v128_load(src + i + 4), inv)));
++        const v128_t q2 = wasm_i32x4_trunc_sat_f32x4(wasm_f32x4_nearest(wasm_f32x4_mul(wasm_v128_load(src + i + 8), inv)));
++        const v128_t q3 = wasm_i32x4_trunc_sat_f32x4(wasm_f32x4_nearest(wasm_f32x4_mul(wasm_v128_load(src + i + 12), inv)));
++        vsum = wasm_i32x4_add(vsum, wasm_i32x4_add(wasm_i32x4_add(q0, q1), wasm_i32x4_add(q2, q3)));
++        // |q| <= 63, so the saturating narrows are exact and q + 64 fits in [1, 127].
++        const v128_t packed = wasm_i8x16_narrow_i16x8(wasm_i16x8_narrow_i32x4(q0, q1), wasm_i16x8_narrow_i32x4(q2, q3));
++        wasm_v128_store(dst + i, wasm_i8x16_add(packed, offset));
++    }
++    isum = HSumI32(vsum);
++    return scale;
++}
++
++// 8-bit A layout (PerGemmQuantAWorkspace): data, scales and scaled block sums in
++// separate arrays.
++void
++QuantizeARowComputeBlkSum_CompInt8(
++    size_t BlkLen,
++    const float* A,
++    size_t CountK,
++    std::byte* QuantA,
++    float* QuantAScale,
++    float* AScaledBlkSum
++)
++{
++    uint8_t* dst = reinterpret_cast<uint8_t*>(QuantA);
++    for (size_t k = 0, b = 0; k < CountK; k += BlkLen, ++b, dst += BlkLen) {
++        int32_t isum;
++        const float scale = QuantizeABlock(A + k, std::min(BlkLen, CountK - k), BlkLen, dst, isum);
++        QuantAScale[b] = scale;
++        AScaledBlkSum[b] = scale * static_cast<float>(isum);
++    }
++}
++
++// 4-bit A layout: one Q8Blk (scale, then BlkLen bytes) per block.
++void
++QuantizeARow_CompInt8(
++    size_t BlkLen,
++    const float* A,
++    size_t CountK,
++    std::byte* QuantA
++)
++{
++    std::byte* blk = QuantA;
++    for (size_t k = 0; k < CountK; k += BlkLen, blk += Q8BlkSize(BlkLen)) {
++        int32_t isum;
++        Q8BlkScale(blk) = QuantizeABlock(
++            A + k, std::min(BlkLen, CountK - k), BlkLen, reinterpret_cast<uint8_t*>(Q8BlkData(blk)), isum
++        );
++    }
++}
++
++//
++// Operand policies for the shared tile. An A policy maps (row, block) to its u bytes
++// and scale. A B policy maps (column, block) to a Ref, loads Step / 16 i8 vectors of s
++// from it, and gives the block's scale and -64 * sum(s) seed.
++//
++
++struct ASeparate {
++    const uint8_t* Data;
++    const float* Scale;
++    size_t BlockCountK, BlkLen;
++    const uint8_t* data(size_t i, size_t b) const { return Data + (i * BlockCountK + b) * BlkLen; }
++    float scale(size_t i, size_t b) const { return Scale[i * BlockCountK + b]; }
++};
++
++struct AInterleaved {
++    const std::byte* Data;
++    size_t BlockCountK, BlkLen;
++    const std::byte* blk(size_t i, size_t b) const { return Data + (i * BlockCountK + b) * Q8BlkSize(BlkLen); }
++    const uint8_t* data(size_t i, size_t b) const { return reinterpret_cast<const uint8_t*>(Q8BlkData(blk(i, b))); }
++    float scale(size_t i, size_t b) const { return Q8BlkScale(blk(i, b)); }
++};
++
++struct B8 {
++    static constexpr size_t Step = 16;
++    struct Ref {
++        const int8_t* p;
++    };
++    const int8_t* Data;
++    const float* Scale;
++    const int32_t* Corr;
++    size_t BlockCountK, BlkLen;
++    Ref ref(size_t j, size_t b) const { return {Data + (j * BlockCountK + b) * BlkLen}; }
++    static void load(const Ref& r, size_t k, v128_t* v) { v[0] = wasm_v128_load(r.p + k); }
++    float scale(size_t j, size_t b) const { return Scale[j * BlockCountK + b]; }
++    int32_t corr(size_t j, size_t b) const { return Corr[j * BlockCountK + b]; }
++};
++
++// Step 32 unpacks one 16-byte load into two vectors; Step 16 serves BlkLen 16.
++template <size_t StepT>
++struct B4 {
++    static constexpr size_t Step = StepT;
++    struct Ref {
++        const uint8_t* p;
++        v128_t zp;
++    };
++    const uint8_t* Data;
++    const float* Scale;
++    const uint8_t* ZeroPoint;  // [N][ceil(BlockCountK / 2)] nibbles, or nullptr
++    const int32_t* Corr;
++    size_t BlockCountK, BlkLen;
++
++    int32_t zp(size_t j, size_t b) const
++    {
++        if (ZeroPoint == nullptr) return 8;
++        const uint8_t v = ZeroPoint[j * MlasDivRoundup(BlockCountK, 2) + b / 2];
++        return (b & 1) ? (v >> 4) : (v & 0x0F);
++    }
++    Ref ref(size_t j, size_t b) const
++    {
++        return {Data + (j * BlockCountK + b) * (BlkLen / 2), wasm_i8x16_splat(static_cast<int8_t>(zp(j, b)))};
++    }
++    static void load(const Ref& r, size_t k, v128_t* v)
++    {
++        const v128_t mask = wasm_i8x16_splat(0x0F);
++        if constexpr (Step == 32) {
++            const v128_t x = wasm_v128_load(r.p + k / 2);
++            v[0] = wasm_i8x16_sub(wasm_v128_and(x, mask), r.zp);
++            v[1] = wasm_i8x16_sub(wasm_u8x16_shr(x, 4), r.zp);
++        } else {
++            const v128_t x = wasm_v128_load64_zero(r.p + k / 2);
++            const v128_t lo = wasm_v128_and(x, mask);
++            const v128_t hi = wasm_u8x16_shr(x, 4);
++            v[0] = wasm_i8x16_sub(
++                wasm_i8x16_shuffle(lo, hi, 0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23), r.zp
++            );
++        }
++    }
++    float scale(size_t j, size_t b) const { return Scale[j * BlockCountK + b]; }
++    int32_t corr(size_t j, size_t b) const { return Corr[j * BlockCountK + b]; }
++};
++
++// ABlockSum * QuantBBlkSum, the 8-bit zero-point term.
++struct EpBlkSum {
++    const float* ABlockSum;
++    const float* QuantBBlkSum;  // nullptr when there are no zero points
++    size_t BlockCountK;
++    float operator()(size_t i, size_t j) const
++    {
++        float v = 0.0f;
++        if (QuantBBlkSum != nullptr) {
++            for (size_t b = 0; b < BlockCountK; ++b) {
++                v += ABlockSum[i * BlockCountK + b] * QuantBBlkSum[j * BlockCountK + b];
++            }
++        }
++        return v;
++    }
++};
++
++struct EpNone {
++    float operator()(size_t, size_t) const { return 0.0f; }
++};
++
++// TM rows of A x TN columns of B starting at (m, n), all K blocks. One f32x4
++// accumulator per output holds lane partials, reduced once at the end.
++template <size_t TM, size_t TN, class AP, class BP, class EP>
++MLAS_FORCEINLINE void
++GemmTile(const AP& a, const BP& bq, const EP& ep, size_t m, size_t n, size_t BlockCountK, size_t BlkLen,
++         float* C, size_t ldc, const float* Bias)
++{
++    constexpr size_t S = BP::Step / 16;
++    v128_t acc[TM][TN];
++    for (size_t i = 0; i < TM; ++i)
++        for (size_t j = 0; j < TN; ++j) acc[i][j] = wasm_f32x4_splat(0.0f);
++
++    for (size_t b = 0; b < BlockCountK; ++b) {
++        v128_t sa[TM], sw[TN];
++        const uint8_t* ap[TM];
++        typename BP::Ref br[TN];
++        for (size_t i = 0; i < TM; ++i) {
++            sa[i] = wasm_f32x4_splat(a.scale(m + i, b));
++            ap[i] = a.data(m + i, b);
++        }
++        v128_t dot[TM][TN];
++        for (size_t j = 0; j < TN; ++j) {
++            sw[j] = wasm_f32x4_splat(bq.scale(n + j, b));
++            br[j] = bq.ref(n + j, b);
++            const v128_t init = wasm_i32x4_make(bq.corr(n + j, b), 0, 0, 0);
++            for (size_t i = 0; i < TM; ++i) dot[i][j] = init;
++        }
++        for (size_t k = 0; k < BlkLen; k += BP::Step) {
++            v128_t va[TM][S];
++            for (size_t i = 0; i < TM; ++i)
++                for (size_t s = 0; s < S; ++s) va[i][s] = wasm_v128_load(ap[i] + k + 16 * s);
++            for (size_t j = 0; j < TN; ++j) {
++                v128_t vb[S];
++                BP::load(br[j], k, vb);
++                for (size_t s = 0; s < S; ++s)
++                    for (size_t i = 0; i < TM; ++i)
++                        dot[i][j] = wasm_i32x4_relaxed_dot_i8x16_i7x16_add(vb[s], va[i][s], dot[i][j]);
++            }
++        }
++        for (size_t i = 0; i < TM; ++i)
++            for (size_t j = 0; j < TN; ++j)
++                acc[i][j] = wasm_f32x4_relaxed_madd(wasm_f32x4_convert_i32x4(dot[i][j]), wasm_f32x4_mul(sa[i], sw[j]), acc[i][j]);
++    }
++
++    for (size_t i = 0; i < TM; ++i) {
++        for (size_t j = 0; j < TN; ++j) {
++            float v = HSum(acc[i][j]) + ep(m + i, n + j);
++            if (Bias != nullptr) v += Bias[n + j];
++            C[(m + i) * ldc + n + j] = v;
++        }
++    }
++}
++
++template <size_t TM, class AP, class BP, class EP>
++MLAS_FORCEINLINE void
++GemmTileTN(size_t tn, const AP& a, const BP& bq, const EP& ep, size_t m, size_t n, size_t BlockCountK,
++           size_t BlkLen, float* C, size_t ldc, const float* Bias)
++{
++    switch (tn) {
++        case 4: GemmTile<TM, 4>(a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias); break;
++        case 3: GemmTile<TM, 3>(a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias); break;
++        case 2: GemmTile<TM, 2>(a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias); break;
++        default: GemmTile<TM, 1>(a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias); break;
++    }
++}
++
++// CountM x CountN outputs, in row panels: each TN-column slice of B is reused across
++// a whole panel of A, the order the standalone prototype was benchmarked with.
++template <class AP, class BP, class EP>
++void
++GemmPanels(const AP& a, const BP& bq, const EP& ep, size_t CountM, size_t CountN, size_t BlockCountK,
++           size_t BlkLen, float* C, size_t ldc, const float* Bias)
++{
++    constexpr size_t TM = 3;
++    constexpr size_t TN = 4;
++    constexpr size_t MP = 21 * TM;
++
++    for (size_t mp = 0; mp < CountM; mp += MP) {
++        const size_t me = std::min(CountM, mp + MP);
++        for (size_t n = 0; n < CountN; n += TN) {
++            const size_t tn = std::min(TN, CountN - n);
++            size_t m = mp;
++            for (; m + TM <= me; m += TM) {
++                GemmTileTN<TM>(tn, a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias);
++            }
++            if (me - m == 2) {
++                GemmTileTN<2>(tn, a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias);
++            } else if (me - m == 1) {
++                GemmTileTN<1>(tn, a, bq, ep, m, n, BlockCountK, BlkLen, C, ldc, Bias);
++            }
++        }
++    }
++}
++
++size_t
++SQ8BitGemmKernel_BlkSum_CompInt8(
++    size_t BlkLen,
++    const std::byte* QuantA,
++    const float* QuantAScale,
++    const std::byte* QuantBData,
++    const float* QuantBScale,
++    const std::byte* QuantBZeroPoint,
++    float* C,
++    size_t CountM,
++    size_t CountN,
++    size_t /*CountK*/,
++    size_t BlockCountK,
++    const float* Bias,
++    size_t ldc,
++    const float* ABlockSum,
++    const float* QuantBBlkSum,
++    const float* BlkUnsignedQuantAZeroPointCorrection
++)
++{
++    const ASeparate a{reinterpret_cast<const uint8_t*>(QuantA), QuantAScale, BlockCountK, BlkLen};
++    const B8 bq{
++        reinterpret_cast<const int8_t*>(QuantBData), QuantBScale,
++        reinterpret_cast<const int32_t*>(BlkUnsignedQuantAZeroPointCorrection), BlockCountK, BlkLen
++    };
++    // The ABlockSum * QuantBBlkSum term is all zeros unless zero points were supplied.
++    const EpBlkSum ep{ABlockSum, QuantBZeroPoint != nullptr ? QuantBBlkSum : nullptr, BlockCountK};
++    GemmPanels(a, bq, ep, CountM, CountN, BlockCountK, BlkLen, C, ldc, Bias);
++    return CountM;
++}
++
++size_t
++Q4BitGemmPackQuantBDataSize(
++    size_t N,
++    size_t K,
++    size_t BlkLen,
++    bool /*HasZeroPoint*/,
++    MLAS_QNBIT_GEMM_COMPUTE_TYPE /*ComputeType*/,
++    const MLAS_BACKEND_KERNEL_SELECTOR_CONFIG* /*BackendKernelSelectorConfig*/
++)
++{
++    return N * MlasDivRoundup(K, BlkLen) * MlasQNBitBlkDataSizeInBytes(4, BlkLen);
++}
++
++// Input: byte i of a block holds value 2i (low nibble) and 2i + 1 (high nibble).
++// Output: the group layout described in the file header.
++void
++SQ4BitGemmPackQuantBData(
++    size_t N,
++    size_t K,
++    size_t BlkLen,
++    MLAS_QNBIT_GEMM_COMPUTE_TYPE /*ComputeType*/,
++    const std::byte* QuantBDataBegin,
++    std::byte* PackedQuantBDataBegin,
++    MLAS_THREADPOOL* ThreadPool,
++    const MLAS_BACKEND_KERNEL_SELECTOR_CONFIG* /*BackendKernelSelectorConfig*/
++)
++{
++    const size_t BlkBytes = BlkLen / 2;
++    const size_t Blocks = N * MlasDivRoundup(K, BlkLen);
++    const size_t G = std::min<size_t>(BlkLen, 32);
++    MlasTrySimpleParallel(ThreadPool, static_cast<ptrdiff_t>(Blocks), [&](ptrdiff_t blk) {
++        const uint8_t* src = reinterpret_cast<const uint8_t*>(QuantBDataBegin) + blk * BlkBytes;
++        uint8_t* dst = reinterpret_cast<uint8_t*>(PackedQuantBDataBegin) + blk * BlkBytes;
++        const auto value = [src](size_t e) { return (src[e / 2] >> ((e & 1) * 4)) & 0x0F; };
++        for (size_t g = 0; g < BlkLen; g += G) {
++            for (size_t t = 0; t < G / 2; ++t) {
++                dst[(g + 2 * t) / 2] = static_cast<uint8_t>(value(g + t) | (value(g + G / 2 + t) << 4));
++            }
++        }
++    });
++}
++
++size_t
++SQ4BitGemmKernel_CompInt8(
++    size_t BlkLen,
++    const std::byte* QuantA,
++    const std::byte* QuantBData,
++    const float* QuantBScale,
++    const std::byte* QuantBZeroPoint,
++    float* C,
++    size_t CountM,
++    size_t CountN,
++    size_t /*CountK*/,
++    size_t BlockCountK,
++    size_t ldc,
++    const float* Bias
++)
++{
++    const uint8_t* B = reinterpret_cast<const uint8_t*>(QuantBData);
++    const uint8_t* ZP = reinterpret_cast<const uint8_t*>(QuantBZeroPoint);
++
++    // -64 * sum(q - zp) over each whole (padded) block, for this call's columns.
++    std::vector<int32_t> corr(CountN * BlockCountK);
++    const B4<16> zps{B, QuantBScale, ZP, nullptr, BlockCountK, BlkLen};
++    for (size_t j = 0; j < CountN; ++j) {
++        for (size_t b = 0; b < BlockCountK; ++b) {
++            const uint8_t* p = B + (j * BlockCountK + b) * (BlkLen / 2);
++            int32_t sum = 0;
++            for (size_t t = 0; t < BlkLen / 2; ++t) sum += (p[t] & 0x0F) + (p[t] >> 4);
++            corr[j * BlockCountK + b] = -kAOffset * (sum - static_cast<int32_t>(BlkLen) * zps.zp(j, b));
++        }
++    }
++
++    const AInterleaved a{QuantA, BlockCountK, BlkLen};
++    if (BlkLen % 32 == 0) {
++        const B4<32> bq{B, QuantBScale, ZP, corr.data(), BlockCountK, BlkLen};
++        GemmPanels(a, bq, EpNone{}, CountM, CountN, BlockCountK, BlkLen, C, ldc, Bias);
++    } else {
++        const B4<16> bq{B, QuantBScale, ZP, corr.data(), BlockCountK, BlkLen};
++        GemmPanels(a, bq, EpNone{}, CountM, CountN, BlockCountK, BlkLen, C, ldc, Bias);
++    }
++    return CountM;
++}
++
++}  // namespace
++
++const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchWasmRelaxedSimd = []() {
++    MLAS_QNBIT_GEMM_DISPATCH d;
++    d.Q8BitGemmPackQuantBDataSize = Q8BitGemmPackQuantBDataSize;
++    d.SQ8BitGemmPackQuantBDataAndBlkSum = SQ8BitGemmPackQuantBDataAndBlkSum;
++    d.QNBitGemmPerGemmWorkspaceSize = QNBitGemmPerGemmWorkspaceSize;
++    d.QNBitGemmPerGemmWorkspaceAlignment = QNBitGemmPerGemmWorkspaceAlignment;
++    d.QuantizeARowComputeBlkSum_CompInt8 = QuantizeARowComputeBlkSum_CompInt8;
++    d.SQ8BitGemmKernel_BlkSum_CompInt8 = SQ8BitGemmKernel_BlkSum_CompInt8;
++    d.Q4BitGemmPackQuantBDataSize = Q4BitGemmPackQuantBDataSize;
++    d.SQ4BitGemmPackQuantBData = SQ4BitGemmPackQuantBData;
++    d.QuantizeARow_CompInt8 = QuantizeARow_CompInt8;
++    d.SQ4BitGemmKernel_CompInt8 = SQ4BitGemmKernel_CompInt8;
++    return d;
++}();
++
++#endif  // MLAS_TARGET_WASM_RELAXED_SIMD
