@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Reproducible custom ONNX Runtime WASM build (CPU, threads + relaxed SIMD) for parakeet_web.
 #
-# What it produces: ort-wasm-relaxedsimd-threaded.{mjs,wasm}, a plain (non-JSEP, non-JSPI) CPU
-# runtime, version-locked to the vendored onnxruntime-web JS bundle, with:
+# What it produces: two CPU runtimes (non-JSEP, non-JSPI) built from the same patched source,
+# version-locked to the vendored onnxruntime-web JS bundle:
+#   - ort-wasm-relaxedsimd-threaded.{mjs,wasm}: relaxed SIMD (Chromium, Firefox).
+#   - ort-wasm-simd-threaded.{mjs,wasm}: plain SIMD128, for browsers without relaxed SIMD (Safari).
+# A browser rejects a whole module that contains one unsupported instruction, so the two cannot be
+# one file; the loader feature-detects and fetches one. Both contain:
 #   - wasm-qnbitgemm.patch: an MLAS SQNBIT_CompInt8 dispatch for MatMulNBits on WASM (8, 4 and
 #     2 bit). Stock ORT dequantizes MatMulNBits to fp32 + SGEMM on WASM; this keeps B integer,
 #     with i32x4.relaxed_dot_i8x16_i7x16_add_s in relaxed-SIMD builds and i16 dots in plain SIMD
@@ -24,8 +28,9 @@
 #   scripts/ort-custom/build.sh --src DIR --out DIR [-j N] [--ops CONFIG] [--expect-sums FILE]
 #     --src DIR    onnxruntime checkout (cloned at the pinned tag if absent). ~10 GB of build
 #                  state; put it in a folder whose name contains ignore_backups.
-#     --out DIR    where the runtime pair, BUILD-INFO and SHA256SUMS are written.
-#     -j N         parallel jobs (default: nproc). The build takes ~35 min at -j8.
+#     --out DIR    where the runtime pairs, BUILD-INFO and SHA256SUMS are written.
+#     -j N         parallel jobs (default: nproc). Each variant takes ~35 min at -j8.
+#     --variants LIST  comma-separated subset of relaxedsimd,simd (default: both).
 #     --ops CONFIG reduced operator build (e.g. scripts/ort-custom/ops.config). Without it every
 #                  operator is compiled in, like the npm runtime.
 #     --expect-sums FILE  fail unless the produced SHA256SUMS match FILE.
@@ -50,6 +55,7 @@ OUT=""
 JOBS="$(nproc)"
 OPS=""
 EXPECT=""
+VARIANTS="relaxedsimd,simd"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --src) SRC="$2"; shift 2 ;;
@@ -57,10 +63,11 @@ while [[ $# -gt 0 ]]; do
     -j) JOBS="$2"; shift 2 ;;
     --ops) OPS="$(realpath "$2")"; shift 2 ;;
     --expect-sums) EXPECT="$(realpath "$2")"; shift 2 ;;
+    --variants) VARIANTS="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[[ -n "$SRC" && -n "$OUT" ]] || { sed -n '2,33p' "$0" >&2; exit 2; }
+[[ -n "$SRC" && -n "$OUT" ]] || { sed -n '2,40p' "$0" >&2; exit 2; }
 
 VENDORED="$(node -p "require('$REPO_ROOT/app/ui/vendor/onnxruntime-web/package.json').version")"
 if [[ "$VENDORED" != "$ORT_VERSION" ]]; then
@@ -89,32 +96,45 @@ git -C "$SRC" apply --whitespace=nowarn "$PATCH"
 # checkout so a parent "type": "module" cannot break the last build step.
 [[ -f "$SRC/package.json" ]] || printf '{\n  "type": "commonjs"\n}\n' > "$SRC/package.json"
 
-BUILD_DIR="$SRC/build/wasm-custom"
 PREFIX_MAP="-ffile-prefix-map=$SRC/=ort/"
-ARGS=(
-  --build_dir "$BUILD_DIR" --config Release --parallel "$JOBS" --skip_submodule_sync --skip_tests
-  --build_wasm --enable_wasm_simd --enable_wasm_relaxed_simd --enable_wasm_threads
+COMMON=(
+  --config Release --parallel "$JOBS" --skip_submodule_sync --skip_tests
+  --build_wasm --enable_wasm_simd --enable_wasm_threads
   --enable_wasm_api_exception_catching --emsdk_version "$EMSDK_VERSION"
   --cmake_extra_defines "CMAKE_C_FLAGS=$PREFIX_MAP" "CMAKE_CXX_FLAGS=$PREFIX_MAP"
 )
-[[ -n "$OPS" ]] && ARGS+=(--include_ops_by_config "$OPS")
-# flatbuffers: ORT's reduced-build config parser (tools/python/util) imports it.
-uv run --no-project --with flatbuffers python "$SRC/tools/ci_build/build.py" "${ARGS[@]}"
+[[ -n "$OPS" ]] && COMMON+=(--include_ops_by_config "$OPS")
 
 mkdir -p "$OUT"
-for ext in mjs wasm; do
-  cp "$BUILD_DIR/Release/ort-wasm-relaxedsimd-threaded.$ext" "$OUT/"
+OUTPUTS=()
+IFS=, read -ra VARIANT_LIST <<< "$VARIANTS"
+for variant in "${VARIANT_LIST[@]}"; do
+  case "$variant" in
+    relaxedsimd) EXTRA=(--enable_wasm_relaxed_simd) ;;
+    simd) EXTRA=() ;;
+    *) echo "unknown variant: $variant" >&2; exit 2 ;;
+  esac
+  BUILD_DIR="$SRC/build/wasm-custom-$variant"
+  # flatbuffers: ORT's reduced-build config parser (tools/python/util) imports it.
+  uv run --no-project --with flatbuffers python "$SRC/tools/ci_build/build.py" \
+    --build_dir "$BUILD_DIR" "${COMMON[@]}" "${EXTRA[@]}"
+  for ext in mjs wasm; do
+    cp "$BUILD_DIR/Release/ort-wasm-$variant-threaded.$ext" "$OUT/"
+    OUTPUTS+=("ort-wasm-$variant-threaded.$ext")
+  done
 done
 
 # Leak and reproducibility guard: no absolute source or home path may survive the prefix map.
 for needle in "$SRC" "$HOME"; do
-  if grep -aqF "$needle" "$OUT/ort-wasm-relaxedsimd-threaded.wasm" "$OUT/ort-wasm-relaxedsimd-threaded.mjs"; then
-    echo "ERROR: the runtime embeds the local path '$needle' (prefix map not applied)." >&2
-    exit 1
-  fi
+  for f in "${OUTPUTS[@]}"; do
+    if grep -aqF "$needle" "$OUT/$f"; then
+      echo "ERROR: $f embeds the local path '$needle' (prefix map not applied)." >&2
+      exit 1
+    fi
+  done
 done
 
-(cd "$OUT" && sha256sum ort-wasm-relaxedsimd-threaded.mjs ort-wasm-relaxedsimd-threaded.wasm > SHA256SUMS)
+(cd "$OUT" && sha256sum "${OUTPUTS[@]}" > SHA256SUMS)
 {
   echo "ort_version=$ORT_VERSION"
   echo "ort_commit=$ORT_COMMIT"
@@ -122,7 +142,8 @@ done
   echo "patch_sha256=$(sha256sum "$PATCH" | cut -d' ' -f1)"
   echo "ops_config=${OPS:+$(basename "$OPS")}"
   echo "ops_config_sha256=${OPS:+$(sha256sum "$OPS" | cut -d' ' -f1)}"
-  ARGS_TEXT="${ARGS[*]//$SRC/<src>}"
+  echo "variants=$VARIANTS"
+  ARGS_TEXT="${COMMON[*]//$SRC/<src>}"
   ARGS_TEXT="${ARGS_TEXT//$REPO_ROOT/<repo>}"
   echo "build_args=${ARGS_TEXT//$HOME/<home>}"
 } > "$OUT/BUILD-INFO"
