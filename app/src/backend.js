@@ -459,10 +459,11 @@ export async function loadOrtModule({ wasmPaths, ortVariant, cpuOnly = false } =
   return _ortLoad;
 }
 
-// A 67-byte ONNX model, one Identity node (opset 13, float[1] -> float[1]).
+// A 67-byte ONNX model, one Identity node (float[1] -> float[1]) at opset 17,
+// the version scripts/ort-custom/ops.config keeps, so a reduced build passes too.
 // Building a session from it is what makes ORT instantiate its WASM runtime,
 // which is where an engine that cannot run the module would fail.
-const SMOKE_MODEL_B64 = 'CAgSADo3ChAKAXgSAXkiCElkZW50aXR5EgFzWg8KAXgSCgoICAESBAoCCAFiDwoBeRIKCggIARIECgIIAUIECgAQDQ==';
+const SMOKE_MODEL_B64 = 'CAgSADo3ChAKAXgSAXkiCElkZW50aXR5EgFzWg8KAXgSCgoICAESBAoCCAFiDwoBeRIKCggIARIECgIIAUIECgAQEQ==';
 
 /**
  * Prove the custom runtime instantiates and builds a session in this context,
