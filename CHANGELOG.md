@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### A faster CPU runtime, built for this app
+
+On the processor (WASM) backend the app now runs its own build of ONNX Runtime 1.30.0 instead of the stock one. The stock runtime computes the quantized encoder's matrix products by first expanding the int8 weights back to fp32, which is where most of the encode time went; this build adds an integer kernel for those products (8, 4 and 2 bit) and is otherwise the stock runtime with every operator included. Through the real app, transcribing the 3-minute test recording on WASM int8 took a median 86 s against 144 s on the stock runtime (3 interleaved runs each, on a busy machine, no overlap between the two), with 359 of 360 words identical. Browsers with relaxed SIMD (Chromium, Firefox) get one build and the others a plain SIMD build; the file is chosen by feature detection, checked against the integrity manifest like every runtime file, and any failure (missing file, wrong hash, a runtime that cannot build a session) falls back to the stock runtime. The GPU backend keeps the stock runtime, so switching between the two now reloads the page once and resumes the load. Add `?ortep=stock` to the address to use the stock runtime everywhere.
+
 ### UltiMed repos renamed
 
 The French medical fine-tune is now [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) (was `parakeet-tdt-0.6b-v3-UltiMed-onnx`), and the redux hybrid is [Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx) (was `parakeet-tdt-0.6b-v3-redux-UltiMed-onnx`), since it is a weight blend rather than a proper fine-tune. Hugging Face redirects the old URLs, and a visitor whose saved model was the old UltiMed id keeps it. The picker label is now `ultra-UltiMed`, and medical mode looks it up by that full label, so it still finds the right model when the redux hybrid is offered too. Operators should update `VITE_MODEL_REPO` and rename their local mirror folder.
