@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError, liveOrtServes, liveOrtVariant } from 'parakeet.js';
+import { planOrtRuntimeSwitch, readPendingOrtReload, writePendingOrtReload, clearPendingOrtReload } from './lib/ortRuntimeSwitch.js';
 import { parseModelRepos, matchModelRepo, migrateRepoId } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n } from './i18n.jsx';
@@ -398,8 +399,13 @@ const WEBGPU_DISABLED = typeof location !== 'undefined'
 //
 // A browser without JSPI resolves to jsep on its own (backend.js
 // resolveOrtVariant), so neither the default nor the flag can break a load.
+//
+// Contexts whose sessions are all WASM (the workers, and the main thread on
+// the WASM backend) default to the self-compiled custom CPU runtime instead,
+// with stock as its automatic fallback. Any explicit value opts out of it, and
+// `?ortep=stock` exists for exactly that: the npm runtimes everywhere.
 const ORT_VARIANT = (typeof location !== 'undefined'
-  ? (/[?&]ortep=(jsep|jspi)(?:&|$)/.exec(location.search || '') || [])[1]
+  ? (/[?&]ortep=(jsep|jspi|stock)(?:&|$)/.exec(location.search || '') || [])[1]
   : undefined) || undefined;
 
 // Map any WebGPU backend id to 'wasm' while WebGPU is disabled, so a persisted
@@ -1971,6 +1977,22 @@ export default function App() {
     saveSetting('backend', backend);
   }, [backend, settingsLoaded]);
 
+  // Resume a load that reloaded the page to switch ORT runtime (loadModel).
+  // A marker for another backend than the restored one is stale: drop it.
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const pending = readPendingOrtReload(globalThis.sessionStorage);
+    if (!pending) return;
+    if (pending.backend !== backend) {
+      clearPendingOrtReload(globalThis.sessionStorage);
+      return;
+    }
+    console.log(`[Load] resuming the model load after the ORT runtime switch (backend ${backend})`);
+    loadModelRef.current();
+    // Boot-time only: settingsLoaded flips once; backend is read, not tracked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoaded]);
+
   // Whether a human ever picked the backend by hand, and the probe's stored
   // verdict. Both gate whether the probe may run and act on its own.
   usePersistedSetting('backendUserPicked', backendUserPicked, settingsLoaded);
@@ -2284,6 +2306,25 @@ export default function App() {
                              // it, because a row labelled fp16 carrying int8's numbers is
                              // worse than a row that says the combination is not served here.
                              allowQuantSubstitution = true } = {}) {
+    // The main thread's ORT runtime depends on the backend (custom CPU runtime
+    // on WASM, stock on WebGPU) and ORT cannot swap it in a live context, so a
+    // load that needs the other one reloads the page first (see
+    // lib/ortRuntimeSwitch.js); the reloaded page resumes this load itself.
+    {
+      const pending = readPendingOrtReload(globalThis.sessionStorage);
+      const plan = planOrtRuntimeSwitch({ serves: liveOrtServes(backend, ORT_VARIANT), backend, pending });
+      if (plan.action === 'reload') {
+        console.log(`[Load] ORT ${liveOrtVariant()} runtime cannot serve backend ${backend}; reloading the page to switch`);
+        await saveSetting('backend', backend);
+        writePendingOrtReload(globalThis.sessionStorage, backend);
+        window.location.reload();
+        return;
+      }
+      if (plan.loopGuard) {
+        console.warn(`[Load] ORT ${liveOrtVariant()} runtime still live after a reload for backend ${backend}; loading on it`);
+      }
+      clearPendingOrtReload(globalThis.sessionStorage);
+    }
     // Clean up existing model first
     if (modelRef.current) {
       console.log('[App] Disposing existing model before loading new one...');
