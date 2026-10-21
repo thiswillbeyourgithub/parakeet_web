@@ -22,10 +22,14 @@
 # unmapped build. BUILD-INFO records every input hash and the output hashes; two builds from the
 # same inputs should produce identical SHA256SUMS (compare with --expect-sums).
 #
-# Nothing here wires the runtime into the app: that is a separate, owner-approved decision.
+# --install copies the pairs into the app (app/ui/public/ort/*.custom.{mjs,wasm}, which
+# backend.js loads for WASM-only contexts) and records their provenance in
+# app/ui/vendor/ort-custom/ (BUILD-INFO, SHA256SUMS of the installed names), which
+# test/unit/ort-custom-runtime.test.mjs checks against the vendored ORT version and the patch.
 #
 # Usage:
-#   scripts/ort-custom/build.sh --src DIR --out DIR [-j N] [--ops CONFIG] [--expect-sums FILE]
+#   scripts/ort-custom/build.sh --src DIR --out DIR [-j N] [--ops CONFIG] [--expect-sums FILE] [--install]
+#   scripts/ort-custom/build.sh --out DIR --install   (install an existing build, no rebuild)
 #     --src DIR    onnxruntime checkout (cloned at the pinned tag if absent). ~10 GB of build
 #                  state; put it in a folder whose name contains ignore_backups.
 #     --out DIR    where the runtime pairs, BUILD-INFO and SHA256SUMS are written.
@@ -34,6 +38,8 @@
 #     --ops CONFIG reduced operator build (e.g. scripts/ort-custom/ops.config). Without it every
 #                  operator is compiled in, like the npm runtime.
 #     --expect-sums FILE  fail unless the produced SHA256SUMS match FILE.
+#     --install    install both variants into the app (see above). Refuses a build whose
+#                  BUILD-INFO does not match the pinned version and the current patch.
 #
 # Requirements: git, uv, cmake, make, node (build.py bootstraps its pinned emsdk).
 #
@@ -56,6 +62,7 @@ JOBS="$(nproc)"
 OPS=""
 EXPECT=""
 VARIANTS="relaxedsimd,simd"
+INSTALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --src) SRC="$2"; shift 2 ;;
@@ -64,10 +71,40 @@ while [[ $# -gt 0 ]]; do
     --ops) OPS="$(realpath "$2")"; shift 2 ;;
     --expect-sums) EXPECT="$(realpath "$2")"; shift 2 ;;
     --variants) VARIANTS="$2"; shift 2 ;;
+    --install) INSTALL=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[[ -n "$SRC" && -n "$OUT" ]] || { sed -n '2,40p' "$0" >&2; exit 2; }
+[[ -n "$OUT" && ( -n "$SRC" || "$INSTALL" == 1 ) ]] || { sed -n '2,46p' "$0" >&2; exit 2; }
+
+# Copy a finished build into the app. Installed names carry '.custom' so they can never be
+# mistaken for (or overwritten by) the npm runtimes update-vendored.sh mirrors next to them.
+install_runtimes() {
+  local info="$OUT/BUILD-INFO"
+  local dest_pub="$REPO_ROOT/app/ui/public/ort" dest_meta="$REPO_ROOT/app/ui/vendor/ort-custom"
+  [[ -f "$info" ]] || { echo "ERROR: no BUILD-INFO in $OUT" >&2; exit 1; }
+  grep -qx "ort_version=$ORT_VERSION" "$info" || { echo "ERROR: $OUT was not built for ORT $ORT_VERSION" >&2; exit 1; }
+  grep -qx "patch_sha256=$(sha256sum "$PATCH" | cut -d' ' -f1)" "$info" \
+    || { echo "ERROR: $OUT was built from another wasm-qnbitgemm.patch; rebuild it" >&2; exit 1; }
+  (cd "$OUT" && sha256sum -c --quiet SHA256SUMS)
+  mkdir -p "$dest_pub" "$dest_meta"
+  local installed=()
+  for variant in relaxedsimd simd; do
+    for ext in mjs wasm; do
+      local name="ort-wasm-$variant-threaded.custom.$ext"
+      cp "$OUT/ort-wasm-$variant-threaded.$ext" "$dest_pub/$name"
+      installed+=("$name")
+    done
+  done
+  cp "$info" "$dest_meta/BUILD-INFO"
+  (cd "$dest_pub" && sha256sum "${installed[@]}") > "$dest_meta/SHA256SUMS"
+  echo "==> installed ${installed[*]} into app/ui/public/ort/"
+}
+
+if [[ -z "$SRC" ]]; then
+  install_runtimes
+  exit 0
+fi
 
 VENDORED="$(node -p "require('$REPO_ROOT/app/ui/vendor/onnxruntime-web/package.json').version")"
 if [[ "$VENDORED" != "$ORT_VERSION" ]]; then
@@ -151,4 +188,9 @@ cat "$OUT/BUILD-INFO" "$OUT/SHA256SUMS"
 
 if [[ -n "$EXPECT" ]]; then
   diff "$EXPECT" "$OUT/SHA256SUMS" && echo "==> SHA256SUMS match $EXPECT"
+fi
+
+if [[ "$INSTALL" == 1 ]]; then
+  [[ "$VARIANTS" == "relaxedsimd,simd" ]] || { echo "ERROR: --install needs both variants" >&2; exit 1; }
+  install_runtimes
 fi
