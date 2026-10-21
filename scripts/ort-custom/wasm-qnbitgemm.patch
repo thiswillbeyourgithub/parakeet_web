@@ -62,10 +62,10 @@ index 0c24933..683e2b3 100644
  size_t
 diff --git a/onnxruntime/core/mlas/lib/qnbitgemm_kernel_wasmsimd.cpp b/onnxruntime/core/mlas/lib/qnbitgemm_kernel_wasmsimd.cpp
 new file mode 100644
-index 0000000..ec25fbf
+index 0000000..f105ca1
 --- /dev/null
 +++ b/onnxruntime/core/mlas/lib/qnbitgemm_kernel_wasmsimd.cpp
-@@ -0,0 +1,950 @@
+@@ -0,0 +1,952 @@
 +/*++
 +
 +Licensed under the MIT License.
@@ -180,15 +180,17 @@ index 0000000..ec25fbf
 +#endif
 +}
 +
-+// Output tile of the grouped kernels, rows of A x columns of B, from a tuning sweep (Node,
-+// i7-7800X, 750 x 1024 x 4096). KB_TM / KB_TN override it for every width when tuning.
++// Output tile of the grouped kernels, rows of A x columns of B, from tuning sweeps on an
++// i7-7800X at 750 x 1024 x 4096: Node for relaxed SIMD, Chromium and WebKit for plain SIMD
++// (where the 8-bit kernel prefers more rows, 4 x 2 beat 2 x 4 by 6-7% in both). KB_TM / KB_TN
++// override it for every width when tuning.
 +template <size_t Bits>
 +struct TileShape {
 +#if defined(KB_TM)
 +    static constexpr size_t M = KB_TM, N = KB_TN;
 +#else
-+    static constexpr size_t M = Bits == 8 ? 2 : 3;
-+    static constexpr size_t N = Bits == 8 ? 4 : 3;
++    static constexpr size_t M = Bits == 8 ? (kRelaxed ? 2 : 4) : 3;
++    static constexpr size_t N = Bits == 8 ? (kRelaxed ? 4 : 2) : 3;
 +#endif
 +};
 +
