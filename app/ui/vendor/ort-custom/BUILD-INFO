@@ -1,0 +1,8 @@
+ort_version=1.30.0
+ort_commit=f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7
+emsdk_version=4.0.23
+patch_sha256=8e263bc02784df0274c6240a27bc55081edc93eb9b011d923c411bb3a7185018
+ops_config=
+ops_config_sha256=
+variants=relaxedsimd,simd
+build_args=--config Release --parallel 8 --skip_submodule_sync --skip_tests --build_wasm --enable_wasm_simd --enable_wasm_threads --enable_wasm_api_exception_catching --emsdk_version 4.0.23 --cmake_extra_defines CMAKE_C_FLAGS=-ffile-prefix-map=<src>/=ort/ CMAKE_CXX_FLAGS=-ffile-prefix-map=<src>/=ort/
