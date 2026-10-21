@@ -3,12 +3,13 @@
 #
 # What it produces: ort-wasm-relaxedsimd-threaded.{mjs,wasm}, a plain (non-JSEP, non-JSPI) CPU
 # runtime, version-locked to the vendored onnxruntime-web JS bundle, with:
-#   - wasm-relaxed-qnbitgemm.patch: an MLAS SQNBIT_CompInt8 dispatch for MatMulNBits on WASM
-#     (8-bit and 4-bit). Stock ORT dequantizes MatMulNBits to fp32 + SGEMM on WASM; this keeps
-#     B integer and uses i32x4.relaxed_dot_i8x16_i7x16_add_s. It engages only on nodes with
-#     accuracy_level 4. The patch also fixes an upstream guard in matmul_nbits.cc that dropped
-#     the raw 4-bit scales on non-x86, non-ARM64 targets (latent upstream, WASM had no 4-bit
-#     CompInt8 kernel before), which made every 4-bit output zero.
+#   - wasm-qnbitgemm.patch: an MLAS SQNBIT_CompInt8 dispatch for MatMulNBits on WASM (8, 4 and
+#     2 bit). Stock ORT dequantizes MatMulNBits to fp32 + SGEMM on WASM; this keeps B integer,
+#     with i32x4.relaxed_dot_i8x16_i7x16_add_s in relaxed-SIMD builds and i16 dots in plain SIMD
+#     builds (same integer results). It engages only on nodes with accuracy_level 4. The patch
+#     also fixes an upstream guard in matmul_nbits.cc that dropped the raw 4-bit scales on
+#     non-x86, non-ARM64 targets (latent upstream, WASM had no 4-bit CompInt8 kernel before),
+#     which made every 4-bit output zero.
 #   - optionally (--ops CONFIG) a reduced operator set, see make-ops-config.py.
 #
 # Reproducibility: the ORT tag AND its commit are pinned, emsdk is pinned by build.py, and source
@@ -36,7 +37,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd -P)"
-PATCH="$HERE/wasm-relaxed-qnbitgemm.patch"
+PATCH="$HERE/wasm-qnbitgemm.patch"
 
 # Pinned upstream. Bump both together with the vendored onnxruntime-web, then re-validate the
 # patch (exactness tests, WER gate) before trusting the new pair.
