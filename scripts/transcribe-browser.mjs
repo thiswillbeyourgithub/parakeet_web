@@ -212,8 +212,11 @@ Options:
       --no-diarize        Skip speaker diarization; write the plain transcript.
       --backend B         webgpu-hybrid (default, real GPU) or wasm (CPU).
       --ortep V           Pin the ORT distribution for this run: jsep (the escape
-                          hatch to the older JS-implemented runtime) or jspi (the
-                          default native C++ one). Applies to the workers too.
+                          hatch to the older JS-implemented runtime), jspi (the
+                          default native C++ one), or stock (the npm runtimes
+                          everywhere, i.e. no custom CPU runtime in WASM-only
+                          contexts). Any value disables the custom CPU runtime.
+                          Applies to the workers too.
       --quant Q           Encoder precision, any the sidebar offers on the backend
                           (e.g. w2a8, w4a8, int8 on wasm; fp32, fp16, w4a8 on
                           webgpu-hybrid). Default fp32 on WebGPU, int8 on WASM.
