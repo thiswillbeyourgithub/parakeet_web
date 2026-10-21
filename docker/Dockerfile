@@ -4,7 +4,7 @@
 # bytes are determined entirely by the Dockerfile, not by whatever
 # Docker Hub serves under the moving tag today. To refresh after a
 # legitimate upstream update:
-#   for img in node:20-alpine caddy:2-alpine; do
+#   for img in node:24-alpine caddy:2-alpine; do
 #     repo="library/${img%:*}"; tag="${img##*:}"
 #     token=$(curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" | jq -r .token)
 #     curl -fsSL -H "Authorization: Bearer $token" \
@@ -15,7 +15,7 @@
 # Then paste the new sha256:... values below and commit.
 
 # ── Stage 1: build the static UI bundle and install signaling deps ──────────
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
+FROM node:24-alpine@sha256:6a1c190e17215d844926b0677f4bf87273ff7d5e54db06d3b5b5863ab0b09a3d AS builder
 WORKDIR /build
 
 # Each `npm ci` runs with --ignore-scripts so a compromised dep's
