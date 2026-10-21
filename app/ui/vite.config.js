@@ -91,6 +91,10 @@ export default defineConfig({
       // cover subpaths and a bare 'onnxruntime-web/jspi' would resolve to
       // node_modules, i.e. outside the audited vendor tree.
       { find: /^onnxruntime-web\/jspi$/, replacement: path.resolve(__dirname, 'vendor/onnxruntime-web/dist/ort.jspi.bundle.min.mjs') },
+      // And its CPU-only 'wasm' entry, which loads the self-compiled custom
+      // runtime (backend.js ORT_VARIANTS custom-*): it is the one bundle whose
+      // loader imports a `wasmPaths.mjs` override instead of embedded glue.
+      { find: /^onnxruntime-web\/wasm$/, replacement: path.resolve(__dirname, 'vendor/onnxruntime-web/dist/ort.wasm.bundle.min.mjs') },
       // Vendored dictation_support (Apache-2.0). UMD bundle in app/ui/vendor/dictation_support/.
       { find: /^dictation_support$/, replacement: path.resolve(__dirname, 'vendor/dictation_support/dist/index.js') },
       // Vendored ffmpeg.wasm wrapper (@ffmpeg/ffmpeg, MIT). The FFmpeg class
