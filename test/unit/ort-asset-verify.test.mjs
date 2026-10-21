@@ -36,8 +36,8 @@ const BASE = '/ort/';
 
 const sha384 = (bytes) => 'sha384-' + createHash('sha384').update(bytes).digest('base64');
 
-// The full vendored set: the jsep pair we pin plus the three variants ORT is
-// never pointed at. Bytes are stand-ins; only their hashes matter here.
+// The full shipped set: the npm runtimes (the pinned pairs plus the variants
+// ORT is never pointed at) and the custom CPU runtimes. Bytes are stand-ins; only their hashes matter here.
 const FILES = {
   'ort-wasm-simd-threaded.mjs': 'plain-mjs',
   'ort-wasm-simd-threaded.wasm': 'plain-wasm',
@@ -47,6 +47,12 @@ const FILES = {
   'ort-wasm-simd-threaded.jspi.wasm': 'jspi-wasm',
   'ort-wasm-simd-threaded.asyncify.mjs': 'asyncify-mjs',
   'ort-wasm-simd-threaded.asyncify.wasm': 'asyncify-wasm',
+  // The self-compiled CPU runtimes (app/ui/vendor/ort-custom/), installed next
+  // to the npm ones in public/ort/ so the same manifest pins them.
+  'ort-wasm-relaxedsimd-threaded.custom.mjs': 'custom-relaxed-mjs',
+  'ort-wasm-relaxedsimd-threaded.custom.wasm': 'custom-relaxed-wasm',
+  'ort-wasm-simd-threaded.custom.mjs': 'custom-simd-mjs',
+  'ort-wasm-simd-threaded.custom.wasm': 'custom-simd-wasm',
 };
 
 const manifestFor = (files) => Object.fromEntries(
@@ -147,9 +153,9 @@ describe('ORT runtime variants', () => {
       assert.equal(typeof v.importer, 'function', `${name} importer`);
       assert.ok(v.assets?.mjs && v.assets?.wasm, `${name} assets`);
       // Every pinned name must exist in a real build, which is what the
-      // vendored manifest set stands in for here.
-      assert.ok(v.assets.mjs in FILES, `${name} mjs is a vendored file`);
-      assert.ok(v.assets.wasm in FILES, `${name} wasm is a vendored file`);
+      // shipped manifest set stands in for here.
+      assert.ok(v.assets.mjs in FILES, `${name} mjs is a shipped file`);
+      assert.ok(v.assets.wasm in FILES, `${name} wasm is a shipped file`);
     }
   });
 
@@ -409,5 +415,121 @@ describe('the ORT runtime variant reaches every JS context', () => {
     const app = readFileSync(fileURLToPath(new URL('../../app/ui/src/App.jsx', import.meta.url)), 'utf8');
     assert.ok(/ortVariant:\s*ORT_VARIANT/.test(app),
       'App.jsx no longer passes ORT_VARIANT into any worker init payload');
+  });
+});
+
+// The self-compiled CPU runtime (custom-relaxed / custom-simd) and its stock
+// fallback. The custom runtime may only ever ADD speed: any context where it
+// cannot be pinned, or will not build a session, has to end up on the stock
+// runtime with a working load, never on a failed one.
+describe('custom CPU runtime selection', () => {
+  test('a CPU-only context takes the custom runtime matching the engine', () => {
+    assert.deepEqual(resolveOrtVariant(undefined, true, { cpuOnly: true, simd: 'relaxed' }),
+      { variant: 'custom-relaxed', downgraded: false });
+    assert.deepEqual(resolveOrtVariant(undefined, false, { cpuOnly: true, simd: 'simd' }),
+      { variant: 'custom-simd', downgraded: false });
+  });
+
+  test('a context that may build a WebGPU session never gets it (no WebGPU EP in it)', () => {
+    assert.deepEqual(resolveOrtVariant(undefined, true, { cpuOnly: false, simd: 'relaxed' }),
+      { variant: 'jspi', downgraded: false });
+    assert.deepEqual(resolveOrtVariant(undefined, false, { simd: 'relaxed' }),
+      { variant: 'jsep', downgraded: false });
+  });
+
+  test('an engine without SIMD keeps the stock runtime', () => {
+    assert.deepEqual(resolveOrtVariant(undefined, true, { cpuOnly: true, simd: null }),
+      { variant: 'jspi', downgraded: false });
+  });
+
+  test('every explicit ?ortep= value opts out of it, ?ortep=stock included', () => {
+    const cpu = { cpuOnly: true, simd: 'relaxed' };
+    assert.deepEqual(resolveOrtVariant('stock', true, cpu), { variant: 'jspi', downgraded: false });
+    assert.deepEqual(resolveOrtVariant('stock', false, cpu), { variant: 'jsep', downgraded: false });
+    assert.deepEqual(resolveOrtVariant('jsep', true, cpu), { variant: 'jsep', downgraded: false });
+    assert.deepEqual(resolveOrtVariant('jspi', true, cpu), { variant: 'jspi', downgraded: false });
+  });
+
+  test('wasmSimdLevel detects relaxed SIMD on this V8', async () => {
+    const { wasmSimdLevel } = await import('../../app/src/backend.js');
+    assert.equal(wasmSimdLevel(), 'relaxed');
+  });
+});
+
+// Behavioural: each test gets a FRESH backend.js instance (a query string is a
+// new module URL), because the live runtime is a per-context singleton. The
+// ORT module behind it is shared, so its wasmPaths is cleared between tests.
+describe('custom CPU runtime fallback', () => {
+  let n = 0;
+  async function freshBackend() {
+    const b = await import(`../../app/src/backend.js?fresh=${++n}`);
+    for (const v of Object.values(b.ORT_VARIANTS)) {
+      const m = await v.importer();
+      (m.default || m).env.wasm.wasmPaths = undefined;
+    }
+    return b;
+  }
+  const quiet = () => {
+    const warnings = [];
+    const { warn, log } = console;
+    console.warn = (...a) => warnings.push(a.join(' '));
+    console.log = () => {};
+    return { warnings, restore() { console.warn = warn; console.log = log; } };
+  };
+
+  test('pinned custom runtime loads in a CPU-only context, and only serves the WASM backend', async () => {
+    const b = await freshBackend();
+    env = stubEnv();
+    const q = quiet();
+    try {
+      const ort = await b.loadOrtModule({ ortVariant: undefined, cpuOnly: true });
+      assert.equal(b.liveOrtVariant(), 'custom-relaxed');
+      assert.deepEqual(Object.keys(ort.env.wasm.wasmPaths).sort(), ['mjs', 'wasm']);
+      assert.ok(env.requested.includes(BASE + 'ort-wasm-relaxedsimd-threaded.custom.wasm'));
+      // The reload decision App.jsx takes before a load.
+      assert.equal(b.liveOrtServes('wasm'), true);
+      assert.equal(b.liveOrtServes('webgpu-hybrid'), false);
+      assert.equal(b.liveOrtServes('wasm', 'stock'), false);
+    } finally { q.restore(); }
+  });
+
+  test('a custom runtime the server does not ship falls back to stock before importing anything', async () => {
+    const b = await freshBackend();
+    env = stubEnv({ missing: 'ort-wasm-relaxedsimd-threaded.custom.wasm' });
+    const q = quiet();
+    try {
+      await b.loadOrtModule({ cpuOnly: true });
+      assert.equal(b.liveOrtVariant(), 'jsep'); // Node has no JSPI
+      assert.ok(q.warnings.some((w) => /custom-relaxed runtime unavailable/.test(w)), q.warnings.join('\n'));
+      // Refused for this context: a reload would only refuse it again, so the
+      // stock runtime now counts as serving the WASM backend.
+      assert.equal(b.liveOrtServes('wasm'), true);
+    } finally { q.restore(); }
+  });
+
+  test('a tampered custom runtime falls back to stock too', async () => {
+    const b = await freshBackend();
+    env = stubEnv({ corrupt: 'ort-wasm-relaxedsimd-threaded.custom.mjs' });
+    const q = quiet();
+    try {
+      await b.loadOrtModule({ cpuOnly: true });
+      assert.equal(b.liveOrtVariant(), 'jsep');
+    } finally { q.restore(); }
+  });
+
+  test('a custom runtime that cannot build a session switches initOrt to stock', async () => {
+    // The stub blob: URLs are not importable, so the smoke session fails the
+    // way an engine that rejects the module would.
+    const b = await freshBackend();
+    env = stubEnv();
+    const q = quiet();
+    try {
+      const ort = await b.initOrt({ backend: 'wasm' });
+      assert.equal(b.liveOrtVariant(), 'jsep');
+      assert.ok(q.warnings.some((w) => /failed its smoke session/.test(w)), q.warnings.join('\n'));
+      const jsep = await b.ORT_VARIANTS.jsep.importer();
+      assert.equal(ort, jsep.default || jsep, 'initOrt returned the stock module');
+      assert.equal(ort.env.wasm.simd, true);
+    } finally { q.restore(); }
   });
 });
