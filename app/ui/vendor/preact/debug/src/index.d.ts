@@ -1,9 +1,19 @@
-import { VNode } from 'preact';
+import { VNode } from '../../src/index';
+
+/**
+ * Return the owner stack captured for the current render, or null when unavailable.
+ */
+export function captureOwnerStack(): string | null;
 
 /**
  * Get the currently rendered `vnode`
  */
 export function getCurrentVNode(): VNode | null;
+
+/**
+ * Get human readable name of the component/dom node
+ */
+export function getDisplayName(vnode: VNode): string;
 
 /**
  * Return the component stack that was captured up to this point.

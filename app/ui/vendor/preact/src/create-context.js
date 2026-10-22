@@ -1,5 +1,5 @@
 import { enqueueRender } from './component';
-import { NULL } from './constants';
+import { COMPONENT_FORCE } from './constants';
 
 export let i = 0;
 
@@ -13,15 +13,11 @@ export function createContext(defaultValue) {
 
 			this.getChildContext = () => ctx;
 
-			this.componentWillUnmount = () => {
-				subs = NULL;
-			};
-
 			this.shouldComponentUpdate = function (_props) {
 				// @ts-expect-error even
 				if (this.props.value != _props.value) {
 					subs.forEach(c => {
-						c._force = true;
+						c._bits |= COMPONENT_FORCE;
 						enqueueRender(c);
 					});
 				}
@@ -31,9 +27,7 @@ export function createContext(defaultValue) {
 				subs.add(c);
 				let old = c.componentWillUnmount;
 				c.componentWillUnmount = () => {
-					if (subs) {
-						subs.delete(c);
-					}
+					subs.delete(c);
 					if (old) old.call(c);
 				};
 			};
@@ -50,11 +44,7 @@ export function createContext(defaultValue) {
 		return props.children(contextValue);
 	};
 
-	// we could also get rid of _contextRef entirely
-	Context.Provider =
-		Context._contextRef =
-		Context.Consumer.contextType =
-			Context;
+	Context.Provider = Context.Consumer.contextType = Context;
 
 	return Context;
 }

@@ -1,8 +1,14 @@
-import { assign } from './util';
-import { diff, commitRoot } from './diff/index';
-import options from './options';
+import {
+	COMPONENT_DIRTY,
+	COMPONENT_FORCE,
+	MODE_HYDRATE,
+	NULL,
+	UNDEFINED
+} from './constants';
 import { Fragment } from './create-element';
-import { MODE_HYDRATE, NULL } from './constants';
+import { commitRoot, diff } from './diff/index';
+import options from './options';
+import { assign } from './util';
 
 /**
  * Base Component class. Provides `setState()` and `forceUpdate()`, which
@@ -14,6 +20,7 @@ import { MODE_HYDRATE, NULL } from './constants';
 export function BaseComponent(props, context) {
 	this.props = props;
 	this.context = context;
+	this._bits = 0;
 }
 
 /**
@@ -27,10 +34,8 @@ export function BaseComponent(props, context) {
  */
 BaseComponent.prototype.setState = function (update, callback) {
 	// only clone state when copying to nextState the first time.
-	let s;
-	if (this._nextState != NULL && this._nextState != this.state) {
-		s = this._nextState;
-	} else {
+	let s = this._nextState;
+	if (!s || s == this.state) {
 		s = this._nextState = assign({}, this.state);
 	}
 
@@ -42,10 +47,9 @@ BaseComponent.prototype.setState = function (update, callback) {
 
 	if (update) {
 		assign(s, update);
+	} else {
+		return;
 	}
-
-	// Skip update if updater function returned null
-	if (update == NULL) return;
 
 	if (this._vnode) {
 		if (callback) {
@@ -66,7 +70,7 @@ BaseComponent.prototype.forceUpdate = function (callback) {
 		// Set render mode so that we can differentiate where the render request
 		// is coming from. We need this because forceUpdate should never call
 		// shouldComponentUpdate
-		this._force = true;
+		this._bits |= COMPONENT_FORCE;
 		if (callback) this._renderCallbacks.push(callback);
 		enqueueRender(this);
 	}
@@ -100,7 +104,7 @@ export function getDomSibling(vnode, childIndex) {
 	for (; childIndex < vnode._children.length; childIndex++) {
 		sibling = vnode._children[childIndex];
 
-		if (sibling != NULL && sibling._dom != NULL) {
+		if (sibling && sibling._dom) {
 			// Since updateParentDomPointers keeps _dom pointer correct,
 			// we can rely on _dom to tell us if this subtree contains a
 			// rendered DOM node, and what the first rendered DOM node is
@@ -112,8 +116,10 @@ export function getDomSibling(vnode, childIndex) {
 	// We must resume from this vnode's sibling (in it's parent _children array)
 	// Only climb up and search the parent if we aren't searching through a DOM
 	// VNode (meaning we reached the DOM parent of the original vnode that began
-	// the search)
-	return typeof vnode.type == 'function' ? getDomSibling(vnode) : NULL;
+	// the search). New roots (_parentDom) are a DOM boundary too.
+	return typeof vnode.type == 'function' && !vnode.props._parentDom
+		? getDomSibling(vnode)
+		: NULL;
 }
 
 /**
@@ -121,32 +127,34 @@ export function getDomSibling(vnode, childIndex) {
  * @param {import('./internal').Component} component The component to rerender
  */
 function renderComponent(component) {
-	if (component._parentDom && component._dirty) {
-		let oldVNode = component._vnode,
-			oldDom = oldVNode._dom,
-			commitQueue = [],
-			refQueue = [],
-			newVNode = assign({}, oldVNode);
+	const oldVNode = component._vnode,
+		oldDom = oldVNode._dom,
+		commitQueue = [],
+		refQueue = [];
+
+	const parentDom = component._parentDom;
+	if (parentDom) {
+		const newVNode = assign({ constructor: UNDEFINED }, oldVNode);
 		newVNode._original = oldVNode._original + 1;
 		if (options.vnode) options.vnode(newVNode);
 
 		diff(
-			component._parentDom,
+			parentDom,
 			newVNode,
 			oldVNode,
 			component._globalContext,
-			component._parentDom.namespaceURI,
+			parentDom.namespaceURI,
 			oldVNode._flags & MODE_HYDRATE ? [oldDom] : NULL,
 			commitQueue,
-			oldDom == NULL ? getDomSibling(oldVNode) : oldDom,
-			!!(oldVNode._flags & MODE_HYDRATE),
+			oldDom || getDomSibling(oldVNode),
+			oldVNode._flags & MODE_HYDRATE,
 			refQueue
 		);
 
 		newVNode._original = oldVNode._original;
 		newVNode._parent._children[newVNode._index] = newVNode;
 		commitRoot(commitQueue, newVNode, refQueue);
-		oldVNode._dom = oldVNode._parent = null;
+		oldVNode._parent = oldVNode._dom = NULL;
 
 		if (newVNode._dom != oldDom) {
 			updateParentDomPointers(newVNode);
@@ -158,13 +166,12 @@ function renderComponent(component) {
  * @param {import('./internal').VNode} vnode
  */
 function updateParentDomPointers(vnode) {
-	if ((vnode = vnode._parent) != NULL && vnode._component != NULL) {
-		vnode._dom = vnode._component.base = NULL;
-		vnode._children.some(child => {
-			if (child != NULL && child._dom != NULL) {
-				return (vnode._dom = vnode._component.base = child._dom);
-			}
-		});
+	// Stop at root boundaries (_parentDom)
+	if ((vnode = vnode._parent) && vnode._component && !vnode.props._parentDom) {
+		// _dom starts nulled, so re-assigning a null child._dom is a no-op and
+		// the first truthy _dom stops the walk.
+		vnode._dom = NULL;
+		vnode._children.some(child => child && (vnode._dom = child._dom));
 
 		return updateParentDomPointers(vnode);
 	}
@@ -174,7 +181,7 @@ function updateParentDomPointers(vnode) {
  * The render queue
  * @type {Array<import('./internal').Component>}
  */
-let rerenderQueue = [];
+const rerenderQueue = [];
 
 /*
  * The value of `Component.debounce` must asynchronously invoke the passed in callback. It is
@@ -185,12 +192,12 @@ let rerenderQueue = [];
  * * [Callbacks synchronous and asynchronous](https://blog.ometer.com/2011/07/24/callbacks-synchronous-and-asynchronous/)
  */
 
-let prevDebounce;
+let prevDebounce,
+	rerenderCount = 0;
 
-const defer =
-	typeof Promise == 'function'
-		? Promise.prototype.then.bind(Promise.resolve())
-		: setTimeout;
+export function resetRenderCount() {
+	rerenderCount = 0;
+}
 
 /**
  * Enqueue a rerender of a component
@@ -198,14 +205,14 @@ const defer =
  */
 export function enqueueRender(c) {
 	if (
-		(!c._dirty &&
-			(c._dirty = true) &&
+		(!(c._bits & COMPONENT_DIRTY) &&
+			(c._bits |= COMPONENT_DIRTY) &&
 			rerenderQueue.push(c) &&
-			!process._rerenderCount++) ||
+			!rerenderCount++) ||
 		prevDebounce != options.debounceRendering
 	) {
 		prevDebounce = options.debounceRendering;
-		(prevDebounce || defer)(process);
+		(prevDebounce || queueMicrotask)(process);
 	}
 }
 
@@ -237,11 +244,11 @@ function process() {
 			c = rerenderQueue.shift();
 			l = rerenderQueue.length;
 
-			renderComponent(c);
+			if (c._bits & COMPONENT_DIRTY) {
+				renderComponent(c);
+			}
 		}
 	} finally {
-		rerenderQueue.length = process._rerenderCount = 0;
+		rerenderQueue.length = rerenderCount = 0;
 	}
 }
-
-process._rerenderCount = 0;

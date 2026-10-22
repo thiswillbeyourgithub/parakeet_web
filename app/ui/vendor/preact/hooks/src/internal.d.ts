@@ -13,12 +13,12 @@ export { PreactContext };
 export interface Options extends PreactOptions {
 	/** Attach a hook that is invoked before a vnode is diffed. */
 	_diff?(vnode: VNode): void;
-	diffed?(vnode: VNode): void;
 	/** Attach a hook that is invoked before a vnode has rendered. */
 	_render?(vnode: VNode): void;
+	/** Attach a hook that is invoked after a vnode has rendered. */
+	diffed?(vnode: VNode): void;
 	/** Attach a hook that is invoked after a tree was mounted or was updated. */
 	_commit?(vnode: VNode, commitQueue: Component[]): void;
-	_unmount?(vnode: VNode): void;
 	/** Attach a hook that is invoked before a hook's state is queried. */
 	_hook?(component: Component, index: number, type: HookType): void;
 }
@@ -73,6 +73,12 @@ export interface EffectHookState extends BaseHookState {
 	_args?: unknown[];
 	_pendingArgs?: unknown[];
 	_cleanup?: Cleanup | void;
+	/**
+	 * Whether this is a passive effect (useEffect), whose unmount cleanup runs
+	 * after paint. Once unmounted it holds the surviving component that deferred
+	 * cleanup errors are routed to instead.
+	 */
+	_passive?: boolean | Component;
 }
 
 export interface MemoHookState<T = unknown> extends BaseHookState {
@@ -80,7 +86,6 @@ export interface MemoHookState<T = unknown> extends BaseHookState {
 	_pendingValue?: T;
 	_args?: unknown[];
 	_pendingArgs?: unknown[];
-	_factory?: () => T;
 }
 
 export interface ReducerHookState<

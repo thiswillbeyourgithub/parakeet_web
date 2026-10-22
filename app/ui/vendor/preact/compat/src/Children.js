@@ -1,8 +1,8 @@
 import { toChildArray } from 'preact';
 
-const mapFn = (children, fn) => {
+const mapFn = (children, fn, context) => {
 	if (children == null) return null;
-	return toChildArray(toChildArray(children).map(fn));
+	return toChildArray(toChildArray(children).map(fn.bind(context)));
 };
 
 // This API is completely unnecessary for Preact, so it's basically passthrough.
@@ -14,7 +14,7 @@ export const Children = {
 	},
 	only(children) {
 		const normalized = toChildArray(children);
-		if (normalized.length !== 1) throw 'Children.only';
+		if (normalized.length != 1) throw 'Children.only';
 		return normalized[0];
 	},
 	toArray: toChildArray

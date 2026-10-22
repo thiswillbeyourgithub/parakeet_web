@@ -1,6 +1,4 @@
-// Intentionally not using a relative path to take advantage of
-// the TS version resolution mechanism
-import * as preact from 'preact';
+import * as preact from './index';
 
 export enum HookType {
 	useState = 1,
@@ -67,10 +65,6 @@ export interface FunctionComponent<P = {}> extends preact.FunctionComponent<P> {
 	// implement the Consumer component
 	contextType?: PreactContext;
 
-	// Internally, createContext stores a ref to the context object on the Provider
-	// Function component to help devtools
-	_contextRef?: PreactContext;
-
 	// Define these properties as undefined on FunctionComponent to get rid of
 	// some errors in `diff()`
 	getDerivedStateFromProps?: undefined;
@@ -78,8 +72,6 @@ export interface FunctionComponent<P = {}> extends preact.FunctionComponent<P> {
 }
 
 export interface ComponentClass<P = {}> extends preact.ComponentClass<P> {
-	_contextRef?: any;
-
 	// Override public contextType with internal PreactContext type
 	contextType?: PreactContext;
 }
@@ -94,6 +86,8 @@ export interface PreactElement extends preact.ContainerNode {
 	data?: CharacterData['data'];
 	// Property to set __dangerouslySetInnerHTML
 	innerHTML?: Element['innerHTML'];
+	textContent?: Element['textContent'];
+	remove?: Element['remove'];
 
 	// Attribute reading and setting
 	readonly attributes?: Element['attributes'];
@@ -103,6 +97,11 @@ export interface PreactElement extends preact.ContainerNode {
 	// Event listeners
 	addEventListener?: Element['addEventListener'];
 	removeEventListener?: Element['removeEventListener'];
+
+	// Used to match DOM nodes to VNodes during hydration
+	readonly ownerDocument: Document;
+	// Used to retarget a Document render to its root element
+	readonly documentElement?: PreactElement | null;
 
 	// Setting styles
 	readonly style?: CSSStyleDeclaration;
@@ -122,12 +121,14 @@ export interface PreactElement extends preact.ContainerNode {
 	_children?: VNode<any> | null;
 	/** Event listeners to support event delegation */
 	_listeners?: Record<string, (e: Event) => void>;
+	/** Event clock value at which each listener was attached, kept when `_listeners` is reset on unmount */
+	_attached?: Record<string, number>;
 }
 
 export interface PreactEvent extends Event {
-	// Keyed by a per-instance unique string (e.g. `__dXXXXX`) so that
-	// multiple Preact copies on the same page don't share event clock stamps.
-	[key: string]: any;
+	// Keyed by a per-instance unique Symbol so that multiple Preact copies
+	// on the same page don't share event clock stamps.
+	[key: symbol]: any;
 }
 
 // We use the `current` property to differentiate between the two kinds of Refs so
@@ -140,9 +141,7 @@ type RefCallback<T> = {
 export type Ref<T> = RefObject<T> | RefCallback<T>;
 
 export interface VNode<P = {}> extends preact.VNode<P> {
-	// Redefine type here using our internal ComponentType type, and specify
-	// string has an undefined `defaultProps` property to make TS happy
-	type: (string & { defaultProps: undefined }) | ComponentType<P>;
+	type: string | ComponentType<P>;
 	props: P & { children: ComponentChildren };
 	ref?: Ref<any> | null;
 	_children: Array<VNode<any>> | null;
@@ -166,26 +165,19 @@ export interface Component<P = {}, S = {}> extends Omit<
 	// When component is functional component, this is reset to functional component
 	constructor: ComponentType<P>;
 	state: S; // Override Component["state"] to not be readonly for internal use, specifically Hooks
-	base?: PreactElement;
 
-	_dirty: boolean;
-	_force?: boolean;
+	_excess?: PreactElement;
 	_renderCallbacks: Array<() => void>; // Only class components
 	_stateCallbacks: Array<() => void>; // Only class components
 	_globalContext?: any;
 	_vnode?: VNode<P> | null;
 	_nextState?: S | null; // Only class components
-	/** Only used in the devtools to later dirty check if state has changed */
-	_prevState?: S | null;
 	/**
 	 * Pointer to the parent dom node. This is only needed for top-level Fragment
 	 * components or array returns.
 	 */
 	_parentDom?: PreactElement | null;
-	// Always read, set only when handling error
-	_processingException?: Component<any, any> | null;
-	// Always read, set only when handling error. This is used to indicate at diffTime to set _processingException
-	_pendingError?: Component<any, any> | null;
+	_bits: number;
 }
 
 export interface PreactContext extends preact.Context<any> {

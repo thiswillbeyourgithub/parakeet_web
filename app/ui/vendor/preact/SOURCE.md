@@ -1,9 +1,9 @@
 # Vendored Preact
 
 - Package: `preact`
-- Version: `10.29.7`
-- Source: https://registry.npmjs.org/preact/-/preact-10.29.7.tgz
-- Tarball SHA-256: `7c0ad67ef994592a5da286b01a0a5d977951ad7ec5ddba85c67c0b7f523de66e`
+- Version: `11.0.1`
+- Source: https://registry.npmjs.org/preact/-/preact-11.0.1.tgz
+- Tarball SHA-256: `a48a17ebaa5ccae3975fee42f3a0ee3042ef68d97060b6fb01ace3fa9996405d`
 - License: MIT (see `LICENSE`)
 
 Vendored to keep the UI's runtime supply chain auditable: no install-time fetch,
@@ -12,10 +12,10 @@ no transitive deps, fixed bytes on disk. Aliased into the build via
 `react/jsx-runtime`).
 
 Used (bundled) files only:
-- `dist/preact.module.js`
-- `hooks/dist/hooks.module.js`
-- `compat/dist/compat.module.js`
-- `jsx-runtime/dist/jsxRuntime.module.js`
+- `dist/preact.mjs`
+- `hooks/dist/hooks.mjs`
+- `compat/dist/compat.mjs`
+- `jsx-runtime/dist/jsxRuntime.mjs`
 
 Other directories from the upstream tarball are kept as-is for traceability but
 are not referenced by any alias and therefore never reach the production bundle.
