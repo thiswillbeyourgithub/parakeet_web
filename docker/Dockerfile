@@ -133,7 +133,7 @@ RUN cd app/ui && npm run build
 RUN node scripts/precompress.mjs --static app/ui/dist
 
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
-FROM caddy:2-alpine@sha256:86deaf5e3d3408a6ccec08fbb79989783dd26e206ae10bcf78a801dc8c9ab794
+FROM caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
 
 # F-107: the nodejs binary runs both the signaling server (which
 # untrusted phones connect to) and the entrypoint's config-generator
