@@ -18,31 +18,75 @@ import {
 	useRef,
 	useState
 } from 'preact/hooks';
-import {
-	useDeferredValue,
-	useInsertionEffect,
-	useSyncExternalStore,
-	useTransition
-} from './index';
+import { useDeferredValue, useInsertionEffect, useTransition } from './index';
+import { assign, IS_NON_DIMENSIONAL } from './util';
 
-export const REACT_ELEMENT_TYPE =
-	(typeof Symbol != 'undefined' && Symbol.for && Symbol.for('react.element')) ||
-	0xeac7;
+export const REACT_ELEMENT_TYPE = Symbol.for('react.element');
+
+const MODE_HYDRATE = 1 << 5;
+let currentComponent, hydrationRoot, renderTrackingInitialized;
 
 const CAMEL_PROPS =
-	/^(?:accent|alignment|arabic|baseline|cap|clip(?!PathU)|color|dominant|fill|flood|font|glyph(?!R)|horiz|image(!S)|letter|lighting|marker(?!H|W|U)|overline|paint|pointer|shape|stop|strikethrough|stroke|text(?!L)|transform|underline|unicode|units|v|vector|vert|word|writing|x(?!C))[A-Z]/;
-const ON_ANI = /^on(Ani|Tra|Tou|BeforeInp|Compo)/;
+	/^(?:accent|alignment|arabic|baseline|cap|clip(?!PathU)|color|dominant|fill|flood|font|glyph(?!R)|horiz|image(?!S)|letter|lighting|marker(?!H|W|U)|overline|paint|pointer|shape|stop|strikethrough|stroke|text(?!L)|transform|underline|unicode|units|v|vector|vert|word|writing|x(?!C))[A-Z]/;
 const CAMEL_REPLACE = /[A-Z0-9]/g;
-const IS_DOM = typeof document !== 'undefined';
+const IS_DOM = typeof document < 'u';
+
+/**
+ * This is taken from https://github.com/facebook/react/blob/main/packages/use-sync-external-store/src/useSyncExternalStoreShimClient.js#L84
+ * on a high level this cuts out the warnings, ... and attempts a smaller implementation
+ * @typedef {{ _value: any; _getSnapshot: () => any }} Store
+ */
+export const useSyncExternalStore = /* @__PURE__ */ initRenderTracking(
+	function useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot) {
+		const serverRendering = options._skipEffects || hydrationRoot;
+		const value = serverRendering
+			? (getServerSnapshot || getSnapshot)()
+			: getSnapshot();
+
+		/**
+		 * @typedef {{ _instance: Store }} StoreRef
+		 * @type {[StoreRef, (store: StoreRef) => void]}
+		 */
+		const [{ _instance }, forceUpdate] = useState({
+			_instance: { _value: value, _getSnapshot: getSnapshot }
+		});
+
+		useLayoutEffect(() => {
+			_instance._value = value;
+			_instance._getSnapshot = getSnapshot;
+
+			if (didSnapshotChange(_instance)) {
+				forceUpdate({ _instance });
+			}
+		}, [subscribe, value, getSnapshot]);
+
+		useEffect(() => {
+			if (didSnapshotChange(_instance)) {
+				forceUpdate({ _instance });
+			}
+
+			return subscribe(() => {
+				if (didSnapshotChange(_instance)) {
+					forceUpdate({ _instance });
+				}
+			});
+		}, [subscribe]);
+
+		return value;
+	}
+);
+
+/** @type {(inst: Store) => boolean} */
+function didSnapshotChange(inst) {
+	try {
+		return !Object.is(inst._value, inst._getSnapshot());
+	} catch (error) {
+		return true;
+	}
+}
 
 // Input types for which onchange should not be converted to oninput.
-// type="file|checkbox|radio", plus "range" in IE11.
-// (IE11 doesn't support Symbol, which we use here to turn `rad` into `ra` which matches "range")
-const onChangeInputType = type =>
-	(typeof Symbol != 'undefined' && typeof Symbol() == 'symbol'
-		? /fil|che|rad/
-		: /fil|che|ra/
-	).test(type);
+const onChangeInputType = type => /fil|che|rad/.test(type);
 
 // Some libraries like `react-virtualized` explicitly check for this.
 Component.prototype.isReactComponent = true;
@@ -132,60 +176,68 @@ function handleDomVNode(vnode) {
 		let value = props[i];
 
 		if (
-			(i === 'value' && 'defaultValue' in props && value == null) ||
+			(i == 'value' && 'defaultValue' in props && value == null) ||
 			// Emulate React's behavior of not rendering the contents of noscript tags on the client.
-			(IS_DOM && i === 'children' && type === 'noscript') ||
-			i === 'class' ||
-			i === 'className'
+			(IS_DOM && i == 'children' && type == 'noscript') ||
+			i == 'class' ||
+			i == 'className'
 		) {
 			// Skip applying value if it is null/undefined and we already set
 			// a default value
 			continue;
 		}
 
-		let lowerCased = i.toLowerCase();
-		if (i === 'defaultValue' && 'value' in props && props.value == null) {
+		if (i == 'style' && typeof value == 'object') {
+			let cloned;
+			for (let key in value) {
+				if (typeof value[key] == 'number' && !IS_NON_DIMENSIONAL.test(key)) {
+					if (!cloned) {
+						cloned = value = assign({}, value);
+					}
+					value[key] += 'px';
+				}
+			}
+		} else if (i == 'defaultValue' && 'value' in props && props.value == null) {
 			// `defaultValue` is treated as a fallback `value` when a value prop is present but null/undefined.
 			// `defaultValue` for Elements with no value prop is the same as the DOM defaultValue property.
 			i = 'value';
-		} else if (i === 'download' && value === true) {
+		} else if (i == 'download' && value === true) {
 			// Calling `setAttribute` with a truthy value will lead to it being
 			// passed as a stringified value, e.g. `download="true"`. React
 			// converts it to an empty string instead, otherwise the attribute
 			// value will be used as the file name and the file will be called
 			// "true" upon downloading it.
 			value = '';
-		} else if (lowerCased === 'translate' && value === 'no') {
+		} else if (i == 'translate' && value === 'no') {
 			value = false;
-		} else if (lowerCased[0] === 'o' && lowerCased[1] === 'n') {
-			if (lowerCased === 'ondoubleclick') {
+		} else if (i[0] == 'o' && i[1] == 'n') {
+			let lowerCased = i.toLowerCase();
+			if (lowerCased == 'ondoubleclick') {
 				i = 'ondblclick';
 			} else if (
-				lowerCased === 'onchange' &&
-				(type === 'input' || type === 'textarea') &&
+				lowerCased == 'onchange' &&
+				(type == 'input' || type == 'textarea') &&
 				!onChangeInputType(props.type)
 			) {
 				lowerCased = i = 'oninput';
-			} else if (lowerCased === 'onfocus') {
+			} else if (lowerCased == 'onfocus') {
 				i = 'onfocusin';
-			} else if (lowerCased === 'onblur') {
+			} else if (lowerCased == 'onblur') {
 				i = 'onfocusout';
-			} else if (ON_ANI.test(i)) {
+			}
+
+			// Add support for onInput and onChange, see #3561
+			// if we have an oninput prop already change it to oninputCapture
+			if (lowerCased == 'oninput') {
 				i = lowerCased;
+				if (normalizedProps[i]) {
+					i = 'oninputCapture';
+				}
 			}
 		} else if (isNonDashedType && CAMEL_PROPS.test(i)) {
 			i = i.replace(CAMEL_REPLACE, '-$&').toLowerCase();
 		} else if (value === null) {
 			value = undefined;
-		}
-
-		// Add support for onInput and onChange, see #3561
-		// if we have an oninput prop already change it to oninputCapture
-		if (lowerCased === 'oninput') {
-			i = lowerCased;
-			if (normalizedProps[i]) {
-				i = 'oninputCapture';
-			}
 		}
 
 		normalizedProps[i] = value;
@@ -232,55 +284,112 @@ function handleDomVNode(vnode) {
 let oldVNodeHook = options.vnode;
 options.vnode = vnode => {
 	// only normalize props on Element nodes
-	if (typeof vnode.type === 'string') {
+	if (typeof vnode.type == 'string') {
 		handleDomVNode(vnode);
+	} else if (typeof vnode.type == 'function') {
+		const shouldApplyRef =
+			'prototype' in vnode.type && vnode.type.prototype.render;
+		if ('ref' in vnode.props && shouldApplyRef) {
+			vnode.ref = vnode.props.ref;
+			delete vnode.props.ref;
+		}
+
+		if (vnode.type.defaultProps) {
+			let normalizedProps = assign({}, vnode.props);
+			for (let i in vnode.type.defaultProps) {
+				if (normalizedProps[i] === undefined) {
+					normalizedProps[i] = vnode.type.defaultProps[i];
+				}
+			}
+			vnode.props = normalizedProps;
+		}
 	}
 
+	// React 19 keeps `ref` in element.props for every element type, and that's
+	// where libraries detecting React 19 read it (e.g. MUI's getReactElementRef).
+	// DOM and class vnodes keep theirs on vnode.ref.
+	if (vnode.ref && !('ref' in vnode.props)) {
+		Object.defineProperty(vnode.props, 'ref', {
+			value: vnode.ref,
+			configurable: true,
+			writable: true
+		});
+	}
 	vnode.$$typeof = REACT_ELEMENT_TYPE;
 
 	if (oldVNodeHook) oldVNodeHook(vnode);
 };
 
-// Only needed for react-relay
-let currentComponent;
-const oldBeforeRender = options._render;
-options._render = function (vnode) {
-	if (oldBeforeRender) {
-		oldBeforeRender(vnode);
-	}
-	currentComponent = vnode._component;
-};
+// Only needed for react-relay and useSyncExternalStore hydration.
+function initRenderTracking(value) {
+	if (!renderTrackingInitialized) {
+		renderTrackingInitialized = true;
 
-const oldDiffed = options.diffed;
-/** @type {(vnode: import('./internal').VNode) => void} */
-options.diffed = function (vnode) {
-	if (oldDiffed) {
-		oldDiffed(vnode);
-	}
+		const oldBeforeRender = options._render;
+		options._render = vnode => {
+			if (oldBeforeRender) oldBeforeRender(vnode);
+			if (vnode._flags & MODE_HYDRATE) hydrationRoot = vnode;
+			currentComponent = vnode._component;
+		};
 
-	const props = vnode.props;
-	const dom = vnode._dom;
-
-	if (
-		dom != null &&
-		vnode.type === 'textarea' &&
-		'value' in props &&
-		props.value !== dom.value
-	) {
-		dom.value = props.value == null ? '' : props.value;
+		const oldDiffed = options.diffed;
+		options.diffed = vnode => {
+			if (oldDiffed) oldDiffed(vnode);
+			currentComponent = null;
+			if (hydrationRoot == vnode) hydrationRoot = null;
+		};
 	}
 
-	currentComponent = null;
-};
+	return value;
+}
+
+/**
+ * Read the value of a Promise (suspending while pending) or a Context.
+ * Unlike other hooks, `use` may be called conditionally.
+ * @template T
+ * @param {(Promise<T> & { status?: string, value?: T, reason?: any }) | import('../../src/internal').PreactContext} resource
+ * @returns {T}
+ */
+export const use = /* @__PURE__ */ initRenderTracking(function use(resource) {
+	// A Context is a function without a `then`, a thenable has one.
+	if (resource.then) {
+		if (resource.status == 'fulfilled') return resource.value;
+		if (resource.status == 'rejected') throw resource.reason;
+		if (!resource.status) {
+			resource.status = 'pending';
+			resource.then(
+				value => {
+					resource.status = 'fulfilled';
+					resource.value = value;
+				},
+				reason => {
+					resource.status = 'rejected';
+					resource.reason = reason;
+				}
+			);
+		}
+		throw resource;
+	}
+
+	const id = resource._id;
+	const provider = currentComponent._globalContext[id];
+	if (!provider) return resource._defaultValue;
+	// `use` runs on every render without hook state, while `provider.sub`
+	// wraps `componentWillUnmount` on each call — mark the component so we
+	// only subscribe it once.
+	if (!currentComponent[id]) {
+		currentComponent[id] = true;
+		provider.sub(currentComponent);
+	}
+	return provider.props.value;
+});
 
 // This is a very very private internal function for React it
 // is used to sort-of do runtime dependency injection.
 export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
 	ReactCurrentDispatcher: {
 		current: {
-			readContext(context) {
-				return currentComponent._globalContext[context._id].props.value;
-			},
+			readContext: use,
 			useCallback,
 			useContext,
 			useDebugValue,

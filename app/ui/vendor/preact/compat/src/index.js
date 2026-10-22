@@ -1,48 +1,49 @@
 import {
-	createElement,
-	render as preactRender,
-	cloneElement as preactCloneElement,
-	createRef,
 	Component,
-	createContext,
 	Fragment,
-	options
+	createContext,
+	createElement,
+	createRef,
+	options,
+	cloneElement as preactCloneElement,
+	render as preactRender
 } from 'preact';
 import {
-	useState,
-	useId,
-	useReducer,
-	useEffect,
-	useLayoutEffect,
-	useRef,
-	useImperativeHandle,
-	useMemo,
 	useCallback,
 	useContext,
-	useDebugValue
+	useDebugValue,
+	useEffect,
+	useId,
+	useImperativeHandle,
+	useLayoutEffect,
+	useMemo,
+	useReducer,
+	useRef,
+	useState
 } from 'preact/hooks';
+import { Children } from './Children';
+import { PureComponent } from './PureComponent';
+import { forwardRef } from './forwardRef';
 import {
-	useInsertionEffect,
 	startTransition,
 	useDeferredValue,
-	useSyncExternalStore,
+	useEffectEvent,
+	useInsertionEffect,
 	useTransition
 } from './hooks';
-import { PureComponent } from './PureComponent';
 import { memo } from './memo';
-import { forwardRef } from './forwardRef';
-import { Children } from './Children';
-import { Suspense, lazy } from './suspense';
-import { SuspenseList } from './suspense-list';
 import { createPortal } from './portals';
 import {
+	REACT_ELEMENT_TYPE,
+	__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED,
 	hydrate,
 	render,
-	REACT_ELEMENT_TYPE,
-	__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED
+	use,
+	useSyncExternalStore
 } from './render';
+import { Suspense, lazy } from './suspense';
 
-const version = '18.3.1'; // trick libraries to think we are react
+const version = '19.0.0'; // trick libraries to think we are react
 
 /**
  * Legacy version of createElement.
@@ -67,7 +68,7 @@ function isValidElement(element) {
  * @returns {boolean}
  */
 function isFragment(element) {
-	return isValidElement(element) && element.type === Fragment;
+	return isValidElement(element) && element.type == Fragment;
 }
 
 /**
@@ -116,20 +117,11 @@ function unmountComponentAtNode(container) {
 function findDOMNode(component) {
 	return (
 		(component &&
-			(component.base || (component.nodeType === 1 && component))) ||
+			((component._vnode && component._vnode._dom) ||
+				(component.nodeType == 1 && component))) ||
 		null
 	);
 }
-
-/**
- * Deprecated way to control batched rendering inside the reconciler, but we
- * already schedule in batches inside our rendering code
- * @template Arg
- * @param {(arg: Arg) => void} callback function that triggers the updated
- * @param {Arg} [arg] Optional argument that can be passed to the callback
- */
-// eslint-disable-next-line camelcase
-const unstable_batchedUpdates = (callback, arg) => callback(arg);
 
 /**
  * In React, `flushSync` flushes the entire tree and forces a rerender.
@@ -141,14 +133,35 @@ const unstable_batchedUpdates = (callback, arg) => callback(arg);
  */
 const flushSync = (callback, arg) => {
 	const prevDebounce = options.debounceRendering;
-	options.debounceRendering = cb => cb();
-	const res = callback(arg);
-	options.debounceRendering = prevDebounce;
-	return res;
+
+	// Capture the scheduled render callback so that all updates performed
+	// inside the user callback are batched into a single synchronous commit
+	// instead of every state setter rendering independently.
+	let flush;
+	options.debounceRendering = cb => {
+		flush = cb;
+	};
+	try {
+		const res = callback(arg);
+		if (flush) flush();
+		return res;
+	} finally {
+		options.debounceRendering = prevDebounce;
+	}
 };
 
-// compat to react-is
-export const isElement = isValidElement;
+/**
+ * In React, `unstable_batchedUpdates` is a legacy feature that was made a no-op
+ * outside of legacy mode in React 18 and a no-op across the board in React 19.
+ * @template Arg
+ * @template Result
+ * @param {(arg: Arg) => Result} callback
+ * @param {Arg} [arg]
+ * @returns {Result}
+ */
+function unstable_batchedUpdates(callback, arg) {
+	return callback(arg);
+}
 
 export * from 'preact/hooks';
 export {
@@ -165,6 +178,8 @@ export {
 	createRef,
 	Fragment,
 	isValidElement,
+	// compat to react-is
+	isValidElement as isElement,
 	isFragment,
 	isMemo,
 	findDOMNode,
@@ -173,16 +188,16 @@ export {
 	memo,
 	forwardRef,
 	flushSync,
+	unstable_batchedUpdates,
 	useInsertionEffect,
 	startTransition,
 	useDeferredValue,
 	useSyncExternalStore,
 	useTransition,
-	// eslint-disable-next-line camelcase
-	unstable_batchedUpdates,
+	useEffectEvent,
+	use,
 	Fragment as StrictMode,
 	Suspense,
-	SuspenseList,
 	lazy,
 	__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED
 };
@@ -198,12 +213,14 @@ export default {
 	useTransition,
 	useDeferredValue,
 	useSyncExternalStore,
+	useEffectEvent,
 	startTransition,
 	useRef,
 	useImperativeHandle,
 	useMemo,
 	useCallback,
 	useContext,
+	use,
 	useDebugValue,
 	version,
 	Children,
@@ -218,7 +235,7 @@ export default {
 	createRef,
 	Fragment,
 	isValidElement,
-	isElement,
+	isElement: isValidElement,
 	isFragment,
 	isMemo,
 	findDOMNode,
@@ -230,7 +247,6 @@ export default {
 	unstable_batchedUpdates,
 	StrictMode: Fragment,
 	Suspense,
-	SuspenseList,
 	lazy,
 	__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED
 };

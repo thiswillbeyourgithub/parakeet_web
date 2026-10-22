@@ -1,5 +1,7 @@
 import { options as _options } from 'preact';
 
+const ObjectIs = Object.is;
+
 /** @type {number} */
 let currentIndex;
 
@@ -14,6 +16,15 @@ let currentHook = 0;
 
 /** @type {Array<import('./internal').Component>} */
 let afterPaintEffects = [];
+
+/**
+ * Passive (useEffect) hook states of unmounted components whose cleanup is
+ * still pending. Deferred to the after-paint flush to match React, which runs
+ * passive destroys after the commit has painted. Each state's `_passive` holds
+ * the surviving component its errors should be routed to.
+ * @type {Array<import('./internal').EffectHookState>}
+ */
+let unmountCleanups = [];
 
 // Cast to use internal Options type
 const options = /** @type {import('./internal').Options} */ (_options);
@@ -54,21 +65,23 @@ options._render = vnode => {
 
 	const hooks = currentComponent.__hooks;
 	if (hooks) {
-		if (previousComponent === currentComponent) {
-			hooks._pendingEffects = [];
+		if (previousComponent == currentComponent) {
 			currentComponent._renderCallbacks = [];
-			hooks._list.some(hookItem => {
-				if (hookItem._nextValue) {
-					hookItem._value = hookItem._nextValue;
-				}
-				hookItem._pendingArgs = hookItem._nextValue = undefined;
-			});
 		} else {
 			hooks._pendingEffects.some(invokeCleanup);
 			hooks._pendingEffects.some(invokeEffect);
-			hooks._pendingEffects = [];
 			currentIndex = 0;
 		}
+		hooks._pendingEffects = [];
+
+		// Runs before every render, forced or not, so `shouldComponentUpdate`
+		// never has to apply these itself.
+		hooks._list.some(hookItem => {
+			if (hookItem._nextValue) {
+				hookItem._value = hookItem._nextValue;
+			}
+			hookItem._pendingArgs = hookItem._nextValue = undefined;
+		});
 	}
 	previousComponent = currentComponent;
 };
@@ -80,11 +93,10 @@ options.diffed = vnode => {
 	const c = vnode._component;
 	if (c && c.__hooks) {
 		if (c.__hooks._pendingEffects.length) afterPaint(afterPaintEffects.push(c));
+		// `_pendingArgs` is cleared again by `options._render` before anything
+		// can read it, so committing it here is enough.
 		c.__hooks._list.some(hookItem => {
-			if (hookItem._pendingArgs) {
-				hookItem._args = hookItem._pendingArgs;
-				hookItem._pendingArgs = undefined;
-			}
+			if (hookItem._pendingArgs) hookItem._args = hookItem._pendingArgs;
 		});
 	}
 	previousComponent = currentComponent = null;
@@ -117,10 +129,29 @@ options.unmount = vnode => {
 
 	const c = vnode._component;
 	if (c && c.__hooks) {
-		let hasErrored;
+		let hasErrored, errorParent;
 		c.__hooks._list.some(s => {
 			try {
-				invokeCleanup(s);
+				// Layout cleanups have to run before the new DOM is in place, so
+				// they stay in the commit phase (see #1886). Passive cleanups run
+				// after paint, before any new passive effect (see #4299), with
+				// `_passive` repurposed to hold the error-routing component.
+				if (s._passive && s._cleanup) {
+					if (errorParent === undefined) {
+						errorParent = vnode._parent;
+						while (
+							errorParent &&
+							!(errorParent._component && errorParent._component._parentDom)
+						) {
+							errorParent = errorParent._parent;
+						}
+						errorParent = errorParent && errorParent._component;
+					}
+					s._passive = errorParent;
+					afterPaint(unmountCleanups.push(s));
+				} else {
+					invokeCleanup(s);
+				}
 			} catch (e) {
 				hasErrored = e;
 			}
@@ -133,7 +164,7 @@ options.unmount = vnode => {
 /**
  * Get a hook's state from the currentComponent
  * @param {number} index The index of the hook to get
- * @param {number} type The index of the hook to get
+ * @param {number} type The type of the hook to get
  * @returns {any}
  */
 function getHookState(index, type) {
@@ -193,7 +224,7 @@ export function useReducer(reducer, initialState, init) {
 					: hookState._value[0];
 				const nextValue = hookState._reducer(currentValue, action);
 
-				if (currentValue !== nextValue) {
+				if (!ObjectIs(currentValue, nextValue)) {
 					hookState._nextValue = [nextValue, hookState._value[1]];
 					hookState._component.setState({});
 				}
@@ -204,51 +235,28 @@ export function useReducer(reducer, initialState, init) {
 
 		if (!currentComponent._hasScuFromHooks) {
 			currentComponent._hasScuFromHooks = true;
-			let prevScu = currentComponent.shouldComponentUpdate;
-			const prevCWU = currentComponent.componentWillUpdate;
-
-			// If we're dealing with a forced update `shouldComponentUpdate` will
-			// not be called. But we use that to update the hook values, so we
-			// need to call it.
-			currentComponent.componentWillUpdate = function (p, s, c) {
-				if (this._force) {
-					let tmp = prevScu;
-					// Clear to avoid other sCU hooks from being called
-					prevScu = undefined;
-					updateHookState(p, s, c);
-					prevScu = tmp;
-				}
-
-				if (prevCWU) prevCWU.call(this, p, s, c);
-			};
+			const prevScu = currentComponent.shouldComponentUpdate;
 
 			// This SCU has the purpose of bailing out after repeated updates
-			// to stateful hooks.
-			// we store the next value in _nextValue[0] and keep doing that for all
-			// state setters, if we have next states and
-			// all next states within a component end up being equal to their original state
-			// we are safe to bail out for this specific component.
-			/**
-			 *
-			 * @type {import('./internal').Component["shouldComponentUpdate"]}
-			 */
-			// @ts-ignore - We don't use TS to downtranspile
-			// eslint-disable-next-line no-inner-declarations
-			function updateHookState(p, s, c) {
-				if (!hookState._component.__hooks) return true;
+			// to stateful hooks. We store the next value in `_nextValue[0]` and
+			// keep doing that for all state setters; if we have next states and
+			// all next states within a component end up being equal to their
+			// original state we are safe to bail out for this specific component.
+			currentComponent.shouldComponentUpdate = function (p, s, c) {
+				const hooks = this.__hooks;
+				if (!hooks) return true;
 
 				// We check whether we have components with a nextValue set that
 				// have values that aren't equal to one another this pushes
 				// us to update further down the tree
 				let updatedHook = false;
-				let shouldUpdate = hookState._component.props !== p;
-				hookState._component.__hooks._list.some(hookItem => {
+				let shouldUpdate = this.props != p;
+				hooks._list.some(hookItem => {
 					if (hookItem._nextValue) {
 						updatedHook = true;
-						const currentValue = hookItem._value[0];
-						hookItem._value = hookItem._nextValue;
-						hookItem._nextValue = undefined;
-						if (currentValue !== hookItem._value[0]) shouldUpdate = true;
+						if (!ObjectIs(hookItem._value[0], hookItem._nextValue[0])) {
+							shouldUpdate = true;
+						}
 					}
 				});
 
@@ -258,13 +266,11 @@ export function useReducer(reducer, initialState, init) {
 				}
 
 				return !updatedHook || shouldUpdate;
-			}
-
-			currentComponent.shouldComponentUpdate = updateHookState;
+			};
 		}
 	}
 
-	return hookState._nextValue || hookState._value;
+	return hookState._value;
 }
 
 /**
@@ -276,6 +282,7 @@ export function useEffect(callback, args) {
 	/** @type {import('./internal').EffectHookState} */
 	const state = getHookState(currentIndex++, 3);
 	if (!options._skipEffects && argsChanged(state._args, args)) {
+		state._passive = true;
 		state._value = callback;
 		state._pendingArgs = args;
 
@@ -292,6 +299,7 @@ export function useLayoutEffect(callback, args) {
 	/** @type {import('./internal').EffectHookState} */
 	const state = getHookState(currentIndex++, 4);
 	if (!options._skipEffects && argsChanged(state._args, args)) {
+		state._passive = false;
 		state._value = callback;
 		state._pendingArgs = args;
 
@@ -342,7 +350,6 @@ export function useMemo(factory, args) {
 	if (argsChanged(state._args, args)) {
 		state._value = factory();
 		state._args = args;
-		state._factory = factory;
 	}
 
 	return state._value;
@@ -424,7 +431,7 @@ export function useId() {
 		// Grab either the root node or the nearest async boundary node.
 		/** @type {import('./internal').VNode} */
 		let root = currentComponent._vnode;
-		while (root !== null && !root._mask && root._parent !== null) {
+		while (!root._mask && root._parent) {
 			root = root._parent;
 		}
 
@@ -440,18 +447,33 @@ export function useId() {
  */
 function flushAfterPaintEffects() {
 	let component;
-	while ((component = afterPaintEffects.shift())) {
-		const hooks = component.__hooks;
-		if (!component._parentDom || !hooks) continue;
-		try {
-			hooks._pendingEffects.some(invokeCleanup);
-			hooks._pendingEffects.some(invokeEffect);
-			hooks._pendingEffects = [];
-		} catch (e) {
-			hooks._pendingEffects = [];
-			options._catchError(e, component._vnode);
+	// The loop picks up components unmounted by an effect we just invoked, which
+	// don't necessarily schedule a flush of their own.
+	do {
+		// Unmounted components' passive cleanups run before any new passive
+		// effect, mirroring React running all destroys before any create.
+		while ((component = unmountCleanups.shift())) {
+			try {
+				invokeCleanup(component);
+			} catch (e) {
+				component = /** @type {any} */ (component._passive);
+				options._catchError(e, { _parent: component && component._vnode });
+			}
 		}
-	}
+
+		while ((component = afterPaintEffects.shift())) {
+			const hooks = component.__hooks;
+			if (!component._parentDom || !hooks) continue;
+			try {
+				hooks._pendingEffects.some(invokeCleanup);
+				hooks._pendingEffects.some(invokeEffect);
+				hooks._pendingEffects = [];
+			} catch (e) {
+				hooks._pendingEffects = [];
+				options._catchError(e, component._vnode);
+			}
+		}
+	} while (unmountCleanups.length);
 }
 
 let HAS_RAF = typeof requestAnimationFrame == 'function';
@@ -489,7 +511,7 @@ function afterNextFrame(callback) {
  * @returns {void}
  */
 function afterPaint(newQueueLength) {
-	if (newQueueLength === 1 || prevRaf !== options.requestAnimationFrame) {
+	if (newQueueLength == 1 || prevRaf != options.requestAnimationFrame) {
 		prevRaf = options.requestAnimationFrame;
 		(prevRaf || afterNextFrame)(flushAfterPaintEffects);
 	}
@@ -533,8 +555,8 @@ function invokeEffect(hook) {
 function argsChanged(oldArgs, newArgs) {
 	return (
 		!oldArgs ||
-		oldArgs.length !== newArgs.length ||
-		newArgs.some((arg, index) => arg !== oldArgs[index])
+		oldArgs.length != newArgs.length ||
+		newArgs.some((arg, index) => !ObjectIs(arg, oldArgs[index]))
 	);
 }
 

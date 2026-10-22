@@ -6,6 +6,6 @@
     "@ffmpeg/core": "0.12.10",
     "@ffmpeg/ffmpeg": "0.12.15",
     "onnxruntime-web": "1.30.0",
-    "preact": "10.29.7"
+    "preact": "11.0.1"
   }
 }

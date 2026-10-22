@@ -1,4 +1,10 @@
-import { NULL } from '../constants';
+import { resetRenderCount } from '../component';
+import {
+	COMPONENT_DIRTY,
+	COMPONENT_PENDING_ERROR,
+	COMPONENT_PROCESSING_EXCEPTION,
+	COMPONENT_FORCE
+} from '../constants';
 
 /**
  * Find the closest error boundary to a thrown error and call it
@@ -14,33 +20,45 @@ export function _catchError(error, vnode, oldVNode, errorInfo) {
 	let component,
 		/** @type {import('../internal').ComponentType} */
 		ctor,
-		/** @type {boolean} */
+		/** @type {number} */
 		handled;
 
 	for (; (vnode = vnode._parent); ) {
-		if ((component = vnode._component) && !component._processingException) {
+		if (
+			(component = vnode._component) &&
+			!(component._bits & COMPONENT_PROCESSING_EXCEPTION)
+		) {
+			component._bits |= COMPONENT_FORCE;
 			try {
 				ctor = component.constructor;
 
-				if (ctor && ctor.getDerivedStateFromError != NULL) {
+				if (ctor && ctor.getDerivedStateFromError) {
 					component.setState(ctor.getDerivedStateFromError(error));
-					handled = component._dirty;
+					handled = component._bits & COMPONENT_DIRTY;
 				}
 
-				if (component.componentDidCatch != NULL) {
+				if (component.componentDidCatch) {
 					component.componentDidCatch(error, errorInfo || {});
-					handled = component._dirty;
+					handled = component._bits & COMPONENT_DIRTY;
 				}
 
 				// This is an error boundary. Mark it as having bailed out, and whether it was mid-hydration.
 				if (handled) {
-					return (component._pendingError = component);
+					component._bits |= COMPONENT_PENDING_ERROR;
+					return;
 				}
 			} catch (e) {
 				error = e;
+				// This component failed to handle the error, so what its
+				// getDerivedStateFromError did must not make the next ancestor a
+				// boundary.
+				handled = 0;
 			}
 		}
 	}
 
+	// Reset rerender count to 0, so that the next render will not be skipped
+	// when we leverage prefresh
+	resetRenderCount();
 	throw error;
 }

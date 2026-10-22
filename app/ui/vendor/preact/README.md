@@ -5,7 +5,7 @@
 
 </a>
 </p>
-<p align="center">Fast <b>3kB</b> alternative to React with the same modern API.</p>
+<p align="center">Fast <b>4kB</b> alternative to React with the same modern API.</p>
 
 **All the power of Virtual DOM components, without the overhead:**
 
@@ -13,7 +13,7 @@
 - Extensive React compatibility via a simple [preact/compat] alias
 - Everything you need: JSX, <abbr title="Virtual DOM">VDOM</abbr>, [DevTools], <abbr title="Hot Module Replacement">HMR</abbr>, <abbr title="Server-Side Rendering">SSR</abbr>.
 - Highly optimized diff algorithm and seamless hydration from Server Side Rendering
-- Supports all modern browsers and IE11
+- Supports all modern browsers
 - Transparent asynchronous rendering with a pluggable scheduler
 
 ### 💁 More information at the [Preact Website ➞](https://preactjs.com)
@@ -29,8 +29,8 @@
 [![OpenCollective Sponsors](https://opencollective.com/preact/sponsors/badge.svg)](#sponsors)
 
 [![coveralls](https://img.shields.io/coveralls/preactjs/preact/main.svg)](https://coveralls.io/github/preactjs/preact)
-[![gzip size](https://img.badgesize.io/https://unpkg.com/preact/dist/preact.min.js?compression=gzip&label=gzip)](https://unpkg.com/preact/dist/preact.min.js)
-[![brotli size](https://img.badgesize.io/https://unpkg.com/preact/dist/preact.min.js?compression=brotli&label=brotli)](https://unpkg.com/preact/dist/preact.min.js)
+[![gzip size](https://img.badgesize.io/https://unpkg.com/preact/dist/preact.mjs?compression=gzip&label=gzip)](https://unpkg.com/preact/dist/preact.mjs)
+[![brotli size](https://img.badgesize.io/https://unpkg.com/preact/dist/preact.mjs?compression=brotli&label=brotli)](https://unpkg.com/preact/dist/preact.mjs)
 
 </td>
 </tr>
@@ -47,7 +47,7 @@ You can find some awesome libraries in the [awesome-preact list](https://github.
 
 #### Tutorial: Building UI with Preact
 
-With Preact, you create user interfaces by assembling trees of components and elements. Components are functions or classes that return a description of what their tree should output. These descriptions are typically written in [JSX](https://facebook.github.io/jsx/) (shown underneath), or [HTM](https://github.com/developit/htm) which leverages standard JavaScript Tagged Templates. Both syntaxes can express trees of elements with "props" (similar to HTML attributes) and children.
+With Preact, you create user interfaces by assembling trees of components and elements. Components are functions or classes that return a description of what their tree should output. These descriptions are typically written in [JSX](https://react.dev/learn/writing-markup-with-jsx) (shown underneath), or [HTM](https://github.com/developit/htm) which leverages standard JavaScript Tagged Templates. Both syntaxes can express trees of elements with "props" (similar to HTML attributes) and children.
 
 To get started using Preact, first look at the render() function. This function accepts a tree description and creates the structure described. Next, it appends this structure to a parent DOM element provided as the second argument. Future calls to render() will reuse the existing tree and update it in-place in the DOM. Internally, render() will calculate the difference from previous outputted structures in an attempt to perform as few DOM operations as possible.
 

@@ -6,7 +6,9 @@ initDebug();
 export { resetPropWarnings } from './check-props';
 
 export {
+	captureOwnerStack,
 	getCurrentVNode,
 	getDisplayName,
-	getOwnerStack
+	getOwnerStack,
+	setupComponentStack
 } from './component-stack';
