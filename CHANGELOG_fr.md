@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Les GPU sans shader-f16 transcrivent désormais sur le GPU en int8
+
+Un GPU qui n'annonce pas la fonctionnalité `shader-f16` ne peut pas exécuter l'encodeur fp16 par défaut, et l'application envoyait jusqu'ici une telle machine sur le processeur (WASM). Elle charge désormais l'encodeur int8 sur le GPU. C'est le cas de la machine de référence elle-même (RTX 3090 Ti, dont le navigateur n'expose pas `shader-f16`) : dans l'application réelle, sur l'enregistrement de test de 3 minutes, le GPU en int8 a pris 5,6 s (médiane de 3, GPU partagé avec d'autres tâches), là où le backend processeur avait mesuré 86 s sur le même enregistrement lors d'une session antérieure (médiane de 3, machine chargée, sans entrelacement avec les passes GPU). La mesure automatique processeur contre GPU tourne désormais aussi sur ces machines, puisque sa réponse peut être suivie. Une source de modèles qui n'héberge pas l'encodeur int8 les envoie toujours sur le processeur, et fp32 et w4a8 restent des choix manuels uniquement.
+
 ### Encodeur int8 sur WebGPU
 
 L'encodeur int8 peut maintenant être choisi sur le backend WebGPU. L'application le refusait jusqu'ici parce qu'un ancien format int8 n'avait pas de noyau GPU, mais l'encodeur int8 livré est construit en MatMulNBits, que le GPU exécute nativement. Dans l'application réelle sur la machine de référence (RTX 3090 Ti partagée avec d'autres tâches, enregistrement de test de 3 minutes, glouton, 3 passes entrelacées chacun), int8 donne mot pour mot la même transcription que fp32 et encode en 1,8 s contre 2,9 s (médianes), pour un téléchargement environ quatre fois plus petit. La précision GPU par défaut ne change pas (fp16). Le banc d'essai de la barre latérale mesure aussi int8 sur le GPU, présélectionné parce qu'il réutilise le fichier int8 que le visiteur a déjà.
