@@ -48,6 +48,9 @@ export default function EngineSection({
   onCpuThreadsCommit,
   parallelEncode,
   setParallelEncode,
+  cpuRuntime,
+  cpuRuntimeOverridden,
+  onCpuRuntimeChange,
   frameStride,
   setFrameStride,
   beamWidth,
@@ -353,6 +356,26 @@ export default function EngineSection({
           </label>
         </div>
       )}
+
+      <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
+        <span className="setting-label" style={{ flex: '1 1 auto' }}>
+          {t('cpuRuntime')}:
+          <InfoTooltip text={t(cpuRuntimeOverridden ? 'tooltipCpuRuntimeOverridden' : 'tooltipCpuRuntime')} />
+        </span>
+        {['custom', 'stock'].map((v) => (
+          <label key={v}>
+            <input
+              type="radio"
+              name="cpuRuntime"
+              value={v}
+              checked={cpuRuntime === v}
+              onChange={() => onCpuRuntimeChange(v)}
+              disabled={modelSwapBlocked || cpuRuntimeOverridden}
+            />
+            {' '}{t(v === 'custom' ? 'cpuRuntimeCustom' : 'cpuRuntimeStock')}
+          </label>
+        ))}
+      </div>
 
       <div className="setting-row" style={{ alignItems: 'center', gap: '0.5rem' }}>
         <span className="setting-label" style={{ flex: '1 1 auto' }}>

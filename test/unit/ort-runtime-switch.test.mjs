@@ -13,6 +13,9 @@ import {
   readPendingOrtReload,
   writePendingOrtReload,
   clearPendingOrtReload,
+  normalizeCpuRuntime,
+  effectiveOrtVariant,
+  pageRuntimeServes,
 } from '../../app/ui/src/lib/ortRuntimeSwitch.js';
 
 function memStorage() {
@@ -65,5 +68,33 @@ describe('pending-reload marker', () => {
     assert.equal(readPendingOrtReload(throwing), null);
     writePendingOrtReload(throwing, 'wasm');
     clearPendingOrtReload(throwing);
+  });
+});
+
+describe('sidebar CPU runtime choice', () => {
+  test('unknown or missing settings read as the custom default', () => {
+    assert.equal(normalizeCpuRuntime('stock'), 'stock');
+    assert.equal(normalizeCpuRuntime('custom'), 'custom');
+    for (const v of [undefined, null, '', 'jspi', 3]) assert.equal(normalizeCpuRuntime(v), 'custom');
+  });
+
+  test('stock opts out, custom leaves backend.js its default, ?ortep= wins over both', () => {
+    assert.equal(effectiveOrtVariant(undefined, 'stock'), 'stock');
+    assert.equal(effectiveOrtVariant(undefined, 'custom'), undefined);
+    assert.equal(effectiveOrtVariant('jsep', 'custom'), 'jsep');
+    assert.equal(effectiveOrtVariant('jspi', 'stock'), 'jspi');
+  });
+
+  test('a page whose first load used another choice must reload, even when the main thread serves', () => {
+    // No load yet: only the main thread's runtime matters.
+    assert.equal(pageRuntimeServes(true, null, 'stock'), true);
+    assert.equal(pageRuntimeServes(false, null, undefined), false);
+    // Same choice as the first load.
+    assert.equal(pageRuntimeServes(true, { variant: undefined }, undefined), true);
+    assert.equal(pageRuntimeServes(true, { variant: 'stock' }, 'stock'), true);
+    // WebGPU main thread is stock either way, but the WASM workers were built
+    // on the custom runtime: switching to stock needs a fresh page.
+    assert.equal(pageRuntimeServes(true, { variant: undefined }, 'stock'), false);
+    assert.equal(pageRuntimeServes(true, { variant: 'stock' }, undefined), false);
   });
 });

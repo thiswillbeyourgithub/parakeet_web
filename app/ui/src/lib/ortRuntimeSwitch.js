@@ -14,9 +14,49 @@
 // The stock runtime serves both backends, the custom one only WASM, so the
 // guarded case is at worst a slower WASM load.
 //
+// The sidebar's CPU runtime choice (custom or stock) is the other reason: it
+// changes the ORT variant every WASM context asks for, workers included, and a
+// worker built on one runtime keeps it. So a page that already loaded a model
+// on one choice reloads to honour the other (pageRuntimeServes).
+//
 // Built with Claude Code.
 
 export const ORT_RELOAD_KEY = 'parakeetOrtRuntimeReload';
+
+/** The sidebar choice: the self-compiled custom CPU runtime, or stock ORT. */
+export const CPU_RUNTIMES = ['custom', 'stock'];
+export const DEFAULT_CPU_RUNTIME = 'custom';
+
+/** Anything but a known choice (a missing or corrupt setting) reads as the default. */
+export function normalizeCpuRuntime(v) {
+  return CPU_RUNTIMES.includes(v) ? v : DEFAULT_CPU_RUNTIME;
+}
+
+/**
+ * The ortVariant to hand backend.js. An explicit `?ortep=` wins (support and
+ * the harnesses rely on it); otherwise 'stock' opts out of the custom runtime
+ * and 'custom' leaves backend.js its default (custom where it applies).
+ * @param {string|undefined} urlVariant `?ortep=` value, if any.
+ * @param {string} cpuRuntime normalizeCpuRuntime() value.
+ * @returns {string|undefined}
+ */
+export function effectiveOrtVariant(urlVariant, cpuRuntime) {
+  if (urlVariant) return urlVariant;
+  return cpuRuntime === 'stock' ? 'stock' : undefined;
+}
+
+/**
+ * Whether this page can load without reloading: the main thread's live runtime
+ * serves the backend AND the page's earlier loads (if any) asked for the same
+ * variant, since their workers are pinned to it.
+ * @param {boolean} liveServes backend.js liveOrtServes(backend, variant).
+ * @param {?{variant: (string|undefined)}} pinned The variant the page's first
+ *   model load used, or null before any load.
+ * @param {string|undefined} variant effectiveOrtVariant() for this load.
+ */
+export function pageRuntimeServes(liveServes, pinned, variant) {
+  return liveServes && (pinned == null || pinned.variant === variant);
+}
 
 /**
  * @param {Object} p

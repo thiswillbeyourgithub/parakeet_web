@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError, liveOrtServes, liveOrtVariant } from 'parakeet.js';
-import { planOrtRuntimeSwitch, readPendingOrtReload, writePendingOrtReload, clearPendingOrtReload } from './lib/ortRuntimeSwitch.js';
+import { planOrtRuntimeSwitch, readPendingOrtReload, writePendingOrtReload, clearPendingOrtReload, DEFAULT_CPU_RUNTIME, normalizeCpuRuntime, effectiveOrtVariant, pageRuntimeServes } from './lib/ortRuntimeSwitch.js';
 import { parseModelRepos, matchModelRepo, migrateRepoId } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n } from './i18n.jsx';
@@ -822,6 +822,15 @@ export default function App() {
   // encodePoolPlan additionally gates on hardware (cores/RAM/threads) at model
   // load, so weak machines never spawn the pool even with the toggle on.
   const [parallelEncode, setParallelEncode] = useState(true);
+  // CPU runtime: the self-compiled custom ORT build (default) or stock ORT.
+  // `?ortep=` overrides it. The ref is what the load and probe paths read, and
+  // pinnedOrtVariantRef records what the page's first load used, because its
+  // workers keep that runtime: a different choice later reloads the page.
+  const [cpuRuntime, setCpuRuntime] = useState(DEFAULT_CPU_RUNTIME);
+  const ortVariant = effectiveOrtVariant(ORT_VARIANT, cpuRuntime);
+  const ortVariantRef = useRef(ortVariant);
+  ortVariantRef.current = ortVariant;
+  const pinnedOrtVariantRef = useRef(null);
   // Live (streaming) transcription: re-runs the model on a sliding window
   // every few seconds while recording. The canonical stop-pass still runs.
   const [liveTranscriptionEnabled, setLiveTranscriptionEnabled] = useState(false);
@@ -1248,7 +1257,7 @@ export default function App() {
     backend,
     webgpuShaderF16,
     cpuThreads,
-    ortVariant: ORT_VARIANT,
+    ortVariant,
   });
 
   // Ask the browser to keep our IndexedDB (where the multi-GB model weights
@@ -1338,6 +1347,7 @@ export default function App() {
           savedCpuThreads,
           savedCpuThreadsMigrated,
           savedParallelEncode,
+          savedCpuRuntime,
           savedNoiseSuppression,
           savedAutoGainControl,
           savedRemoteMicGain,
@@ -1388,6 +1398,7 @@ export default function App() {
           loadSetting('cpuThreads', null),
           loadSetting('cpuThreadsMigrated', false),
           loadSetting('parallelEncode', true),
+          loadSetting('cpuRuntime', DEFAULT_CPU_RUNTIME),
           loadSetting('noiseSuppression', true),
           loadSetting('autoGainControl', true),
           loadSetting('remoteMicGain', 2.0),
@@ -1496,6 +1507,7 @@ export default function App() {
           if (!savedCpuThreadsMigrated || migrationApplied) saveSetting('cpuThreadsMigrated', true);
         }
         setParallelEncode(savedParallelEncode !== false);
+        setCpuRuntime(normalizeCpuRuntime(savedCpuRuntime));
         setNoiseSuppression(savedNoiseSuppression);
         setAutoGainControl(savedAutoGainControl);
         setRemoteMicGain(Number.isFinite(savedRemoteMicGain) ? savedRemoteMicGain : 2.0);
@@ -2040,6 +2052,7 @@ export default function App() {
   usePersistedSetting('maesPrefixAlpha', maesPrefixAlpha, settingsLoaded);
   usePersistedSetting('cpuThreads', cpuThreads, settingsLoaded);
   usePersistedSetting('parallelEncode', parallelEncode, settingsLoaded);
+  usePersistedSetting('cpuRuntime', cpuRuntime, settingsLoaded);
   usePersistedSetting('benchmarkAutoSend', benchmarkAutoSend, settingsLoaded);
   usePersistedSetting('noiseSuppression', noiseSuppression, settingsLoaded);
   usePersistedSetting('autoGainControl', autoGainControl, settingsLoaded);
@@ -2312,7 +2325,9 @@ export default function App() {
     // lib/ortRuntimeSwitch.js); the reloaded page resumes this load itself.
     {
       const pending = readPendingOrtReload(globalThis.sessionStorage);
-      const plan = planOrtRuntimeSwitch({ serves: liveOrtServes(backend, ORT_VARIANT), backend, pending });
+      const variant = ortVariantRef.current;
+      const serves = pageRuntimeServes(liveOrtServes(backend, variant), pinnedOrtVariantRef.current, variant);
+      const plan = planOrtRuntimeSwitch({ serves, backend, pending });
       if (plan.action === 'reload') {
         console.log(`[Load] ORT ${liveOrtVariant()} runtime cannot serve backend ${backend}; reloading the page to switch`);
         await saveSetting('backend', backend);
@@ -2429,13 +2444,15 @@ export default function App() {
       // Determine mel bin count from model config (nemo128 → 128, nemo80 → 80)
       const nMels = modelUrls.modelConfig?.featuresSize || 128;
       try {
+        // From here on this page's contexts hold this variant's runtime.
+        pinnedOrtVariantRef.current ??= { variant: ortVariantRef.current };
         modelRef.current = await ParakeetModel.fromUrls({
           ...modelUrls.urls,
           filenames: modelUrls.filenames,
           backend,
           verbose: verboseLog,
           cpuThreads,
-          ortVariant: ORT_VARIANT,
+          ortVariant: ortVariantRef.current,
           preprocessorBackend: modelUrls.preprocessorBackend,
           nMels,
         });
@@ -2466,7 +2483,7 @@ export default function App() {
         // CSS animations for the duration of a WebGPU run (the html.gpu-run
         // toggle in runTranscription), which restores probe speed in-thread.
         // Each worker is its own JS context with its own ORT runtime, so
-        // ORT_VARIANT has to travel in BOTH payloads; buildWorkerInitParams
+        // the ORT variant has to travel in BOTH payloads; buildWorkerInitParams
         // owns that and is unit-tested for it.
         const workerInit = buildWorkerInitParams({
           plan: pipeline,
@@ -2474,7 +2491,7 @@ export default function App() {
           filenames: modelUrls.filenames,
           nMels,
           preprocessorBackend: modelUrls.preprocessorBackend,
-          ortVariant: ORT_VARIANT,
+          ortVariant: ortVariantRef.current,
         });
         encodePoolInitParamsRef.current = workerInit.encodePoolInit;
         if (pipeline.startPool) startEncodePool();
@@ -4675,7 +4692,7 @@ export default function App() {
     const ready = workerReady(worker, {
       type: 'init', arm, modelBytes: bytes.slice(0), numThreads,
       seq: PROBE_SEQ, dim: PROBE_DIM, inputName: PROBE_INPUT_NAME,
-      ortVariant: ORT_VARIANT,
+      ortVariant: ortVariantRef.current,
     }, { timeoutMs: PROBE_INIT_TIMEOUT_MS, label: `Probe ${arm}` });
     return { worker, ready, run, dispose: () => { try { worker.postMessage({ type: 'dispose' }); } catch { /* gone */ } worker.terminate(); } };
   }
@@ -5259,6 +5276,17 @@ export default function App() {
             }}
             parallelEncode={parallelEncode}
             setParallelEncode={setParallelEncode}
+            cpuRuntime={cpuRuntime}
+            cpuRuntimeOverridden={!!ORT_VARIANT}
+            onCpuRuntimeChange={async (v) => {
+              setCpuRuntime(v);
+              // A loaded model reloads on the new runtime (via a page reload,
+              // see loadModel). The ref and the setting are updated by hand
+              // because loadModel runs before the next render.
+              ortVariantRef.current = effectiveOrtVariant(ORT_VARIANT, v);
+              await saveSetting('cpuRuntime', v);
+              if (modelRef.current) loadModel();
+            }}
             frameStride={frameStride}
             setFrameStride={setFrameStride}
             beamWidth={beamWidth}

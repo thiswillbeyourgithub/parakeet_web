@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import { seedSettings } from './seed.mjs';
+import { seedSettings, expandSettingsSection } from './seed.mjs';
 import { words, overlap } from './text-overlap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,4 +74,31 @@ test('?ortep=stock keeps every context on the npm runtime', async ({ page }) => 
   expect(seen.variants.filter((v) => v.startsWith('custom')),
     `contexts on the custom runtime despite ?ortep=stock: ${seen.variants.join(', ')}`).toEqual([]);
   expect(seen.fallbacks).toEqual([]);
+});
+
+test('the sidebar Stock choice keeps every context on the npm runtime', async ({ page }) => {
+  const seen = watch(page);
+  await bootAndLoad(page, '/', { cpuRuntime: 'stock' });
+  expect(seen.variants.length).toBeGreaterThan(0);
+  expect(seen.variants.filter((v) => v.startsWith('custom')),
+    `contexts on the custom runtime despite cpuRuntime=stock: ${seen.variants.join(', ')}`).toEqual([]);
+});
+
+test('switching the sidebar runtime with a model loaded reloads onto the other runtime', async ({ page }) => {
+  const seen = watch(page);
+  await bootAndLoad(page, '/', {});
+  expect(seen.variants).toContain('custom-relaxed (main)');
+
+  await page.locator('.settings-toggle').click();
+  await expandSettingsSection(page, 'Model and performance');
+  seen.variants.length = 0;
+  // The choice reloads the page, and the reloaded page resumes the load itself.
+  await Promise.all([
+    page.waitForEvent('load', { timeout: 60 * 1000 }),
+    page.locator('input[name="cpuRuntime"][value="stock"]').check(),
+  ]);
+  await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+  expect(seen.variants.length).toBeGreaterThan(0);
+  expect(seen.variants.filter((v) => v.startsWith('custom')),
+    `contexts still on the custom runtime after switching: ${seen.variants.join(', ')}`).toEqual([]);
 });
