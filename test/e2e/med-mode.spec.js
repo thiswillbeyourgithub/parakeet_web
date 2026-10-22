@@ -16,6 +16,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
+import { routeSyntheticLocalMirror } from './routes.mjs';
 import { readSetting, seedSettings } from './seed.mjs';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
@@ -216,10 +217,9 @@ test('?mode=med measures the machine even when a backend was once picked by hand
   // headline promise.
   await configureTwoRepos(page);
   // A machine that HAS a GPU the app would actually use, so the probe is a
-  // decision worth making. `shader-f16` is part of that since 2026-09-11: the
-  // only precision the app will put on a GPU unasked is fp16, so an adapter
-  // without the feature is not measured at all (the test below pins that), and
-  // stubbing one here would make this test pass or fail for the wrong reason.
+  // decision worth making. With shader-f16 the GPU default is fp16 (without it,
+  // int8 on the GPU, see gpuDefaultEncoderQuant); either way the real repos
+  // host it, so the measurement is worth running.
   // The adapter enumerates but cannot build a device, which is fine: this test
   // is about the measurement RUNNING, not about which backend wins (headless
   // Chromium has no GPU, so the honest verdict is always WASM).
@@ -251,18 +251,27 @@ test('?mode=med measures the machine even when a backend was once picked by hand
 });
 
 test('a GPU the app would never use unasked is not measured at all', async ({ page }) => {
-  // The other side of the gate, and the reason it exists. fp16 is the only
-  // precision the app will put on a graphics card for somebody who did not ask
-  // for it: fp32 nearly triples the download and w4a8 is the weakest encoder on
-  // long audio, so both are hand picks. An adapter with no `shader-f16` cannot
-  // run fp16, so whatever the measurement said, the load would end up on the
-  // processor anyway. Measuring it would spend two timed runs to prove a card
-  // is faster and then not use it, which is worse than not measuring: it is the
-  // kind of result that later reads as a bug ("it said my GPU won").
-  //
-  // This is the development box's own shape, incidentally: an RTX 3090 Ti whose
-  // driver stack does not expose shader-f16 to Dawn.
+  // The other side of the gate, and the reason it exists. The app puts a
+  // visitor on a graphics card unasked only at its GPU default: fp16 with
+  // shader-f16, int8 without it (owner rule 2026-10-22). fp32 nearly triples
+  // the download and w4a8 is the weakest encoder on long audio, so both are
+  // hand picks. An adapter with no `shader-f16`, on a deployment that mirrored
+  // no int8 encoder, therefore has nothing the app may run on it, and whatever
+  // the measurement said the load would end up on the processor. Measuring it
+  // would spend two timed runs to prove a card is faster and then not use it,
+  // which is worse than not measuring: it is the kind of result that later
+  // reads as a bug ("it said my GPU won").
   await configureTwoRepos(page);
+  // Both repos answer with the same listing: fp32 shards and w4a8, no int8
+  // encoder. The preset only touches settings, so no weights are needed.
+  await routeSyntheticLocalMirror(page, [
+    'vocab.txt',
+    'int8/decoder_joint-model.int8.onnx',
+    'w4a8/encoder-model.w4a8.onnx',
+    'fp32/encoder-model.onnx',
+    'fp32/encoder-model.onnx.data.000',
+    'fp32/encoder-model.onnx.data.001',
+  ]);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'gpu', {
       configurable: true,

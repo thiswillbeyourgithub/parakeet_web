@@ -25,17 +25,15 @@
 
 import { test, expect } from '@playwright/test';
 import { expandSettingsSection } from './seed.mjs';
+import { routeSyntheticLocalMirror } from './routes.mjs';
 
 // A machine whose browser exposes WebGPU. requestDevice is absent on purpose:
 // this adapter can be enumerated but cannot actually run a graph, which is the
 // realistic shape of a broken/blocklisted GPU and the case the probe must fail
 // safely on. Test 1 only ever uses it to prove the app-wide kill switch wins
 // even when a GPU is present.
-// It reports shader-f16 because since 2026-09-11 the app will only ever select
-// a GPU backend unasked at fp16, so an adapter without it is one the probe
-// deliberately does not measure (see NO_F16_ADAPTER below). To keep this stub
-// on the case it is about (an adapter that enumerates but cannot run), it has
-// to clear that gate first.
+// It reports shader-f16 so the app's unasked GPU precision is fp16, the common
+// case; NO_F16_ADAPTER below covers the int8 one (2026-10-22).
 const FAKE_ADAPTER = () => {
   Object.defineProperty(navigator, 'gpu', {
     configurable: true,
@@ -50,10 +48,9 @@ const FAKE_ADAPTER = () => {
   });
 };
 
-// A machine with a working-looking adapter that cannot do fp16. The app will
-// not put a visitor on a GPU backend unasked at any other precision, so a
-// verdict here could never be acted on: nothing may be fetched and nothing may
-// be timed.
+// A machine with a working-looking adapter that cannot do fp16. Since
+// 2026-10-22 the app puts such a visitor on the GPU's int8 unasked, so it is
+// measured exactly like any other adapter, as long as the source serves int8.
 const NO_F16_ADAPTER = () => {
   Object.defineProperty(navigator, 'gpu', {
     configurable: true,
@@ -88,9 +85,16 @@ function watchProbe(page) {
 
 // Park every model-weight fetch so loadModel() enters its loading state and
 // never reaches modelReady: these tests care about what happens BEFORE the
-// download, and this keeps them weight-free and fast.
+// download, and this keeps them weight-free and fast. The hub's listing API is
+// FAILED instead of parked: the probe gates wait for the source listing to
+// answer (a pending one is not "no opinion" yet), so a listing parked forever
+// would hold the prefetch back for the whole test. Failing it is what a
+// network that blocks HuggingFace does, and the app then lists the mirror.
 async function stallWeights(page) {
-  await page.route(/huggingface\.co/, () => { /* keep pending forever */ });
+  await page.route(/huggingface\.co/, (route) => {
+    if (new URL(route.request().url()).pathname.startsWith('/api/')) return route.abort();
+    /* keep weight fetches pending forever */
+  });
 }
 
 test('the probe never fetches or runs when the ?webgpu=0 kill switch is used', async ({ page }) => {
@@ -139,14 +143,54 @@ test('with no adapter, the probe stays silent on a normal load', async ({ page }
   expect(seen.logs, 'probe ran with no adapter present').toEqual([]);
 });
 
-test('an adapter that cannot do fp16 is neither prefetched for nor measured', async ({ page }) => {
-  // The app will only ever put a visitor on a GPU backend unasked at fp16, so
-  // on a machine without shader-f16 a probe win could not be acted on: the very
-  // next load would fall back to WASM anyway. Nothing may be spent on it, and
-  // that includes the ~5 MB of probe artifacts, which is the half a broken gate
-  // would leak silently (the visitor would still end up on WASM, just poorer).
+test('an adapter without shader-f16 is measured, since GPU int8 can be acted on', async ({ page }) => {
+  // It used to be skipped outright (fp16 was the only precision the app would
+  // pick on a GPU, so a win could not be acted on). It now loads the GPU int8,
+  // so the probe must run: skipping it would keep a GPU that is an order of
+  // magnitude faster than the CPU (the RTX 3090 Ti this repo is tested on has
+  // no shader-f16) on WASM forever. The stub cannot create a device, so the
+  // verdict is the safe one.
   await page.addInitScript(NO_F16_ADAPTER);
   await stallWeights(page);
+  const seen = watchProbe(page);
+
+  await page.goto('/');
+  const loadBtn = page.locator('[data-umami-event="load_model_button"]');
+  await expect(loadBtn).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(6500);
+  expect(seen.assets.length, 'both probe artifacts should be prefetched').toBe(2);
+
+  await loadBtn.click();
+  await expect
+    .poll(() => seen.logs.find((l) => l.includes('wins')), { timeout: 90000 })
+    .toContain('wasm wins');
+  await expect(page.locator('.controls')).toHaveCount(1, { timeout: 30000 });
+});
+
+test('an adapter without shader-f16 on a source with no int8 is neither prefetched for nor measured', async ({ page }) => {
+  // The gate still exists, it just moved: with no fp16 kernel and no int8 file
+  // the app has no precision it may put this visitor on unasked (fp32 and w4a8
+  // are hand picks only), so a probe win could not be acted on and the ~5 MB of
+  // artifacts must not be spent. A broken gate leaks silently here: the visitor
+  // still ends up on WASM, just poorer.
+  const NO_INT8_SOURCE = [
+    'config.json',
+    'fp32/decoder_joint-model.onnx',
+    'fp32/decoder_joint-model.onnx.data',
+    'fp32/encoder-model.onnx',
+    'fp32/encoder-model.onnx.data.000',
+    'fp32/encoder-model.onnx.data.001',
+    'int8/decoder_joint-model.int8.onnx',
+    'nemo128.onnx',
+    'vocab.txt',
+    'w4a8/encoder-model.w4a8.onnx',
+  ];
+  await page.addInitScript(NO_F16_ADAPTER);
+  await stallWeights(page);
+  // The listing is the premise, so pin the source it comes from (the same
+  // pattern as precision-radio-source-gate.spec.js).
+  await page.addInitScript(() => { window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local' }; });
+  await routeSyntheticLocalMirror(page, NO_INT8_SOURCE);
   const seen = watchProbe(page);
 
   await page.goto('/');
