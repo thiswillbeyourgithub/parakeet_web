@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '@playwright/test';
+import { chromium, firefox } from '@playwright/test';
 
 import { seedSettings } from '../../test/e2e/seed.mjs';
 
@@ -71,7 +71,12 @@ export function spawnAppServer({ port, modelDir, distDir } = {}) {
 // at ORT session create; reproduced app-free, 2026-08-12). The default launch
 // uses the headless shell for headless runs, which never hits it, and headed
 // runs use the full binary either way.
+//
+// channel 'firefox' launches Playwright's Firefox instead, for WASM runs only
+// (it has no WebGPU here): the CPU runtime comparisons need it, because
+// Firefox's WASM codegen differs from Chromium's by up to 9x.
 export function launchWebGpuBrowser({ headless = false, channel = 'chromium' } = {}) {
+  if (channel === 'firefox') return firefox.launch({ headless });
   return chromium.launch({
     headless,
     channel: channel === 'chromium' ? undefined : channel,
@@ -118,6 +123,10 @@ export async function bootApp(page, { baseURL, settings = {}, ortep, modelSource
 // (surfaced immediately with the on-page error text instead of masking the
 // real failure as a slow timeout), or the model never becomes ready.
 export async function loadModelAndWaitReady(page, { timeoutMs = 6 * 60 * 1000 } = {}) {
+  // Outside the Chromium family the app opens a "this browser will be slow"
+  // modal on every boot (not persisted) that covers the Load button.
+  const slowModal = page.getByTestId('slow-browser-modal');
+  if (await slowModal.isVisible().catch(() => false)) await slowModal.locator('button').click();
   await page.locator('[data-umami-event="load_model_button"]').click();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

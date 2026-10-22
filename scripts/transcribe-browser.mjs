@@ -223,7 +223,7 @@ Options:
                           The run fails if a different encoder file was loaded.
       --lang L            Seed the UI language (default en) so control text matches.
       --headless          Run headless (WebGPU is more reliable headed on a GPU box).
-      --channel C         Browser build: chromium (default) or chrome.
+      --channel C         Browser build: chromium (default), chrome, or firefox (WASM only).
       --port N            Static-server port. Default 4180.
       --model-dir DIR     Weights dir to serve at /models. Default ./fallback_models.
       --model-repo R      Repo to load from /models/<R> (VITE_MODEL_REPO), e.g.
@@ -239,6 +239,9 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) { printHelp(); return; }
 
+  if (args.channel === 'firefox' && args.backend.startsWith('webgpu')) {
+    throw new Error('--channel firefox is WASM only here: pass --backend wasm');
+  }
   const audioPath = resolve(args.audio);
   if (!existsSync(audioPath)) throw new Error(`audio file not found: ${audioPath}`);
   if (!existsSync(resolve(DIST, 'index.html'))) {
@@ -273,7 +276,7 @@ async function main() {
   // ORT's expected partial-EP-assignment warning on every webgpu-hybrid session.
   const benign = (t) => (
     /Failed to load resource.*\b404\b/i.test(t)
-    || /Unexpected token '<'/.test(t)
+    || /Unexpected token '<'|expected expression, got '<'/.test(t)  // Chromium | Firefox wording
     || /VerifyEachNodeIsAssignedToAnEp|Some nodes were not assigned preferred execution providers|Rerunning with verbose output/.test(t)
   );
 
