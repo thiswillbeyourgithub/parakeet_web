@@ -72,19 +72,12 @@ try {
     return r;
   });
   if (!gate.ok) throw new Skip(`no real WebGPU GPU here (${gate.reason})`);
-  // A real GPU is not enough: since 2026-09-11 the app only probes where the
-  // answer could be acted on, and fp16 is the only GPU precision it will ever
-  // select unasked (gpuBackendAutoUsable in lib/encoderQuants.js). An adapter
-  // without `shader-f16` therefore prefetches nothing, runs no probe and stores
-  // no verdict, ON PURPOSE. That is a skip, not a failure: this script has
-  // nothing left to measure, and asserting a verdict here would be asserting
-  // the app misbehaves. (This box is exactly that case: Dawn does not expose
-  // `shader-f16` on the RTX 3090 Ti even though Vulkan advertises it, so the
-  // script read FAIL for two days before the gate was aligned.)
-  if (!gate.shaderF16) {
-    throw new Skip(`adapter has no shader-f16 (${gate.adapter}), so the app never auto-probes here`);
-  }
-  console.log(`GPU: ${gate.adapter} (shader-f16)`);
+  // Any real GPU qualifies since 2026-10-22: the app's unasked GPU precision
+  // is fp16 with shader-f16 and int8 without it (gpuDefaultEncoderQuant in
+  // lib/encoderQuants.js), so the probe runs either way. It used to SKIP here
+  // on an adapter without shader-f16 (this box: Dawn hides it on the RTX 3090
+  // Ti), because fp16 was then the only GPU precision the app would select.
+  console.log(`GPU: ${gate.adapter} (${gate.shaderF16 ? 'shader-f16, loads fp16' : 'no shader-f16, loads int8'})`);
 
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
