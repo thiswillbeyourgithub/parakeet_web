@@ -8,7 +8,7 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Unreleased
+## 11.5.0 (2026-10-22)
 
 ### A faster CPU runtime, built for this app
 

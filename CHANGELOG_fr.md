@@ -8,7 +8,7 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Non publié
+## 11.5.0 (2026-10-22)
 
 ### Un moteur CPU plus rapide, compilé pour l'application
 
