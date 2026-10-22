@@ -8,8 +8,8 @@
 //      webgpu-hybrid backend SURVIVES a reload. It used to be coerced to WASM
 //      on every boot, so this is the assertion that would catch the app-wide
 //      pin coming back by accident,
-//   2. on WebGPU the int8 precision is not offered at all (the GPU EP has no
-//      int8 encoder kernel) and fp16 is the default, but only on an adapter
+//   2. on WebGPU int8 is offered as a hand pick (the shipped int8 is
+//      MatMulNBits, which the GPU EP runs) and fp16 is the default, but only on an adapter
 //      that reports the `shader-f16` feature: without it ORT builds an fp16
 //      session and then returns an EMPTY transcript, so the radio has to be
 //      greyed out and the load has to degrade to fp32,
@@ -76,12 +76,11 @@ test('with a GPU present, WebGPU is selectable and a persisted choice survives a
   // and the test below pins the first of them from the other side.
   await expect(page.locator('input[name="encoderQuant"][value="fp16"]')).toBeChecked();
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).not.toBeChecked();
-  // There is no GPU int8 encoder kernel, so int8 is not a precision this
-  // backend offers and gets no row at all. Asserting absence rather than a
-  // disabled row is the stronger claim: a greyed int8 under WebGPU described a
-  // precision that was unavailable today rather than one that does not exist
-  // here, which is how a greyed fp16 under WASM got read as a missing file.
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
+  // int8 runs on the GPU too (MatMulNBits), so it has a live row, but it is a
+  // hand pick: the GPU default stays fp16.
+  const int8 = page.locator('input[name="encoderQuant"][value="int8"]');
+  await expect(int8).toBeEnabled();
+  await expect(int8).not.toBeChecked();
 });
 
 test('on WebGPU without shader-f16, fp16 is greyed out and nothing is picked in its place', async ({ page }) => {
@@ -114,7 +113,9 @@ test('on WebGPU without shader-f16, fp16 is greyed out and nothing is picked in 
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).not.toBeChecked();
   await expect(page.locator('input[name="encoderQuant"][value="fp32"]')).toBeEnabled();
   await expect(page.locator('input[name="encoderQuant"][value="w4a8"]')).not.toBeChecked();
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
+  // int8 runs on the GPU as well, and is likewise a hand pick here, not a substitute.
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).not.toBeChecked();
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toBeEnabled();
 
   // A radio group with nothing checked reads as undecided, so the app has to
   // say what a load would really do. Without this the visitor would find out
@@ -134,8 +135,8 @@ test('on WebGPU with shader-f16, fp16 is selectable and a saved choice is restor
   const fp16 = page.locator('input[name="encoderQuant"][value="fp16"]');
   await expect(fp16).toBeEnabled();
   await expect(fp16).toBeChecked();
-  // int8 has no GPU encoder kernel, so it is not offered on this backend.
-  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).toHaveCount(0);
+  // int8 is offered on this backend too, but a saved fp16 is what stays selected.
+  await expect(page.locator('input[name="encoderQuant"][value="int8"]')).not.toBeChecked();
 });
 
 test('with no adapter, WebGPU is greyed out and WASM int8 stays the default', async ({ page }) => {

@@ -1517,8 +1517,12 @@ function resolveDecoderQuant(repoFiles, decoderQuant) {
  *     decoder stays int8 either way (tiny, runs fine on WASM). Anything missing
  *     and the int8 pin stands, which is what makes a repo that cannot serve the
  *     request legible instead of a silent downgrade.
- *   - WebGPU: the GPU EP has no int8 encoder kernel, so the encoder is always
- *     fp32 (which needs the shards, see below) for an 'int8' request. The tiny decoder stays int8, which the GPU EP runs fine.
+ *   - WebGPU: every requested precision is served as itself. int8, w4a8 and
+ *     w2a8 are MatMulNBits encoders, which the GPU EP runs natively; fp16 needs
+ *     the `shader-f16` adapter feature and fp32 needs the shards (see below).
+ *     A MatMulNBits precision the repo does not ship is flagged
+ *     (`nbitsNeedsFile`) so the load is refused rather than quietly run on
+ *     another file. The tiny decoder stays on the CPU.
  *
  * @param {Object} args
  * @param {string} args.backend Backend mode ('wasm' | 'webgpu' | 'webgpu-*').

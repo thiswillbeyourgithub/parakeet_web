@@ -103,10 +103,11 @@ export function planBenchmark({
     { backend: 'wasm', quant: 'fp32' },
   ];
   if (webgpuAvailable && !webgpuDisabled) {
-    // fp32 and w4a8 are the precisions the GPU EP has an encoder kernel for:
-    // int8 has none, while w4a8's MatMulNBits dequantizes the weights to fp16 in
-    // the shader (so the GPU win is download and VRAM, not arithmetic).
+    // Every MatMulNBits encoder (int8, w4a8, w2a8) has a GPU kernel, and the
+    // shipped int8 is one, so it gets a GPU row like the other two. Only an old
+    // MatMulInteger int8 (upstream istupakov) would still fall to the CPU.
     combos.push({ backend: 'webgpu-hybrid', quant: 'fp32' });
+    combos.push({ backend: 'webgpu-hybrid', quant: 'int8' });
     combos.push({ backend: 'webgpu-hybrid', quant: 'w4a8' });
     combos.push({ backend: 'webgpu-hybrid', quant: 'w2a8' });
     // fp16 is the third, and only on an adapter that reports shader-f16:
