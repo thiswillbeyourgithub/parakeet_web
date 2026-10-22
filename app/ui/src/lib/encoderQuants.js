@@ -4,8 +4,9 @@
 // Three separate questions get confused constantly, and each has a different
 // owner, so they are named apart here:
 //
-//   1. Does this BACKEND have a kernel for the precision? int8 has no WebGPU
-//      encoder kernel; fp16 has no usable WASM one. A property of ORT, fixed
+//   1. Does this BACKEND have a kernel for the precision? fp16 has no usable
+//      WASM one. (int8 used to be listed as having no WebGPU kernel: true of the
+//      old MatMulInteger int8, not of the MatMulNBits int8 shipped since.) A property of ORT, fixed
 //      for all time, encoded in the two lists below.
 //   2. Can this MACHINE run it? fp16 additionally needs the adapter's
 //      `shader-f16` feature: without it ORT builds the session and then returns
@@ -46,9 +47,11 @@ export const WASM_ENCODER_QUANTS = ['int8', 'w4a8', 'w2a8', 'fp32'];
 // stays under every wall). fp32 and w4a8 are opt-in and are NEVER selected for
 // anyone: fp32 needs shards, like WASM, for Chromium's ~2 GB IndexedDB readback
 // wall rather than the 32-bit one, and w4a8's MatMulNBits dequantizes to fp16 in
-// the shader, so its win is download and VRAM, not arithmetic. int8 is absent on
-// purpose: there is no GPU int8 encoder kernel.
-export const WEBGPU_ENCODER_QUANTS = ['fp16', 'fp32', 'w4a8', 'w2a8'];
+// the shader, so its win is download and VRAM, not arithmetic. int8 is opt-in
+// since 2026-10-22: the shipped int8 encoder is MatMulNBits (8-bit), which has a
+// WebGPU kernel, and it measured faster than fp32 there from a quarter of the
+// download (see resolveModelQuant in hub.js).
+export const WEBGPU_ENCODER_QUANTS = ['fp16', 'fp32', 'int8', 'w4a8', 'w2a8'];
 
 // What a visitor gets before they have ever picked anything, and what a
 // nonsense saved value is coerced back to.
@@ -164,7 +167,7 @@ export const ENCODER_QUANT_ROWS = ['w2a8', 'w4a8', 'int8', 'fp16', 'fp32'];
  * and the split is the whole point:
  *
  *   (1) BACKEND has no kernel -> the row is not rendered. There is nothing for a
- *       visitor to do about it and nothing to learn from it: int8 on WebGPU is
+ *       visitor to do about it and nothing to learn from it: fp16 on WASM is
  *       not a precision that is unavailable today, it is one that does not exist
  *       on that backend, and a greyed row claiming otherwise reads as breakage.
  *       This is also what stopped fp16 from showing up greyed under WASM, which

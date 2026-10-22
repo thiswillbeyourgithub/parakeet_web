@@ -1568,27 +1568,27 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
       pinnedToInt8: encoderQuant !== 'int8',
     };
   }
-  // fp32 is the GPU path's DEFAULT encoder precision. fp16 and the MatMulNBits
-  // builds (w4a8, w2a8; "w4a8" below stands for both) are opt-in
-  // alternatives to it, each with its own condition. An int8 request on WebGPU becomes
-  // fp32 (there is no GPU int8 encoder kernel either). The decoder follows
-  // resolveDecoderQuant, as on WASM.
+  // fp32 is the GPU path's fallback encoder precision. fp16, int8 and the
+  // MatMulNBits builds (w4a8, w2a8) are alternatives to it, each with its own
+  // condition. The decoder follows resolveDecoderQuant, as on WASM.
   //
-  // w4a8 is NOT rewritten: MatMulNBits has a WebGPU kernel (it dequantizes the
-  // int4 weights to fp16 in the shader, so the GPU gets no int8 arithmetic and
-  // the win is download size and VRAM, not speed), and it loads as one flat file
-  // with no shard requirement. Only an int8 request is rewritten, which is
-  // what lets it through here.
-  // A w4a8 request against a repo that does not ship the file falls back to fp32
-  // here rather than 404ing deep in the download, but it is FLAGGED, unlike the
-  // int8 rewrite above. The two are not the same case. int8 has no GPU encoder
-  // kernel at any repo, so the UI greys that radio out and the rewrite surprises
-  // nobody. w4a8 is offered on the GPU as a live choice, so silently serving
-  // fp32 instead would hand a visitor who picked a 610 MB encoder a 2.35 GB one,
-  // which is exactly the silent quant swap the rest of this module refuses to do.
-  // The flag routes it through the /models upgrade probe and then
-  // QuantUnavailableError, the same path the WASM pin takes.
-  const nbitsServable = isNbitsEncoder(encoderQuant) && hasEncoderFor(repoFiles, encoderQuant);
+  // int8, w4a8 and w2a8 are all MatMulNBits encoders in the Olicorne repos (int8
+  // is built by scripts/quantize-nbits.py --bits 8), and MatMulNBits has a WebGPU
+  // kernel. Until 2026-10-22 an int8 request was rewritten to fp32 here on the
+  // belief that the GPU had no int8 encoder kernel, which was true of the old
+  // dynamic-quantized (MatMulInteger) int8 but not of the MatMulNBits one: on an
+  // RTX 3090 Ti it ran a warm 60 s encode in a median 436-568 ms against fp32's
+  // 585-652 ms, from a quarter of the download. An upstream source whose int8 is
+  // still MatMulInteger (istupakov) also loads, its integer ops just run on the
+  // CPU side of the partition, so it is slower but correct.
+  // A request against a repo that does not ship the file falls back to fp32 here
+  // rather than 404ing deep in the download, but it is FLAGGED: silently serving
+  // fp32 would hand a visitor who picked a 610 MB encoder a 2.35 GB one, which is
+  // exactly the silent quant swap the rest of this module refuses to do. The flag
+  // routes it through the /models upgrade probe and then QuantUnavailableError,
+  // the same path the WASM pin takes.
+  const gpuNbits = encoderQuant === 'int8' || isNbitsEncoder(encoderQuant);
+  const nbitsServable = gpuNbits && hasEncoderFor(repoFiles, encoderQuant);
   // fp16 needs BOTH conditions, and they fail for different reasons that the
   // caller has to be able to tell apart:
   //   - the adapter must expose `shader-f16`. Without it ORT still BUILDS the
@@ -1605,8 +1605,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
   const fp16NeedsF16Adapter = encoderQuant === 'fp16' && !shaderF16;
   const fp16NeedsFile = encoderQuant === 'fp16' && !hasEncoderFor(repoFiles, 'fp16');
   const fp16Servable = encoderQuant === 'fp16' && !fp16NeedsF16Adapter && !fp16NeedsFile;
-  const encoderQ = encoderQuant === 'int8'
-    || (isNbitsEncoder(encoderQuant) && !nbitsServable)
+  const encoderQ = (gpuNbits && !nbitsServable)
     || (encoderQuant === 'fp16' && !fp16Servable)
     ? 'fp32'
     : encoderQuant;
@@ -1625,7 +1624,7 @@ export function resolveModelQuant({ backend, encoderQuant, decoderQuant, repoFil
     decoderQ,
     pinnedToInt8: false,
     webgpuFp32NeedsShards,
-    nbitsNeedsFile: isNbitsEncoder(encoderQuant) && !nbitsServable,
+    nbitsNeedsFile: gpuNbits && !nbitsServable,
     fp16NeedsFile,
     fp16NeedsF16Adapter,
   };
@@ -1809,12 +1808,11 @@ export async function getParakeetModel(repoIdOrModelKey, options = {}) {
     });
   }
   if (nbitsNeedsFile) {
-    // w4a8 (or w2a8) was picked on WebGPU and NO source we tried ships the encoder. The
-    // resolution above already fell back to fp32 so the rest of this function
-    // has a loadable graph, but serving that silently would be a 2.35 GB
-    // download in place of the 610 MB the user chose, and unlike int8 (greyed
-    // out on this backend) w4a8 is offered here as a live choice. Refuse for the
-    // same reason the WASM pin above refuses.
+    // int8, w4a8 or w2a8 was picked on WebGPU and NO source we tried ships the
+    // encoder. The resolution above already fell back to fp32 so the rest of
+    // this function has a loadable graph, but serving that silently would be a
+    // 2.35 GB download in place of the few hundred MB the user chose. Refuse
+    // for the same reason the WASM pin above refuses.
     throw new QuantUnavailableError({
       backend,
       requested: { encoder: encoderQuant, decoder: decoderQuant },
