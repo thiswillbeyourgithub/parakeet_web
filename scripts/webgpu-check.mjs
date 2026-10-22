@@ -186,6 +186,7 @@ async function main() {
     let lastChunk = 0, chunkTotal = 0;
     let animsPaused = false;       // saw App.jsx's "[Transcribe] animations paused" marker
     let pipelineEngaged = false;   // saw App.jsx's "[Decode] pipeline engaged" marker
+    let warmedUp = false;          // saw App.jsx's "[Load] encoder warmed up" marker
     let ortVariant = null;         // which ORT runtime backend.js actually loaded
     let encoderBatch = 0;          // parakeet.js's "[Parakeet.js] Encoder batching enabled: batch=N"
     let stageSplit = null;         // App.jsx's "[Transcribe] Stage split: ..." line
@@ -223,6 +224,7 @@ async function main() {
       if (hit) { lastChunk = Number(hit[1]); chunkTotal = Number(hit[2]); }
       if (txt.includes('[Transcribe] animations paused')) animsPaused = true;
       if (txt.includes('[Decode] pipeline engaged')) pipelineEngaged = true;
+      if (txt.includes('[Load] encoder warmed up')) warmedUp = true;
       // Main thread only: the decode/encode workers run WASM sessions and stay
       // on the shipped runtime by design, so their line is not the answer to
       // "which runtime ran the GPU encoder" (reading it as such made the first
@@ -378,6 +380,10 @@ async function main() {
       // on any WebGPU multi-chunk run; assert the marker so a green run proves
       // the worker path ran rather than silently falling through to in-thread.
       contentChecks.push({ name: 'decode-worker pipeline engaged', ok: pipelineEngaged, detail: pipelineEngaged ? 'yes' : 'NOT engaged (fell through to in-thread?)' });
+      // The first encoder run compiles every shader (~3.7 s measured on the
+      // RTX 3090 Ti). App.jsx pays it at load time; without the marker that
+      // cost silently moves back onto the first transcription.
+      contentChecks.push({ name: 'encoder warmed up at load', ok: warmedUp, detail: warmedUp ? 'yes' : 'MARKER MISSING (first transcription pays the shader compile)' });
       // Which runtime actually ran. Without this an A/B could compare a jspi
       // run against another jsep run (a browser without JSPI downgrades with
       // only a warning) and read the noise as a verdict.

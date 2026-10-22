@@ -2758,6 +2758,25 @@ export class ParakeetModel {
    * old mask-free leak ~3e-2). Costs two tiny encoder runs, once.
    * @returns {Promise<boolean>}
    */
+  /**
+   * Pay the batching encoder's one-time costs at load instead of inside the
+   * first transcription. On WebGPU the first encoderSession.run compiles every
+   * shader, a fixed cost whatever the input length: measured 2026-10-22 at
+   * 3.7 s for the ragged probe's 1 s clip (RTX 3090 Ti, fp32, jspi), while the
+   * next run on a full 60 s chunk pair took 0.95 s. transcribeChunked awaited
+   * that probe before its first chunk, so 3.9 of an 11.5 s 3-minute
+   * transcription was this warm-up. Running the memoized probe here moves both
+   * costs into the model load, where the user is already waiting. Only
+   * batching encoders (maxEncoderBatch > 1, i.e. WebGPU) ever probe; on WASM
+   * this is a no-op, so the CPU path is untouched.
+   * @returns {Promise<boolean>} Whether a warm-up ran.
+   */
+  async warmUp() {
+    if (!this.encoderSession || !(this.maxEncoderBatch > 1)) return false;
+    await this.raggedBatchOk();
+    return true;
+  }
+
   raggedBatchOk() {
     if (!this._raggedBatchProbe) {
       this._raggedBatchProbe = (async () => {
