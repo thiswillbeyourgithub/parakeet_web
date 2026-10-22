@@ -29,6 +29,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
   - [Benchmark](#benchmark)
 - [Performance and Hardware](#performance-and-hardware)
   - [Performance on commodity hardware](#performance-on-commodity-hardware)
+  - [A CPU runtime built for this app](#a-cpu-runtime-built-for-this-app)
   - [Choosing between CPU and GPU](#choosing-between-cpu-and-gpu)
   - [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
 - [Self-Hosting](#self-hosting)
@@ -384,13 +385,36 @@ This app is meant to run on the machine you already own, which is usually a lapt
 
 Concretely that has meant: decoder graphs that return only the top-K logits, so each decode step stops copying a full vocabulary row out of the model; a 60-second chunk window chosen by measurement rather than habit; encoding spread across background workers when, and only when, the machine has cores genuinely free; and a backend chosen by timing both paths on your own hardware instead of trusting a number from someone else's GPU ([Autoconfigure](#autoconfigure-measuring-instead-of-guessing)).
 
-On the processor path the app also ships its own build of the inference runtime: the stock one expands quantized int8 weights back to fp32 before every matrix product, and this build multiplies them as integers instead. Through the real app it took the 3-minute test recording from a median 144 s to 86 s on WASM int8 (3 interleaved runs each, on a busy machine), and it falls back to the stock runtime on any failure. `?ortep=stock` in the address turns it off. Details are in the [changelog](./CHANGELOG.md).
+On the processor path the app also runs its own build of the inference engine, with integer kernels written for this model's quantized encoder: on a 3-minute recording it cut transcription time by about 40 % in Chromium and Firefox alike. See [A CPU runtime built for this app](#a-cpu-runtime-built-for-this-app).
 
 The rule behind all of it is that a claim only survives if it was measured on a real machine through the real app. That is also how the largest win in this release was found: WebGPU had been switched off for a month on a diagnosis that turned out to be wrong (see the next section), and the actual fix took a 3-minute clip from 12 min 39 s to 8.5 s.
 
 The same rule cuts the other way, so it is worth stating plainly. Comparing the shipped 9.9.0 build against the shipped 10.0.0 build on the same 6.5-minute recording, with the arm order rotated every repetition, the GPU path got **50x faster** (1004 s to 20 s) while the CPU path got about **7 % slower** (104 s to 111 s, 20 runs per arm). That CPU cost is not several changes each taking a little: everything 10.0.0 changed about CPU work other than the chunk window measures +0.5 %, which is nothing at all. The whole of it is the chunk window going from 20 s to 60 s, and that was bought deliberately, because a longer window means fewer stitch seams and about half a point of WER better accuracy. The window is adjustable in Settings if you would rather have the 7 % back.
 
 Every measured change is listed in the [changelog](./CHANGELOG.md), and you can measure your own machine with the built-in [Benchmark](#benchmark).
+
+### A CPU runtime built for this app
+
+The app runs on [ONNX Runtime Web](https://onnxruntime.ai/), and the stock build of it leaves a lot on the table for this particular model. Profiling the encoder on the processor backend showed that 83 % of its time goes into one operator, `MatMulNBits`, the matrix product against the quantized (int8, 4-bit or 2-bit) weights. On WebAssembly the stock runtime has no integer path for it: every call expands the weights back to 32-bit floats and runs a float matrix product, so the quantized model pays float compute and only saves download size. Asking for integer accuracy in the model file changes nothing; on WebAssembly the flag is ignored.
+
+So the app ships its own build of ONNX Runtime, identical to the stock one except for that operator:
+
+- **Integer kernels for 8, 4 and 2-bit weights.** Activations are quantized per block on the fly and multiplied against the weights as integers with WebAssembly SIMD, with the scaling folded in once per block. Each kernel was checked against an exact reference (relative difference below 1e-6) before going near the app.
+- **Two builds, picked by feature detection.** One uses relaxed SIMD (the dot-product instructions Chromium and Firefox expose), the other plain SIMD128 for engines without it, such as Safari. The page asks the engine which instructions it validates and loads the matching file, so the choice is deterministic rather than a timing guess.
+- **An upstream bug fixed along the way.** A platform guard in the stock runtime zeroed every 4-bit output on WebAssembly once the integer path existed; the patch corrects it.
+- **Reproducible and pinned.** `scripts/ort-custom/build.sh` builds it from the pinned upstream tag with a pinned compiler and records every input; a unit test fails if the vendored ONNX Runtime version, the patch, or the shipped bytes ever stop matching that record. The files go through the same integrity manifest as every other runtime file.
+- **Stock is always the fallback.** A missing or tampered file, or a runtime that cannot build a one-node test session, puts that page on the stock runtime before any model loads, so the custom build can only add speed. The GPU backend keeps the stock runtime (the custom build has no WebGPU support), and switching between the two reloads the page once.
+
+Measured through the real app, transcribing the 3-minute test recording on the processor backend with the int8 encoder (greedy, 3 interleaved runs per arm, on a busy machine):
+
+| Browser | Stock runtime | Custom runtime | Change |
+|---|---|---|---|
+| Chromium 156 | 144 s | 86 s | -40 % |
+| Firefox 157 | 117 s | 66 s | -44 % |
+
+The custom transcripts were word-for-word identical in both browsers, and differed from stock by one word out of 360. Accuracy was also gated on 691 FLEURS utterances before shipping: word error rate 5.02 % against 5.08 % for int8, 4.99 % against 4.98 % for 4-bit, both within noise. The plain-SIMD build is slower than the relaxed one (in an encoder benchmark it gained little for int8 in Chromium, and about 1.5x for 4 and 2-bit); it has not been measured through the app.
+
+To compare for yourself, or if something looks wrong, set **CPU runtime** to **Stock** under Model and performance in the settings, or add `?ortep=stock` to the address. (Kernels, build and measurements done with the help of [Claude Code](https://claude.com/claude-code).)
 
 ### Choosing between CPU and GPU
 

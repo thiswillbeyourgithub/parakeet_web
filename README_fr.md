@@ -29,6 +29,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
   - [Banc d'essai](#banc-dessai)
 - [Performances et matériel](#performances-et-matériel)
   - [Performances sur du matériel ordinaire](#performances-sur-du-matériel-ordinaire)
+  - [Un moteur CPU compilé pour cette application](#un-moteur-cpu-compilé-pour-cette-application)
   - [Choisir entre CPU et GPU](#choisir-entre-cpu-et-gpu)
   - [Configuration automatique : mesurer plutôt que supposer](#configuration-automatique--mesurer-plutôt-que-supposer)
 - [Auto-hébergement](#auto-hébergement)
@@ -389,13 +390,36 @@ Cette application est faite pour tourner sur la machine que vous possédez déj�
 
 Concrètement : des graphes de décodeur qui ne renvoient que les logits top-K, pour que chaque étape de décodage cesse de recopier une ligne de vocabulaire entière hors du modèle ; une fenêtre de découpage de 60 secondes choisie par la mesure et non par habitude ; un encodage réparti sur des workers d'arrière-plan quand, et seulement quand, la machine a des cœurs réellement libres ; et un backend choisi en chronométrant les deux voies sur votre propre matériel plutôt qu'en se fiant à un chiffre obtenu sur le GPU de quelqu'un d'autre ([Configuration automatique](#configuration-automatique--mesurer-plutôt-que-supposer)).
 
-Côté processeur, l'application embarque aussi sa propre compilation du moteur d'inférence : le moteur standard reconvertit les poids int8 quantifiés en fp32 avant chaque produit matriciel, alors que cette compilation les multiplie directement en entiers. Dans l'application réelle, l'enregistrement de test de 3 minutes est passé de 144 s à 86 s en médiane en WASM int8 (3 exécutions entrelacées de chaque, sur une machine chargée), et tout échec ramène au moteur standard. `?ortep=stock` dans l'adresse le désactive. Les détails sont dans le [journal des modifications](./CHANGELOG_fr.md).
+Côté processeur, l'application exécute aussi sa propre compilation du moteur d'inférence, avec des noyaux entiers écrits pour l'encodeur quantifié de ce modèle : sur un enregistrement de 3 minutes, elle réduit le temps de transcription d'environ 40 %, dans Chromium comme dans Firefox. Voir [Un moteur CPU compilé pour cette application](#un-moteur-cpu-compilé-pour-cette-application).
 
 La règle derrière tout cela : une affirmation ne survit que si elle a été mesurée sur une vraie machine, à travers la vraie application. C'est aussi ainsi qu'a été trouvé le plus gros gain de cette version : WebGPU était désactivé depuis un mois sur un diagnostic qui s'est révélé faux (voir la section suivante), et le correctif réel a fait passer un extrait de 3 minutes de 12 min 39 s à 8,5 s.
 
 La même règle vaut dans l'autre sens, et il faut donc le dire clairement. En comparant la version 9.9.0 telle que publiée à la version 10.0.0 telle que publiée, sur le même enregistrement de 6,5 minutes, en alternant l'ordre des deux versions à chaque répétition, la voie GPU est devenue **50x plus rapide** (de 1004 s à 20 s) tandis que la voie CPU est devenue environ **7 % plus lente** (de 104 s à 111 s, 20 exécutions par version). Ce coût CPU n'est pas la somme de plusieurs changements qui coûteraient chacun un peu : tout ce que la 10.0.0 a changé au travail CPU en dehors de la fenêtre de découpage mesure +0,5 %, c'est-à-dire rien. La totalité vient du passage de la fenêtre de 20 s à 60 s, et c'était un choix délibéré, car une fenêtre plus longue signifie moins de coutures et environ un demi-point de WER de mieux. La fenêtre reste réglable dans les Paramètres si vous préférez récupérer ces 7 %.
 
 Chaque changement mesuré est listé dans le [journal des modifications](./CHANGELOG_fr.md), et vous pouvez mesurer votre propre machine avec le [banc d'essai](#banc-dessai) intégré.
+
+### Un moteur CPU compilé pour cette application
+
+L'application repose sur [ONNX Runtime Web](https://onnxruntime.ai/), et sa version standard laisse beaucoup de performance de côté pour ce modèle précis. Le profilage de l'encodeur sur le backend processeur a montré que 83 % de son temps part dans un seul opérateur, `MatMulNBits`, le produit matriciel avec les poids quantifiés (int8, 4 bits ou 2 bits). En WebAssembly, le moteur standard n'a pas de voie entière pour lui : chaque appel reconvertit les poids en flottants 32 bits et effectue un produit matriciel flottant, si bien que le modèle quantifié paie le calcul flottant et n'économise que du téléchargement. Demander une précision entière dans le fichier du modèle n'y change rien : en WebAssembly, l'option est ignorée.
+
+L'application embarque donc sa propre compilation d'ONNX Runtime, identique à la version standard à cet opérateur près :
+
+- **Des noyaux entiers pour les poids 8, 4 et 2 bits.** Les activations sont quantifiées par bloc à la volée puis multipliées en entiers avec les poids grâce au SIMD WebAssembly, la mise à l'échelle n'étant appliquée qu'une fois par bloc. Chaque noyau a été vérifié contre une référence exacte (écart relatif inférieur à 1e-6) avant d'approcher l'application.
+- **Deux versions, choisies par détection de fonctionnalités.** L'une utilise le SIMD relaxé (les instructions de produit scalaire que Chromium et Firefox exposent), l'autre le SIMD128 simple, pour les moteurs qui en sont dépourvus comme Safari. La page demande au moteur quelles instructions il valide et charge le fichier correspondant : le choix est déterministe, pas une estimation par chronométrage.
+- **Un bogue amont corrigé au passage.** Une garde de plateforme du moteur standard mettait à zéro toutes les sorties 4 bits en WebAssembly dès que la voie entière existait ; le correctif la rectifie.
+- **Reproductible et figé.** `scripts/ort-custom/build.sh` le compile depuis l'étiquette amont figée avec un compilateur figé et consigne chaque entrée ; un test unitaire échoue si la version d'ONNX Runtime embarquée, le correctif ou les octets livrés cessent de correspondre à cette trace. Les fichiers passent par le même manifeste d'intégrité que tous les autres fichiers du moteur.
+- **Le moteur standard reste toujours le repli.** Un fichier absent ou altéré, ou un moteur incapable de créer une session de test à un nœud, ramène la page au moteur standard avant tout chargement de modèle : la version compilée ne peut qu'ajouter de la vitesse. Le backend GPU garde le moteur standard (la version compilée ne gère pas WebGPU), et passer de l'un à l'autre recharge la page une fois.
+
+Mesuré dans l'application réelle, en transcrivant l'enregistrement de test de 3 minutes sur le backend processeur avec l'encodeur int8 (glouton, 3 exécutions entrelacées par bras, sur une machine chargée) :
+
+| Navigateur | Moteur standard | Moteur compilé | Écart |
+|---|---|---|---|
+| Chromium 156 | 144 s | 86 s | -40 % |
+| Firefox 157 | 117 s | 66 s | -44 % |
+
+Les transcriptions du moteur compilé étaient identiques mot pour mot dans les deux navigateurs, et différaient du moteur standard d'un mot sur 360. La précision a aussi été contrôlée sur 691 énoncés FLEURS avant la mise en service : taux d'erreur sur les mots de 5,02 % contre 5,08 % en int8, 4,99 % contre 4,98 % en 4 bits, dans le bruit de mesure dans les deux cas. La version SIMD simple est plus lente que la version relaxée (dans un banc d'essai de l'encodeur, elle gagnait peu en int8 dans Chromium, et environ 1,5x en 4 et 2 bits) ; elle n'a pas été mesurée dans l'application.
+
+Pour comparer vous-même, ou si quelque chose semble anormal, réglez **Moteur CPU** sur **Standard** dans Modèle et performance, ou ajoutez `?ortep=stock` à l'adresse. (Noyaux, compilation et mesures réalisés avec l'aide de [Claude Code](https://claude.com/claude-code).)
 
 ### Choisir entre CPU et GPU
 
