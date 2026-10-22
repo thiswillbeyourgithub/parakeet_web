@@ -1,7 +1,7 @@
 // Tier-3 coverage for the slow-browser warning popup (App.jsx +
-// lib/browserFamily.js): the WASM engine is ~9x slower outside the Chromium
-// family (SpiderMonkey SIMD codegen, PERF_PLAN #5 2026-08-10), so non-Chromium
-// visitors get a dismissable heads-up recommending Brave/Chrome/Edge.
+// lib/browserFamily.js): the WASM engine was ~9x slower outside the Chromium
+// family in Firefox 153 (PERF_PLAN #5 2026-08-10) and close to it in Firefox
+// 157, so non-Chromium visitors get a dismissable "may be slower" heads-up.
 //
 // Three behaviours pinned:
 // 1. Chromium NEVER shows it (a false positive would nag every normal user).

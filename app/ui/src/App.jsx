@@ -2288,9 +2288,9 @@ export default function App() {
     medModeProbeDoneRef.current = true;
     autoconfigureBackendForMedMode();
   }, [settingsLoaded, webgpuAvailable]);
-  // Slow-browser heads-up: the WASM engine is ~9x slower outside the
-  // Chromium family (SpiderMonkey SIMD codegen, measured 2026-08-10, see
-  // lib/browserFamily.js). Dismissal is DELIBERATELY not persisted: the
+  // Slow-browser heads-up: the WASM engine was ~9x slower outside the
+  // Chromium family (Firefox 153, 2026-08-10) but close to it in Firefox 157,
+  // so the copy says "may be slower" (see lib/browserFamily.js). Dismissal is DELIBERATELY not persisted: the
   // slowness is real on every visit, so the popup returns on every reload.
   const slowBrowser = useMemo(() => !isChromiumFamily(typeof navigator !== 'undefined' ? navigator : null), []);
   const [slowBrowserDismissed, setSlowBrowserDismissed] = useState(false);

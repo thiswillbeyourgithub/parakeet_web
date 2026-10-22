@@ -5,7 +5,10 @@
 // 2026-08-10; kernel-level benches pinned it on SpiderMonkey's SIMD codegen,
 // not threading, so it is not fixable app-side). Users deserve that heads-up
 // BEFORE they wait ten minutes on a recording, so App.jsx shows a dismissable
-// (never persisted) popup on every non-Chromium load.
+// (never persisted) popup on every non-Chromium load. Firefox 157 (2026-10-22,
+// in-app, contended box) measured close to Chromium instead (stock 117 s vs
+// Chromium 156's 144 s the day before), so the copy now says "may be slower"
+// rather than promising a 10x gap that depends on the version.
 //
 // Detection, in order of preference:
 // 1. userAgentData.brands containing "Chromium": the honest signal, exposed
