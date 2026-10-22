@@ -2,10 +2,9 @@
 // that picks the encoder/decoder quantisation per backend and per what the repo
 // ships. It encodes two hard rules: WASM is pinned to int8 (a single 2.4 GB
 // fp32 sidecar overflows the 32-bit WASM heap and the browser's blob caps), and
-// WebGPU runs no int8 encoder at all (the GPU EP has no kernel for one), so an
-// int8 request there becomes fp32, which in turn REQUIRES the <2 GB shards on
-// both backends. w4a8 is the one exception on the GPU side: MatMulNBits does
-// have a WebGPU kernel, so that request survives intact and needs no shards.
+// fp32 REQUIRES the <2 GB shards on both backends. The MatMulNBits encoders
+// (int8 since 2026-10-22, w4a8, w2a8) have a WebGPU kernel, so on the GPU side
+// those requests survive intact and need no shards.
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
@@ -55,7 +54,7 @@ describe('resolveModelQuant: the nested repo layout', () => {
     const wasm = resolveModelQuant({ backend: 'wasm', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT, allowWasmFp32: true });
     assert.equal(wasm.encoderQ, 'fp32');
     assert.equal(wasm.pinnedToInt8, false);
-    const gpu = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
+    const gpu = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: NESTED_LAYOUT });
     assert.equal(gpu.webgpuFp32NeedsShards, false);
   });
 
@@ -367,19 +366,30 @@ describe('parseEncoderShards: normalises flat and sharded/ layouts', () => {
   });
 });
 
-describe('resolveModelQuant: WebGPU resolves int8 requests to fp32', () => {
-  // The GPU EP has no int8 encoder kernel, so an int8 request becomes fp32
-  // silently and without a flag: that radio is greyed out on this backend, so
-  // the rewrite surprises nobody. The opt-in precisions (w4a8, fp16) are the
-  // opposite case and are always flagged, see their own describes.
-  test('int8 request -> fp32 encoder, int8 decoder', () => {
-    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+describe('resolveModelQuant: WebGPU serves int8 requests as int8', () => {
+  // Until 2026-10-22 an int8 request on WebGPU silently became fp32, on the
+  // belief that the GPU EP had no int8 encoder kernel. The shipped int8 encoder
+  // is MatMulNBits, which has one, so it is now served as-is, and like the other
+  // opt-in precisions (w4a8, fp16) it is FLAGGED rather than swapped when the
+  // source does not ship it.
+  test('int8 request -> int8 encoder, int8 decoder, no shards needed', () => {
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NO_SHARDS });
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+    assert.equal(r.webgpuFp32NeedsShards, false);
+    assert.equal(r.nbitsNeedsFile, false);
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NO_SHARDS }), true);
   });
 
   test('webgpu-hybrid is treated as WebGPU', () => {
     const r = resolveModelQuant({ backend: 'webgpu-hybrid', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS });
-    assert.deepEqual([r.encoderQ, r.decoderQ], ['fp32', 'int8']);
+    assert.deepEqual([r.encoderQ, r.decoderQ], ['int8', 'int8']);
+  });
+
+  test('an int8 request against a source with no int8 encoder is flagged, not swapped for fp32', () => {
+    const noInt8 = WITH_FP32_SHARDS.filter((f) => f !== 'encoder-model.int8.onnx');
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: noInt8 });
+    assert.equal(r.nbitsNeedsFile, true);
+    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: noInt8 }), false);
   });
 
   test('explicit fp32 request -> fp32 encoder, int8 decoder', () => {
@@ -398,7 +408,7 @@ describe('resolveModelQuant: WebGPU resolves int8 requests to fp32', () => {
   // WebGPU never pins to int8: pinnedToInt8 is the WASM-only signal, and a GPU
   // load that cannot proceed is reported through webgpuFp32NeedsShards instead.
   test('pinnedToInt8 is never set on WebGPU, even with no shards', () => {
-    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NO_SHARDS });
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: NO_SHARDS });
     assert.equal(r.pinnedToInt8, false);
     assert.equal(r.webgpuFp32NeedsShards, true);
   });
@@ -493,16 +503,10 @@ describe('resolveModelQuant: WebGPU fp32 REQUIRES the shards', () => {
   });
 
   test('shards under a sharded/ subfolder (how the model repo ships them) also clear it', () => {
-    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS_SUBFOLDER });
+    const r = resolveModelQuant({ backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8', repoFiles: WITH_FP32_SHARDS_SUBFOLDER });
     assert.equal(r.webgpuFp32NeedsShards, false);
   });
 
-  // An int8 request is the common case since it is the app's default: the
-  // visitor never asked for fp32, so a shard-less source must still be reported
-  // as unservable rather than silently attempting a load that dies inside ORT.
-  test('an int8 request on a shard-less source is also flagged (the probe never asked for fp32)', () => {
-    assert.equal(quantSatisfiable({ backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: NO_SHARDS }), false);
-  });
 });
 
 // quantSatisfiable(fileSet) = "this source can deliver the requested quant with
@@ -524,7 +528,7 @@ describe('quantSatisfiable: can a file set deliver the requested quant?', () => 
   });
 
   test('WebGPU is satisfiable iff the source ships an fp32 shard set', () => {
-    const args = { backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8' };
+    const args = { backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8' };
     assert.equal(quantSatisfiable({ ...args, repoFiles: WITH_FP32_SHARDS }), true);
     assert.equal(quantSatisfiable({ ...args, repoFiles: NO_SHARDS }), false, 'a flat 2.3 GB fp32 encoder cannot load on WebGPU either');
   });
@@ -542,7 +546,7 @@ describe('local /models fallback decision (HF downgraded + local can satisfy)', 
   });
 
   test('WebGPU: HF (no shards) cannot load, local (shards) satisfies -> prefer local', () => {
-    const req = { backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8' };
+    const req = { backend: 'webgpu', encoderQuant: 'fp32', decoderQuant: 'int8' };
     const hf = resolveModelQuant({ ...req, repoFiles: NO_SHARDS });
     assert.equal(hf.webgpuFp32NeedsShards, true, 'HF ships no loadable fp32 layout');
     assert.equal(quantSatisfiable({ ...req, repoFiles: WITH_FP32_SHARDS }), true, 'local can');

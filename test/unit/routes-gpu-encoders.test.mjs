@@ -99,7 +99,17 @@ describe('routeLocalMirrorWithoutGpuEncoders', () => {
     // the GPU-to-WASM fallback.
     const call = await install();
     const { json } = await call(`${ORIGIN}/models/repo/${MANIFEST_FILE}`, MANIFEST);
-    for (const encoderQuant of WEBGPU_ENCODER_QUANTS) {
+    // int8 is the one exception, by construction: since 2026-10-22 it is also a
+    // GPU precision (MatMulNBits), but it is the encoder the WASM fallback
+    // loads, so the helper must keep it. The app never takes int8 to the GPU
+    // unasked (its only substitution is WASM int8), so keeping it does not
+    // weaken the premise.
+    assert.equal(
+      quantSatisfiable({ backend: 'wasm', encoderQuant: 'int8', decoderQuant: 'int8', repoFiles: json }),
+      true,
+      'the WASM fallback still needs its int8 encoder',
+    );
+    for (const encoderQuant of WEBGPU_ENCODER_QUANTS.filter((q) => q !== 'int8')) {
       assert.equal(
         quantSatisfiable({
           backend: 'webgpu-hybrid', encoderQuant, decoderQuant: 'int8', repoFiles: MANIFEST, shaderF16: true,

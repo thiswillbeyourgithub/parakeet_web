@@ -28,7 +28,9 @@ const LOCAL_MODELS_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/models
 // the directory), because both spellings of the same file have to disappear
 // together for routeLocalMirrorWithoutGpuEncoders to be honest.
 //
-// EVERY GPU-runnable precision has to be in here, not just the default. The app
+// EVERY GPU-runnable precision has to be in here, not just the default, with one
+// deliberate exception: int8, a GPU precision too since 2026-10-22, is the very
+// encoder the WASM fallback loads, so it stays. The app
 // makes exactly one substitution of its own, WASM int8, and never swaps one GPU
 // precision for another: fp32, w4a8 and w2a8 are hand picks only. So a mirror
 // that still serves w4a8, w2a8 or fp16 is a source the app will still not take to the GPU

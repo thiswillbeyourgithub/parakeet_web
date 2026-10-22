@@ -52,9 +52,10 @@ test('parseArgs: --quant follows the backend (default and allowed set)', () => {
   assert.equal(parseArgs(['a.wav', '--backend', 'wasm']).quant, 'int8');
   assert.equal(parseArgs(['a.wav', '--backend', 'wasm', '--quant', 'w2a8']).quant, 'w2a8');
   assert.equal(parseArgs(['a.wav', '--quant', 'w4a8']).quant, 'w4a8');
-  // fp16 has no WASM kernel and int8 no GPU one: refused, not silently remapped.
+  // fp16 has no WASM kernel: refused, not silently remapped. int8 runs on both
+  // backends since 2026-10-22 (MatMulNBits has a WebGPU kernel).
   assert.throws(() => parseArgs(['a.wav', '--backend', 'wasm', '--quant', 'fp16']), /--quant must be one of/);
-  assert.throws(() => parseArgs(['a.wav', '--quant', 'int8']), /--quant must be one of/);
+  assert.equal(parseArgs(['a.wav', '--quant', 'int8']).quant, 'int8');
 });
 
 test('parseArgs: --model-repo is passed through', () => {

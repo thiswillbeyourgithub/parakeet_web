@@ -374,20 +374,21 @@ describe('getParakeetModel: the nested repo layout', () => {
 });
 
 describe('getParakeetModel file selection: WebGPU', () => {
-  test('int8 request, no shards -> throws QuantUnavailableError (single-file fp32 is unloadable on WebGPU)', async () => {
-    mockHf(REPO_FLAT);
-    // int8 has no GPU encoder kernel so it resolves to fp32, but the repo ships
-    // only the flat 2.3 GB sidecar and no shards. Single-file fp32 cannot load on
-    // WebGPU (exceeds the browser's ~2 GB ArrayBuffer/Blob limits), so rather than
-    // attempt a load that dies deep in ORT, getParakeetModel refuses cleanly.
-    // This is the common case: int8 is the app's default, so a visitor the perf
-    // probe moves onto WebGPU never asked for fp32 at all.
-    await assert.rejects(
-      getParakeetModel('test/webgpu-int8-no-shards', {
-        backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8',
-      }),
-      (e) => e instanceof QuantUnavailableError && /shards|2 GB|ArrayBuffer/i.test(e.message),
-    );
+  test('int8 request -> the int8 encoder itself, with no fp32 piece or shard set demanded', async () => {
+    const downloaded = mockHf(REPO_FLAT);
+    // Until 2026-10-22 an int8 request on WebGPU was rewritten to fp32 (then
+    // refused here, the repo shipping no shards). The shipped int8 encoder is
+    // MatMulNBits, which has a WebGPU kernel, so it is served as-is: one
+    // self-contained file, exactly like w4a8 below.
+    const r = await getParakeetModel('test/webgpu-int8', {
+      backend: 'webgpu', encoderQuant: 'int8', decoderQuant: 'int8',
+    });
+    assert.equal(r.filenames.encoder, 'encoder-model.int8.onnx');
+    assert.deepEqual(r.quantisation, { encoder: 'int8', decoder: 'int8' });
+    assert.equal(r.urls.encoderDataUrl ?? null, null);
+    assert.ok(!downloaded.some((f) => f.startsWith('encoder-model.onnx')),
+      `no fp32 piece may be fetched; got ${downloaded.join(', ')}`);
+    assert.ok(r.urls.encoderUrl instanceof Uint8Array, 'WebGPU encoder graph must load as bytes');
   });
 
   test('explicit fp32 request, no shards -> throws QuantUnavailableError', async () => {
@@ -404,9 +405,9 @@ describe('getParakeetModel file selection: WebGPU', () => {
 // The w4a8 encoder (scripts/quantize-nbits.py) packs the weights to 4 bits into
 // MatMulNBits nodes: like int8 it is ONE self-contained file, with no external
 // sidecar and no shard set, so the selection layer has to leave both of those
-// mechanisms alone for it. Unlike int8 it runs on BOTH backends (MatMulNBits has
-// a WebGPU kernel), which is what gives it a describe of its own rather than a
-// row in the per-backend ones above.
+// mechanisms alone for it. It runs on BOTH backends (MatMulNBits has a WebGPU
+// kernel), which is what gives it a describe of its own rather than a row in the
+// per-backend ones above.
 const REPO_W4A8 = [...REPO_FLAT, 'encoder-model.w4a8.onnx'];
 
 describe('getParakeetModel file selection: w4a8', () => {
@@ -433,8 +434,8 @@ describe('getParakeetModel file selection: w4a8', () => {
 
   test('WebGPU w4a8 request is served as-is, with no shard set demanded', async () => {
     const downloaded = mockHf(REPO_W4A8);
-    // REPO_W4A8 ships NO fp32 shards, which on this backend is fatal for every
-    // other precision (int8 and fp32 alike resolve to fp32 and then refuse). w4a8
+    // REPO_W4A8 ships NO fp32 shards, which on this backend is fatal for fp32
+    // (and was for int8 until 2026-10-22, when it resolved to fp32). w4a8
     // carries its own weights, so it loads from exactly the repo that cannot
     // serve any of them.
     const r = await getParakeetModel('test/webgpu-w4a8', {
