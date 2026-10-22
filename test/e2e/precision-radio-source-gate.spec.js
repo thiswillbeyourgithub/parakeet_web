@@ -133,13 +133,15 @@ test('a precision this source does not host is not offered at all, before it is 
   await expect.poll(
     () => page.locator('input[name="encoderQuant"]').evaluateAll((els) => els.map((e) => e.value)),
     { timeout: FAST },
-  ).toEqual(['w4a8', 'fp32']);
+  ).toEqual(['w4a8', 'int8', 'fp32']);
 
-  // The gate has to be about this one file, not a blanket refusal: the two
-  // precisions the mirror DOES host stay pickable. Without this half, a probe
+  // The gate has to be about this one file, not a blanket refusal: the three
+  // precisions the mirror DOES host stay pickable (int8 included: the shipped
+  // int8 is MatMulNBits, which the GPU EP runs). Without this half, a probe
   // that simply failed and greyed everything out would pass the assertion above.
   await expect(precisionRadio(page, 'fp32')).toBeEnabled({ timeout: FAST });
   await expect(precisionRadio(page, 'w4a8')).toBeEnabled({ timeout: FAST });
+  await expect(precisionRadio(page, 'int8')).toBeEnabled({ timeout: FAST });
 });
 
 test('the same mirror drops nothing it does host on the CPU backend', async ({ page }) => {

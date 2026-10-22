@@ -56,9 +56,13 @@ describe('planBenchmark', () => {
       // alternatives, fp32 for fp16 (half the GPU download is its whole point).
       assert.ok(QUANT_DOWNLOAD_MB[quant] < QUANT_DOWNLOAD_MB[gpuOnly ? 'fp32' : 'int8']);
     }
-    // No GPU row for int8: the GPU EP has no int8 encoder kernel. w4a8 is the
-    // opt-in that DOES reach the GPU, pinned below.
-    assert.equal(plan.some(r => r.backend.startsWith('webgpu') && r.quant === 'int8'), false);
+    // int8 also gets a GPU row (the shipped int8 is MatMulNBits, which the GPU
+    // EP runs), and it is NOT opt-in: it reads the very file the visitor already
+    // has cached for WASM int8, so it adds a CPU-vs-GPU comparison for free.
+    const gpuInt8 = plan.find(r => r.id === 'webgpu-hybrid:int8');
+    assert.ok(gpuInt8, 'int8 must be offered on the GPU');
+    assert.equal(gpuInt8.cached, true);
+    assert.equal(gpuInt8.defaultSelected, true);
   });
 
   test('w4a8 gets a row on both backends, opt-in on each', () => {
@@ -121,11 +125,11 @@ describe('planBenchmark', () => {
     const off = planBenchmark({ webgpuAvailable: true, webgpuDisabled: true });
     assert.ok(off.every(r => r.backend === 'wasm'));
     const on = planBenchmark({ webgpuAvailable: true });
-    // fp32, w4a8 and w2a8 are the precisions any WebGPU adapter can run (plain
-    // int8 has no GPU kernel at all). fp16 needs one more thing, pinned below.
+    // fp32 and the MatMulNBits encoders (int8, w4a8, w2a8) are the precisions
+    // any WebGPU adapter can run. fp16 needs one more thing, pinned below.
     assert.deepEqual(
-      on.filter(r => r.backend === 'webgpu-hybrid').map(r => r.quant),
-      ['fp32', 'w4a8', 'w2a8'],
+      on.filter(r => r.backend === 'webgpu-hybrid').map(r => r.quant).sort(),
+      ['fp32', 'int8', 'w2a8', 'w4a8'],
     );
   });
 
@@ -196,10 +200,12 @@ describe('planBenchmark', () => {
   });
 
   test('a precision on one backend only is cached on that one alone', () => {
-    // The rule is "same file", not "same name": int8 exists on WASM only, so
-    // there is no second row for it to vouch for.
-    const plan = planBenchmark({ webgpuAvailable: true, currentBackend: 'wasm', currentWasmQuant: 'int8' });
-    assert.deepEqual(plan.filter(r => r.cached).map(r => r.id), ['wasm:int8']);
+    // The rule is "same file", not "same name": fp16 exists on WebGPU only
+    // (there are no CPU fp16 kernels), so there is no second row for it to vouch for.
+    const plan = planBenchmark({
+      webgpuAvailable: true, shaderF16: true, currentBackend: 'webgpu-hybrid', currentWebgpuQuant: 'fp16',
+    });
+    assert.deepEqual(plan.filter(r => r.cached).map(r => r.id), ['webgpu-hybrid:fp16']);
   });
 
   test('a precision selected on both backends is downloaded once, not twice', () => {

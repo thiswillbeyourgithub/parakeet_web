@@ -657,8 +657,8 @@ export default function App() {
   // WebGPU, which has its own selection.
   const [wasmEncoderQuant, setWasmEncoderQuant] = useState(DEFAULT_WASM_ENCODER_QUANT);
   // Encoder precision for the WebGPU backend: fp16 (~1.2 GB, near-lossless) by
-  // default, else fp32 (~2.4 GB, sharded) or w4a8 (MatMulNBits, the only
-  // quantised encoder with a GPU kernel; int8 has none). fp16 was withdrawn on
+  // default, else fp32 (~2.4 GB, sharded), int8, w4a8 or w2a8 (all three
+  // MatMulNBits, which the GPU EP runs). fp16 was withdrawn on
   // 2026-08-23 on the premise that no reachable GPU exposes the `shader-f16`
   // adapter feature its WGSL kernels need; a benchmark report from an Intel
   // UHD 630 laptop (2026-09-03) reported that feature present, so the premise
