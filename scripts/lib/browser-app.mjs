@@ -160,9 +160,9 @@ export async function loadModelAndWaitReady(page, { timeoutMs = 6 * 60 * 1000 } 
 // OOMs on big models). Returns { ok, adapter, shaderF16, reason }.
 //
 // `shaderF16` reports the adapter feature, not a verdict: a real GPU without it
-// still runs fp32 and w4a8 by hand. It matters to callers that care about what
-// the app will choose UNASKED, because fp16 is the only GPU precision it ever
-// picks on its own (see gpuBackendAutoUsable in lib/encoderQuants.js).
+// still runs int8, fp32 and w4a8. It matters to callers that care about what
+// the app will choose UNASKED: fp16 with it, int8 without (see
+// gpuDefaultEncoderQuant in lib/encoderQuants.js).
 export async function probeRealWebGpu(page) {
   return page.evaluate(async () => {
     if (!navigator.gpu) return { ok: false, reason: 'navigator.gpu is undefined' };

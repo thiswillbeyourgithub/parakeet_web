@@ -114,9 +114,10 @@ export function planLoadFailure({
   }
 
   if (isQuantUnavailable) {
-    // On a GPU backend this means the machine cannot RUN the precision (fp16
-    // without shader-f16) or the source does not HOST it. Either way the answer
-    // is WASM int8, never another GPU precision: substituting fp32 would hand
+    // On a GPU backend this means the source does not HOST the precision
+    // (an adapter without shader-f16 never asks for fp16: it requests the GPU
+    // int8 instead, see modelRequest.js, so it only lands here when int8 is
+    // not hosted either). The answer is WASM int8, never another GPU precision: substituting fp32 would hand
     // someone who asked for 1.2 GB a 2.35 GB download, and substituting w4a8
     // would quietly swap in the weakest encoder on long audio. Both are
     // reachable by hand and only by hand.

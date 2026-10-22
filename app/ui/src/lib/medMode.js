@@ -61,17 +61,18 @@ export const MED_MODE_ALIASES = Object.freeze([
  *    `encoder-model.fp16.onnx`, and missing either one used to fail the load
  *    over to WASM and PERSIST that flip, so the station quietly stopped using
  *    its GPU. Neither half of that survives: a missing adapter feature now
- *    degrades to fp32 in effectiveEncoderQuant before hub.js is ever asked, and
+ *    selects the GPU's int8 in effectiveEncoderQuant before hub.js is ever
+ *    asked (2026-10-22; it degraded to fp32 before), and
  *    a source that does not host the file clears its own
  *    `gpuWeightsUnservableSig` as soon as it starts serving it. What is left is
  *    a reason to prefer fp16 here more than anywhere else, not less: the
  *    station reloads all day on a network chosen for being locked down, and
  *    fp16 is half of fp32's bytes at the same accuracy. fp32 stays reachable by
  *    hand, and a later `?mode=med` deliberately resets such a pick, because the
- *    link is a setup instruction for the whole station. int8 is NOT an option
- *    here despite being the WASM choice: ORT has no WebGPU kernel for it (see
- *    WEBGPU_ENCODER_QUANTS in lib/encoderQuants.js), so asking for it on the
- *    GPU would either be refused or silently execute on the CPU.
+ *    link is a setup instruction for the whole station. int8 is not the pick
+ *    here, but it IS what an adapter without shader-f16 gets for it: the
+ *    shipped int8 is MatMulNBits, which has a WebGPU kernel (see
+ *    WEBGPU_ENCODER_QUANTS in lib/encoderQuants.js).
  *  - lang is forced to French: the lexicon, the dictation regexes and the model
  *    are all French, so an English UI would misdescribe the station.
  *  - drugFix switches on the drug-name fix layer (lib/drugRules.js), which

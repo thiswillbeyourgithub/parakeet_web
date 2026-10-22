@@ -3,12 +3,15 @@
 // hub.js decides what a repo can actually serve; this decides what to request
 // of it. That is a separate question, and the one with the sharper rules:
 //
-//   - The app performs NO local rewriting of a GPU precision. fp16 used to be
-//     degraded to fp32 whenever the adapter had no `shader-f16`, a 2.35 GB
-//     download nobody asked for. Since 2026-09-11 the only substitution the app
-//     makes on its own is the whole-backend flip to WASM int8 (see
-//     loadFailure.js), so an fp16 request this machine or this source cannot
-//     honour is SENT as fp16, refused by hub.js, and caught there.
+//   - The app rewrites a GPU precision locally in exactly one case: an
+//     adapter without `shader-f16` cannot compile fp16, so the fp16 default is
+//     requested as int8 on the GPU (owner decision 2026-10-22, the rule lives
+//     in effectiveEncoderQuant/gpuDefaultEncoderQuant, reused here so what the
+//     sidebar shows and what the load asks for cannot drift). It used to be
+//     degraded to fp32, a 2.35 GB download nobody asked for, and then from
+//     2026-09-11 sent to WASM. Every OTHER fp16 request this source cannot
+//     honour (no fp16 file) is still SENT as fp16, refused by hub.js, and
+//     caught by the whole-backend flip to WASM int8 in loadFailure.js.
 //   - `w4a8` and `w2a8` are passed straight through rather than collapsed
 //     to `int8`, so hub.js can tell "the user hand-picked that build and this
 //     repo ships none" (which raises the quantUnavailable banner) apart from
@@ -23,6 +26,8 @@
 // Kept pure and out of loadModel because every one of those rules is a decision
 // about gigabytes the visitor will wait for, and inline none of them could be
 // asserted without downloading a real model.
+
+import { effectiveEncoderQuant } from './encoderQuants.js';
 
 /** WASM encoder builds requested verbatim; anything else falls back to int8. */
 const WASM_PASSTHROUGH_QUANTS = new Set(['w4a8', 'w2a8']);
@@ -65,8 +70,15 @@ export function buildDownloadOpts({
     ? 'fp32'
     : (WASM_PASSTHROUGH_QUANTS.has(wasmEncoderQuant) ? wasmEncoderQuant : 'int8');
 
+  // servable is left unknown on purpose: whether the SOURCE hosts the file is
+  // hub.js's call (with its /models upgrade probe), so only the adapter rule
+  // applies here. A null answer keeps the request as picked, for hub.js to
+  // refuse loudly.
+  const webgpuEncoderRequest = effectiveEncoderQuant({
+    backend, selected: webgpuEncoderQuant, shaderF16: webgpuShaderF16 === true,
+  }) ?? webgpuEncoderQuant;
   const opts = {
-    encoderQuant: wantWebgpu ? webgpuEncoderQuant : wasmEncoderRequest,
+    encoderQuant: wantWebgpu ? webgpuEncoderRequest : wasmEncoderRequest,
     // fp32 decoder_joint on both backends (it runs on the WASM EP either way):
     // batch-invariant, so batched decoding gives the same transcript as one
     // chunk at a time. hub.js falls back to int8 when a source lacks it.

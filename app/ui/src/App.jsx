@@ -1100,6 +1100,16 @@ export default function App() {
   // must offer everything rather than grey out a precision that would have
   // loaded. Failing to the permissive side keeps this a hint, never a gate.
   const [sourceRepoFiles, setSourceRepoFiles] = useState(null);
+  // Which source the listing above has ANSWERED for (with files or with null).
+  // Only the probe gates read it: "no opinion" is the right default for a
+  // radio, but a probe fired while the listing is still in flight spends ~5 MB
+  // and two timed runs on a GPU the finished listing may rule out a moment
+  // later. Keyed rather than a boolean because med mode switches repo right
+  // after boot, and in that render a boolean would still say "settled" about
+  // the previous repo.
+  const sourceListingKey = `${modelSource}|${repoId}|${forceLocalFallback}`;
+  const [settledListingKey, setSettledListingKey] = useState(null);
+  const sourceListingSettled = settledListingKey === sourceListingKey;
   useEffect(() => {
     if (!settingsLoaded) return undefined;
     let cancelled = false;
@@ -1127,6 +1137,7 @@ export default function App() {
       }
       if (cancelled) return;
       setSourceRepoFiles(files?.length ? files : null);
+      setSettledListingKey(sourceListingKey);
     })();
     return () => { cancelled = true; };
   }, [settingsLoaded, modelSource, repoId, forceLocalFallback]);
@@ -2240,9 +2251,9 @@ export default function App() {
       // measures rather than assumes, and the unservable-weights guard below
       // keeps it from re-selecting a GPU this source cannot feed.
       userPickedBackend: false,
-      // Same fp16 condition as the ordinary gate below: a station whose adapter
-      // or mirror cannot do fp16 has nothing to measure, because the answer
-      // could only be acted on in one direction.
+      // Same condition as the ordinary gate below: a station that cannot be
+      // served its GPU default (fp16, or int8 without shader-f16) has nothing
+      // to measure, because the answer could only be acted on in one direction.
       webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true
         && gpuBackendAutoUsable({ servable: sourceQuants, shaderF16: webgpuShaderF16 === true }),
       hasValidVerdict: storedVerdictValid,
@@ -2284,10 +2295,10 @@ export default function App() {
   // waits on webgpuAvailable resolving to true/false instead of the manifest.
   useEffect(() => {
     if (!URL_MED_MODE || medModeProbeDoneRef.current) return;
-    if (!settingsLoaded || webgpuAvailable === null) return;
+    if (!settingsLoaded || webgpuAvailable === null || !sourceListingSettled) return;
     medModeProbeDoneRef.current = true;
     autoconfigureBackendForMedMode();
-  }, [settingsLoaded, webgpuAvailable]);
+  }, [settingsLoaded, webgpuAvailable, sourceListingSettled]);
   // Slow-browser heads-up: the WASM engine was ~9x slower outside the
   // Chromium family (Firefox 153, 2026-08-10) but close to it in Firefox 157,
   // so the copy says "may be slower" (see lib/browserFamily.js). Dismissal is DELIBERATELY not persisted: the
@@ -4641,12 +4652,14 @@ export default function App() {
     if (WEBGPU_DISABLED) return;             // nothing the probe could change
     // Wait for the adapter check, then only spend the ~5 MB where there is
     // genuinely something to decide: a machine with no adapter is staying on
-    // WASM whatever a measurement would say, and so is one whose adapter or
-    // whose model source cannot do fp16, because that is the only precision
-    // the app will put a visitor on a GPU backend at unasked. Same gate as the
+    // WASM whatever a measurement would say, and so is one whose source cannot
+    // serve the GPU default for its adapter (fp16, or int8 without shader-f16,
+    // see gpuDefaultEncoderQuant), because that is the only precision the app
+    // will put a visitor on a GPU backend at unasked. Same gate as the
     // run below, deliberately: prefetching for a probe that is never going to
     // run is the pure-waste half of guessing.
     if (webgpuAvailable !== true) return;
+    if (!sourceListingSettled) return;       // a pending listing is not "no opinion" yet
     if (!gpuBackendAutoUsable({ servable: sourceQuants, shaderF16: webgpuShaderF16 === true })) return;
     let cancelled = false;
     const prefetch = () => {
@@ -4674,7 +4687,7 @@ export default function App() {
       if (typeof cancelIdleCallback === 'function' && typeof idle === 'number') cancelIdleCallback(idle);
       else clearTimeout(idle);
     };
-  }, [webgpuAvailable, webgpuShaderF16, sourceQuants]);
+  }, [webgpuAvailable, webgpuShaderF16, sourceQuants, sourceListingSettled]);
 
   // Run ONE arm end to end in its own worker. Resolves to null (never throws)
   // so a broken arm degrades into "stay on WASM" instead of a failed load.
@@ -4855,10 +4868,13 @@ export default function App() {
       settingsLoaded,
       userPickedBackend: backendUserPicked,
       // The GPU is only worth MEASURING when the app would be willing to select
-      // it, and since 2026-09-11 that means fp16 specifically: on a machine or a
-      // source that cannot do fp16, a probe win would be followed by the
-      // GPU-to-WASM fallback on the very next load, so there is nothing to
-      // decide and two timed runs to skip.
+      // it, which means its GPU default (fp16, or int8 on an adapter without
+      // shader-f16 since 2026-10-22): on a source that cannot serve that, a
+      // probe win would be followed by the GPU-to-WASM fallback on the very
+      // next load, so there is nothing to decide and two timed runs to skip.
+      // The GPU arm times the fp32 probe graph even when the load will be
+      // int8; GPU int8 measured faster than GPU fp32, so that bias
+      // under-reports the GPU, the safe direction.
       webgpuSelectable: !WEBGPU_DISABLED && webgpuAvailable === true
         && gpuBackendAutoUsable({ servable: sourceQuants, shaderF16: webgpuShaderF16 === true }),
       hasValidVerdict: verdictStillValid(probeVerdict, {
