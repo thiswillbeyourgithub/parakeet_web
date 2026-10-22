@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### Faster encoder graph on WebGPU (model update)
+
+The [ultra model](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) now ships encoders whose attention layers realign their position scores with one lookup instead of five operations that copied the whole score matrix twice. The outputs are identical to the previous encoders (maximum difference 0.0, checked for fp32, fp16, int8 and w4a8). Measured on the WebGPU fp32 encoder alone (RTX 3090 Ti, shared with other jobs, 60 s of audio): warm run medians 542 to 609 ms against 586 to 666 ms before, over 3 interleaved rounds of 10 runs. On the processor (WASM) backend the int8 encoder runs at the same speed as before. Returning visitors download the new encoder once.
+
 ### The first WebGPU transcription no longer waits for shader compilation
 
 The first time the encoder runs on the GPU, the browser compiles every shader it needs, which took 3.7 s on an RTX 3090 Ti and used to delay the first transcription after each model load. The app now does that warm-up while the model loads, right after the session is built. Through the real app on the WebGPU fp32 backend, the 3-minute test recording transcribed in 7.6, 7.8 and 8.9 s, against 10.3 to 12.7 s before (on a GPU shared with other jobs, so the spread is wide). The processor (WASM) backend is unchanged.
