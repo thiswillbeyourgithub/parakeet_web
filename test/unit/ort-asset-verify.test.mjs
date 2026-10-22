@@ -413,8 +413,10 @@ describe('the ORT runtime variant reaches every JS context', () => {
     // it was sent. Existence rather than a count, so refactoring the payloads
     // into a helper does not fail this spuriously.
     const app = readFileSync(fileURLToPath(new URL('../../app/ui/src/App.jsx', import.meta.url)), 'utf8');
-    assert.ok(/ortVariant:\s*ORT_VARIANT/.test(app),
-      'App.jsx no longer passes ORT_VARIANT into any worker init payload');
+    // The variant is ortVariantRef.current: `?ortep=` or the sidebar CPU
+    // runtime choice (lib/ortRuntimeSwitch.js effectiveOrtVariant).
+    assert.ok(/ortVariant:\s*ortVariantRef\.current/.test(app),
+      'App.jsx no longer passes the ORT variant into any worker init payload');
   });
 });
 
