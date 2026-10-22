@@ -40,7 +40,7 @@ import { resolve, basename, extname } from 'node:path';
 
 import {
   ROOT, sleep, waitForServer, spawnAppServer, launchWebGpuBrowser,
-  bootApp, loadModelAndWaitReady, probeRealWebGpu, seedSettings,
+  bootApp, loadModelAndWaitReady, probeRealWebGpu, seedSettings, parseTimingLine,
 } from './lib/browser-app.mjs';
 import { encoderQuantsFor } from '../app/ui/src/lib/encoderQuants.js';
 import { QUANT_SUFFIX } from '../app/src/hub.js';
@@ -267,6 +267,7 @@ async function main() {
   let sessionMode = null;
   let sawWebGpuSession = false;
   let transcribeDone = false;
+  let totalTime = null, stageSplit = null;
   let crashed = false;
   let lastChunk = 0, chunkTotal = 0;
   const errors = [];
@@ -294,7 +295,9 @@ async function main() {
       if (sm) { sessionMode = sm[1]; if (sm[1].startsWith('webgpu')) sawWebGpuSession = true; }
       const ch = /chunk (\d+)\/(\d+)/.exec(txt);
       if (ch) { lastChunk = Number(ch[1]); chunkTotal = Number(ch[2]); }
-      if (txt.includes('[Transcribe] Total time for entire audio')) transcribeDone = true;
+      const timing = parseTimingLine(txt);
+      if (timing?.totalTime) { totalTime = timing.totalTime; transcribeDone = true; }
+      if (timing?.stageSplit) stageSplit = timing.stageSplit;
     });
     page.on('pageerror', (e) => { if (!benign(e.message)) errors.push(`pageerror: ${e.message}`); });
     page.on('crash', () => { crashed = true; });
@@ -393,6 +396,7 @@ async function main() {
     }
     if (!transcribeDone) throw new Error(`transcription did not finish within ${args.timeoutMin} min`);
     console.error(`[transcribe-browser] transcription complete (${chunkTotal || 1} chunk(s))`);
+    console.error(`[transcribe-browser] wall time: ${totalTime}${stageSplit ? `; ${stageSplit}` : ''}`);
 
     // Capture the plain transcript BEFORE diarizing (diarizing swaps the view).
     const historyText = page.locator('.history-text').first();

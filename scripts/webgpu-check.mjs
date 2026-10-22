@@ -64,6 +64,7 @@ import { seedSettings } from '../test/e2e/seed.mjs';
 import { words, overlap } from '../test/e2e/text-overlap.mjs';
 import { findFfmpeg } from './transcribe.mjs';
 import { ensureFullCompact, FIXTURE_MP3, EXPECTED_TXT } from './gen-jfk-moon-fixtures.mjs';
+import { parseTimingLine } from './lib/browser-app.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -235,10 +236,9 @@ async function main() {
       if (dq) decoderOutputs = dq[1];
       const eb = /\[Parakeet\.js\] Encoder batching enabled: batch=(\d+)/.exec(txt);
       if (eb) encoderBatch = Number(eb[1]);
-      const st = /\[Transcribe\] Stage split: (encode [\d.]+s, decode [\d.]+s \| pipeline overlap ceiling ~[\d.]+s.*)/.exec(txt);
-      if (st) stageSplit = st[1];
-      const tt = /\[Transcribe\] Total time for entire audio: ([^(]+\(proc_t\/dur_t [\d.]+\))/.exec(txt);
-      if (tt) totalTimeLine = tt[1].trim();
+      const timing = parseTimingLine(txt);
+      if (timing?.stageSplit) stageSplit = timing.stageSplit;
+      if (timing?.totalTime) totalTimeLine = timing.totalTime;
     });
     page.on('pageerror', (e) => { if (!benign(e.message)) errors.push(`pageerror: ${e.message}`); });
     page.on('crash', () => { crashed = true; });

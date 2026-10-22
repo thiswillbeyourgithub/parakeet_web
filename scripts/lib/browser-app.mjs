@@ -30,6 +30,17 @@ const SERVE = resolve(ROOT, 'test/e2e/serve.mjs');
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// App.jsx's two end-of-run timing lines, so every harness reports the app's
+// OWN measurement instead of timing the page from outside. Returns
+// { totalTime } or { stageSplit } for a matching console line, else null.
+export function parseTimingLine(txt) {
+  const tt = /\[Transcribe\] Total time for entire audio: ([^(]+\(proc_t\/dur_t [\d.]+\))/.exec(txt);
+  if (tt) return { totalTime: tt[1].trim() };
+  const st = /\[Transcribe\] Stage split: (encode [\d.]+s, decode [\d.]+s \| pipeline overlap ceiling ~[\d.]+s.*)/.exec(txt);
+  if (st) return { stageSplit: st[1] };
+  return null;
+}
+
 // Poll a static server until it answers (or the request 404s, which still means
 // it is up). Throws if it never comes up within `timeoutMs`.
 export async function waitForServer(baseURL, timeoutMs = 30000) {
