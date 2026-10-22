@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### GPUs without shader-f16 now transcribe on the GPU at int8
+
+A GPU that does not report the `shader-f16` feature cannot run the default fp16 encoder, and the app used to send such a machine to the processor (WASM) instead. It now loads the int8 encoder on the GPU. This is the reference machine's own case (RTX 3090 Ti, whose browser does not expose `shader-f16`): through the real app on the 3-minute test recording, the GPU at int8 took 5.6 s wall (median of 3, GPU shared with other jobs), where the processor backend measured 86 s on the same recording in an earlier session (median of 3, busy machine, not interleaved with the GPU runs). The automatic CPU-versus-GPU measurement now runs on such machines too, since its answer can be acted on. A model source that does not host the int8 encoder still sends them to the processor, and fp32 and w4a8 remain hand picks only.
+
 ### int8 encoder on WebGPU
 
 The int8 encoder can now be picked on the WebGPU backend. The app used to refuse it there because an older int8 format had no GPU kernel, but the shipped int8 encoder is a MatMulNBits build, which the GPU runs natively. Through the real app on the reference machine (RTX 3090 Ti shared with other jobs, 3-minute test recording, greedy, 3 interleaved runs each), int8 gave the same transcript as fp32 word for word and encoded in 1.8 s against 2.9 s (medians), from roughly a quarter of the download. The default GPU precision is unchanged (fp16). The sidebar benchmark now also times int8 on the GPU, pre-selected because it reuses the int8 file a visitor already has.
