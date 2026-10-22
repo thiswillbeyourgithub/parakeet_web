@@ -316,9 +316,9 @@ const translations = {
 
     // About / info section
     about: 'About',
-    slowBrowserTitle: 'This browser will be slow',
-    slowBrowserBody1: 'Heads-up: the speech engine runs up to ~10x slower in this browser than in Chromium-based ones (measured in Firefox; its engine optimizes the SIMD math the model relies on much less well). Everything still works, but long recordings will take a while.',
-    slowBrowserBody2: 'For a fast experience, use a Chromium-based browser such as Brave, Chrome, or Edge.',
+    slowBrowserTitle: 'This browser may be slower',
+    slowBrowserBody1: 'Heads-up: the speech engine may run slower in this browser than in Chromium-based ones. Older Firefox versions were up to ~10x slower on the SIMD math the model relies on; recent ones measured close to Chromium, but this varies by version. Everything still works either way.',
+    slowBrowserBody2: 'If transcription feels slow, a Chromium-based browser such as Brave, Chrome, or Edge is the most tested option.',
     slowBrowserDismiss: 'Got it, continue anyway',
     precisionNoneAutoUsable: 'None of these can be chosen for you here, so a load started now would run on the processor at int8 instead. Pick one to use the graphics card.',
     modelUnservableTitle: 'This instance cannot serve the model',
@@ -811,9 +811,9 @@ const translations = {
 
     // About / info section
     about: '\u00c0 propos',
-    slowBrowserTitle: 'Ce navigateur sera lent',
-    slowBrowserBody1: 'Attention : le moteur vocal tourne jusqu\u2019\u00e0 ~10x plus lentement dans ce navigateur que dans ceux bas\u00e9s sur Chromium (mesur\u00e9 dans Firefox ; son moteur optimise beaucoup moins bien le calcul SIMD dont le mod\u00e8le d\u00e9pend). Tout fonctionne quand m\u00eame, mais les enregistrements longs prendront du temps.',
-    slowBrowserBody2: 'Pour une exp\u00e9rience rapide, utilisez un navigateur bas\u00e9 sur Chromium comme Brave, Chrome ou Edge.',
+    slowBrowserTitle: 'Ce navigateur peut \u00eatre plus lent',
+    slowBrowserBody1: 'Attention : le moteur vocal peut tourner plus lentement dans ce navigateur que dans ceux bas\u00e9s sur Chromium. Les anciennes versions de Firefox \u00e9taient jusqu\u2019\u00e0 ~10x plus lentes sur le calcul SIMD dont le mod\u00e8le d\u00e9pend ; les versions r\u00e9centes ont \u00e9t\u00e9 mesur\u00e9es proches de Chromium, mais cela varie selon la version. Tout fonctionne dans tous les cas.',
+    slowBrowserBody2: 'Si la transcription vous semble lente, un navigateur bas\u00e9 sur Chromium comme Brave, Chrome ou Edge est l\u2019option la plus test\u00e9e.',
     slowBrowserDismiss: 'Compris, continuer quand m\u00eame',
     precisionNoneAutoUsable: "Aucune de ces pr\u00e9cisions ne peut \u00eatre retenue \u00e0 votre place ici : un chargement lanc\u00e9 maintenant tournerait sur le processeur en int8. Choisissez-en une pour utiliser la carte graphique.",
     modelUnservableTitle: "Cette instance ne peut pas fournir le mod\u00e8le",
