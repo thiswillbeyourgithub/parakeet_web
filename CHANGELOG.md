@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### int8 encoder on WebGPU
+
+The int8 encoder can now be picked on the WebGPU backend. The app used to refuse it there because an older int8 format had no GPU kernel, but the shipped int8 encoder is a MatMulNBits build, which the GPU runs natively. Through the real app on the reference machine (RTX 3090 Ti shared with other jobs, 3-minute test recording, greedy, 3 interleaved runs each), int8 gave the same transcript as fp32 word for word and encoded in 1.8 s against 2.9 s (medians), from roughly a quarter of the download. The default GPU precision is unchanged (fp16). The sidebar benchmark now also times int8 on the GPU, pre-selected because it reuses the int8 file a visitor already has.
+
 ### Faster encoder graph on WebGPU (model update)
 
 The [ultra model](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) now ships encoders whose attention layers realign their position scores with one lookup instead of five operations that copied the whole score matrix twice. The outputs are identical to the previous encoders (maximum difference 0.0, checked for fp32, fp16, int8 and w4a8). Measured on the WebGPU fp32 encoder alone (RTX 3090 Ti, shared with other jobs, 60 s of audio): warm run medians 542 to 609 ms against 586 to 666 ms before, over 3 interleaved rounds of 10 runs. On the processor (WASM) backend the int8 encoder runs at the same speed as before. Returning visitors download the new encoder once.
