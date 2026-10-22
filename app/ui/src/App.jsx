@@ -2524,6 +2524,19 @@ export default function App() {
         return loadModel({ useLocalFallback, corruptionRetried: true, gpuQuantFallbackTried });
       }
 
+      // WebGPU compiles its shaders on the encoder's first run (3.7 s measured
+      // on the GPU box), which used to land inside the first transcription.
+      // Pay it here instead, still under "compiling model", and with page
+      // animations paused like any other WebGPU run (rendering coupling).
+      if (backend.startsWith('webgpu')) {
+        const releaseGpuRun = acquireGpuRun();
+        try {
+          if (await modelRef.current.warmUp()) console.log('[Load] encoder warmed up');
+        } finally {
+          releaseGpuRun();
+        }
+      }
+
       console.timeEnd('LoadModel');
       // Record what ACTUALLY loaded, as opposed to what was requested.
       // Everything else in the sidebar describes the request: the backend and
