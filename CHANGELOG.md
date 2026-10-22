@@ -8,6 +8,12 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Unreleased
+
+### The first WebGPU transcription no longer waits for shader compilation
+
+The first time the encoder runs on the GPU, the browser compiles every shader it needs, which took 3.7 s on an RTX 3090 Ti and used to delay the first transcription after each model load. The app now does that warm-up while the model loads, right after the session is built. Through the real app on the WebGPU fp32 backend, the 3-minute test recording transcribed in 7.6, 7.8 and 8.9 s, against 10.3 to 12.7 s before (on a GPU shared with other jobs, so the spread is wide). The processor (WASM) backend is unchanged.
+
 ## 11.5.0 (2026-10-22)
 
 ### A faster CPU runtime, built for this app

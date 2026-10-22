@@ -8,6 +8,12 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Non publié
+
+### La première transcription WebGPU n'attend plus la compilation des shaders
+
+La première fois que l'encodeur tourne sur le GPU, le navigateur compile tous les shaders dont il a besoin, ce qui prenait 3,7 s sur une RTX 3090 Ti et retardait la première transcription après chaque chargement du modèle. L'application fait désormais ce préchauffage pendant le chargement, juste après la création de la session. Dans l'application réelle, sur le backend WebGPU fp32, l'enregistrement de test de 3 minutes a été transcrit en 7,6, 7,8 et 8,9 s, contre 10,3 à 12,7 s auparavant (sur un GPU partagé avec d'autres tâches, d'où l'écart important). Le backend processeur (WASM) est inchangé.
+
 ## 11.5.0 (2026-10-22)
 
 ### Un moteur CPU plus rapide, compilé pour l'application
