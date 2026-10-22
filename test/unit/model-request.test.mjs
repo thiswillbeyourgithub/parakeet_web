@@ -12,7 +12,7 @@ const build = (over = {}) => buildDownloadOpts({ ...base, ...over });
 describe('buildDownloadOpts: backend split', () => {
   test('WASM takes the wasm radio, WebGPU takes the webgpu radio', () => {
     assert.equal(build().opts.encoderQuant, 'int8');
-    assert.equal(build({ backend: 'webgpu-hybrid' }).opts.encoderQuant, 'fp16');
+    assert.equal(build({ backend: 'webgpu-hybrid', webgpuShaderF16: true }).opts.encoderQuant, 'fp16');
   });
 
   test('any webgpu-prefixed backend counts as GPU', () => {
@@ -36,15 +36,30 @@ describe('buildDownloadOpts: backend split', () => {
   });
 });
 
-describe('buildDownloadOpts: no silent rewriting of the GPU request', () => {
-  // The rule that matters: the app substitutes nothing on the GPU side. An
-  // unhonourable fp16 must reach hub.js as fp16 so it can be REFUSED (which is
-  // what raises the banner / triggers the GPU-to-WASM flip), not degraded here
-  // into a 2.35 GB fp32 download nobody asked for.
-  test('fp16 stays fp16 even without shader-f16', () => {
-    const { opts } = build({ backend: 'webgpu-hybrid', webgpuEncoderQuant: 'fp16', webgpuShaderF16: false });
-    assert.equal(opts.encoderQuant, 'fp16');
+describe('buildDownloadOpts: the one GPU rewrite, and no other', () => {
+  // The single substitution on the GPU side (owner decision 2026-10-22): an
+  // adapter without shader-f16 cannot compile fp16, so the fp16 default is
+  // requested as the GPU's int8 (649 MB), never as fp32 (a 2.35 GB download
+  // nobody asked for) and never sent to be refused into a WASM flip.
+  test('fp16 without shader-f16 is requested as GPU int8, not fp32', () => {
+    const { opts, wantWebgpu } = build({ backend: 'webgpu-hybrid', webgpuEncoderQuant: 'fp16', webgpuShaderF16: false });
+    assert.equal(wantWebgpu, true);
+    assert.equal(opts.encoderQuant, 'int8');
     assert.equal(opts.shaderF16, false);
+  });
+
+  test('an adapter still being probed counts as no shader-f16', () => {
+    // null is "not answered yet": an fp16 session on an adapter that turns out
+    // to lack the feature builds and then transcribes silence, while int8 runs
+    // on every adapter.
+    for (const f16 of [null, undefined]) {
+      assert.equal(build({ backend: 'webgpu-hybrid', webgpuShaderF16: f16 }).opts.encoderQuant, 'int8');
+    }
+  });
+
+  test('the rewrite is GPU-only: WASM never sees the webgpu radio', () => {
+    assert.equal(build({ backend: 'wasm', webgpuShaderF16: false }).opts.encoderQuant, 'int8');
+    assert.equal(build({ backend: 'wasm', wasmEncoderQuant: 'w4a8', webgpuShaderF16: false }).opts.encoderQuant, 'w4a8');
   });
 
   test('shaderF16 is forwarded as a strict boolean', () => {
@@ -53,10 +68,15 @@ describe('buildDownloadOpts: no silent rewriting of the GPU request', () => {
     assert.equal(build({ webgpuShaderF16: 'yes' }).opts.shaderF16, false);
   });
 
-  test('a hand-picked GPU quant passes through untouched', () => {
-    for (const q of ['fp32', 'w4a8', 'fp16']) {
-      assert.equal(build({ backend: 'webgpu-hybrid', webgpuEncoderQuant: q }).opts.encoderQuant, q);
+  test('a hand-picked GPU quant passes through untouched, with or without shader-f16', () => {
+    // Only the fp16 the adapter cannot run is rewritten; a deliberate pick of
+    // anything it CAN run is honoured as-is, on both kinds of adapter.
+    for (const f16 of [true, false]) {
+      for (const q of ['fp32', 'w4a8', 'int8']) {
+        assert.equal(build({ backend: 'webgpu-hybrid', webgpuEncoderQuant: q, webgpuShaderF16: f16 }).opts.encoderQuant, q);
+      }
     }
+    assert.equal(build({ backend: 'webgpu-hybrid', webgpuEncoderQuant: 'fp16', webgpuShaderF16: true }).opts.encoderQuant, 'fp16');
   });
 
   test('allowWasmFp32 is never set on a GPU load', () => {

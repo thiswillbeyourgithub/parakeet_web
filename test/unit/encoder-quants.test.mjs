@@ -31,6 +31,7 @@ import {
   DEFAULT_WASM_ENCODER_QUANT,
   DEFAULT_WEBGPU_ENCODER_QUANT,
   effectiveEncoderQuant,
+  gpuDefaultEncoderQuant,
   encoderQuantRows,
   encoderQuantsFor,
   gpuBackendAutoUsable,
@@ -150,21 +151,34 @@ describe('servableEncoderQuants: what a source can really deliver', () => {
 });
 
 describe('gpuBackendAutoUsable: when the GPU may be chosen for somebody', () => {
-  // The rule the owner set on 2026-09-11: fp16 or nothing on the GPU. fp32 and
-  // w4a8 stay reachable by hand, so this is NOT "the GPU is broken", it is "the
-  // app will not put anyone there by itself". Gating the performance probe on
-  // it is the point: without it a machine with no shader-f16 spends two timed
-  // runs proving its GPU is faster and is then moved to WASM on the next load.
+  // The rule: the GPU default for this adapter (fp16, or int8 without
+  // shader-f16 since 2026-10-22) or nothing. fp32 and w4a8 stay reachable by
+  // hand, so this is NOT "the GPU is broken", it is "the app will not put
+  // anyone there by itself". Gating the performance probe on it is the point:
+  // without it a machine that the next load moves to WASM anyway spends two
+  // timed runs proving its GPU faster.
   test('yes when this machine and this source can both do fp16', () => {
     const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: true });
     assert.equal(gpuBackendAutoUsable({ servable, shaderF16: true }), true);
   });
 
-  test('no without the adapter feature, whatever the source serves', () => {
+  test('yes without the adapter feature when the source serves int8', () => {
+    // This repo's own GPU box (RTX 3090 Ti) is this case: Dawn hides
+    // shader-f16. Its GPU int8 measured encode 1.8 s vs fp32 2.9 s in-app, and
+    // it used to be sent to the CPU instead.
     const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false });
-    assert.equal(gpuBackendAutoUsable({ servable, shaderF16: false }), false);
-    assert.equal(gpuBackendAutoUsable({ servable: null, shaderF16: false }), false);
+    assert.equal(gpuBackendAutoUsable({ servable, shaderF16: false }), true);
+    assert.equal(gpuBackendAutoUsable({ servable: null, shaderF16: false }), true);
   });
+
+  test('no without the adapter feature when the source hosts no int8', () => {
+    // fp16 (unrunnable) and fp32/w4a8 (never automatic) are all that is left.
+    const noInt8 = DEPLOYED_MIRROR_WITH_FP16.filter((f) => !f.startsWith('int8/encoder'));
+    const servable = servableEncoderQuants({ repoFiles: noInt8, shaderF16: false });
+    assert.ok(!servable.webgpu.includes('int8'));
+    assert.equal(gpuBackendAutoUsable({ servable, shaderF16: false }), false);
+  });
+
 
   test('no when the source hosts no fp16, even on an adapter that could run it', () => {
     // fp32 and w4a8 are both served by this mirror and neither counts: an
@@ -339,16 +353,26 @@ describe('effectiveEncoderQuant: what a load would really use', () => {
     assert.equal(gpu({ servable, shaderF16: true }), 'fp16');
   });
 
-  test('no shader-f16 answers null, NOT fp32 and not w4a8', () => {
+  test('no shader-f16 answers GPU int8, NOT fp32 and not w4a8', () => {
     // The adapter feature is the common case, not the exotic one: this repo's
     // own GPU box (RTX 3090 Ti) does not expose it. Answering fp32 here was the
-    // old behaviour and it handed a 2.35 GB download to somebody who picked
+    // oldest behaviour and it handed a 2.35 GB download to somebody who picked
     // nothing; answering w4a8 would hand them the weakest encoder on long
-    // audio. null means "this backend has nothing it may use unasked", and the
-    // caller takes that to WASM int8.
+    // audio; answering null (2026-09-11 to 2026-10-22) sent a GPU an order of
+    // magnitude faster than the CPU to WASM. int8 is the WASM default's own
+    // file, and it has a WebGPU kernel.
     const servable = servableEncoderQuants({ repoFiles: DEPLOYED_MIRROR_WITH_FP16, shaderF16: false });
+    assert.equal(gpu({ servable, shaderF16: false }), 'int8');
+    assert.equal(gpuDefaultEncoderQuant(false), 'int8');
+    assert.equal(gpuDefaultEncoderQuant(true), DEFAULT_WEBGPU_ENCODER_QUANT);
+  });
+
+  test('no shader-f16 and no int8 hosted answers null', () => {
+    const noInt8 = DEPLOYED_MIRROR_WITH_FP16.filter((f) => !f.startsWith('int8/encoder'));
+    const servable = servableEncoderQuants({ repoFiles: noInt8, shaderF16: false });
     assert.equal(gpu({ servable, shaderF16: false }), null);
   });
+
 
   test('a source with no fp16 file answers null too', () => {
     // The deployment as it stood before the fp16 encoder was published. It
@@ -365,7 +389,7 @@ describe('effectiveEncoderQuant: what a load would really use', () => {
     // unreachable. The shader-f16 question fails the other way on purpose, so
     // the two nulls below mean different things and must not be conflated.
     assert.equal(gpu({ servable: null, shaderF16: true }), 'fp16');
-    assert.equal(gpu({ servable: null, shaderF16: false }), null);
+    assert.equal(gpu({ servable: null, shaderF16: false }), 'int8');
   });
 
   test('a deliberate choice survives, and is not quietly upgraded to the default', () => {
