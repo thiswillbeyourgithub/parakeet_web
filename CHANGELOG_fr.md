@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Encodeur int8 sur WebGPU
+
+L'encodeur int8 peut maintenant être choisi sur le backend WebGPU. L'application le refusait jusqu'ici parce qu'un ancien format int8 n'avait pas de noyau GPU, mais l'encodeur int8 livré est construit en MatMulNBits, que le GPU exécute nativement. Dans l'application réelle sur la machine de référence (RTX 3090 Ti partagée avec d'autres tâches, enregistrement de test de 3 minutes, glouton, 3 passes entrelacées chacun), int8 donne mot pour mot la même transcription que fp32 et encode en 1,8 s contre 2,9 s (médianes), pour un téléchargement environ quatre fois plus petit. La précision GPU par défaut ne change pas (fp16). Le banc d'essai de la barre latérale mesure aussi int8 sur le GPU, présélectionné parce qu'il réutilise le fichier int8 que le visiteur a déjà.
+
 ### Graphe d'encodeur plus rapide en WebGPU (mise à jour du modèle)
 
 Le [modèle ultra](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) fournit désormais des encodeurs dont les couches d'attention réalignent leurs scores de position en une seule recherche d'indices au lieu de cinq opérations qui copiaient deux fois toute la matrice de scores. Les sorties sont identiques à celles des encodeurs précédents (écart maximal 0,0, vérifié en fp32, fp16, int8 et w4a8). Mesuré sur l'encodeur WebGPU fp32 seul (RTX 3090 Ti partagée avec d'autres tâches, 60 s d'audio) : médianes des exécutions à chaud de 542 à 609 ms contre 586 à 666 ms auparavant, sur 3 séries entrelacées de 10 exécutions. Sur le backend processeur (WASM), l'encodeur int8 tourne à la même vitesse qu'avant. Les visiteurs déjà venus téléchargent le nouvel encodeur une fois.
