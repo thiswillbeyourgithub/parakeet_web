@@ -13,5 +13,5 @@ To refresh, from the repo root, with the model repo checked out under `fallback_
 
 ```bash
 node scripts/compile-drug-rules.mjs          # rewrite drug_rules.json, then commit it
-node scripts/compile-drug-rules.mjs --check  # what deploy.sh runs: fails when out of sync
+node scripts/compile-drug-rules.mjs --check  # what deploy.sh runs: when out of sync it asks whether to deploy anyway (default no)
 ```
