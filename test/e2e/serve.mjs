@@ -35,7 +35,10 @@ const BOOST_DIR = resolve(process.env.PARAKEET_E2E_BOOST_DIR || join(here, 'fixt
 // but dotted, so the manifest generator's own walk skips it and it cannot end up
 // describing itself.
 const MANIFEST_DIR = resolve(process.env.PARAKEET_E2E_MANIFEST_DIR || join(MODEL_DIR, '.manifests'));
-const PORT = parseInt(process.env.PORT, 10) || 4178;
+// `??`-style, not `||`: PORT=0 (any free port) is falsy and used to become
+// 4178, colliding with a tier-3 server that was already up.
+const parsedPort = parseInt(process.env.PORT, 10);
+const PORT = Number.isInteger(parsedPort) ? parsedPort : 4178;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
