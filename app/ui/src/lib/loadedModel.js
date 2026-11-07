@@ -48,7 +48,47 @@
  */
 export function effectiveServedFrom(servedFrom, relayFlag) {
   if (servedFrom !== 'local') return 'hf';
-  return relayFlag === true || relayFlag === 'true' ? 'relay' : 'local';
+  return isRelayDeployment(relayFlag) ? 'relay' : 'local';
+}
+
+/**
+ * Whether this instance's /models is the HF relay (CONFIG.VITE_MODEL_RELAY,
+ * a string from config.js or a boolean from a test harness).
+ *
+ * @param {string|boolean|undefined} relayFlag
+ * @returns {boolean}
+ */
+export function isRelayDeployment(relayFlag) {
+  return relayFlag === true || relayFlag === 'true';
+}
+
+/**
+ * The operator-facing warning for a /models that cannot serve the selected
+ * repo. Its advice depends on what /models IS: behind the relay there is no
+ * folder to mount (the old LOCAL_MODEL_PATH advice would now make the
+ * container refuse to boot), elsewhere it is a static mirror someone serves.
+ *
+ * @param {{repoId: string, allowFlat: boolean, relayFlag: string|boolean|undefined}} a
+ * @returns {string}
+ */
+export function modelsUnreachableMessage({ repoId, allowFlat, relayFlag }) {
+  if (isRelayDeployment(relayFlag)) {
+    return `The model relay at /models/${repoId}/ cannot serve this model. `
+      + `The relay only forwards the repos listed as "HF relay repos" at the top of the container log `
+      + `(the default models plus VITE_MODEL_REPO), and needs HuggingFace to be reachable from the server.`;
+  }
+  // With several repos on offer a flat layout is refused on purpose (see
+  // ALLOW_FLAT_LOCAL_FALLBACK in App.jsx): a flat folder carries no repo id
+  // and would be served under the wrong model's name.
+  return allowFlat
+    ? `Local model fallback is enabled but model files are not reachable at /models/. `
+      + `Serve a folder containing the ONNX files (e.g. produced by\n`
+      + `  hf download ${repoId} --local-dir <folder>)\n`
+      + `at /models/ on this server.`
+    : `Local model fallback is enabled but model files are not reachable at /models/${repoId}/. `
+      + `This instance offers a choice of models, so each one must live in its own `
+      + `subfolder: serve the files of ${repoId} at /models/${repoId}/ (e.g. produced by\n`
+      + `  hf download ${repoId} --local-dir <folder>/${repoId}).`;
 }
 
 /**
