@@ -1,5 +1,6 @@
 import CollapsibleSection from '../CollapsibleSection.jsx';
 import InfoTooltip from '../InfoTooltip.jsx';
+import { RELAY_MODES } from '../../lib/relayMode.js';
 
 // The sidebar's Debug group: how much the console says, whether a run keeps its
 // per-token decode trace, and the copyable support report.
@@ -19,6 +20,8 @@ export default function DebugSection({
   saveSetting,
   debugDecode,
   setDebugDecode,
+  relayMode,
+  setRelayMode,
   supportReport,
   supportReportCopied,
   copySupportReport,
@@ -54,6 +57,22 @@ export default function DebugSection({
           {t('debugDecode')}
           <InfoTooltip text={t('tooltipDebugDecode')} />
         </label>
+      </div>
+      <div className="setting-row">
+        <span className="setting-label">
+          {t('relayMode')}:
+          <InfoTooltip text={t('tooltipRelayMode')} />
+        </span>
+        <select
+          value={relayMode}
+          data-testid="relay-mode"
+          onChange={e => setRelayMode(e.target.value)}
+          style={{ padding: '0.3rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
+        >
+          {RELAY_MODES.map(m => (
+            <option key={m} value={m}>{t(`relayMode${m[0].toUpperCase()}${m.slice(1)}`)}</option>
+          ))}
+        </select>
       </div>
       <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.35rem' }}>
         <span className="setting-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

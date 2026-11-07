@@ -33,6 +33,7 @@ import { transcribeErrorMessage } from '../lib/format.js';
  * @param {string} deps.status                          model-load status; the prefetch waits for 'modelReady'.
  * @param {Array} deps.transcriptions                   the history entries; the auto-run scans them.
  * @param {boolean} deps.forceLocalFallback             the model source is the local mirror only.
+ * @param {boolean} deps.mirrorAllowed                  false under the 'forbid' relay debug mode: HuggingFace only.
  * @param {{current:boolean}} deps.localFirstRef        HuggingFace preflight answer, shared with the ASR loader.
  * @param {object} deps.entryDisplayModes               per-entry base view overrides (an auto-run trigger).
  * @param {string} deps.transcriptDisplayMode           the global default display (an auto-run trigger).
@@ -48,6 +49,7 @@ export function useDiarization({
   status,
   transcriptions,
   forceLocalFallback,
+  mirrorAllowed = true,
   localFirstRef,
   entryDisplayModes,
   transcriptDisplayMode,
@@ -147,7 +149,7 @@ export function useDiarization({
   function modelRequest() {
     return {
       precision: diarizationPrecision(backend, webgpuShaderF16),
-      localBaseUrl: '/models',
+      localBaseUrl: mirrorAllowed ? '/models' : null,
       localOnly: forceLocalFallback,
       localFirst: localFirstRef.current,
     };

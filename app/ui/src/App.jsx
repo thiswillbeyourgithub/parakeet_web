@@ -51,6 +51,7 @@ import { acquireGpuRun } from './lib/gpuRun.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
+import { resolveModelSourcing, normalizeRelayMode, DEFAULT_RELAY_MODE } from './lib/relayMode.js';
 import { reconcileSelection, effectiveServedFrom, modelsUnreachableMessage } from './lib/loadedModel.js';
 import {
   QUANT_DOWNLOAD_MB,
@@ -567,7 +568,10 @@ export default function App() {
   //   'local' : instance-served /models/ only (skip HF entirely)
   //   'both'  : HF first, silent fallback to /models/ if HF is unreachable
   const rawModelSource = (CONFIG.VITE_MODEL_SOURCE || 'hf').toLowerCase();
-  const modelSource = (rawModelSource === 'local' || rawModelSource === 'both') ? rawModelSource : 'hf';
+  const configModelSource = (rawModelSource === 'local' || rawModelSource === 'both') ? rawModelSource : 'hf';
+  // Debug override (Debug section, lib/relayMode.js): auto | force | forbid.
+  const [relayMode, setRelayMode] = useState(DEFAULT_RELAY_MODE);
+  const { modelSource, mirrorAllowed } = resolveModelSourcing(configModelSource, relayMode);
   const forceLocalFallback = modelSource === 'local';
   const localFallbackEnabled = modelSource === 'local' || modelSource === 'both';
   // Background HuggingFace preflight (lib/hubReachability.js). On a network that
@@ -581,7 +585,9 @@ export default function App() {
   useEffect(() => {
     // 'local' never touches HF, so there is nothing to learn and no request
     // worth making (the CSP does not even list the host in that configuration).
-    if (modelSource === 'local') return;
+    // 'forbid' must not let a failed probe reorder a load onto /models.
+    localFirstRef.current = false;
+    if (modelSource === 'local' || !mirrorAllowed) return;
     let cancelled = false;
     (async () => {
       const hubReachable = await probeHubReachable({ repoId });
@@ -597,7 +603,7 @@ export default function App() {
     // Re-probes when the visitor switches repo: the probe URL is repo-scoped,
     // so a different repo is a different question even though host
     // reachability is not.
-  }, [modelSource, repoId]);
+  }, [modelSource, mirrorAllowed, repoId]);
 
   // Warning message when local fallback is enabled but model files are missing
   const [fallbackWarning, setFallbackWarning] = useState(null);
@@ -1109,7 +1115,7 @@ export default function App() {
   // later. Keyed rather than a boolean because med mode switches repo right
   // after boot, and in that render a boolean would still say "settled" about
   // the previous repo.
-  const sourceListingKey = `${modelSource}|${repoId}|${forceLocalFallback}`;
+  const sourceListingKey = `${modelSource}|${mirrorAllowed}|${repoId}|${forceLocalFallback}`;
   const [settledListingKey, setSettledListingKey] = useState(null);
   const sourceListingSettled = settledListingKey === sourceListingKey;
   useEffect(() => {
@@ -1133,7 +1139,7 @@ export default function App() {
       // The same both-ways fallback the load itself performs, so the radios
       // describe whichever source will really answer rather than the one that
       // happens to be tried first.
-      if (!files?.length && !localOnly) files = await listLocal();
+      if (!files?.length && !localOnly && mirrorAllowed) files = await listLocal();
       if (!files?.length && localOnly && modelSource !== 'local') {
         files = await listRepoFiles(repoId).catch(() => null);
       }
@@ -1142,7 +1148,7 @@ export default function App() {
       setSettledListingKey(sourceListingKey);
     })();
     return () => { cancelled = true; };
-  }, [settingsLoaded, modelSource, repoId, forceLocalFallback]);
+  }, [settingsLoaded, modelSource, mirrorAllowed, repoId, forceLocalFallback]);
 
   // Recomputed rather than stored, because the adapter probe finishes on its own
   // schedule: a listing that arrived before `shader-f16` was known would
@@ -1262,6 +1268,7 @@ export default function App() {
     status,
     transcriptions,
     forceLocalFallback,
+    mirrorAllowed,
     localFirstRef,
     entryDisplayModes,
     transcriptDisplayMode,
@@ -1350,6 +1357,7 @@ export default function App() {
           savedPreprocessor,
           savedVerboseLog,
           savedDebugDecode,
+          savedRelayMode,
           savedFrameStride,
           savedBeamWidth,
           savedBeamWidthAuto,
@@ -1396,6 +1404,7 @@ export default function App() {
           loadSetting('preprocessor', 'nemo128'),
           loadSetting('verboseLog', false),
           loadSetting('debugDecode', false),
+          loadSetting('relayMode', DEFAULT_RELAY_MODE),
           loadSetting('frameStride', 1),
           // null defaults so restoreBeamWidthAuto can tell "never set" apart
           // from an explicit choice (see lib/beamWidth.js).
@@ -1494,6 +1503,7 @@ export default function App() {
         setPreprocessor(savedPreprocessor);
         setVerboseLog(savedVerboseLog);
         setDebugDecode(!!savedDebugDecode);
+        setRelayMode(normalizeRelayMode(savedRelayMode));
         setFrameStride(savedFrameStride);
         {
           // Auto mode leaves beamWidth alone here: the coupling effect below
@@ -2030,6 +2040,7 @@ export default function App() {
   usePersistedSetting('preprocessor', preprocessor, settingsLoaded);
   usePersistedSetting('verboseLog', verboseLog, settingsLoaded);
   usePersistedSetting('debugDecode', debugDecode, settingsLoaded);
+  usePersistedSetting('relayMode', relayMode, settingsLoaded);
   usePersistedSetting('frameStride', frameStride, settingsLoaded);
   usePersistedSetting('beamWidth', beamWidth, settingsLoaded);
   usePersistedSetting('beamWidthAuto', beamWidthAuto, settingsLoaded);
@@ -2427,9 +2438,11 @@ export default function App() {
         useLocalFallback,
         revision: CONFIG.VITE_MODEL_REVISION,
         allowFlatLocalFallback: ALLOW_FLAT_LOCAL_FALLBACK,
+        mirrorAllowed,
       });
       downloadOpts.progress = progressCallback;
       downloadOpts.protectCacheKeys = diarizationModelProtectKeys();
+      if (relayMode !== DEFAULT_RELAY_MODE) console.log(`[App] relay debug mode: ${relayMode} (model source ${modelSource})`);
       if (useLocalFallback) console.log('[App] Using local fallback for model download');
       const modelUrls = await getParakeetModel(repoId, downloadOpts);
 
@@ -2632,7 +2645,7 @@ export default function App() {
         gpuQuantFallbackTried,
       };
       let localReachable = false;
-      if (shouldProbeLocalMirror(failure)) {
+      if (mirrorAllowed && shouldProbeLocalMirror(failure)) {
         const probe = await checkLocalModelFiles('/models', repoId, { allowFlatFallback: ALLOW_FLAT_LOCAL_FALLBACK }).catch(() => null);
         localReachable = !!probe?.ok;
       }
@@ -5367,6 +5380,8 @@ export default function App() {
             saveSetting={saveSetting}
             debugDecode={debugDecode}
             setDebugDecode={setDebugDecode}
+            relayMode={relayMode}
+            setRelayMode={setRelayMode}
             supportReport={supportReport}
             supportReportCopied={supportReportCopied}
             copySupportReport={copySupportReport}
