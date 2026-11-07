@@ -51,7 +51,7 @@ import { acquireGpuRun } from './lib/gpuRun.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
-import { reconcileSelection, effectiveServedFrom } from './lib/loadedModel.js';
+import { reconcileSelection, effectiveServedFrom, modelsUnreachableMessage } from './lib/loadedModel.js';
 import {
   QUANT_DOWNLOAD_MB,
   restoredEncoderQuant,
@@ -1724,22 +1724,8 @@ export default function App() {
       if (result.ok) {
         console.log('[App] Local fallback check passed:', result.message);
       } else {
-        // With several repos on offer a flat mount is refused on purpose (see
-        // ALLOW_FLAT_LOCAL_FALLBACK), so the single-repo advice below would send
-        // the operator to build the one layout that cannot work. Name the
-        // per-repo path instead: it is both the fix and the reason.
-        const msg = ALLOW_FLAT_LOCAL_FALLBACK
-          ? `Local model fallback is enabled but model files are not reachable at /models/. `
-            + `Bind-mount a folder containing the ONNX files (e.g. produced by\n`
-            + `  hf download ${repoId} --local-dir /some/host/path)\n`
-            + `into the container and set LOCAL_MODEL_PATH to that in-container path. `
-            + `See docker-compose.yml.`
-          : `Local model fallback is enabled but model files are not reachable at /models/${repoId}/. `
-            + `This instance offers a choice of models, so each one must live in its own `
-            + `subfolder: a flat mount carries no repo id and would be served under the `
-            + `wrong model's name. Bind-mount the PARENT folder (e.g. produced by\n`
-            + `  hf download ${repoId} --local-dir /some/host/path/${repoId})\n`
-            + `and set LOCAL_MODEL_PATH to /some/host/path. See docker-compose.yml.`;
+        const msg = modelsUnreachableMessage({
+          repoId, allowFlat: ALLOW_FLAT_LOCAL_FALLBACK, relayFlag: CONFIG.VITE_MODEL_RELAY });
         console.error('[App]', msg);
         setFallbackWarning(msg);
       }

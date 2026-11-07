@@ -19,7 +19,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadedModelDiverges, describeLoadedModel, reconcileSelection, effectiveServedFrom } from '../../app/ui/src/lib/loadedModel.js';
+import { loadedModelDiverges, describeLoadedModel, reconcileSelection, effectiveServedFrom, modelsUnreachableMessage } from '../../app/ui/src/lib/loadedModel.js';
 
 const LABELS = { wasm: 'CPU', webgpu: 'GPU', fromHub: 'from HuggingFace', fromLocal: 'from this server', fromRelay: 'relayed by this server' };
 const REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
@@ -194,5 +194,29 @@ describe('effectiveServedFrom: naming the source a load really used', () => {
     for (const flag of [undefined, '', 'false', false]) {
       assert.equal(effectiveServedFrom('local', flag), 'local');
     }
+  });
+});
+
+describe('modelsUnreachableMessage: advice that fits what /models is', () => {
+  const repoId = 'Olicorne/some-model';
+
+  test('behind the relay it points at the relay, never at a folder to mount', () => {
+    // LOCAL_MODEL_PATH is retired, and the entrypoint now refuses to boot when
+    // it is set: advising it would turn a missing repo into a dead container.
+    for (const allowFlat of [true, false]) {
+      const msg = modelsUnreachableMessage({ repoId, allowFlat, relayFlag: 'true' });
+      assert.ok(!msg.includes('LOCAL_MODEL_PATH'), msg);
+      assert.ok(!/bind-mount/i.test(msg), msg);
+      assert.match(msg, /relay/);
+      assert.ok(msg.includes(repoId), msg);
+    }
+  });
+
+  test('without the relay it describes the mirror layout, still without the retired variable', () => {
+    const flat = modelsUnreachableMessage({ repoId, allowFlat: true, relayFlag: undefined });
+    const perRepo = modelsUnreachableMessage({ repoId, allowFlat: false, relayFlag: 'false' });
+    assert.match(flat, /reachable at \/models\/\. /);
+    assert.ok(perRepo.includes(`/models/${repoId}/`), perRepo);
+    for (const msg of [flat, perRepo]) assert.ok(!msg.includes('LOCAL_MODEL_PATH'), msg);
   });
 });
