@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
-import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, QuantUnavailableError, liveOrtServes, liveOrtVariant } from 'parakeet.js';
+import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, LocalDownloadError, QuantUnavailableError, liveOrtServes, liveOrtVariant } from 'parakeet.js';
 import { planOrtRuntimeSwitch, readPendingOrtReload, writePendingOrtReload, clearPendingOrtReload, DEFAULT_CPU_RUNTIME, normalizeCpuRuntime, effectiveOrtVariant, pageRuntimeServes } from './lib/ortRuntimeSwitch.js';
 import { parseModelRepos, matchModelRepo, migrateRepoId } from './lib/modelRepos.js';
 import './App.css';
@@ -2633,6 +2633,7 @@ export default function App() {
       // says when that is worth making.
       const failure = {
         isHubError: e instanceof HubDownloadError,
+        isLocalError: e instanceof LocalDownloadError,
         isQuantUnavailable: e instanceof QuantUnavailableError,
         useLocalFallback,
         forceLocalFallback,

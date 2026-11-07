@@ -25,6 +25,21 @@ export class HubDownloadError extends Error {
 }
 
 /**
+ * The same failure from this instance's own /models (the HF relay or a static
+ * mirror). A separate class because the two call for opposite next steps: a
+ * load that went to /models only because HuggingFace LOOKED unreachable must go
+ * back to HuggingFace when /models misses, and nothing else may.
+ */
+export class LocalDownloadError extends Error {
+  constructor(filename, cause) {
+    super(`Failed to download ${filename} from /models`);
+    this.name = 'LocalDownloadError';
+    this.filename = filename;
+    this.cause = cause;
+  }
+}
+
+/**
  * Raised when the requested quantisation cannot be served by ANY source tried
  * (the primary HF repo and, when probed, the local /models mirror), so honouring
  * it would mean silently swapping in a different quant (e.g. fp32-on-WASM with no
@@ -750,7 +765,12 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
       }
       if (!resp.ok && resp.status !== 206) {
         clearWatchdog();
-        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        const httpErr = new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        // The file is not there, and asking again will not put it there. Without
+        // this a missing file cost the whole backoff ladder (about a minute on
+        // /models) before the load could move on to another source.
+        httpErr.permanent = resp.status === 404 || resp.status === 410;
+        throw httpErr;
       }
 
       // A content-encoded response describes the ENCODED entity in its headers
@@ -884,7 +904,7 @@ async function _streamAndCache(url, cacheKey, filename, progress, logTag, {
       break;
     } catch (err) {
       await flushTail();
-      if (attempt >= maxRetries) throw err;
+      if (attempt >= maxRetries || err?.permanent) throw err;
       const delay = Math.min(30000, 1000 * 2 ** attempt);
       console.warn(`${logTag} Download error for ${filename} at ${received}/${total || '?'}, retrying in ${delay}ms (${attempt + 1}/${maxRetries}):`, err.message || err);
       await new Promise(r => setTimeout(r, delay));
@@ -1099,8 +1119,12 @@ export async function getLocalModelFile(baseUrl, repoId, filename, options = {})
 
   const url = `${baseUrl}/${filename}`;
   console.log(`[Hub:local] Downloading ${filename} from ${url}...`);
-  return _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]',
+  try {
+    return await _streamAndCache(url, cacheKey, filename, progress, '[Hub:local]',
       { asBytes, noCache, cacheIfUnder, prefixCacheBytes, ...(prefixSegmentBytes ? { prefixSegmentBytes } : {}) });
+  } catch (fetchErr) {
+    throw new LocalDownloadError(filename, fetchErr);
+  }
 }
 
 /**

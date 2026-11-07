@@ -43,6 +43,7 @@ export function shouldProbeLocalMirror({ isHubError, useLocalFallback, localFall
  *
  * @param {object} a
  * @param {boolean} a.isHubError            HubDownloadError
+ * @param {boolean} a.isLocalError          LocalDownloadError (/models missed)
  * @param {boolean} a.isQuantUnavailable    QuantUnavailableError
  * @param {boolean} a.useLocalFallback      this attempt used /models
  * @param {boolean} a.forceLocalFallback    the user pinned local weights
@@ -62,6 +63,7 @@ export function shouldProbeLocalMirror({ isHubError, useLocalFallback, localFall
  */
 export function planLoadFailure({
   isHubError = false,
+  isLocalError = false,
   isQuantUnavailable = false,
   useLocalFallback = false,
   forceLocalFallback = false,
@@ -92,7 +94,10 @@ export function planLoadFailure({
   // turned out not to serve the model. A false negative (an extension or a
   // proxy blocking the probe on a machine where HuggingFace works) must
   // therefore cost one fast same-origin miss, not a failed load.
-  if (isHubError && useLocalFallback && !forceLocalFallback && localFirst && !hubRetryTried) {
+  // It keys on the LOCAL error because that is what a local attempt throws: it
+  // once tested isHubError here, which a /models download never raises, so the
+  // rescue could not fire and a false negative failed the load after all.
+  if (isLocalError && useLocalFallback && !forceLocalFallback && localFirst && !hubRetryTried) {
     plan.retry = { useLocalFallback: false, hubRetryTried: true };
     plan.reason = 'hub-after-local-first';
     return plan;
@@ -102,7 +107,10 @@ export function planLoadFailure({
   // and the mirror can answer: retry there rather than surfacing the failure.
   // hub.js owns that gate (operator-configured fallback, or a probe that found
   // the files); this must not restate it, or the two would drift.
-  if (shouldRetryLocally({
+  // Not on the rescue leg: hubRetryTried means /models already missed this very
+  // load, and sending the HF failure back there would ping-pong the two sources
+  // forever (the retry below does not carry hubRetryTried along).
+  if (!hubRetryTried && shouldRetryLocally({
     isHubError,
     alreadyLocal: useLocalFallback,
     localConfigured: localFallbackEnabled,

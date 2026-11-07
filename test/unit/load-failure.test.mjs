@@ -49,8 +49,11 @@ describe('shouldProbeLocalMirror', () => {
 });
 
 describe('planLoadFailure: the local-first rescue', () => {
+  // A local-first attempt fails with what hub.js's /models path throws, a
+  // LocalDownloadError. This used to say isHubError, a combination the app can
+  // never produce, which is how the rescue shipped dead with every test green.
   const base = {
-    isHubError: true, useLocalFallback: true, forceLocalFallback: false,
+    isLocalError: true, useLocalFallback: true, forceLocalFallback: false,
     localFirst: true, hubRetryTried: false,
   };
 
@@ -70,9 +73,51 @@ describe('planLoadFailure: the local-first rescue', () => {
     assert.equal(planLoadFailure({ ...base, forceLocalFallback: true }).retry, null);
   });
 
+  test('a hub error cannot trigger it: a /models attempt never raises one', () => {
+    assert.equal(planLoadFailure({ ...base, isLocalError: false, isHubError: true }).retry, null);
+  });
+
   test('a load that chose the mirror for any other reason than the preflight '
     + 'does not get the rescue', () => {
     assert.equal(planLoadFailure({ ...base, localFirst: false }).retry, null);
+  });
+});
+
+describe('planLoadFailure: the ladder always ends', () => {
+  // Plays the ladder the way App.jsx does: every attempt fails with the error
+  // its source raises, and loadModel(plan.retry) resets every argument the
+  // retry does not name to its default. Waking the local-first rescue up once
+  // revealed an endless HF -> /models -> HF loop on a 'both' deployment that
+  // no single-step test could see, because each step looked right on its own.
+  const bools = [false, true];
+  for (const localFirst of bools)
+    for (const localFallbackEnabled of bools)
+      for (const forceLocalFallback of bools)
+        for (const localReachable of bools) {
+          const name = JSON.stringify({ localFirst, localFallbackEnabled, forceLocalFallback, localReachable });
+          test(`a dead network gives up: ${name}`, () => {
+            const defaults = () => ({ useLocalFallback: forceLocalFallback || localFirst, hubRetryTried: false });
+            let state = defaults();
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const plan = planLoadFailure({
+                isHubError: !state.useLocalFallback,
+                isLocalError: state.useLocalFallback,
+                useLocalFallback: state.useLocalFallback,
+                forceLocalFallback, localFirst, localFallbackEnabled, localReachable,
+                hubRetryTried: state.hubRetryTried,
+              });
+              if (!plan.retry) return;
+              state = { ...defaults(), ...plan.retry };
+            }
+            assert.fail('still retrying after 10 attempts');
+          });
+        }
+
+  test('on the rescue leg a hub failure is final, even on a deployment with /models', () => {
+    assert.equal(planLoadFailure({
+      isHubError: true, useLocalFallback: false, localFallbackEnabled: true,
+      localReachable: true, hubRetryTried: true,
+    }).retry, null);
   });
 });
 
@@ -173,6 +218,7 @@ describe('planLoadFailure: giving up', () => {
     + 'nothing left to pick', () => {
     const bools = [false, true];
     for (const isHubError of bools)
+     for (const isLocalError of bools)
       for (const isQuantUnavailable of bools)
         for (const useLocalFallback of bools)
           for (const forceLocalFallback of bools)
@@ -185,7 +231,7 @@ describe('planLoadFailure: giving up', () => {
                         for (const allowQuantSubstitution of bools)
                           for (const gpuQuantFallbackTried of bools) {
                             const plan = planLoadFailure({
-                              isHubError, isQuantUnavailable, useLocalFallback,
+                              isHubError, isLocalError, isQuantUnavailable, useLocalFallback,
                               forceLocalFallback, localFirst, hubRetryTried,
                               localFallbackEnabled, localReachable, isWebgpu,
                               wasmQuantIsDefault, allowQuantSubstitution,
