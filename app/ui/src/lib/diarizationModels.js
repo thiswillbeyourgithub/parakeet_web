@@ -29,9 +29,10 @@ import { getModelFile, getLocalModelFile, resolveLocalModelBase, HubDownloadErro
 import { CONFIG } from '../config.js';
 import { diarizationFileName } from './modelRepos.js';
 import { SORTFORMER_STEP_FILES, parseSortformerData } from '../../../src/sortformer.js';
+import { DEFAULT_DIARIZATION_REPO, DEFAULT_DIARIZATION_EMB_REPO } from '../../../src/defaultRepos.js';
 
-export const DIAR_REPO = CONFIG.VITE_DIARIZATION_REPO || 'Olicorne/Nemotron-3-Diarization-web-onnx';
-const EMB_REPO = CONFIG.VITE_DIARIZATION_EMB_REPO || 'csukuangfj/speaker-embedding-models';
+export const DIAR_REPO = CONFIG.VITE_DIARIZATION_REPO || DEFAULT_DIARIZATION_REPO;
+const EMB_REPO = CONFIG.VITE_DIARIZATION_EMB_REPO || DEFAULT_DIARIZATION_EMB_REPO;
 // Multilingual (zh+en "advanced common") CAM++: speaker embeddings transfer
 // across languages, and this is the broadest CAM++, a better default for the
 // en/fr Parakeet model than the zh-cn-only baked-in ERes2Net.
