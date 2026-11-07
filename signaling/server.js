@@ -177,6 +177,21 @@ for (const origin of ALLOWED_ORIGINS) {
 // Trust proxy headers only from loopback (Caddy/Vite proxy on same host)
 app.set('trust proxy', 'loopback');
 
+// ============ HuggingFace model relay ============
+// Streams allowlisted model repos from huggingface.co under /models for
+// visitors who can reach this site but not the hub (see hf-relay.js).
+// Disabled (every /models request 404s) when HF_RELAY_REPOS is empty, which
+// is the case whenever the entrypoint was told HF_MODEL_RELAY=false.
+const { createHfRelay, parseRepoAllowlist } = require('./hf-relay');
+const HF_RELAY_REPOS = parseRepoAllowlist(process.env.HF_RELAY_REPOS || '');
+const HF_RELAY_MAX_STREAMS = parseInt(process.env.HF_RELAY_MAX_STREAMS, 10) || 16;
+if (HF_RELAY_REPOS.size) {
+    const hfRelay = createHfRelay({ repos: HF_RELAY_REPOS, token: process.env.HF_TOKEN || '', maxStreams: HF_RELAY_MAX_STREAMS });
+    app.use('/models', hfRelay.handler);
+} else {
+    app.use('/models', (req, res) => res.status(404).end());
+}
+
 // CORS middleware, needed because Vite proxy forwards requests.
 // The Origin header is non-secret (the browser sets it), so a plain
 // String#includes() match is fine, no timing-safe comparison needed.
@@ -1439,6 +1454,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`  TURNS_PORT: ${TURNS_PORT || '(none)'}`);
     console.log(`  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS.join(', ')}`);
     console.log(`  RELAY_ENABLE: ${RELAY_ENABLE}`);
+    console.log(`  HF_RELAY_REPOS: ${HF_RELAY_REPOS.size ? [...HF_RELAY_REPOS].map(([r, v]) => `${r}@${v}`).join(', ') : '(none, model relay disabled)'}`);
+    if (HF_RELAY_REPOS.size) console.log(`  HF_RELAY_MAX_STREAMS: ${HF_RELAY_MAX_STREAMS}`);
+    console.log(`  HF_TOKEN: ${process.env.HF_TOKEN ? '(set)' : '(not set)'}`);
     console.log(`  BENCHMARK_REPORTS_DIR: ${BENCHMARK_REPORTS_DIR || '(not set, report collection disabled)'}`);
     if (BENCHMARK_REPORTS_DIR) {
         console.log(`  BENCHMARK_REPORTS_MAX_FILES: ${BENCHMARK_REPORTS_MAX_FILES}`);
