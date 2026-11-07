@@ -8,8 +8,10 @@
 // local mirror and goes back to HuggingFace for weights it was told to
 // self-host.
 
-/** Repo used when the operator configured nothing at all. */
-export const DEFAULT_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
+/** Repo used when the operator configured nothing at all (shared with the container's HF relay allowlist). */
+import { DEFAULT_MODEL_REPO } from '../../../src/defaultRepos.js';
+
+export { DEFAULT_MODEL_REPO };
 
 /**
  * Repos renamed on the hub (2026-10-19), old id -> new id. The hub redirects
