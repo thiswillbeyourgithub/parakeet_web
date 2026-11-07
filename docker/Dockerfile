@@ -159,7 +159,7 @@ RUN apk add --no-cache 'nodejs=~24' && \
     apk info -v | LC_ALL=C sort > /etc/parakeet-build.txt && \
     # Create a non-root user for the runtime processes. UID 1000 matches the
     # default host user on most Linux distros, which keeps bind-mount perms
-    # simple (e.g. ./fallback_models is readable by the same UID without an
+    # simple (e.g. ./benchmark_reports is writable by the same UID without an
     # extra chown). docker-compose.yml pins user: "1000:1000".
     addgroup -g 1000 -S parakeet && \
     adduser -u 1000 -S -G parakeet parakeet
@@ -173,22 +173,11 @@ COPY --from=builder --chown=parakeet:parakeet /build/signaling /signaling
 # Boost prebuild: the shared encoder/tokenizer modules plus the prebuild
 # script, laid out so the script's `../app/src` imports resolve (script at
 # /opt/parakeet/docker/, modules at /opt/parakeet/app/src/). Run at container
-# boot by entrypoint.sh to pre-encode operator boost lists when the model vocab
-# is on disk (local-model deployments); see docker/prebuild-boost.mjs.
+# boot by entrypoint.sh to pre-encode operator boost lists with the model vocab
+# the HF relay check downloads; see docker/prebuild-boost.mjs. entrypoint.sh
+# also reads the default repo ids from app/src/defaultRepos.js here.
 COPY --from=builder --chown=parakeet:parakeet /build/app/src /opt/parakeet/app/src
 COPY --chown=parakeet:parakeet docker/prebuild-boost.mjs /opt/parakeet/docker/prebuild-boost.mjs
-
-# Sidecar precompressor, used at boot on the mounted model folder: it reports
-# stale sidecars by default and regenerates them when PRECOMPRESS_MODELS is set
-# (see entrypoint.sh). Same file the builder ran over the bundle, so the
-# staleness rule cannot drift between the two.
-COPY --chown=parakeet:parakeet scripts/precompress.mjs /opt/parakeet/scripts/precompress.mjs
-
-# Mirror manifest generator, run at boot over the mounted model folder so the
-# app reads a listing instead of HEAD-probing for paths it can only guess at
-# (see entrypoint.sh and scripts/model-manifest.mjs). Same file the CI model
-# fetch runs, so the two mirrors cannot describe themselves differently.
-COPY --chown=parakeet:parakeet scripts/model-manifest.mjs /opt/parakeet/scripts/model-manifest.mjs
 
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY docker/entrypoint.sh /entrypoint.sh

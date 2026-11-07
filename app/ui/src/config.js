@@ -9,6 +9,10 @@ export const CONFIG = {
   VITE_MODEL_REPO: runtime.VITE_MODEL_REPO ?? import.meta.env.VITE_MODEL_REPO,
   VITE_MODEL_REVISION: runtime.VITE_MODEL_REVISION ?? import.meta.env.VITE_MODEL_REVISION,
   VITE_MODEL_SOURCE: runtime.VITE_MODEL_SOURCE ?? import.meta.env.VITE_MODEL_SOURCE,
+  // 'true' when /models/ is this server's HuggingFace relay (set by the
+  // entrypoint, not by the operator): the UI then tells the visitor when their
+  // model came through it rather than from HuggingFace directly.
+  VITE_MODEL_RELAY: runtime.VITE_MODEL_RELAY ?? import.meta.env.VITE_MODEL_RELAY,
   VITE_ANALYTICS_URL: runtime.VITE_ANALYTICS_URL ?? import.meta.env.VITE_ANALYTICS_URL,
   VITE_ANALYTICS_WEBSITE_ID: runtime.VITE_ANALYTICS_WEBSITE_ID ?? import.meta.env.VITE_ANALYTICS_WEBSITE_ID,
   // Every new VITE_* key the operator can set MUST be added here, otherwise
