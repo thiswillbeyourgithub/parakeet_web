@@ -1,8 +1,10 @@
 #!/bin/sh
 # Entrypoint for the parakeetweb production container.
 #
-# - Verifies the fallback model is present at LOCAL_MODEL_PATH (operator
-#   bind-mounts a host folder containing the ONNX files into the container).
+# - Refuses to start on retired model-source variables (local mirror era).
+# - Unless HF_MODEL_RELAY=false, checks that HuggingFace is reachable FROM
+#   HERE for every repo the /models relay will serve, and refuses to start
+#   otherwise (signaling/hf-relay.js --check).
 # - Populates /var/regex with the dictation regex CSV(s).
 # - Generates /run/config/config.js so the static bundle picks up runtime
 #   VITE_* envs without needing a rebuild.
@@ -242,30 +244,37 @@ _validate_model_revision() {
   return 0
 }
 
-# Accept only 'hf', 'local', 'both', or empty (defaults to hf in the bundle).
-_validate_model_source() {
-  case "$1" in
-    ''|hf|local|both) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-if ! _validate_model_repo "${VITE_MODEL_REPO:-}"; then
-  echo "[entrypoint] ERROR: VITE_MODEL_REPO has an unsupported shape: ${VITE_MODEL_REPO}"
-  echo "[entrypoint] Expected: owner/name (letters, digits, _ - . only),"
-  echo "[entrypoint] or a comma-separated list of those to offer a model picker."
+# Retired model-source variables. The local fallback mirror (a bind-mounted
+# folder of ONNX files served by Caddy at /models/) was replaced by a streaming
+# HuggingFace relay at the same URL, so these no longer do anything. Ignoring
+# them would be a silent misconfiguration (an operator who still sets
+# LOCAL_MODEL_PATH believes the weights come from their disk), so refuse to
+# start and say what replaced them.
+for _old_var in LOCAL_MODEL_PATH PRECOMPRESS_MODELS VITE_MODEL_SOURCE; do
+  eval "_old_val=\${${_old_var}:-}"
+  if [ -n "$_old_val" ]; then
+    echo "[entrypoint] ERROR: ${_old_var} is set (${_old_val}) but is no longer supported."
+    echo "[entrypoint] The local model mirror was replaced by a HuggingFace relay at /models/"
+    echo "[entrypoint] (on by default, HF_MODEL_RELAY=false disables it; HF_TOKEN raises the"
+    echo "[entrypoint] rate limit). Remove ${_old_var} from docker/.env and restart."
+    exit 1
+  fi
+done
+# A still-mounted model folder is the same mistake seen from the volume side.
+if [ -d /models ] && [ -n "$(ls -A /models 2>/dev/null)" ]; then
+  echo "[entrypoint] ERROR: /models is a non-empty mount, but local model files are no longer served."
+  echo "[entrypoint] Models now come through the HuggingFace relay. Remove the /models volume"
+  echo "[entrypoint] from your compose file (the host folder can then be deleted)."
   exit 1
 fi
-if ! _validate_model_revision "${VITE_MODEL_REVISION:-}"; then
-  echo "[entrypoint] ERROR: VITE_MODEL_REVISION has an unsupported shape: ${VITE_MODEL_REVISION}"
-  echo "[entrypoint] Expected: commit SHA or branch name (letters, digits, _ - . only)."
-  exit 1
-fi
-if ! _validate_model_source "${VITE_MODEL_SOURCE:-}"; then
-  echo "[entrypoint] ERROR: VITE_MODEL_SOURCE has an unsupported value: ${VITE_MODEL_SOURCE}"
-  echo "[entrypoint] Expected one of: hf, local, both (or empty for default 'hf')."
-  exit 1
-fi
+HF_MODEL_RELAY="${HF_MODEL_RELAY:-true}"
+case "$HF_MODEL_RELAY" in
+  true|false) ;;
+  *)
+    echo "[entrypoint] ERROR: HF_MODEL_RELAY must be 'true' or 'false', got: ${HF_MODEL_RELAY}"
+    exit 1
+    ;;
+esac
 
 echo "[entrypoint] === Environment variables ==="
 echo "[entrypoint] VITE_DEV_MODE=${VITE_DEV_MODE:-(not set)}"
@@ -274,9 +283,9 @@ echo "[entrypoint] VITE_ANALYTICS_WEBSITE_ID=${VITE_ANALYTICS_WEBSITE_ID:-(not s
 echo "[entrypoint] VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-(not set)}"
 echo "[entrypoint] VITE_MODEL_REPO=${VITE_MODEL_REPO:-(not set)}"
 echo "[entrypoint] VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-(not set, uses models.js per-model pin)}"
-echo "[entrypoint] VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-(not set, defaults to 'hf')}"
-echo "[entrypoint] LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-(not set)}"
-echo "[entrypoint] PRECOMPRESS_MODELS=${PRECOMPRESS_MODELS:-(not set, sidecars are only reported on, never written)}"
+echo "[entrypoint] HF_MODEL_RELAY=${HF_MODEL_RELAY}"
+if [ -n "${HF_TOKEN:-}" ]; then echo "[entrypoint] HF_TOKEN=(set)"; else echo "[entrypoint] HF_TOKEN=(not set, anonymous HF rate limit)"; fi
+echo "[entrypoint] HF_RELAY_MAX_STREAMS=${HF_RELAY_MAX_STREAMS:-(not set, defaults to 16)}"
 echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
 echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boost lists served)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
@@ -317,128 +326,50 @@ echo "[entrypoint] VITE_CSP_SCRIPT_HOSTS=${VITE_CSP_SCRIPT_HOSTS:-(not set, bake
 echo "[entrypoint] VITE_CSP_CONNECT_HOSTS=${VITE_CSP_CONNECT_HOSTS:-(not set, baked-in connect hosts only)}"
 echo "[entrypoint] =============================="
 
-# ---------- Fallback model: ensure weights exist on the bind mount ---------
-# When LOCAL_MODEL_PATH is set, the operator has bind-mounted a folder of
-# ONNX files into the container. We verify vocab.txt is present and let
-# Caddy serve that folder under /models/ (see Caddyfile).
-if [ -z "${LOCAL_MODEL_PATH}" ]; then
-  echo "[entrypoint] LOCAL_MODEL_PATH not set — skipping fallback model setup."
-else
-  # This looks for ONE marker, vocab.txt, because that is the one file the model
-  # repo keeps at its root in every layout the app supports (see
-  # app/src/modelLayout.js: weights may sit in fp32/, int8/, w4a8/,
-  # w2a8/, fp16/, or flat, but vocab.txt never moves). The mount may also be a parent of
-  # one or more HuggingFace-style repo folders (files under <repoId>/, e.g. what
-  # `hf download` leaves); when only that is present, descend into it so Caddy
-  # (/models/*), the boost prebuild, and the app's probes all see the repo root.
-  _MODEL_REPOS="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx}"
-  _LOCAL_REPO="${_MODEL_REPOS%%,*}"   # the default repo: first entry of the list
-  case "${_MODEL_REPOS}" in
-    *,*) _MULTI_REPO=1 ;;
-    *)   _MULTI_REPO=0 ;;
-  esac
-
-  # With ONE repo configured, a nested mount is flattened by descending into it,
-  # which is the long-standing contract and what the app's flat probe expects.
-  #
-  # With SEVERAL, descending would be actively wrong: it would make Caddy serve
-  # one repo at /models/ and hide the rest, and since hub.js falls back to the
-  # flat base for a repo with no subfolder, every picker entry would then load
-  # the descended repo's weights under its own name. So the parent stays the
-  # served root and each repo is reached at /models/<repoId>/.
-  if [ "${_MULTI_REPO}" = "0" ] \
-     && [ ! -f "${LOCAL_MODEL_PATH}/vocab.txt" ] \
-     && [ -f "${LOCAL_MODEL_PATH}/${_LOCAL_REPO}/vocab.txt" ]; then
-    echo "[entrypoint] Fallback model found nested under ${_LOCAL_REPO}/; using ${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
-    LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH}/${_LOCAL_REPO}"
-    export LOCAL_MODEL_PATH
-  fi
-
-  # Report per repo which ones this mount can actually serve. A repo is served
-  # when its own subfolder has vocab.txt, or (for the default repo only) when
-  # the mount is the flat single-repo layout. A repo that is missing is not
-  # fatal: the app still offers it and downloads it from HuggingFace, which is
-  # exactly what happens on an instance with no local mirror at all. Only a
-  # mount that can serve NOTHING is an operator error worth refusing to boot on.
-  _SERVED_ANY=0
-  _OLD_IFS="$IFS"
+# ---------- HuggingFace model relay -----------------------------------------
+# Browsers that cannot reach huggingface.co (corporate proxies, national
+# filtering) fetch the models from this server instead: the signaling sidecar
+# streams them from HF at /models/<repoId>/<file> (signaling/hf-relay.js), so
+# no weights are stored here and RAM stays flat. Only the repos listed in
+# HF_RELAY_REPOS are relayed, which keeps it from being an open HF proxy.
+#
+# The reachability check runs HERE, at every start, not at image build: a
+# build step is layer-cached and says nothing about the network the container
+# actually runs in. A failed check refuses to start, because a relay that
+# cannot reach HF only surfaces later, as a broken load for exactly the
+# visitors who have no other way to get the model.
+RELAY_VOCAB=""
+HF_RELAY_REPOS=""
+if [ "$HF_MODEL_RELAY" = "true" ]; then
+  # Defaults come from the one module the bundle also uses, so the relay can
+  # never allowlist a different repo than the one the app asks for.
+  _default_repo() {
+    node --input-type=module -e 'const m = await import("/opt/parakeet/app/src/defaultRepos.js"); process.stdout.write(m[process.argv[1]]);' "$1"
+  }
+  _relay_rev="${VITE_MODEL_REVISION:-main}"
+  _old_ifs="$IFS"
   IFS=','
-  for _repo in ${_MODEL_REPOS}; do
-    if [ -f "${LOCAL_MODEL_PATH}/${_repo}/vocab.txt" ]; then
-      echo "[entrypoint] Fallback model present for ${_repo} at ${LOCAL_MODEL_PATH}/${_repo}"
-      _SERVED_ANY=1
-    elif [ "${_repo}" = "${_LOCAL_REPO}" ] && [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
-      echo "[entrypoint] Fallback model present for ${_repo} at ${LOCAL_MODEL_PATH} (flat layout)"
-      _SERVED_ANY=1
-    else
-      echo "[entrypoint] WARNING: no local weights for ${_repo}; it will be downloaded from HuggingFace."
-      echo "[entrypoint]          Put them at ${LOCAL_MODEL_PATH}/${_repo}/ to serve them from here."
-    fi
+  for _repo in ${VITE_MODEL_REPO:-$(_default_repo DEFAULT_MODEL_REPO)}; do
+    HF_RELAY_REPOS="${HF_RELAY_REPOS:+$HF_RELAY_REPOS,}${_repo}@${_relay_rev}"
   done
-  IFS="$_OLD_IFS"
-
-  if [ "${_SERVED_ANY}" = "0" ]; then
-    echo "[entrypoint] ERROR: fallback model missing at ${LOCAL_MODEL_PATH}."
-    echo "[entrypoint] Bind-mount a folder of ONNX files into the container at"
-    echo "[entrypoint] ${LOCAL_MODEL_PATH} (the repo root: vocab.txt directly"
-    echo "[entrypoint] inside, weights either in their precision folders or flat"
-    echo "[entrypoint] beside it), or nested under <repoId>/ for each of:"
-    echo "[entrypoint]   ${_MODEL_REPOS}"
-    echo "[entrypoint] Pre-populate the host folder with e.g.:"
-    echo "[entrypoint]   hf download ${_LOCAL_REPO} \\"
-    echo "[entrypoint]     --local-dir /some/host/path"
+  IFS="$_old_ifs"
+  HF_RELAY_REPOS="${HF_RELAY_REPOS},${VITE_DIARIZATION_REPO:-$(_default_repo DEFAULT_DIARIZATION_REPO)}"
+  HF_RELAY_REPOS="${HF_RELAY_REPOS},${VITE_DIARIZATION_EMB_REPO:-$(_default_repo DEFAULT_DIARIZATION_EMB_REPO)}"
+  export HF_RELAY_REPOS HF_TOKEN
+  echo "[entrypoint] HF relay repos: ${HF_RELAY_REPOS}"
+  RELAY_VOCAB="/tmp/relay-vocab.txt"
+  if ! node /signaling/hf-relay.js --check --vocab-out "$RELAY_VOCAB"; then
+    echo "[entrypoint] ERROR: HuggingFace is not usable from this server (see the lines above)."
+    echo "[entrypoint] Fix the network/token/repo, or set HF_MODEL_RELAY=false to run without"
+    echo "[entrypoint] the relay (visitors who cannot reach huggingface.co then cannot load models)."
     exit 1
   fi
-
-  # Mirror manifest. The app cannot list a folder behind a static file server,
-  # so without one it HEAD-probes the paths app/src/modelLayout.js predicts:
-  # every layout anyone wrote down, and no others. A repo that files a weight
-  # somewhere else (the optimized repo keeps a second model under
-  # istupakov_smoothquant/ and put an encoder build in it) then resolves
-  # fine from HuggingFace and reads as unavailable from this mount. So describe
-  # the mount instead of making the app guess at it.
-  #
-  # Written to a tmpfs, not into the mount, because the mount is read-only by
-  # default and this must work without the operator changing that; Caddy serves
-  # it back under /models/ (see Caddyfile). Regenerated at every boot from what
-  # is actually on disk, so it cannot go stale, and a failure is only a warning:
-  # a mount with no manifest is probed exactly as it was before.
-  MODEL_MANIFEST_DIR="/var/model-manifests"
-  if mkdir -p "${MODEL_MANIFEST_DIR}" 2>/dev/null && [ -w "${MODEL_MANIFEST_DIR}" ]; then
-    node /opt/parakeet/scripts/model-manifest.mjs \
-      "${LOCAL_MODEL_PATH}" "${_MODEL_REPOS}" "${MODEL_MANIFEST_DIR}" \
-      || echo "[entrypoint] WARNING: could not describe the model mount; the app will probe for paths instead."
-  else
-    echo "[entrypoint] WARNING: ${MODEL_MANIFEST_DIR} is not writable; the app will probe for model paths instead."
-  fi
-
-  # Precompressed sidecars. Caddy serves `<file>.zst` in place of `<file>` to
-  # any browser that accepts zstd (file_server ... precompressed, see
-  # Caddyfile), which takes the 841 MB int8 encoder to 643 MB on the wire.
-  #
-  # Default (PRECOMPRESS_MODELS unset): REPORT ONLY. A sidecar left over from an
-  # OLDER copy of a model would be handed to some visitors while the plain file
-  # stays correct, which is silent and hits only part of the audience, so it is
-  # worth a loud line at boot. Nothing is written, because the container runs
-  # unprivileged and the model folder is usually mounted read-only.
-  #
-  # PRECOMPRESS_MODELS=1: generate the missing ones and replace the stale ones
-  # here, at startup. That needs the mount WRITABLE (drop the `:ro`) and costs
-  # ~30-90 s the first time on a full model set; afterwards it is a no-op, so
-  # the cost is paid once per model change rather than per container start.
-  # Either way this never fails the boot: without a sidecar Caddy serves the
-  # plain file, which is what it did before any of this existed.
-  case "${PRECOMPRESS_MODELS:-}" in
-    1|true|y|yes)
-      echo "[entrypoint] PRECOMPRESS_MODELS set: generating zstd sidecars in ${LOCAL_MODEL_PATH}..."
-      node /opt/parakeet/scripts/precompress.mjs --models "${LOCAL_MODEL_PATH}" \
-        || echo "[entrypoint] WARNING: precompression failed; Caddy will serve the plain files."
-      ;;
-    *)
-      node /opt/parakeet/scripts/precompress.mjs --models "${LOCAL_MODEL_PATH}" --check \
-        || true
-      ;;
-  esac
+  VITE_MODEL_SOURCE="both"
+  VITE_MODEL_RELAY="true"
+else
+  echo "[entrypoint] HF_MODEL_RELAY=false: browsers download models straight from HuggingFace."
+  VITE_MODEL_SOURCE="hf"
+  VITE_MODEL_RELAY=""
 fi
 
 # ---------- Dictation regex rules ------------------------------------------
@@ -480,13 +411,13 @@ fi
 #
 # 1. HuggingFace connect-src list: the explicit subdomains HF currently
 #    redirects model files through, including the Xet CDN (*.aws.cdn.hf.co)
-#    every repo migrated to Xet storage now serves its weights from. Default
-#    ON, but cleared entirely when VITE_MODEL_SOURCE=local, since the app never
-#    reaches HF in that mode and there is no reason to advertise those origins.
+#    every repo migrated to Xet storage now serves its weights from. Always
+#    on: browsers that can reach HF download from it directly, and only fall
+#    back to this server's /models/ relay (same origin) when they cannot.
 #
 #    A host missing from this list is not a soft failure: the browser blocks the
 #    request, hub.js only sees a failed download, and the app falls through to
-#    the local mirror or to nothing. That is exactly how a deployment broke,
+#    the relay or to nothing. That is exactly how a deployment broke,
 #    with cas-bridge.xethub.hf.co allowed and us.aws.cdn.hf.co not. The hosts
 #    are spelled out rather than wildcarded because _validate_csp_hosts refuses
 #    `*` from operators and this default should not hold itself to a looser
@@ -501,12 +432,7 @@ fi
 #    allowlist as _validate_csp_hosts), so no unvalidated input reaches
 #    the CSP header.
 _HF_HOSTS_DEFAULT="https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://cdn-lfs-eu-1.huggingface.co https://cas-bridge.xethub.hf.co https://us.aws.cdn.hf.co https://eu.aws.cdn.hf.co"
-if [ "${VITE_MODEL_SOURCE:-}" = "local" ]; then
-  _CSP_HF_HOSTS=""
-  echo "[entrypoint] VITE_MODEL_SOURCE=local: dropping HF origins from CSP."
-else
-  _CSP_HF_HOSTS="$_HF_HOSTS_DEFAULT"
-fi
+_CSP_HF_HOSTS="$_HF_HOSTS_DEFAULT"
 export _CSP_HF_HOSTS
 
 if [ -n "${VITE_ANALYTICS_URL:-}" ]; then
@@ -629,12 +555,12 @@ if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
   # part for 10k-100k lists). No-op without a local vocab (pure-HF deploy): the
   # browser then encodes the .txt itself, as before. Failure is non-fatal.
   _MERGES="/srv/tokenizer/bpe-merges.json"
-  if [ -n "${LOCAL_MODEL_PATH:-}" ] && [ -f "${LOCAL_MODEL_PATH}/vocab.txt" ]; then
-    echo "[entrypoint] Pre-encoding boost lists with local vocab (${LOCAL_MODEL_PATH}/vocab.txt)..."
-    node /opt/parakeet/docker/prebuild-boost.mjs "$BOOST_DIR" "${LOCAL_MODEL_PATH}/vocab.txt" "$_MERGES" \
+  if [ -n "${RELAY_VOCAB}" ] && [ -f "${RELAY_VOCAB}" ]; then
+    echo "[entrypoint] Pre-encoding boost lists with the model vocab fetched by the relay check..."
+    node /opt/parakeet/docker/prebuild-boost.mjs "$BOOST_DIR" "${RELAY_VOCAB}" "$_MERGES" \
       || echo "[entrypoint] WARNING: boost prebuild failed; browser will encode lists itself."
   else
-    echo "[entrypoint] No local vocab — skipping boost prebuild (browser will encode lists)."
+    echo "[entrypoint] No model vocab (HF_MODEL_RELAY=false): skipping boost prebuild (browser will encode lists)."
   fi
   # Re-list AFTER the prebuild so the manifest also names the .json artifacts it
   # produced, which is how the browser knows whether a prebuilt encoding exists
@@ -699,9 +625,10 @@ mkdir -p /run/config
 # so that even if a future refactor inlines the config, it stays safe.
 VITE_DEV_MODE="${VITE_DEV_MODE:-false}" \
 VITE_DICTATION_DEVICE_SUPPORT="${VITE_DICTATION_DEVICE_SUPPORT:-true}" \
-VITE_MODEL_REPO="${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx}" \
+VITE_MODEL_REPO="${VITE_MODEL_REPO:-}" \
 VITE_MODEL_REVISION="${VITE_MODEL_REVISION:-}" \
-VITE_MODEL_SOURCE="${VITE_MODEL_SOURCE:-}" \
+VITE_MODEL_SOURCE="${VITE_MODEL_SOURCE}" \
+VITE_MODEL_RELAY="${VITE_MODEL_RELAY}" \
 VITE_ANALYTICS_URL="${VITE_ANALYTICS_URL:-}" \
 VITE_ANALYTICS_WEBSITE_ID="${VITE_ANALYTICS_WEBSITE_ID:-}" \
 VITE_ANALYTICS_SRI="${VITE_ANALYTICS_SRI:-}" \
@@ -719,6 +646,7 @@ node -e '
     "VITE_MODEL_REPO",
     "VITE_MODEL_REVISION",
     "VITE_MODEL_SOURCE",
+    "VITE_MODEL_RELAY",
     "VITE_ANALYTICS_URL",
     "VITE_ANALYTICS_WEBSITE_ID",
     "VITE_ANALYTICS_SRI",

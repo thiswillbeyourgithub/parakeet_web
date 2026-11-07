@@ -14,8 +14,8 @@ services:
     # Run as non-root (UID 1000, created in the Dockerfile). Combined with
     # cap_drop:ALL, no-new-privileges, and the read-only rootfs, this keeps
     # the blast radius of any RCE minimal. UID 1000 also matches the default
-    # host user on most Linux distros so bind-mounted ./fallback_models is
-    # readable without extra chown.
+    # host user on most Linux distros so bind-mounted folders (e.g.
+    # benchmark_reports) are writable without extra chown.
     user: "1000:1000"
     security_opt:
       - no-new-privileges:true
@@ -33,11 +33,6 @@ services:
       # Caddy also runs as UID 1000 and writes into /config/caddy + /data/caddy.
       - /var/regex:uid=1000,gid=1000,mode=0700
       - /var/boost:uid=1000,gid=1000,mode=0700
-      # The model mount is read-only by default, so the file list the entrypoint
-      # generates for it (scripts/model-manifest.mjs, served by Caddy under
-      # /models/) is written here instead. Without it the app falls back to
-      # HEAD-probing, which cannot find a weight the repo files somewhere new.
-      - /var/model-manifests:uid=1000,gid=1000,mode=0700
       - /run/config:uid=1000,gid=1000,mode=0700
       - /config/caddy:uid=1000,gid=1000,mode=0700
       - /data/caddy:uid=1000,gid=1000,mode=0700
@@ -48,17 +43,6 @@ services:
       # to this compose file (docker/), so it points at the repo's
       # phrase_boosting/ folder. See BOOST_PHRASES_SOURCE / VITE_PHRASE_BOOST_DEFAULT below.
       - ../phrase_boosting:/boost-defaults:ro
-
-      # Local model fallback: bind-mount a host folder of ONNX files (the repo
-      # root: vocab.txt directly inside, weights either in their precision
-      # folders as the repo ships them or flat beside it, OR a nested
-      # <repoId>/ subfolder which the entrypoint descends into) into the
-      # container, then set LOCAL_MODEL_PATH below to the in-container target.
-      # Caddy serves it under /models/. Pre-populate the host folder with e.g.:
-      #   hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx --local-dir /host/path
-      # Drop the `:ro` if you set PRECOMPRESS_MODELS below, which writes the
-      # `.zst` sidecars into this folder at boot.
-      # - /host/path/to/onnx-files:/models:ro
 
       # Custom dictation regex rules: uncomment and set the host path to a folder
       # containing your own CSV regex files (overrides the default Murmure download).
@@ -86,26 +70,24 @@ services:
       - VITE_DICTATION_DEVICE_SUPPORT=${VITE_DICTATION_DEVICE_SUPPORT:-true}
       # One repo id, or several comma-separated to offer a sidebar model
       # picker (first entry is the default). See docker/env.example.
-      - VITE_MODEL_REPO=${VITE_MODEL_REPO:-Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx}
+      # Unset means the app default (app/src/defaultRepos.js).
+      - VITE_MODEL_REPO=${VITE_MODEL_REPO:-}
       - VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-}
-      # Where to fetch model weights from:
-      #   hf    : HuggingFace only (default)
-      #   local : instance-served /models/ only (requires LOCAL_MODEL_PATH)
-      #   both  : HF first, silent fallback to /models/ if HF is unreachable
-      # Auto-promoted to 'both' when LOCAL_MODEL_PATH is set and the operator
-      # left this unset.
-      - VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-${LOCAL_MODEL_PATH:+both}}
-      # In-container path of the bind-mounted ONNX folder (must match the
-      # container side of the volume above). Caddy serves this directory at
-      # /models/. Leave unset to disable local fallback entirely.
+      # HuggingFace relay: visitors who cannot reach huggingface.co download the
+      # models through this server at /models/ (streamed, nothing stored on
+      # disk). On by default; the container refuses to start when HF is not
+      # reachable from here. 'false' disables it.
+      - HF_MODEL_RELAY=${HF_MODEL_RELAY:-true}
+      # Optional HuggingFace token: raises the relay's HF rate limit, and gives
+      # it access to private/gated repos (which it then serves publicly).
+      - HF_TOKEN=${HF_TOKEN:-}
+      # Optional cap on simultaneous relayed downloads (default 16).
+      - HF_RELAY_MAX_STREAMS=${HF_RELAY_MAX_STREAMS:-}
+      # REMOVED variables, passed through only so the entrypoint can refuse to
+      # start when one is still set (they did nothing silently otherwise).
       - LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-}
-      # Generate the zstd sidecars Caddy serves for the local weights, at boot,
-      # instead of only warning about stale ones (841 MB -> 643 MB on the int8
-      # encoder). Needs the model mount WRITABLE (drop its `:ro`); costs
-      # ~30-90 s on the first boot after a model change and nothing afterwards.
-      # Leave unset to prepare them on the host instead:
-      #   node scripts/precompress.mjs --models <model-dir>
       - PRECOMPRESS_MODELS=${PRECOMPRESS_MODELS:-}
+      - VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-}
       # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
       # Phrase-boosting lists: folder of .txt files or https URL to one .txt.
@@ -132,7 +114,7 @@ services:
       # section produces. The entrypoint probes the folder and derives the
       # client-side VITE_BENCHMARK_UPLOAD from it, so unset means the section
       # still benchmarks but never offers to send anything. The folder must be
-      # owned by UID 1000 (deploy.sh chowns it, like fallback_models).
+      # owned by UID 1000.
       - BENCHMARK_REPORTS_DIR=${BENCHMARK_REPORTS_DIR:-}
       # Disk backstop: refuse new reports once the folder holds this many
       # files (~32 KB each, so the default caps it around 640 MB).
