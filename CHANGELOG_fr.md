@@ -8,7 +8,7 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Non publié
+## 12.0.0 (2026-11-07)
 
 ### Un réglage de débogage pour vérifier le relais des modèles, et deux corrections du repli qu'il a révélées
 
