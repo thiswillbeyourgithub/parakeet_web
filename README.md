@@ -628,6 +628,7 @@ The models this app loads, and the French medical ASR stack behind them, are all
 | [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) | [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), a ternary-weight model, exported to ONNX (fp32 / fp16 / int8 / w4a8 / w2a8, the last three packing the ternary weights exactly). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The plain v3 export the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. Superseded by the ultra export and no longer offered by the app; kept online so existing links keep working. |
+| [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx) | [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization), the speaker-diarization model, exported to ONNX for the browser (fp32 / fp16 / int8). |
 | [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts) | The open recipe that built that dataset end to end: text sources, spoken-form normalization, the batch synthesis client, and the transcribe-and-rescore QC pass. |
 | [UltiMed-ASR-FR-v1-NeMo_training_scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-NeMo_training_scripts) | The NeMo fork and training configs used to run the fine-tune itself. |
 | [UltiMed-ASR-FR-v1-Voxtral](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-Voxtral) | The Voxtral TTS container that spoke every clip of the dataset: Dockerfile, tuning, and the vllm-omni patches. |
@@ -648,7 +649,7 @@ Some bundled phrase-boosting lists include bacterial names derived from LPSN (Li
   - This was essential in allowing me to come up with my own improved quantization, available at [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx)
 - **[istupakov/onnx-asr](https://github.com/istupakov/onnx-asr)** – Python reference implementation
 - **ONNX Runtime Web** – Makes browser inference possible
-- **[nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)** – Streaming Sortformer speaker-diarization model by NVIDIA (OpenMDW-1.1), exported for the browser with Claude Code
+- **[nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)** – Streaming Sortformer speaker-diarization model by NVIDIA (OpenMDW-1.1), exported for the browser with Claude Code as [Olicorne/Nemotron-3-Diarization-web-onnx](https://huggingface.co/Olicorne/Nemotron-3-Diarization-web-onnx)
 - **[3D-Speaker CAM++](https://huggingface.co/csukuangfj/speaker-embedding-models)** – Speaker-embedding model used to recognise a voice across recordings (Apache-2.0)
 
 ### Credits
