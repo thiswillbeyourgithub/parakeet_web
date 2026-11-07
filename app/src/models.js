@@ -97,10 +97,10 @@ export const MODELS = {
 };
 
 /**
- * Default model to use when none specified. Matches the web app's own default
- * repo (DEFAULT_MODEL_REPO in app/ui/src/lib/modelRepos.js,
- * Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx), so the CLI and the browser default
- * to the same multilingual v3 model.
+ * Default model to use when none specified. Its repoId must equal the web
+ * app's default repo (DEFAULT_MODEL_REPO in ./defaultRepos.js, pinned by
+ * test/unit/default-repos.test.mjs), so the CLI and the browser default to the
+ * same multilingual v3 model.
  * @type {string}
  */
 export const DEFAULT_MODEL = 'parakeet-tdt-0.6b-v3-ultra';
