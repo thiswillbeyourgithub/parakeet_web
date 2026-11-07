@@ -47,6 +47,8 @@ const WASM_PASSTHROUGH_QUANTS = new Set(['w4a8', 'w2a8']);
  * @param {string} [a.revision]          operator override of the model revision pin
  * @param {boolean} [a.allowFlatLocalFallback] may an unattributed flat /models
  *   tree stand in for a repo the mount has no subfolder for
+ * @param {boolean} [a.mirrorAllowed=true] false under the 'forbid' relay debug
+ *   mode: no /models at all, so not even the pre-download quant upgrade probe
  * @returns {{opts: object, wantWebgpu: boolean, wasmEncoderRequest: string}}
  *   `opts` for hub.js, plus the two derived facts the caller needs again later
  *   (the encode pool is eligible only on a non-fp32 WASM load).
@@ -60,6 +62,7 @@ export function buildDownloadOpts({
   useLocalFallback = false,
   revision = undefined,
   allowFlatLocalFallback = false,
+  mirrorAllowed = true,
 }) {
   const wantWebgpu = String(backend || '').startsWith('webgpu');
   // On WASM the user may opt into the sharded fp32 encoder (full quality); the
@@ -102,7 +105,7 @@ export function buildDownloadOpts({
     // Serve the weights from this instance under /models/ (hub.js auto-detects a
     // flat layout or a nested /models/<repoId>/ tree via resolveLocalModelBase).
     opts.localFallbackBaseUrl = '/models';
-  } else {
+  } else if (mirrorAllowed) {
     opts.localUpgradeBaseUrl = '/models';
   }
   return { opts, wantWebgpu, wasmEncoderRequest };
