@@ -386,7 +386,7 @@ async function runCheck({ repos, token, upstream = DEFAULT_UPSTREAM, fetchImpl =
     return failures;
 }
 
-module.exports = { createHfRelay, parseRepoAllowlist, parseRelayPath, isAllowedHfHost, nextLinkUrl, runCheck };
+module.exports = { MANIFEST_FILE, createHfRelay, parseRepoAllowlist, parseRelayPath, isAllowedHfHost, nextLinkUrl, runCheck };
 
 if (require.main === module) {
     const args = process.argv.slice(2);

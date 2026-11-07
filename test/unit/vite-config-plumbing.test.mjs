@@ -17,7 +17,9 @@ const read = (p) => readFileSync(fileURLToPath(new URL(`../../${p}`, import.meta
 const configJs = read('app/ui/src/config.js');
 const KEYS = [...new Set([...configJs.matchAll(/^\s*(VITE_[A-Z0-9_]+):/gm)].map((m) => m[1]))];
 // Derived by the entrypoint from BENCHMARK_REPORTS_DIR, never set by an operator.
-const DERIVED = new Set(['VITE_BENCHMARK_UPLOAD']);
+// VITE_MODEL_SOURCE and VITE_MODEL_RELAY follow HF_MODEL_RELAY (the operator
+// setting VITE_MODEL_SOURCE now refuses the boot).
+const DERIVED = new Set(['VITE_BENCHMARK_UPLOAD', 'VITE_MODEL_SOURCE', 'VITE_MODEL_RELAY']);
 
 test('config.js exposes keys (the parser found them)', () => {
   assert.ok(KEYS.length > 5, `only found ${KEYS.join(', ')}`);
