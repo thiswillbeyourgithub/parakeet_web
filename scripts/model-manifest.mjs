@@ -30,7 +30,10 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const MANIFEST_FILE = 'model-manifest.json';
+// The filename hub.js reads, imported so the writer cannot drift from it.
+import { LOCAL_MANIFEST_FILE as MANIFEST_FILE } from '../app/src/hub.js';
+
+export { MANIFEST_FILE };
 
 // Skipped wholesale rather than filtered path by path, because these carry
 // thousands of entries that are never model files and would drown the listing.

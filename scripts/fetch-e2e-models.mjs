@@ -46,22 +46,23 @@ import { fileURLToPath } from 'node:url';
 
 import { basenameOf, findRepoFile } from '../app/src/modelLayout.js';
 import { listRepoFiles } from '../app/src/hub.js';
+import { DEFAULT_MODEL_REPO, DEFAULT_DIARIZATION_REPO, DEFAULT_DIARIZATION_EMB_REPO } from '../app/src/defaultRepos.js';
 import { writeMirrorManifests, MANIFEST_FILE } from './model-manifest.mjs';
 
 // Each entry is a { repo, file } HuggingFace descriptor, where `file` is the
 // IN-REPO path: it is both what gets requested from HF and where the file lands
 // under MODEL_DIR, so the e2e mirror is a faithful copy of the repo layout
 // rather than a flattened one. The int8 set comes from the app's default model
-// repo (DEFAULT_MODEL_REPO in app/ui/src/lib/modelRepos.js, now the ultra
-// repo), so the tier-3 e2e exercises the same weights users get by default. The diarization
+// repo (DEFAULT_MODEL_REPO in app/src/defaultRepos.js, imported below rather
+// than restated), so the tier-3 e2e exercises the same weights users get by default. The diarization
 // set matches diarizationModels.js's defaults: the Sortformer files a WASM
 // diarization loads (its int8 step) plus the CAM++ model at its repo's root.
 const REVISION = 'main';
-export const ASR_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
+export const ASR_REPO = DEFAULT_MODEL_REPO;
 // The two diarization repos, named so the specs that probe for their weights
 // share this list's idea of where they came from instead of restating the ids.
-export const DIARIZATION_REPO = 'Olicorne/Nemotron-3-Diarization-web-onnx';
-export const DIARIZATION_EMB_REPO = 'csukuangfj/speaker-embedding-models';
+export const DIARIZATION_REPO = DEFAULT_DIARIZATION_REPO;
+export const DIARIZATION_EMB_REPO = DEFAULT_DIARIZATION_EMB_REPO;
 export const MODELS = [
   { repo: ASR_REPO, file: 'int8/encoder-model.int8.onnx' },
   { repo: ASR_REPO, file: 'int8/decoder_joint-model.int8.onnx' },
