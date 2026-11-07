@@ -34,7 +34,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
   - [Configuration automatique : mesurer plutôt que supposer](#configuration-automatique--mesurer-plutôt-que-supposer)
 - [Auto-hébergement](#auto-hébergement)
   - [Proposer plusieurs modèles](#proposer-plusieurs-modèles)
-  - [Modèle local de secours](#modèle-local-de-secours)
+  - [Relais des modèles HuggingFace](#relais-des-modèles-huggingface)
   - [Serveur d'API compatible OpenAI](#serveur-dapi-compatible-openai)
 - [Dépannage](#dépannage)
   - [Réinitialiser l'application](#réinitialiser-lapplication)
@@ -166,7 +166,7 @@ L'identification des locuteurs utilise [Nemotron-3-Diarization](https://huggingf
 
 Les segments de locuteurs obtenus sont mis en correspondance avec les horodatages de mots existants (chaque mot reçoit le locuteur dont le segment le chevauche le plus), et les mots consécutifs d'un même locuteur sont regroupés en tours de parole.
 
-- Les modèles sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli local `/models`) et mis en cache dans IndexedDB. Ils ne sont préchargés en arrière-plan, une fois le modèle ASR chargé, que si **Locuteurs** est votre affichage par défaut ; sinon ils se téléchargent à votre premier clic sur **Locuteurs**, donc la fonctionnalité ne coûte rien si vous ne l'utilisez jamais. Si ce téléchargement échoue, le bouton **Locuteurs** et l'option d'affichage par défaut **Locuteurs** sont grisés et affichent la raison au survol (au lieu d'une fenêtre d'erreur).
+- Les modèles sont récupérés depuis le même hub que le modèle ASR (variables d'environnement `VITE_DIARIZATION_*`, avec un repli via le relais `/models`) et mis en cache dans IndexedDB. Ils ne sont préchargés en arrière-plan, une fois le modèle ASR chargé, que si **Locuteurs** est votre affichage par défaut ; sinon ils se téléchargent à votre premier clic sur **Locuteurs**, donc la fonctionnalité ne coûte rien si vous ne l'utilisez jamais. Si ce téléchargement échoue, le bouton **Locuteurs** et l'option d'affichage par défaut **Locuteurs** sont grisés et affichent la raison au survol (au lieu d'une fenêtre d'erreur).
 - Changer le nombre de locuteurs d'une entrée ne fait que regrouper à nouveau le résultat déjà calculé, sans relancer le modèle.
 
 Cette fonctionnalité a été mise en place avec [Claude Code](https://www.anthropic.com/claude-code).
@@ -264,13 +264,13 @@ Il s'agit d'un portage navigateur du *concept* derrière le [Phrase-Boosting acc
 
 ##### Listes précompilées (`.pwc`, auto-hébergé uniquement)
 
-Lorsque `LOCAL_MODEL_PATH` est défini, le conteneur encode chaque liste fournie par l'opérateur en identifiants de tokens au démarrage et sert le résultat (un fichier `.json` voisin) afin que les navigateurs des visiteurs sautent ce travail. Les visiteurs sont déjà rapides dans les deux cas ; ce qui n'est pas gratuit, c'est cet encodage au démarrage lui-même, qui se relance à **chaque** démarrage du conteneur et est lent pour une très grande liste (10k à 100k phrases). La précompilation épargne au **serveur** ce travail répété au démarrage (elle ne change pas la vitesse côté visiteur). Compilez la liste une fois :
+Lorsque le relais des modèles est actif (par défaut), le conteneur encode chaque liste fournie par l'opérateur en identifiants de tokens au démarrage et sert le résultat (un fichier `.json` voisin) afin que les navigateurs des visiteurs sautent ce travail. Les visiteurs sont déjà rapides dans les deux cas ; ce qui n'est pas gratuit, c'est cet encodage au démarrage lui-même, qui se relance à **chaque** démarrage du conteneur et est lent pour une très grande liste (10k à 100k phrases). La précompilation épargne au **serveur** ce travail répété au démarrage (elle ne change pas la vitesse côté visiteur). Compilez la liste une fois :
 
 ```bash
 node scripts/compile-boost.mjs my-list.txt --model-dir /path/to/model
 ```
 
-(utilisez le même dossier de modèle que celui monté à `LOCAL_MODEL_PATH`) et déposez le fichier `my-list.pwc` résultant à côté de `my-list.txt` dans votre dossier `BOOST_PHRASES_SOURCE`. Le `.pwc` est un fichier compressé en gzip (il n'est jamais relu que par le conteneur, jamais récupéré par un navigateur, il est donc livré plus petit). Le conteneur réutilise alors les identifiants de tokens du `.pwc` au démarrage au lieu de ré-encoder, réduisant le temps de démarrage du conteneur, tant que sa signature de vocabulaire correspond au modèle. Si le modèle (et donc le vocabulaire) diffère, le `.pwc` périmé est silencieusement ignoré et le `.txt` est ré-encodé, donc un `.pwc` non concordant n'est jamais erroné, seulement sauté. La réutilisation de `.pwc` ne concerne que les dossiers locaux (la forme à URL unique ré-encode toujours).
+(n'importe quel téléchargement local du même dépôt de modèle convient, par exemple `hf download <dépôt> --local-dir /path/to/model`) et déposez le fichier `my-list.pwc` résultant à côté de `my-list.txt` dans votre dossier `BOOST_PHRASES_SOURCE`. Le `.pwc` est un fichier compressé en gzip (il n'est jamais relu que par le conteneur, jamais récupéré par un navigateur, il est donc livré plus petit). Le conteneur réutilise alors les identifiants de tokens du `.pwc` au démarrage au lieu de ré-encoder, réduisant le temps de démarrage du conteneur, tant que sa signature de vocabulaire correspond au modèle. Si le modèle (et donc le vocabulaire) diffère, le `.pwc` périmé est silencieusement ignoré et le `.txt` est ré-encodé, donc un `.pwc` non concordant n'est jamais erroné, seulement sauté. La réutilisation de `.pwc` ne concerne que les dossiers locaux (la forme à URL unique ré-encode toujours).
 
 </details>
 
@@ -544,135 +544,27 @@ s'applique quand même et un avertissement en console indique l'élément ignor�
 
 Réalisé avec [Claude Code](https://claude.com/claude-code).
 
-### Modèle local de secours
+### Relais des modèles HuggingFace
 
-Si HuggingFace est bloqué ou injoignable dans votre environnement, vous pouvez
-servir les poids du modèle directement depuis le conteneur. Choisissez n'importe quel
-dossier hôte, remplissez-le avec les fichiers ONNX, montez-le par liaison (bind-mount)
-dans le conteneur, et définissez `LOCAL_MODEL_PATH` sur le chemin correspondant
-dans le conteneur :
+Certains visiteurs ne peuvent pas joindre huggingface.co (proxy d'hôpital ou d'entreprise, blocage national) mais peuvent joindre votre site. Pour eux, le conteneur relaie les modèles : le navigateur essaie d'abord HuggingFace et, en cas d'échec, demande le chemin `/models/` de ce serveur. Le service de signalisation répond en **diffusant en flux** le fichier depuis HuggingFace au fur et à mesure qu'il arrive. Rien n'est stocké sur disque, et la mémoire se limite à quelques petits tampons par téléchargement, quelle que soit la taille du fichier. Les requêtes Range sont transmises telles quelles, donc un téléchargement interrompu reprend où il s'était arrêté.
 
-```bash
-# 1. Remplissez n'importe quel dossier hôte avec les fichiers ONNX :
-hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx \
-    --local-dir /host/path/to/onnx-files
-```
+C'est activé par défaut et ne demande aucune configuration. Quand un modèle est passé par le relais, l'application le dit au visiteur : un avis au-dessus de la transcription indique que HuggingFace n'était pas joignable depuis son réseau, et la barre latérale étiquette le modèle chargé « relayé par ce serveur ».
 
-Gardez la disposition du dépôt : chaque poids dans le dossier que nomme sa
-précision (`fp32/`, `int8/`, `w4a8/`, `w2a8/`, `fp16/`), avec
-`vocab.txt`, `config.json` et `nemo128.onnx` à la racine. Un dossier
-entièrement à plat fonctionne encore, de même qu'un dossier à plat avec les
-fragments fp32 sous `sharded/`, qui est la façon dont le dépôt était publié
-auparavant : le chargeur cherche d'abord dans le dossier de la précision, puis
-à la racine, puis dans `sharded/`. Ne renommez jamais un fichier, seul son
-dossier peut changer. (Prise en charge de la disposition ajoutée avec
-[Claude Code](https://claude.com/claude-code).)
+Seuls les dépôts de `VITE_MODEL_REPO` et les deux dépôts de diarisation sont relayés, chacun à sa révision configurée. Toute autre demande reçoit un 404 : ce n'est pas un proxy ouvert. Au **démarrage** du conteneur (et non à la construction de l'image, qui est mise en cache et ne dit rien de la machine où le conteneur tourne réellement), l'entrypoint récupère depuis HuggingFace la liste des fichiers et le `vocab.txt` de chaque dépôt relayé. Si l'un d'eux échoue, le conteneur **refuse de démarrer** : un relais incapable de joindre HuggingFace ne peut donc jamais être déployé sans que personne ne le remarque.
 
-```yaml
-# 2. Dans docker/docker-compose.yml, ajoutez un volume :
-volumes:
-  - /host/path/to/onnx-files:/models:ro
-```
+Réglages, tous dans `docker/.env` (voir `docker/env.example`) :
 
-```bash
-# 3. Dans docker/.env, définissez :
-LOCAL_MODEL_PATH=/models
-```
+- `HF_TOKEN` : jeton HuggingFace facultatif, utilisé uniquement côté serveur et jamais envoyé aux navigateurs. Les requêtes anonymes partagent une limite de débit plus basse par IP de serveur ; un jeton la relève. Un jeton permet aussi au relais de servir un dépôt privé ou restreint que le jeton peut lire, et ce dépôt devient alors téléchargeable publiquement via `/models/`. Un jeton en lecture seule suffit.
+- `HF_RELAY_MAX_STREAMS` : nombre maximal de téléchargements simultanés, tous visiteurs confondus (16 par défaut, et 8 par visiteur). Les requêtes en trop reçoivent un 503 avec `Retry-After`, et le navigateur réessaie.
+- `HF_MODEL_RELAY=false` : désactive le relais. Les navigateurs téléchargent alors directement depuis HuggingFace, et rien d'autre.
 
-```bash
-# 4. Facultatif mais recommandé : précompressez les poids une fois pour toutes.
-node scripts/precompress.mjs --models /host/path/to/onnx-files
-```
+Chaque téléchargement relayé traverse votre serveur deux fois (entrée depuis HuggingFace, sortie vers le visiteur) : comptez-le dans votre bande passante.
 
-Caddy sert ce qui se trouve à `LOCAL_MODEL_PATH` sous `/models/`. Le
-conteneur plante au démarrage si `vocab.txt` est manquant, de sorte que
-les mauvaises configurations sont détectées tôt.
+L'application vérifie aussi en arrière-plan, dès le chargement de la page, si HuggingFace est joignable (un HEAD vers son API, budget de quatre secondes). C'est important sur les réseaux qui font disparaître le trafic sortant au lieu de le refuser : la tentative HuggingFace n'y échoue pas, elle **reste bloquée** pendant tout le délai de connexion du navigateur avant même que le relais soit essayé. Quand la vérification est négative, le chargement commence par `/models/` et saute la tentative vouée à l'échec, et les deux modèles de diarisation suivent la même réponse. Si `/models/` échoue ensuite, HuggingFace est essayé quand même, donc ce réordonnancement ne peut pas faire échouer un chargement. Sans réponse du tout, l'ordre reste inchangé.
 
-**Servir plusieurs modèles.** Lorsque `VITE_MODEL_REPO` liste plusieurs
-dépôts, montez le dossier *parent* et donnez à chaque dépôt son propre
-sous-dossier `<propriétaire>/<nom>/` :
+**Migration depuis l'ancien miroir local.** `LOCAL_MODEL_PATH`, `PRECOMPRESS_MODELS` et `VITE_MODEL_SOURCE` ont disparu, avec le dossier de modèles monté qu'ils configuraient. Le conteneur refuse de démarrer tant que l'une d'elles est encore définie, ou que quelque chose est encore monté sur `/models`, pour qu'un réglage oublié ne puisse pas être ignoré en silence. Retirez-les de `docker/.env`, supprimez le volume de modèles de votre fichier compose, puis le dossier.
 
-```
-/chemin/hote/
-  Olicorne/
-    parakeet-tdt-0.6b-v3-ultra-onnx/{vocab.txt,int8/,fp32/,...}
-    parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
-```
-
-Chaque dépôt listé a besoin de son propre sous-dossier. Une arborescence à
-plat à la racine est ignorée dès que plusieurs dépôts sont proposés, car
-elle ne porte aucun identifiant de dépôt : la servir sous le nom du modèle
-choisi par le visiteur lui donnerait une transcription fluide issue d'un
-autre modèle, sans rien qui permette de s'en apercevoir. Un dépôt listé sans
-poids locaux ne produit qu'un avertissement au démarrage : il est téléchargé
-depuis HuggingFace, exactement comme s'il n'y avait aucun miroir. Le
-démarrage n'échoue que si aucun d'entre eux ne peut être servi localement.
-
-**Comment l'application trouve les poids dans votre dossier.** Un dossier
-derrière un serveur web ne peut pas être listé, l'application devrait donc
-sinon deviner : elle vérifie la poignée de dispositions qu'elle connaît
-(`int8/`, `fp32/`, à plat à la racine, et quelques anciennes graphies). Cela
-couvre toutes les dispositions documentées ici et rien d'autre : un dépôt qui
-range une variante à un endroit inhabituel se chargerait donc très bien depuis
-HuggingFace tout en apparaissant indisponible depuis votre miroir.
-
-Pour supprimer ces suppositions, le conteneur écrit à chaque démarrage un petit
-`model-manifest.json` listant ce que votre dossier contient réellement, et le
-sert à côté des poids. Rien à configurer : il est généré à partir du dossier
-lui-même, il ne peut donc pas décrire ce que vous n'avez pas, et il est
-réécrit à chaque démarrage, il ne peut donc pas devenir périmé. Il est écrit
-dans un dossier temporaire à l'intérieur du conteneur, pas dans votre montage :
-monter les modèles en lecture seule reste donc parfaitement valable. S'il ne
-peut pas être écrit, vous obtenez un avertissement et l'application retombe sur
-les suppositions ci-dessus, ce que faisait tout miroir auparavant.
-
-
-L'étape 4 écrit un fichier `<fichier>.zst` à côté de chaque fichier ONNX,
-que Caddy sert ensuite avec `Content-Encoding: zstd`. L'encodeur int8 passe
-ainsi de 841 Mo à 643 Mo (27 % de moins à télécharger), et le navigateur le
-décompresse nativement en 3 secondes environ : sur toute connexion plus lente
-que ~200 Mo/s, le modèle arrive donc plus tôt. Le script nécessite `zstd` sur
-l'hôte, et rien ne casse s'il est absent : sans fichier `.zst`, Caddy sert le
-fichier brut exactement comme avant (il utilise le binaire `zstd` si l'hôte en
-a un, sinon le zstd intégré à Node). **Relancez le script chaque fois que vous
-remplacez un fichier de modèle**, sinon le conteneur avertira au démarrage
-qu'un fichier `.zst` est périmé.
-
-Si vous préférez ne pas avoir à penser à l'étape 4, définissez
-`PRECOMPRESS_MODELS=1` dans `docker/.env` et le conteneur s'en charge au
-démarrage. Cela nécessite que le volume de modèles soit monté en écriture
-(retirez son `:ro` dans `docker-compose.yml`) et prend 30 à 90 secondes au
-premier démarrage suivant un changement de modèle ; les démarrages suivants
-trouvent les fichiers `.zst` à jour et ne font rien.
-
-Utilisez `VITE_MODEL_SOURCE` pour choisir d'où l'interface récupère les poids :
-
-- `hf` (par défaut) : HuggingFace uniquement.
-- `local` : `/models/` servi par l'instance uniquement, HuggingFace n'est jamais contacté.
-- `both` : HuggingFace d'abord, repli silencieux sur `/models/` si HF est
-  injoignable.
-
-Lorsque `LOCAL_MODEL_PATH` est défini et que `VITE_MODEL_SOURCE` est laissé non défini, il
-est automatiquement promu en `both`.
-
-Avec `hf` et `both`, l'application vérifie en arrière-plan, dès le chargement de
-la page, si HuggingFace est joignable (un HEAD vers son API, budget de quatre
-secondes). Cela compte sur les réseaux qui absorbent le trafic sortant au lieu de
-le refuser : la tentative HuggingFace-d'abord n'y échoue pas, elle se BLOQUE
-pendant tout le délai de connexion du navigateur avant que la copie locale ne
-soit même essayée. Si la vérification est négative, le chargement démarre depuis
-`/models/` et saute la tentative vouée à l'échec, et les deux modèles de
-diarisation suivent la même réponse. Si `/models/` s'avère finalement ne pas
-servir le modèle, HuggingFace est tenté quand même : le réordonnancement ne peut
-donc pas coûter un chargement, et une vérification bloquée à tort (par une
-extension, par exemple) coûte un échec instantané sur votre propre serveur.
-L'absence de réponse laisse l'ordre inchangé.
-
-Le conteneur s'exécute sous l'UID 1000. Si vos fichiers finissent par être illisibles pour l'UID
-1000, exécutez `chmod -R a+rX /host/path/to/onnx-files` (ou
-`chown -R 1000:1000 /host/path/to/onnx-files`).
-
-Construit avec [Claude Code](https://claude.com/claude-code).
+Réalisé avec [Claude Code](https://claude.com/claude-code).
 
 ### Serveur d'API compatible OpenAI
 

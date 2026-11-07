@@ -34,7 +34,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
   - [Autoconfigure: measuring instead of guessing](#autoconfigure-measuring-instead-of-guessing)
 - [Self-Hosting](#self-hosting)
   - [Offering several models](#offering-several-models)
-  - [Local Model Fallback](#local-model-fallback)
+  - [HuggingFace Model Relay](#huggingface-model-relay)
   - [OpenAI-Compatible API Server](#openai-compatible-api-server)
 - [Troubleshooting](#troubleshooting)
   - [Resetting the app](#resetting-the-app)
@@ -166,7 +166,7 @@ Diarization runs NVIDIA's [Nemotron-3-Diarization](https://huggingface.co/nvidia
 
 The resulting speaker segments are matched to the existing word timestamps (each word gets the speaker whose segment overlaps it most), and consecutive words from the same speaker are grouped into turns.
 
-- The models are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with a local `/models` fallback) and cached in IndexedDB. They are prefetched in the background once the ASR model has loaded only when **Speakers** is your default display; otherwise they download on your first click on **Speakers**, so the feature costs nothing if you never use it. If that download fails, the **Speakers** button and the **Speakers** default-display option are greyed out and show the reason on hover (instead of an error popup).
+- The models are fetched from the same model hub as the ASR model (`VITE_DIARIZATION_*` env vars, with the `/models` relay as fallback) and cached in IndexedDB. They are prefetched in the background once the ASR model has loaded only when **Speakers** is your default display; otherwise they download on your first click on **Speakers**, so the feature costs nothing if you never use it. If that download fails, the **Speakers** button and the **Speakers** default-display option are greyed out and show the reason on hover (instead of an error popup).
 - Changing the speaker count of an entry only regroups the result already computed, it does not run the model again.
 
 This feature was wired up with [Claude Code](https://www.anthropic.com/claude-code).
@@ -264,13 +264,13 @@ At beam width 1 this app decodes **greedily** (one best token per step), so boos
 
 ##### Precompiled lists (`.pwc`, self-hosted only)
 
-When `LOCAL_MODEL_PATH` is set, the container encodes each operator-provided list to token ids at boot and serves the result (a sibling `.json`) so visitors' browsers skip that work. Visitors are already fast either way; what is not free is that boot encode itself, which reruns on **every** container start and is slow for a very large (10k-100k phrase) list. Precompiling spares the **server** that repeated startup work (it does not change visitor speed). Compile the list once:
+When the model relay is on (the default), the container encodes each operator-provided list to token ids at boot and serves the result (a sibling `.json`) so visitors' browsers skip that work. Visitors are already fast either way; what is not free is that boot encode itself, which reruns on **every** container start and is slow for a very large (10k-100k phrase) list. Precompiling spares the **server** that repeated startup work (it does not change visitor speed). Compile the list once:
 
 ```bash
 node scripts/compile-boost.mjs my-list.txt --model-dir /path/to/model
 ```
 
-(use the same model folder you mount at `LOCAL_MODEL_PATH`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The `.pwc` is a gzip-compressed file (it is only ever read back by the container, never fetched by a browser, so it ships smaller). The container then reuses the `.pwc`'s token ids at boot instead of re-encoding, cutting container startup time, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
+(any local download of the same model repo works, e.g. `hf download <repo> --local-dir /path/to/model`) and drop the resulting `my-list.pwc` next to `my-list.txt` in your `BOOST_PHRASES_SOURCE` folder. The `.pwc` is a gzip-compressed file (it is only ever read back by the container, never fetched by a browser, so it ships smaller). The container then reuses the `.pwc`'s token ids at boot instead of re-encoding, cutting container startup time, as long as its vocab signature matches the model. If the model (hence vocab) differs, the stale `.pwc` is silently ignored and the `.txt` is re-encoded, so a mismatched `.pwc` is never wrong, only skipped. `.pwc` reuse is local-folder only (the single-URL form always re-encodes).
 
 </details>
 
@@ -532,125 +532,25 @@ applies and a console warning says which piece was skipped.
 
 Built with [Claude Code](https://claude.com/claude-code).
 
-### Local Model Fallback
+### HuggingFace Model Relay
 
-If HuggingFace is blocked or unreachable in your environment, you can serve
-model weights directly from the container. Pick any host folder, populate
-it with the ONNX files, bind-mount it into the container, and set
-`LOCAL_MODEL_PATH` to the matching in-container path:
+Some visitors cannot reach huggingface.co (a hospital or corporate proxy, a national block) but can reach your site. For them, the container relays the models: the browser tries HuggingFace first, and if that fails it asks this server's `/models/` path instead. The signaling sidecar answers by **streaming** the file from HuggingFace as it arrives. Nothing is stored on disk, and memory stays at a few small buffers per download no matter how big the file is. Range requests are passed straight through, so an interrupted download resumes.
 
-```bash
-# 1. Populate any host folder with the ONNX files:
-hf download Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx \
-    --local-dir /host/path/to/onnx-files
-```
+This is on by default and needs no setup. When a model came through the relay, the app tells the visitor: a notice above the transcript says HuggingFace was not reachable from their network, and the sidebar labels the loaded model "relayed by this server".
 
-Keep the repo's own layout: each weight in the folder its precision names
-(`fp32/`, `int8/`, `w4a8/`, `w2a8/`, `fp16/`), with `vocab.txt`,
-`config.json` and `nemo128.onnx` at the root. A folder that is entirely
-flat still works, and so does a flat one with the fp32 shards under
-`sharded/`, which is how the repo used to be published: the loader looks in
-the precision folder first, then the root, then `sharded/`. Never rename a
-file, only its folder is allowed to move. (Layout support added with
-[Claude Code](https://claude.com/claude-code).)
+Only the repos in `VITE_MODEL_REPO` and the two diarization repos are relayed, each at its configured revision. Anything else gets a 404, so this is not an open proxy. At container **start** (not at image build, which is cached and says nothing about the host the container really runs on) the entrypoint fetches each relayed repo's file listing and `vocab.txt` from HuggingFace. If any of them fails, the container **refuses to boot**, so a relay that cannot reach HuggingFace is never deployed without anyone noticing.
 
-```yaml
-# 2. In docker/docker-compose.yml, add a volume:
-volumes:
-  - /host/path/to/onnx-files:/models:ro
-```
+Settings, all in `docker/.env` (see `docker/env.example`):
 
-```bash
-# 3. In docker/.env, set:
-LOCAL_MODEL_PATH=/models
-```
+- `HF_TOKEN`: optional HuggingFace token, used only server-side and never sent to browsers. Anonymous requests share a lower rate limit per server IP; a token raises it. A token also lets the relay serve a private or gated repo the token can read, and that repo then becomes publicly downloadable through `/models/`. A read-only token is enough.
+- `HF_RELAY_MAX_STREAMS`: maximum concurrent file downloads across all visitors (default 16, and 8 per visitor). Extra requests get a 503 with `Retry-After`, and the browser retries.
+- `HF_MODEL_RELAY=false`: turns the relay off. Browsers then download straight from HuggingFace and nothing else.
 
-```bash
-# 4. Optional but recommended: precompress the weights once.
-node scripts/precompress.mjs --models /host/path/to/onnx-files
-```
+Every relayed download crosses your server twice (in from HuggingFace, out to the visitor), so count that against your bandwidth.
 
-Caddy serves whatever is at `LOCAL_MODEL_PATH` under `/models/`. The
-container crashes at startup if `vocab.txt` is missing, so
-misconfigurations are caught early.
+The app also checks in the background, from page load, whether HuggingFace is reachable at all (a HEAD to its API, four-second budget). This matters on networks that blackhole outbound traffic rather than refusing it: there the HuggingFace-first attempt does not fail, it **stalls** for a full browser connect timeout before the relay is even tried. When the check comes back negative, the load starts from `/models/` and skips the doomed attempt, and the two diarization models follow the same answer. If `/models/` then fails, HuggingFace is tried anyway, so the reorder cannot cost a load. No answer at all leaves the ordering unchanged.
 
-**Serving several models.** When `VITE_MODEL_REPO` lists more than one repo,
-mount the *parent* folder and give each repo its own `<owner>/<name>/`
-subfolder underneath:
-
-```
-/host/path/
-  Olicorne/
-    parakeet-tdt-0.6b-v3-ultra-onnx/{vocab.txt,int8/,fp32/,...}
-    parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/{vocab.txt,int8/,fp32/,...}
-```
-
-Every listed repo needs its own subfolder. A flat tree at the root is
-ignored once more than one repo is on offer, because it carries no repo id:
-serving it under whichever model the visitor picked would hand them a fluent
-transcript from a different model, with nothing to notice. A listed repo
-with no local weights is only a warning at startup: it downloads from
-HuggingFace like it would with no mirror at all. The boot only fails when
-none of them can be served locally.
-
-**How the app finds the weights in your folder.** A folder behind a web server
-cannot be listed, so the app would otherwise have to guess: it checks the
-handful of layouts it knows (`int8/`, `fp32/`, flat at the root, and a few
-older spellings). That covers every layout documented here and nothing else, so
-a repo that keeps a build somewhere unusual would load fine from HuggingFace
-and read as unavailable from your mirror.
-
-To remove the guessing, the container writes a small `model-manifest.json` at
-every boot listing what your folder actually contains, and serves it alongside
-the weights. Nothing to configure: it is generated from the folder itself, so
-it cannot describe something you do not have, and it is rewritten each start,
-so it cannot go stale. It is written to a temporary folder inside the
-container, not into your mount, so mounting the models read-only is still fine.
-If it cannot be written you get a warning and the app falls back to the
-guessing above, which is what every mirror did before.
-
-
-Step 4 writes a `<file>.zst` next to each ONNX file, which Caddy then
-serves with `Content-Encoding: zstd`. It takes the int8 encoder from 841 MB
-to 643 MB (27% less to download), and the browser decompresses it natively
-in about 3 seconds, so on any connection slower than ~200 MB/s the model
-arrives sooner. It needs `zstd` on the host, and nothing breaks without it:
-with no sidecar, Caddy serves the plain file exactly as before (it uses the
-`zstd` binary when the host has one, and Node's own zstd otherwise). **Re-run
-the script whenever you replace a model file**, or the container will warn at
-startup that a sidecar went stale.
-
-If you would rather not think about step 4 at all, set `PRECOMPRESS_MODELS=1`
-in `docker/.env` and the container does it for you at startup. That needs the
-model volume mounted writable (drop its `:ro` in `docker-compose.yml`) and
-takes 30 to 90 seconds on the first boot after a model change; later boots
-find the sidecars current and do nothing.
-
-Use `VITE_MODEL_SOURCE` to choose where the UI fetches weights from:
-
-- `hf` (default): HuggingFace only.
-- `local`: instance-served `/models/` only, HuggingFace is never contacted.
-- `both`: HuggingFace first, silent fallback to `/models/` if HF is
-  unreachable.
-
-When `LOCAL_MODEL_PATH` is set and `VITE_MODEL_SOURCE` is left unset, it
-is auto-promoted to `both`.
-
-On `hf` and `both`, the app checks in the background from page load
-whether HuggingFace is reachable at all (a HEAD to its API, four-second
-budget). This matters on networks that blackhole outbound traffic rather
-than refusing it, where the HuggingFace-first attempt does not fail but
-STALLS for a full browser connect timeout before the local copy is even
-tried. When the check comes back negative the load starts from `/models/`
-and skips the doomed attempt, and the two diarization models follow the
-same answer. If `/models/` then turns out not to serve the model,
-HuggingFace is tried anyway, so the reorder cannot cost a load: a check
-wrongly blocked (by an extension, say) costs one instant same-origin
-miss. No answer at all leaves the ordering exactly as it was.
-
-The container runs as UID 1000. If your files end up unreadable to UID
-1000, run `chmod -R a+rX /host/path/to/onnx-files` (or
-`chown -R 1000:1000 /host/path/to/onnx-files`).
+**Migrating from the old local mirror.** `LOCAL_MODEL_PATH`, `PRECOMPRESS_MODELS` and `VITE_MODEL_SOURCE` are gone, along with the bind-mounted model folder they configured. The container refuses to start while any of them is still set, or while anything is still mounted at `/models`, so a leftover setting cannot be silently ignored. Remove them from `docker/.env`, drop the model volume from your compose file, and delete the folder.
 
 Built with [Claude Code](https://claude.com/claude-code).
 
