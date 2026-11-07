@@ -8,7 +8,7 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Unreleased
+## 12.0.0 (2026-11-07)
 
 ### A debug setting to check the model relay, and two fixes to the fallback it exposed
 
