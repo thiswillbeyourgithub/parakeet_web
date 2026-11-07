@@ -194,6 +194,10 @@ const translations = {
     loadedModel: 'Currently loaded',
     loadedFromHub: 'from HuggingFace',
     loadedFromLocal: 'from this server',
+    loadedFromRelay: 'from HuggingFace, relayed by this server',
+    // Shown once a model came through the /models/ relay (lib/loadedModel.js
+    // effectiveServedFrom): the visitor's network could not reach HuggingFace.
+    modelViaRelay: 'HuggingFace is not reachable from your network, so the model was downloaded through {host}, which relays it from HuggingFace. Everything works the same; the download may just be slower.',
     loadedDiffers: 'This differs from the selection below; reload the model to apply it.',
     tooltipLoadedModel: 'What is actually running right now, which is not always what is selected below: a precision this source could not serve falls back (and says so), and weights can come from this server rather than HuggingFace. The controls below describe what the NEXT load will ask for.',
     medMode: 'Mode Dict\u00e9e M\u00e9dical',
@@ -689,6 +693,8 @@ const translations = {
     loadedModel: 'Actuellement charg\u00e9',
     loadedFromHub: 'depuis HuggingFace',
     loadedFromLocal: 'depuis ce serveur',
+    loadedFromRelay: 'depuis HuggingFace, relay\u00e9 par ce serveur',
+    modelViaRelay: 'HuggingFace n\u2019est pas joignable depuis votre r\u00e9seau : le mod\u00e8le a donc \u00e9t\u00e9 t\u00e9l\u00e9charg\u00e9 via {host}, qui le relaie depuis HuggingFace. Tout fonctionne de la m\u00eame fa\u00e7on, le t\u00e9l\u00e9chargement peut seulement \u00eatre plus lent.',
     loadedDiffers: 'Cela diff\u00e8re de la s\u00e9lection ci-dessous ; rechargez le mod\u00e8le pour l\u2019appliquer.',
     tooltipLoadedModel: 'Ce qui tourne r\u00e9ellement en ce moment, qui n\u2019est pas toujours ce qui est s\u00e9lectionn\u00e9 ci-dessous : une pr\u00e9cision que cette source ne pouvait pas servir est remplac\u00e9e (et signal\u00e9e), et les poids peuvent venir de ce serveur plut\u00f4t que de HuggingFace. Les r\u00e9glages ci-dessous d\u00e9crivent ce que le PROCHAIN chargement demandera.',
     medMode: 'Mode Dict\u00e9e M\u00e9dical',

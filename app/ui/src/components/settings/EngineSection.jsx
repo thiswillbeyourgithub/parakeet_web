@@ -150,6 +150,7 @@ export default function EngineSection({
             webgpu: t('webgpu'),
             fromHub: t('loadedFromHub'),
             fromLocal: t('loadedFromLocal'),
+            fromRelay: t('loadedFromRelay'),
           },
         );
         if (!described) return null;

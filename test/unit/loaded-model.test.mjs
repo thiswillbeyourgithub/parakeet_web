@@ -19,9 +19,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadedModelDiverges, describeLoadedModel, reconcileSelection } from '../../app/ui/src/lib/loadedModel.js';
+import { loadedModelDiverges, describeLoadedModel, reconcileSelection, effectiveServedFrom } from '../../app/ui/src/lib/loadedModel.js';
 
-const LABELS = { wasm: 'CPU', webgpu: 'GPU', fromHub: 'from HuggingFace', fromLocal: 'from this server' };
+const LABELS = { wasm: 'CPU', webgpu: 'GPU', fromHub: 'from HuggingFace', fromLocal: 'from this server', fromRelay: 'relayed by this server' };
 const REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
 const OTHER = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
 
@@ -93,6 +93,14 @@ describe('describeLoadedModel: the line the sidebar renders', () => {
     // HuggingFace was never involved.
     assert.match(describeLoadedModel(loaded({ servedFrom: 'local' }), selected(), LABELS).text,
       /from this server$/);
+  });
+
+  test('says when the weights came through the HuggingFace relay', () => {
+    // In the docker deployment /models/ is a relay, not a mirror: "from this
+    // server" would claim the weights are hosted here.
+    const d = describeLoadedModel(loaded({ servedFrom: 'relay' }), selected(), LABELS);
+    assert.match(d.text, /relayed by this server$/);
+    assert.equal(d.mismatch, false);
   });
 
   test('names the repo only when it is not the selected one', () => {
@@ -168,5 +176,23 @@ describe('reconcileSelection: a fallback must move the controls, not just the co
   test('nothing loaded, or nothing stored, writes nothing', () => {
     assert.deepEqual(reconcileSelection(null, stored()), {});
     assert.deepEqual(reconcileSelection({ backend: 'wasm', encoderQuant: 'int8' }, null), {});
+  });
+});
+
+describe('effectiveServedFrom: naming the source a load really used', () => {
+  test('HuggingFace stays HuggingFace whatever the deployment', () => {
+    assert.equal(effectiveServedFrom('hf', 'true'), 'hf');
+    assert.equal(effectiveServedFrom(undefined, 'true'), 'hf');
+  });
+
+  test('/models is the relay only when the entrypoint says so', () => {
+    assert.equal(effectiveServedFrom('local', 'true'), 'relay');
+    assert.equal(effectiveServedFrom('local', true), 'relay');
+  });
+
+  test('a real local mirror (dev server, e2e harness) keeps "local"', () => {
+    for (const flag of [undefined, '', 'false', false]) {
+      assert.equal(effectiveServedFrom('local', flag), 'local');
+    }
   });
 });
