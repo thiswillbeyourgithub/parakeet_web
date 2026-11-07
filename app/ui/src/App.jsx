@@ -51,7 +51,7 @@ import { acquireGpuRun } from './lib/gpuRun.js';
 import { restoreChunkDuration } from './lib/chunkDuration.js';
 import { medModeRequested, MED_MODE_PRESET } from './lib/medMode.js';
 import { probeHubReachable, preferLocalFirst } from './lib/hubReachability.js';
-import { reconcileSelection } from './lib/loadedModel.js';
+import { reconcileSelection, effectiveServedFrom } from './lib/loadedModel.js';
 import {
   QUANT_DOWNLOAD_MB,
   restoredEncoderQuant,
@@ -622,6 +622,8 @@ export default function App() {
   // source, so the load fell back to WASM. Separate from modelLoadError
   // because the load then SUCCEEDS, and loadModel clears that on entry.
   const [gpuFallbackWarning, setGpuFallbackWarning] = useState(null);
+  // The relay notice below is dismissable per page view; a reload shows it again.
+  const [relayNoticeDismissed, setRelayNoticeDismissed] = useState(false);
   // What the CURRENTLY LOADED model actually is:
   // `{ repoId, backend, encoderQuant, decoderQuant, servedFrom }`, or null when
   // nothing is loaded. Deliberately NOT persisted: it describes a live session's
@@ -2558,16 +2560,18 @@ export default function App() {
       // divergence was completely silent: a station could sit on a WebGPU
       // selection while an int8 CPU model did the work. This is the value the
       // sidebar renders back, so the two can be compared at a glance.
+      const loadedFrom = effectiveServedFrom(
+        modelUrls.servedFrom || (useLocalFallback ? 'local' : 'hf'), CONFIG.VITE_MODEL_RELAY);
       setLoadedModelInfo({
         repoId,
         backend: modelUrls.resolvedBackend || backend,
         encoderQuant: modelUrls.quantisation?.encoder || null,
         decoderQuant: modelUrls.quantisation?.decoder || null,
-        servedFrom: modelUrls.servedFrom || (useLocalFallback ? 'local' : 'hf'),
+        servedFrom: loadedFrom,
       });
       console.log(`[App] Loaded ${repoId} on ${modelUrls.resolvedBackend || backend} `
         + `(encoder ${modelUrls.quantisation?.encoder}, from `
-        + `${modelUrls.servedFrom === 'local' ? '/models' : 'HuggingFace'})`);
+        + `${{ local: '/models', relay: 'HuggingFace via the /models relay' }[loadedFrom] ?? 'HuggingFace'})`);
       // A fallback must move the CONTROLS, not just the console. The backend
       // half already does (the GPU->WASM fallback flips it through applyBackend
       // before retrying, since the retry has to read the new value); the
@@ -5733,6 +5737,18 @@ export default function App() {
         <div className="fallback-prompt" style={{ borderColor: '#e8a838' }}>
           <p>⚠ {fallbackWarning}</p>
           <button onClick={() => setFallbackWarning(null)} style={{ marginTop: '0.5em' }}>
+            {t('dismiss')}
+          </button>
+        </div>
+      )}
+
+      {/* Info banner: the model came through this server's HuggingFace relay
+          because the visitor's network could not reach HuggingFace. Not a
+          problem, but the visitor should know which path their download took. */}
+      {loadedModelInfo?.servedFrom === 'relay' && !relayNoticeDismissed && (
+        <div className="fallback-prompt" data-testid="model-relay-notice">
+          <p>ℹ {t('modelViaRelay').replace('{host}', window.location.host)}</p>
+          <button onClick={() => setRelayNoticeDismissed(true)} style={{ marginTop: '0.5em' }}>
             {t('dismiss')}
           </button>
         </div>

@@ -30,8 +30,26 @@
  * @property {string} repoId Repo the live weights came from.
  * @property {string} backend Backend the live session was built on.
  * @property {string|null} encoderQuant Encoder precision actually mounted.
- * @property {string} servedFrom 'hf' | 'local'.
+ * @property {string} servedFrom 'hf' | 'local' | 'relay'.
  */
+
+/**
+ * Name the source a load really used. hub.js only knows 'hf' or 'local' (the
+ * instance's /models/), but in the docker deployment /models/ is a relay that
+ * streams the files from HuggingFace, and calling that "this server" would
+ * read as if the weights were hosted here. So the deployment flag
+ * (CONFIG.VITE_MODEL_RELAY, written by the entrypoint) turns 'local' into
+ * 'relay'. A local dev server or the e2e harness serving real files keeps
+ * 'local'.
+ *
+ * @param {string|undefined} servedFrom 'hf' | 'local' as reported by the load.
+ * @param {string|boolean|undefined} relayFlag CONFIG.VITE_MODEL_RELAY.
+ * @returns {'hf'|'local'|'relay'}
+ */
+export function effectiveServedFrom(servedFrom, relayFlag) {
+  if (servedFrom !== 'local') return 'hf';
+  return relayFlag === true || relayFlag === 'true' ? 'relay' : 'local';
+}
 
 /**
  * Whether what is loaded differs from what the controls currently request.
@@ -68,7 +86,7 @@ export function loadedModelDiverges(loaded, selected) {
  *
  * @param {LoadedModel|null} loaded
  * @param {{repoId: string, backend: string, encoderQuant: string}} selected
- * @param {{wasm: string, webgpu: string, fromHub: string, fromLocal: string}} labels
+ * @param {{wasm: string, webgpu: string, fromHub: string, fromLocal: string, fromRelay: string}} labels
  *   Translated pieces, injected so this module stays pure.
  * @returns {{text: string, mismatch: boolean}|null} null when nothing is loaded.
  */
@@ -76,7 +94,7 @@ export function describeLoadedModel(loaded, selected, labels) {
   if (!loaded) return null;
   const parts = [loaded.backend?.startsWith('webgpu') ? labels.webgpu : labels.wasm];
   if (loaded.encoderQuant) parts.push(loaded.encoderQuant);
-  parts.push(loaded.servedFrom === 'local' ? labels.fromLocal : labels.fromHub);
+  parts.push({ local: labels.fromLocal, relay: labels.fromRelay }[loaded.servedFrom] ?? labels.fromHub);
   // The repo only when it is NOT the selected one. Naming it on every load
   // would bury the one case that actually needs attention under a line that is
   // the same on every visit.
