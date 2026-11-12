@@ -6,6 +6,7 @@ import './App.css';
 import { useI18n } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
 import Modal, { useAnyModalOpen } from './components/Modal.jsx';
+import { parseDictationCsv, applyDictationRules } from './lib/dictationRegex.js';
 import InfoTooltip from './components/InfoTooltip.jsx';
 import CollapsibleSection from './components/CollapsibleSection.jsx';
 import { resamplePcmTo16k, createLevelMonitor, buildRecordingRateCandidates, createWavBlob, AUDIO_FILE_ACCEPT } from './lib/audio.js';
@@ -4289,65 +4290,7 @@ export default function App() {
               }
               continue;
             }
-            const csvText = r.text;
-            const lines = csvText.trim().split('\n');
-            // Parse header to find column indices
-            const header = parseCSVLine(lines[0].trim()).map(h => h.trim().toLowerCase());
-            const regexIdx = header.indexOf('regex');
-            const replacementIdx = header.indexOf('remplacement') !== -1 ? header.indexOf('remplacement') : header.indexOf('replacement');
-            if (regexIdx === -1 || replacementIdx === -1) {
-              console.warn(`[Dictation] ${file}: could not find 'regex' and 'remplacement' columns in header: ${lines[0]}`);
-              continue;
-            }
-            for (let i = 1; i < lines.length; i++) {
-              const line = lines[i].trim();
-              if (!line || line === ',,') continue;
-              // Parse CSV: handle quoted fields
-              const fields = parseCSVLine(line);
-              const rawRegex = fields[regexIdx] ?? '';
-              const rawReplacement = fields[replacementIdx] ?? '';
-              if (!rawRegex) continue;
-              try {
-                // Extract Python-style inline flags (e.g. (?i), (?ims)) from the
-                // pattern and translate to JS RegExp flags so case-sensitive
-                // rules don't silently become insensitive.
-                let cleanedRegex = rawRegex;
-                let parsedFlags = '';
-                cleanedRegex = cleanedRegex.replace(/\(\?([gimsuy]+)\)/g, (_, fl) => {
-                  parsedFlags += fl;
-                  return '';
-                });
-                // Default to case-insensitive when no flags specified (preserves
-                // historical behaviour for rules that omit (?i)).
-                const jsFlags = 'g' + (parsedFlags
-                  ? [...new Set(parsedFlags.split(''))].filter(f => 'imsuy'.includes(f)).join('')
-                  : 'i');
-                new RegExp(cleanedRegex, jsFlags);
-                const replacement = rawReplacement
-                  .replace(/\\n/g, '\n') // support \n in replacements
-                  .replace(/^"(.*)"$/, '$1'); // strip outer quotes
-                // Refuse replacements containing C0/C1 controls (ESC, BEL,
-                // backspace, OSC introducer) and bidi-override codepoints.
-                // The auto-copy-to-clipboard path writes this directly into
-                // the user's system clipboard; a tampered upstream CSV
-                // could otherwise smuggle ANSI/OSC sequences that execute
-                // on paste-to-terminal in shells without bracketed-paste.
-                // Tab and newline are kept explicitly because they are
-                // legitimate replacement content.
-                if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f‪-‮⁦-⁩]/.test(replacement)) {
-                  console.warn(`[Dictation] Rejecting rule in ${file} line ${i + 1}: replacement contains control or bidi characters`);
-                  continue;
-                }
-                rules.push({
-                  regex: cleanedRegex,
-                  flags: jsFlags,
-                  replacement,
-                  source: file.replace('.csv', '')
-                });
-              } catch (e) {
-                console.warn(`[Dictation] Invalid regex in ${file} line ${i + 1}: regex="${rawRegex}" replacement="${rawReplacement}" error=${e.message}`);
-              }
-            }
+            rules.push(...parseDictationCsv(r.text, file.replace('.csv', ''), msg => console.warn(`[Dictation] ${file}: ${msg}`)));
           } catch (e) {
             console.warn(`[Dictation] Failed to load ${file}:`, e);
           }
@@ -4392,60 +4335,9 @@ export default function App() {
     })();
   }, [drugFixEnabled]);
 
-  // Simple CSV line parser that handles quoted fields with commas
-  function parseCSVLine(line) {
-    const fields = [];
-    let current = '';
-    let inQuotes = false;
-    let bracketDepth = 0;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
-          current += '"';
-          i++; // skip escaped quote
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (!inQuotes && ch === '[') {
-        bracketDepth++;
-        current += ch;
-      } else if (!inQuotes && ch === ']') {
-        bracketDepth = Math.max(0, bracketDepth - 1);
-        current += ch;
-      } else if (ch === ',' && !inQuotes && bracketDepth === 0) {
-        fields.push(current);
-        current = '';
-      } else {
-        current += ch;
-      }
-    }
-    fields.push(current);
-    return fields;
-  }
-
   // Apply dictation regex rules to a text string
   function applyDictationRegex(text) {
-    if (!dictationRegexRules.length || !text) return text;
-    let result = text;
-    for (const rule of dictationRegexRules) {
-      try {
-        const re = new RegExp(rule.regex, rule.flags || 'gi');
-        result = result.replace(re, rule.replacement);
-      } catch (e) {
-        // Skip invalid regex at runtime
-      }
-    }
-    // Strip whitespace from each line and capitalize the first letter
-    result = result
-      .split('\n')
-      .map(line => {
-        const trimmed = line.trim();
-        if (!trimmed) return trimmed;
-        return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-      })
-      .join('\n');
-    return result;
+    return applyDictationRules(text, dictationRegexRules);
   }
 
   // Every text layer after raw, in this order: drug names first (their rules
