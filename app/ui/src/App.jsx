@@ -24,6 +24,7 @@ import { createCaptureQueue } from './lib/captureQueue.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { workerReady } from './lib/workerInit.js';
 import VerificationModal from './components/VerificationModal.jsx';
+import DictationCommandsModal from './components/DictationCommandsModal.jsx';
 import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
@@ -1216,6 +1217,7 @@ export default function App() {
   const [persistTranscripts, setPersistTranscripts] = useState(false);
   // About modal visibility
   const [showAbout, setShowAbout] = useState(false);
+  const [showDictCommands, setShowDictCommands] = useState(false);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
   // Global keyboard shortcuts (R/S/F/Space/Enter for record/settings/file/load).
@@ -5040,6 +5042,10 @@ export default function App() {
         </Modal>
       )}
 
+      {showDictCommands && (
+        <DictationCommandsModal t={t} rules={dictationRegexRules} onClose={() => setShowDictCommands(false)} />
+      )}
+
       {showSettings && (
         <SettingsSidebar
           t={t}
@@ -5070,6 +5076,7 @@ export default function App() {
           clearDisabled={transcriptions.length === 0}
           onResetAllData={resetAllData}
           onAbout={() => { setShowSettings(false); setShowAbout(true); }}
+          onDictCommands={dictationRegexRules.length > 0 ? () => { setShowSettings(false); setShowDictCommands(true); } : null}
           version={VERSION}
         >
           <GeneralSection
@@ -6082,8 +6089,27 @@ export default function App() {
         </Modal>
       )}
 
+      {/* Dictation commands helper: what to say for punctuation, line breaks,
+          abbreviations. Outside the post-load block so it is reachable before
+          any model loads; only when dictation rules were served, since without
+          them the popup would have nothing to list. */}
+      {dictationRegexRules.length > 0 && (
+        <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+          <button
+            type="button"
+            className="dict-commands-link"
+            onClick={() => setShowDictCommands(true)}
+            title={t('dictCommandsHint')}
+            data-testid="dict-commands-open"
+            data-umami-event="dict_commands_button"
+          >
+            📖 {t('dictCommands')}
+          </button>
+        </div>
+      )}
+
       {/* About button at the very bottom of the page */}
-      <div style={{ textAlign: 'center', marginTop: '2rem', paddingBottom: '1rem' }}>
+      <div style={{ textAlign: 'center', marginTop: dictationRegexRules.length > 0 ? '0.5rem' : '2rem', paddingBottom: '1rem' }}>
         <button
           onClick={() => setShowAbout(true)}
           style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }}

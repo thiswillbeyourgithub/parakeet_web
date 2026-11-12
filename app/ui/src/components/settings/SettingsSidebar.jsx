@@ -32,6 +32,7 @@ import Banner from '../Banner.jsx';
  * @param {boolean} props.clearDisabled True when there is no history to clear.
  * @param {Function} props.onResetAllData Wipe every setting and cached model.
  * @param {Function} props.onAbout Close the drawer and open the About modal.
+ * @param {Function|null} props.onDictCommands Close the drawer and open the dictation-commands popup; null hides the button (no rules served).
  * @param {string} props.version App version, shown at the foot of the drawer.
  * @param {import('react').ReactNode} props.children The collapsible setting groups.
  */
@@ -48,6 +49,7 @@ export default function SettingsSidebar({
   clearDisabled,
   onResetAllData,
   onAbout,
+  onDictCommands,
   version,
   children,
 }) {
@@ -139,6 +141,17 @@ export default function SettingsSidebar({
           >
             {t('resetAllSettingsAndData')}
           </button>
+
+          {onDictCommands && (
+            <button
+              onClick={onDictCommands}
+              style={{ marginTop: '1rem', width: '100%' }}
+              className="primary"
+              data-testid="dict-commands-open-sidebar"
+            >
+              {t('dictCommands')}
+            </button>
+          )}
 
           <button
             onClick={onAbout}
