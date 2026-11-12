@@ -71,7 +71,7 @@ export const DICTATION_COMMANDS = [
   ...[
     'examen clinique', 'examen simplifié', 'examen anaphylaxie', 'examen infectieux',
     'examen traumatologie', 'examen traumatisme cranien', 'examen conclusion',
-    'examen patient alcoolisé', 'électrisation', 'drain thoracique', 'intubation',
+    "examen d'un patient alcoolisé", 'électrisation', 'drain thoracique', 'intubation',
     'luxation épaule', 'sédation procédurale', 'sortie contre avis',
     'entorse cheville droite', 'entorse cheville gauche', 'ordonnance entorse cheville',
     'ordonnance botte de marche', 'ordonnance brûlures', 'échographie urgentiste',
