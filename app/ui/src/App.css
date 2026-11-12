@@ -1180,6 +1180,54 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   max-width: 640px;
 }
 
+/* Dictation commands: a two-column reference table. */
+.modal-panel--dict-commands {
+  max-width: 720px;
+}
+
+.dict-commands__intro {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.dict-commands {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.dict-commands th,
+.dict-commands td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.dict-commands__group th {
+  padding-top: 0.9rem;
+  color: var(--accent);
+}
+
+.dict-commands__target {
+  white-space: nowrap;
+}
+
+.dict-commands__desc {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.dict-commands-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  padding: 0.25rem 0;
+}
+
 .modal-close {
   position: absolute;
   top: 1rem;
