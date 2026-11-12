@@ -8,6 +8,14 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Unreleased
+
+### A "Dictation commands" reference, and the dictation templates now work
+
+A new **Dictation commands** link on the main screen (also a button in the settings sidebar) opens a table of what to say in Dictation view to get each line break, punctuation mark, abbreviation or template, with the recommended phrase in bold (for example "nouveau tiret" for a list dash, since a bare "tiret" is not understood). The phrases are tried against the rules this instance actually loaded, so the table only lists what really works here.
+
+Building it surfaced a bug: the rule loader split the CSV on newlines before parsing, so the "ajoute la commande ..." templates, whose text spans several lines, never fired, and every line of their text became a stray rule of its own (59 of them with the default Murmure rules, such as one matching " pas de toux"). The templates now load as single rules and all 20 work.
+
 ## 12.0.0 (2026-11-07)
 
 ### A debug setting to check the model relay, and two fixes to the fallback it exposed
