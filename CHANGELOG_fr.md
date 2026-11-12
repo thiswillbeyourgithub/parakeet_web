@@ -8,6 +8,14 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
+## Non publié
+
+### Un aide-mémoire des « commandes de dictée », et les modèles de dictée fonctionnent enfin
+
+Un nouveau lien **Commandes de dictée** sur l'écran principal (aussi un bouton dans la barre latérale des réglages) ouvre un tableau de ce qu'il faut dire en vue Dictée pour obtenir chaque retour à la ligne, signe de ponctuation, abréviation ou modèle, avec la formulation recommandée en gras (par exemple « nouveau tiret » pour un tiret de liste, car « tiret » seul n'est pas compris). Les formulations sont testées contre les règles réellement chargées par cette instance, donc le tableau ne liste que ce qui fonctionne ici.
+
+Sa construction a révélé un bug : le chargeur de règles découpait le CSV ligne par ligne avant de l'analyser, si bien que les modèles « ajoute la commande ... », dont le texte tient sur plusieurs lignes, ne se déclenchaient jamais, et chaque ligne de leur texte devenait une règle parasite (59 avec les règles Murmure par défaut, dont une qui cherchait « pas de toux »). Les modèles sont désormais chargés comme des règles uniques et les 20 fonctionnent.
+
 ## 12.0.0 (2026-11-07)
 
 ### Un réglage de débogage pour vérifier le relais des modèles, et deux corrections du repli qu'il a révélées
