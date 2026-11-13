@@ -58,7 +58,25 @@ test('every curated row has at least one form and a known group', () => {
   }
 });
 
-const MURMURE = resolve(root, 'framagit_murmure/regex.csv');
+// Rough French sound key: endings that are spelled differently but sound the
+// same collapse together ("fermer"/"fermez"/"fermé" -> "fermé", silent plural
+// and final consonants dropped: "nouveaux tirets" -> "nouveau tire").
+const soundKey = form => form.toLowerCase().split(/\s+/).map(w => w
+  .replace(/(?:er|ez|ées?|és?)$/, 'é')
+  .replace(/[sxz]$/, '')
+  .replace(/[td]$/, '')).join(' ');
+
+test('a row never lists two forms that sound the same', () => {
+  assert.equal(soundKey('nouveaux tirets'), soundKey('nouveau tiret'));
+  assert.equal(soundKey('fermer la parenthèse'), soundKey('fermez la parenthèse'));
+  assert.notEqual(soundKey('ouvrir la parenthèse'), soundKey('ouvrez la parenthèse'));
+  for (const c of DICTATION_COMMANDS) {
+    const keys = c.forms.map(soundKey);
+    assert.equal(new Set(keys).size, keys.length, `${c.target}: ${c.forms.join(' / ')}`);
+  }
+});
+
+const MURMURE =resolve(root, 'framagit_murmure/regex.csv');
 test('every curated phrase works with the local Murmure regex.csv', { skip: !existsSync(MURMURE) && 'framagit_murmure/regex.csv not present' }, () => {
   const rules = parseDictationCsv(readFileSync(MURMURE, 'utf8'), 'regex');
   const broken = DICTATION_COMMANDS.flatMap(c => c.forms.filter(f => !formWorks(f, c, rules)));
