@@ -19,7 +19,9 @@ import { applyDictationRules } from './dictationRegex.js';
  * @property {string} group i18n key of the table section.
  * @property {string} target What the user wants, shown in the first column.
  * @property {string} [targetKey] i18n key describing an invisible target (newline...).
- * @property {string[]} forms Ways to say it, the RECOMMENDED one first.
+ * @property {string[]} forms Ways to say it, the RECOMMENDED one first. Only
+ *   phonetically DISTINCT ones: "nouveaux tirets" sounds like "nouveau tiret"
+ *   and "fermer" like "fermez", so listing both teaches nothing.
  * @property {string} [expect] Text the output must contain for a form to count.
  * @property {boolean} [noRecommended] All forms are equivalent, bold none.
  */
@@ -33,7 +35,7 @@ const TEMPLATE = 'dictCmdGroupTemplates';
 export const DICTATION_COMMANDS = [
   { group: LAYOUT, target: '↵', targetKey: 'dictCmdNewline', expect: '\n', forms: ['retour à la ligne', 'à la ligne', 'aller à la ligne', 'saute une ligne'] },
   { group: LAYOUT, target: '↵↵', targetKey: 'dictCmdBlankLine', expect: '\n\n', forms: ['saut de ligne'] },
-  { group: LAYOUT, target: '- ', targetKey: 'dictCmdListDash', expect: '-', forms: ['nouveau tiret', 'nouveaux tirets'] },
+  { group: LAYOUT, target: '- ', targetKey: 'dictCmdListDash', expect: '-', forms: ['nouveau tiret'] },
   { group: PUNCT, target: ',', expect: ',', forms: ['virgule'] },
   { group: PUNCT, target: '.', expect: '.', forms: ['point', 'point final'] },
   { group: PUNCT, target: ';', expect: ';', forms: ['point virgule'] },
@@ -43,9 +45,9 @@ export const DICTATION_COMMANDS = [
   { group: PUNCT, target: '...', expect: '...', forms: ['points de suspension', 'trois petits points', 'trois points'] },
   { group: PUNCT, target: '-', targetKey: 'dictCmdHyphen', expect: '-', forms: ["trait d'union"] },
   { group: PUNCT, target: '"', targetKey: 'dictCmdOpenQuote', expect: '"', forms: ['ouvrez les guillemets', 'ouvrir les guillemets', 'début de citation'] },
-  { group: PUNCT, target: '"', targetKey: 'dictCmdCloseQuote', expect: '"', forms: ['fermez les guillemets', 'fermer les guillemets', 'fin de citation'] },
+  { group: PUNCT, target: '"', targetKey: 'dictCmdCloseQuote', expect: '"', forms: ['fermez les guillemets', 'fin de citation'] },
   { group: PUNCT, target: '(', expect: '(', forms: ['ouvrez la parenthèse', 'ouvrir la parenthèse'] },
-  { group: PUNCT, target: ')', expect: ')', forms: ['fermez la parenthèse', 'fermer la parenthèse'] },
+  { group: PUNCT, target: ')', expect: ')', forms: ['fermez la parenthèse'] },
   { group: PUNCT, target: '/', expect: '/', forms: ['slash'] },
   { group: PUNCT, target: '#', expect: '#', forms: ['dièse', 'hashtag'] },
   { group: ABBREV, target: 'mg/kg/j', expect: 'mg/kg/j', forms: ['15 mg par kilo par jour'] },
