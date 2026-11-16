@@ -297,7 +297,8 @@ app.use(express.json({ limit: '50kb' }));
 
 // ============ In-memory Room Storage ============
 const rooms = new Map();
-const ROOM_TTL = 10 * 60 * 1000; // 10 minutes
+// Expiry policy (idle TTL, hard cap) lives in room-expiry.js
+const { sweepRoom } = require('./room-expiry.js');
 
 // ============ Rate Limiting ============
 const rateLimiters = new Map();
@@ -631,7 +632,7 @@ function validateIceCandidate(body) {
 function cleanupRooms() {
     const now = Date.now();
     for (const [id, room] of rooms.entries()) {
-        if (now - room.created > ROOM_TTL) {
+        if (sweepRoom(room, now)) {
             // Wake any pending long-pollers so they stop holding refs to the room.
             if (room.answerWaiters) {
                 for (const wake of room.answerWaiters) wake();

@@ -326,7 +326,7 @@ of recovery cover it:
   verification, so the end-to-end guarantee is unchanged.)
 
 If you ever want a brand-new pairing instead, click **Generate new QR** on the
-computer. Rooms live for about 10 minutes, after which you'll need a new QR.
+computer. An unused room expires after 10 minutes; a room in use (phone connected) stays alive until 10 minutes after the phone leaves, with a hard cap of 60 minutes, after which you'll need a new QR.
 Built with the help of Claude Code.
 
 #### Requirements
