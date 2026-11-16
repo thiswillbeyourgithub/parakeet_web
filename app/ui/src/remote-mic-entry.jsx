@@ -41,6 +41,12 @@ const STATUS = {
     ERROR: 'error',
 };
 
+// Statuses during which a desktop session is open (screen kept awake).
+const SESSION_STATUSES = new Set([
+    STATUS.RECONNECTING, STATUS.WAITING_KEY, STATUS.RECORDING,
+    STATUS.PAUSED, STATUS.READY, STATUS.SENDING_FILE,
+]);
+
 // Global log buffer so we can capture logs before React renders.
 // Previously the buffer was an Array with a `_notify` property hung off
 // it; that was fragile (Array methods don't preserve own props, two
@@ -244,6 +250,17 @@ function RemoteMicSender() {
         keepaliveHeldRef.current = false;
         releaseKeepalive();
     }, []);
+
+    // Keep the screen on for the whole session, not just while recording:
+    // a phone that sleeps between two dictations suspends the page, which
+    // drops the relay and forces a re-scan. The keepalive is ref-counted, so
+    // this hold stacks with the recording one above.
+    const sessionOpen = SESSION_STATUSES.has(status);
+    useEffect(() => {
+        if (!sessionOpen) return undefined;
+        acquireKeepalive();
+        return releaseKeepalive;
+    }, [sessionOpen]);
 
     // --- Audio-only cleanup (keeps RTC alive) ---
     const cleanupAudio = useCallback(() => {
