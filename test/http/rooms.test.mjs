@@ -209,3 +209,26 @@ describe('per-role room secrets', () => {
     assert.equal((await apiGet(srv, `/api/rooms/${roomId}`, hostSecret)).status, 200);
   });
 });
+
+// Relay slots are bound to the role, not first-come: a QR holder (phone secret)
+// can never take the desktop's slot, even if it handshakes first, and a second
+// phone cannot displace the first one while its slot is live.
+describe('relay slots bound to role', () => {
+  const handshake = (roomId, secret) => apiPost(srv, `/api/rooms/${roomId}/relay/handshake`, {}, secret);
+
+  test('the phone always gets slot b and the host slot a, regardless of order', async () => {
+    const { roomId, secret, hostSecret } = await createRoom(srv);
+    const phone = await handshake(roomId, secret);
+    assert.equal(phone.status, 200);
+    assert.equal((await phone.json()).slot, 'b');
+    const host = await handshake(roomId, hostSecret);
+    assert.equal(host.status, 200);
+    assert.equal((await host.json()).slot, 'a');
+  });
+
+  test('a second phone cannot claim the free host slot', async () => {
+    const { roomId, secret } = await createRoom(srv);
+    assert.equal((await handshake(roomId, secret)).status, 200);
+    assert.equal((await handshake(roomId, secret)).status, 409);
+  });
+});

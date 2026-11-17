@@ -1127,15 +1127,20 @@ app.get('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), requireHost
 // never inspects the bytes: audio chunks are AES-256-GCM ciphertext from
 // the application layer (remote-crypto.js).
 
-// Claim a slot. First caller gets 'a', second gets 'b', third gets 409.
+// Each role owns one fixed slot: the desktop (host secret) is always 'a', the
+// phone (QR secret) always 'b'. It used to be first-come, so a second phone
+// holding the QR could grab the slot meant for the desktop (or squat it before
+// the desktop's relay race fired) and receive the real phone's traffic. With
+// fixed slots a QR holder can only ever compete for the phone's own slot.
+const RELAY_SLOT_FOR_ROLE = { host: 'a', phone: 'b' };
+
+// Claim the caller's role slot; 409 if it is already held.
 app.post('/api/rooms/:id/relay/handshake', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
     if (!RELAY_ENABLE) return res.status(404).json({ error: 'Relay disabled' });
     const room = req.room;
     const r = room.relay || (room.relay = { a: null, b: null, sessionBytes: 0 });
-    let slotName;
-    if (!r.a) slotName = 'a';
-    else if (!r.b) slotName = 'b';
-    else return res.status(409).json({ error: 'Room relay slots full' });
+    const slotName = RELAY_SLOT_FOR_ROLE[req.roomRole];
+    if (r[slotName]) return res.status(409).json({ error: 'Room relay slot taken' });
 
     const token = crypto.randomBytes(RELAY_LP_SLOT_TOKEN_BYTES).toString('hex');
     const slot = {
@@ -1595,10 +1600,8 @@ server.on('upgrade', (req, socket, head) => {
     if (!role) return denyAndClose('401 Unauthorized');
 
     const r = room.relay || { a: null, b: null, sessionBytes: 0 };
-    let slotName;
-    if (!r.a) slotName = 'a';
-    else if (!r.b) slotName = 'b';
-    else return denyAndClose('409 Conflict');
+    const slotName = RELAY_SLOT_FOR_ROLE[role];
+    if (r[slotName]) return denyAndClose('409 Conflict');
 
     _relayWss.handleUpgrade(req, socket, head, (ws) => {
         attachRelay(room, ws, slotName);
