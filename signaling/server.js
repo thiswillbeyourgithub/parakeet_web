@@ -293,7 +293,10 @@ app.use('/api', validateOrigin);
 // body parser. Otherwise express.json reads up to 50 KB and runs
 // synchronous JSON.parse for every rejected request, a CPU
 // amplification path that the rate limiter alone cannot fully close.
-app.use(express.json({ limit: '50kb' }));
+// Mounted per route, AFTER the room-secret check on room routes, so a
+// request without the right secret is refused before its body is read
+// either. Only the routes that read req.body get it.
+const jsonBody = express.json({ limit: '50kb' });
 
 // ============ In-memory Room Storage ============
 const rooms = new Map();
@@ -1003,7 +1006,7 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
 });
 
 // Store SDP offer
-app.post('/api/rooms/:id/offer', rateLimitMiddleware('general'), requireHost, (req, res) => {
+app.post('/api/rooms/:id/offer', rateLimitMiddleware('general'), requireHost, jsonBody, (req, res) => {
     const err = validateSdp(req.body);
     if (err) return res.status(400).json({ error: err });
     req.room.offer = { type: req.body.type, sdp: req.body.sdp };
@@ -1018,7 +1021,7 @@ app.get('/api/rooms/:id/offer', rateLimitMiddleware('roomLookup'), requirePhone,
 });
 
 // Store SDP answer
-app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), requirePhone, (req, res) => {
+app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), requirePhone, jsonBody, (req, res) => {
     const err = validateSdp(req.body);
     if (err) return res.status(400).json({ error: err });
     req.room.answer = { type: req.body.type, sdp: req.body.sdp };
@@ -1102,7 +1105,7 @@ app.post('/api/rooms/:id/rearm', rateLimitMiddleware('general'), requireHost, (r
 });
 
 // ICE candidates for offer side
-app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), requireHost, (req, res) => {
+app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), requireHost, jsonBody, (req, res) => {
     const err = validateIceCandidate(req.body);
     if (err) return res.status(400).json({ error: err });
     if (req.room.iceCandidatesOffer.length >= MAX_ICE_CANDIDATES_PER_ROOM) {
@@ -1131,7 +1134,7 @@ app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), requirePhone
 });
 
 // ICE candidates for answer side
-app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), requirePhone, (req, res) => {
+app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), requirePhone, jsonBody, (req, res) => {
     const err = validateIceCandidate(req.body);
     if (err) return res.status(400).json({ error: err });
     if (req.room.iceCandidatesAnswer.length >= MAX_ICE_CANDIDATES_PER_ROOM) {
@@ -1427,7 +1430,7 @@ function validateBenchmarkReport(body) {
 
 const tryConsumeBenchmarkGlobalQuota = makeGlobalWindowQuota(BENCHMARK_REPORTS_MAX_PER_MINUTE, 60 * 1000);
 
-app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), async (req, res) => {
+app.post('/api/benchmark-report', rateLimitMiddleware('benchmarkReport'), jsonBody, async (req, res) => {
     if (!BENCHMARK_REPORTS_DIR) {
         return res.status(503).json({ error: 'Unavailable', message: 'Benchmark report collection is not enabled' });
     }

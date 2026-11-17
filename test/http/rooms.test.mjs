@@ -37,6 +37,19 @@ describe('room creation + lookup', () => {
     assert.equal(res.status, 401);
   });
 
+  test('a wrong secret is refused before the body is parsed', async () => {
+    // Regression guard: express.json ran for every room route before the
+    // secret check, so an unauthenticated client got its body read and
+    // parsed (a malformed one answered 400 instead of 401).
+    const { roomId } = await createRoom(srv);
+    const res = await fetch(`${srv.baseUrl}/api/rooms/${roomId}/offer`, {
+      method: 'POST',
+      headers: { Origin: srv.origin, 'Content-Type': 'application/json', 'X-Room-Secret': 'wrong' },
+      body: '{not json',
+    });
+    assert.equal(res.status, 401);
+  });
+
   test('an unknown room is indistinguishable from a wrong secret (401, same body)', async () => {
     const res = await apiGet(srv, '/api/rooms/ZZZZZZ', 'whatever');
     assert.equal(res.status, 401);
