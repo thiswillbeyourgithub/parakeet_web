@@ -133,11 +133,12 @@ const RELAY_LP_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
 // instead of letting the relay buffer for it without bound. Same 4 MiB as the
 // LP queue so both transports bound a stuck receiver alike.
 const RELAY_WS_MAX_BUFFERED_BYTES = RELAY_LP_QUEUE_MAX_BYTES;
-// Bytes queued in all LP slots together. The per-slot cap times ROOMS_MAX x 2
-// slots would be ~40 GB, far over the container's 256 MiB: past this budget a
-// new frame is refused (429 to an LP sender, who retries) instead of the relay
-// being OOM-killed with every room in it.
-const RELAY_QUEUE_BUDGET_BYTES = 64 * 1024 * 1024;
+// Bytes the relay holds for receivers, LP queues and WS send buffers together.
+// The per-slot caps times ROOMS_MAX x 2 slots would be ~40 GB, far over the
+// container's 256 MiB: past this budget a new LP frame is refused (429 to its
+// sender, who retries) and the WS receiver holding the most is dropped,
+// instead of the relay being OOM-killed with every room in it.
+const RELAY_QUEUE_BUDGET_BYTES = parseInt(process.env.RELAY_QUEUE_BUDGET_BYTES, 10) || 64 * 1024 * 1024;
 let _relayQueuedBytes = 0;
 // Reap an LP slot after this much silence. Slightly above the /down
 // hold timeout so a slow consumer that round-trips at the maximum
@@ -807,6 +808,8 @@ function attachRelay(room, ws, slotName) {
     ws.slotName = slotName;
     r[slotName] = ws;
     _relayWsLive.add(ws);
+    ws.pendingBytes = 0;
+    ws.pendingReleased = false;
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
 
@@ -835,6 +838,7 @@ function attachRelay(room, ws, slotName) {
 
     ws.on('close', () => {
         _relayWsLive.delete(ws);
+        wsReleaseCounted(ws);
         if (room.relay) {
             if (room.relay[slotName] === ws) room.relay[slotName] = null;
             // Symmetric pair: once one half is gone the session is dead.
@@ -913,17 +917,55 @@ function deliverToPeer(peerSlot, data, isBinary) {
     // WS slot: forward verbatim. ws.send is async but errors propagate
     // via the 'error' event handler attached in attachRelay.
     if (peerSlot.readyState === peerSlot.OPEN) {
+        // terminate() (not close(), whose close frame would queue behind the
+        // backlog) fires 'close', which tears the sending half down too.
         if (peerSlot.bufferedAmount > RELAY_WS_MAX_BUFFERED_BYTES) {
             // The peer stopped reading: ws would keep every further frame
-            // in relay memory. terminate() (not close(), whose close frame
-            // would queue behind the backlog) fires 'close', which tears
-            // the sending half down too.
+            // in relay memory.
             try { peerSlot.terminate(); } catch (_) { /* ignore */ }
             return true;
         }
-        try { peerSlot.send(data, { binary: isBinary }); } catch (_) { /* ignore */ }
+        const len = frameBytes(data);
+        if (_relayQueuedBytes + len > RELAY_QUEUE_BUDGET_BYTES) dropFullestWs();
+        if (_relayQueuedBytes + len > RELAY_QUEUE_BUDGET_BYTES) {
+            try { peerSlot.terminate(); } catch (_) { /* ignore */ }
+            return true;
+        }
+        wsSendCounted(peerSlot, data, isBinary, len);
     }
     return true;
+}
+
+// ws.send with its bytes counted in _relayQueuedBytes until ws hands them to
+// the kernel (the send callback) or the socket closes (wsReleaseCounted).
+function wsSendCounted(ws, data, isBinary, len) {
+    ws.pendingBytes += len;
+    _relayQueuedBytes += len;
+    const release = () => {
+        if (ws.pendingReleased) return;
+        ws.pendingBytes -= len;
+        _relayQueuedBytes -= len;
+    };
+    try { ws.send(data, { binary: isBinary }, release); } catch (_) { release(); }
+}
+
+function wsReleaseCounted(ws) {
+    if (ws.pendingReleased) return;
+    ws.pendingReleased = true;
+    _relayQueuedBytes -= ws.pendingBytes;
+    ws.pendingBytes = 0;
+}
+
+// Over the budget: drop the WS receiver holding the most unsent bytes, the
+// one most likely to have stopped reading.
+function dropFullestWs() {
+    let fullest = null;
+    for (const ws of _relayWsLive) {
+        if (!fullest || ws.pendingBytes > fullest.pendingBytes) fullest = ws;
+    }
+    if (!fullest || fullest.pendingBytes === 0) return;
+    wsReleaseCounted(fullest);
+    try { fullest.terminate(); } catch (_) { /* ignore */ }
 }
 
 // ============ TURN Credential Generation ============

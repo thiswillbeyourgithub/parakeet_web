@@ -64,3 +64,63 @@ describe('relay-wide LP queue budget', () => {
     assert.equal((await up(rooms.at(-1), frame)).status, 204);
   });
 });
+
+// WS send buffers count in the same budget. A small budget, mostly taken by
+// one LP queue, makes the next WS frame overflow it deterministically
+// (no dependence on how much the kernel socket buffers absorb).
+describe('WS frames share the relay-wide budget', () => {
+  let small;
+  before(async () => { small = await startServer({ RELAY_QUEUE_BUDGET_BYTES: String(1024 * KiB) }); });
+  after(async () => { await stopServer(small); });
+
+  function openWs(roomId, secret) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${small.port}/api/rooms/${roomId}/relay?secret=${encodeURIComponent(secret)}`);
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => resolve(ws);
+      ws.onerror = () => reject(new Error('ws failed to open'));
+    });
+  }
+  const nextEvent = (ws) => new Promise((resolve) => {
+    ws.addEventListener('message', (ev) => resolve({ type: 'message', size: ev.data.byteLength }), { once: true });
+    ws.addEventListener('close', () => resolve({ type: 'close' }), { once: true });
+  });
+
+  test('a WS receiver is dropped when LP queues hold the budget, and served once they drain', async () => {
+    const lpRoom = await createRoom(small);
+    const hs = async (secret) => (await (await apiPost(small, `/api/rooms/${lpRoom.roomId}/relay/handshake`, {}, secret)).json()).token;
+    const hostToken = await hs(lpRoom.hostSecret);
+    const phoneToken = await hs(lpRoom.secret);
+    const hdr = (secret, token, extra = {}) => ({ Origin: small.origin, 'X-Room-Secret': secret, 'X-Slot-Token': token, ...extra });
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${small.baseUrl}/api/rooms/${lpRoom.roomId}/relay/up`, {
+        method: 'POST', headers: hdr(lpRoom.secret, phoneToken, { 'Content-Type': 'application/octet-stream' }), body: new Uint8Array(200 * KiB),
+      });
+      assert.equal(res.status, 204);
+    }
+
+    const wsRoom = await createRoom(small);
+    const phone = await openWs(wsRoom.roomId, wsRoom.secret);
+    const host = await openWs(wsRoom.roomId, wsRoom.hostSecret);
+    const got = nextEvent(phone);
+    host.send(new Uint8Array(200 * KiB));
+    assert.equal((await got).type, 'close', '1000 KiB queued + 200 KiB must overflow 1 MiB');
+
+    for (;;) {
+      const res = await fetch(`${small.baseUrl}/api/rooms/${lpRoom.roomId}/relay/down`, { headers: hdr(lpRoom.hostSecret, hostToken) });
+      if (res.status === 204) break;
+      await res.arrayBuffer();
+    }
+    // Sent and handed to the kernel: those bytes must be given back, or the
+    // budget would leak until every frame is refused.
+    const room2 = await createRoom(small);
+    const phone2 = await openWs(room2.roomId, room2.secret);
+    const host2 = await openWs(room2.roomId, room2.hostSecret);
+    for (let i = 0; i < 12; i++) {
+      const next = nextEvent(phone2);
+      host2.send(new Uint8Array(200 * KiB));
+      assert.deepEqual(await next, { type: 'message', size: 200 * KiB });
+    }
+    host2.close(); phone2.close();
+  });
+});

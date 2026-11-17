@@ -156,6 +156,7 @@ services:
       - RELAY_LP_FRAME_BODY_LIMIT=${RELAY_LP_FRAME_BODY_LIMIT:-}
       - RELAY_LP_SLOT_IDLE_TIMEOUT_MS=${RELAY_LP_SLOT_IDLE_TIMEOUT_MS:-}
       - RELAY_WS_PING_INTERVAL_MS=${RELAY_WS_PING_INTERVAL_MS:-}
+      - RELAY_QUEUE_BUDGET_BYTES=${RELAY_QUEUE_BUDGET_BYTES:-}
       # F-142: forward operator HSTS / CSP overrides so the Caddyfile's
       # {$VITE_HSTS_*} / {$VITE_CSP_*} substitutions resolve to non-empty
       # values when set in .env. Without these the documented overrides
