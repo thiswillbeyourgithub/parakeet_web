@@ -26,6 +26,18 @@ export const REMOTE_MIC_MAX_SAMPLES = 10 * 60 * 96000;
  */
 export const FILE_MAX_BYTES = 512 * 1024 * 1024;
 
+/**
+ * Largest frame a relay transport accepts from the server, in bytes: binary
+ * (AES-GCM IV + ciphertext + tag, as sent) and control (text) frames. Same
+ * values as the signaling server's defaults RELAY_LP_FRAME_BODY_LIMIT (256kb)
+ * and RELAY_MAX_CONTROL_MSG_BYTES (16 KiB), which an honest relay never
+ * forwards past. Kept as plain numbers because the server is a separate
+ * CommonJS package. A hostile or broken relay could otherwise make the
+ * transport buffer a body of any size.
+ */
+export const RELAY_FRAME_MAX_BYTES = 256 * 1024;
+export const RELAY_CONTROL_MAX_BYTES = 16 * 1024;
+
 /** @param {{size: number}} file */
 export function fileTooLargeToDecode(file) {
     return !file || !Number.isFinite(file.size) || file.size > FILE_MAX_BYTES;

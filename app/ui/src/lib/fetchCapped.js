@@ -30,6 +30,20 @@ export const SERVED_FILE_MAX_BYTES = 5 * 1024 * 1024;
 export async function fetchTextCapped(url, maxBytes = SERVED_FILE_MAX_BYTES) {
   const res = await fetch(url);
   if (!res.ok) return { ok: false, status: res.status };
+  const body = await readBodyCapped(res, maxBytes);
+  if (!body.ok) return body;
+  return { ok: true, text: new TextDecoder('utf-8').decode(body.bytes) };
+}
+
+/**
+ * Read a Response body into memory, streaming and aborting once it exceeds
+ * `maxBytes`. Also used for the remote-mic relay frames.
+ *
+ * @param {Response} res
+ * @param {number} maxBytes
+ * @returns {Promise<{ok: true, bytes: Uint8Array} | {ok: false, oversize: true, declared: number}>}
+ */
+export async function readBodyCapped(res, maxBytes) {
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
     try { res.body?.cancel(); } catch (_) { /* noop */ }
@@ -40,15 +54,16 @@ export async function fetchTextCapped(url, maxBytes = SERVED_FILE_MAX_BYTES) {
     // No streaming body (an old engine, or a mocked Response). The cap can only
     // be applied AFTER the whole body is materialised here, so this branch is
     // about refusing to hand oversize content on, not about avoiding the
-    // allocation. Measure UTF-8 BYTES: `text.length` counts UTF-16 code units,
-    // so a body of multi-byte characters (any non-ASCII boost-phrase list) can
-    // be well over the byte cap this module exists to enforce and still pass.
-    const text = await res.text();
-    const bytes = new TextEncoder().encode(text).length;
-    if (bytes > maxBytes) {
-      return { ok: false, oversize: true, declared: bytes };
+    // allocation. Measure BYTES: `text.length` counts UTF-16 code units, so a
+    // body of multi-byte characters (any non-ASCII boost-phrase list) can be
+    // well over the byte cap this module exists to enforce and still pass.
+    const bytes = typeof res.arrayBuffer === 'function'
+      ? new Uint8Array(await res.arrayBuffer())
+      : new TextEncoder().encode(await res.text());
+    if (bytes.byteLength > maxBytes) {
+      return { ok: false, oversize: true, declared: bytes.byteLength };
     }
-    return { ok: true, text };
+    return { ok: true, bytes };
   }
   let total = 0;
   const chunks = [];
@@ -65,5 +80,5 @@ export async function fetchTextCapped(url, maxBytes = SERVED_FILE_MAX_BYTES) {
   const merged = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
-  return { ok: true, text: new TextDecoder('utf-8').decode(merged) };
+  return { ok: true, bytes: merged };
 }

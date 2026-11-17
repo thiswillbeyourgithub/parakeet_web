@@ -21,6 +21,18 @@
  */
 
 import { signalingFetch } from './signaling-fetch.js';
+import { readBodyCapped } from './fetchCapped.js';
+import { RELAY_FRAME_MAX_BYTES, RELAY_CONTROL_MAX_BYTES } from './remote-mic-limits.js';
+
+// True for a WS frame no honest relay forwards: a binary frame over the frame
+// limit, a text frame over the control limit (in UTF-8 bytes), or anything
+// that is neither an ArrayBuffer nor a string.
+export function relayWsFrameTooLarge(data) {
+    if (typeof data === 'string') {
+        return new TextEncoder().encode(data).byteLength > RELAY_CONTROL_MAX_BYTES;
+    }
+    return !(data instanceof ArrayBuffer) || data.byteLength > RELAY_FRAME_MAX_BYTES;
+}
 
 // Helper: turn an http(s) signaling base path into the matching ws(s)
 // origin. Works for absolute base URLs and for the common
@@ -95,6 +107,10 @@ export class RelayWsTransport {
                 // binaryType='arraybuffer') and text frames as string -
                 // exactly the shape RemoteMicRTC's onMessage already
                 // expects from the data channel.
+                if (relayWsFrameTooLarge(event.data)) {
+                    console.warn('[RelayWs] dropping an oversized frame');
+                    return;
+                }
                 if (this.onMessage) this.onMessage(event.data);
             };
 
@@ -307,15 +323,24 @@ export class RelayHttpTransport {
             if (response.status === 200) {
                 transientRetries = 0;
                 const contentType = (response.headers.get('content-type') || '').toLowerCase();
-                if (contentType.includes('application/octet-stream')) {
-                    const buf = await response.arrayBuffer();
-                    if (this.onMessage) this.onMessage(buf);
+                const isBinary = contentType.includes('application/octet-stream');
+                // Stream-read with a cap: an honest relay never sends more,
+                // and a hostile one must not make us buffer any size.
+                const body = await readBodyCapped(response, isBinary ? RELAY_FRAME_MAX_BYTES : RELAY_CONTROL_MAX_BYTES);
+                if (!body.ok) {
+                    console.warn(`[RelayHttp] down-poll frame over the cap (${body.declared} bytes)`);
+                    this._fail('oversized frame');
+                    return;
+                }
+                const { bytes } = body;
+                if (isBinary) {
+                    const exact = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+                    if (this.onMessage) this.onMessage(exact ? bytes.buffer : bytes.slice().buffer);
                 } else {
                     // Text frame: server tags these as text/plain. The
                     // protocol layer (handshake / mic) does its own
                     // JSON.parse so we hand over the raw string.
-                    const text = await response.text();
-                    if (this.onMessage) this.onMessage(text);
+                    if (this.onMessage) this.onMessage(new TextDecoder('utf-8').decode(bytes));
                 }
                 continue;
             }
