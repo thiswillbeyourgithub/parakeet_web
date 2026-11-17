@@ -78,3 +78,50 @@ export async function computePairFingerprintForRole(role, ownPub, theirPub, hexL
     const senderPub = role === 'receiver' ? theirPub : ownPub;
     return getPairFingerprint(receiverPub, senderPub, hexLen);
 }
+
+/**
+ * How long either side waits for a fingerprint decision, local (the user's
+ * Confirm/Deny) or remote (the peer's verify-ok), before treating it as a
+ * deny. The local confirm used to wait forever, so a modal left open on an
+ * unattended screen kept a pending pairing alive indefinitely.
+ */
+export const VERIFY_TTL_MS = 60000;
+
+/**
+ * Await a decision delivered through a resolver the caller registers
+ * (typically into a ref read by a message handler or a modal button), or
+ * `false` after `timeoutMs`. Only the first decision counts.
+ *
+ * @template T
+ * @param {(resolve: (value: T) => void) => void} register may call resolve synchronously
+ * @param {number} [timeoutMs=VERIFY_TTL_MS]
+ * @returns {Promise<T|false>}
+ */
+export function waitForDecision(register, timeoutMs = VERIFY_TTL_MS) {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (value) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(value);
+        };
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        register(finish);
+    });
+}
+
+/**
+ * verify-ok names the fingerprint it approves, so a confirmation can only bind
+ * the exact pair the peer's user compared (example: {type:'verify-ok',
+ * fp:'1A2B-3C4D-5E6F-7A8B'}). A bare verify-ok, or one naming another code,
+ * no longer counts as an approval.
+ */
+export function verifyOkMessage(fp) {
+    return { type: 'verify-ok', fp };
+}
+
+/** The fingerprint a received verify-ok approves ('' when it names none). */
+export function approvedFingerprint(msg) {
+    return msg && typeof msg.fp === 'string' ? msg.fp : '';
+}

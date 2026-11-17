@@ -18,7 +18,8 @@ import {
     deriveSharedKey, encrypt
 } from './lib/remote-crypto.js';
 import {
-    getAdaptiveFingerprintLength, computePairFingerprintForRole
+    getAdaptiveFingerprintLength, computePairFingerprintForRole,
+    waitForDecision, verifyOkMessage, approvedFingerprint
 } from './lib/remote-mic-handshake.js';
 import { createFrameSender, packFrame, packEndFrame, FRAME_AUDIO } from './lib/remote-mic-frames.js';
 import VerificationModal from './components/VerificationModal.jsx';
@@ -154,7 +155,7 @@ function RemoteMicSender() {
     // desktop user denies it would still leave the phone in a streaming-
     // ready state on the next interaction. Waiting on the peer ack closes
     // that asymmetry.
-    const peerAckResolveRef = useRef(null); // (boolean) => void
+    const peerAckResolveRef = useRef(null); // (approvedFp: string | false) => void
     // Buffer for a peer verify-ok that arrives BEFORE the local user clicks
     // confirm on the phone's fingerprint modal (i.e. the desktop user
     // confirmed first). Without this, the early message would be discarded
@@ -893,7 +894,8 @@ function RemoteMicSender() {
                             const hexLen = await getAdaptiveFingerprintLength();
                             const fp = await computePairFingerprintForRole('sender', keyPair.publicKey, theirKey, hexLen);
                             setFingerprint(fp);
-                            const confirmed = await new Promise((resolve) => {
+                            // Counted as a deny after VERIFY_TTL_MS.
+                            const confirmed = await waitForDecision((resolve) => {
                                 verifyResolveRef.current = resolve;
                             });
                             setFingerprint('');
@@ -907,14 +909,13 @@ function RemoteMicSender() {
                                 rtc.close();
                                 return;
                             }
-                            rtc.sendMessage({ type: 'verify-ok' });
+                            rtc.sendMessage(verifyOkMessage(fp));
 
                             // F-63: wait for the receiver's reciprocal
-                            // verify-ok before binding the shared key. 60s
-                            // cap is consistent with the desktop side.
-                            const PEER_ACK_TIMEOUT_MS = 60000;
-                            let peerAckTimer = null;
-                            const peerAcked = await new Promise((resolve) => {
+                            // verify-ok, naming THIS fingerprint, before
+                            // binding the shared key. Same VERIFY_TTL_MS cap
+                            // as the desktop side.
+                            const peerApproved = await waitForDecision((resolve) => {
                                 // If the desktop confirmed before us, its
                                 // verify-ok was buffered while our modal
                                 // was up. Consume it now rather than
@@ -927,15 +928,9 @@ function RemoteMicSender() {
                                     return;
                                 }
                                 peerAckResolveRef.current = resolve;
-                                peerAckTimer = setTimeout(() => {
-                                    if (peerAckResolveRef.current) {
-                                        peerAckResolveRef.current(false);
-                                        peerAckResolveRef.current = null;
-                                    }
-                                }, PEER_ACK_TIMEOUT_MS);
                             });
-                            if (peerAckTimer) clearTimeout(peerAckTimer);
                             peerAckResolveRef.current = null;
+                            const peerAcked = peerApproved === fp;
 
                             if (!peerAcked) {
                                 console.warn('[RemoteMic] Receiver did not ack verify-ok (deny or timeout), aborting');
@@ -968,11 +963,11 @@ function RemoteMicSender() {
                             //      late side waits the full 60s timeout
                             //      and surfaces a misleading abort.
                             if (peerAckResolveRef.current) {
-                                peerAckResolveRef.current(true);
+                                peerAckResolveRef.current(approvedFingerprint(msg));
                             } else if (sharedKeyRef.current) {
                                 console.warn('[RemoteMic] Stray verify-ok ignored (session already bound)');
                             } else {
-                                earlyPeerVerifyRef.current = true;
+                                earlyPeerVerifyRef.current = approvedFingerprint(msg);
                                 console.log('[RemoteMic] Peer verify-ok arrived before local confirm, buffered');
                             }
                         } else if (msg.type === 'verify-deny') {
