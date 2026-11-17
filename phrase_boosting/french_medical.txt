@@ -67365,7 +67365,6 @@ syndrome de myopathie, cataracte, hypogonadisme
 syndrome de méthylmercure fœtal
 syndrome de paralysie périodique sensible au potassium-dysrythmie cardiaque
 syndrome de paumes rouges de Lane
-syndrome de peeling cutané
 syndrome de phocomélie SC
 syndrome de polyneuropathie-cataracte-surdité
 syndrome de prédisposition héréditaire aux hémopathies malignes
@@ -67387,6 +67386,7 @@ syndrome de résorption
 syndrome de rétraction du globe oculaire
 syndrome de sclérose combinée de la moelle
 syndrome de sevrage
+syndrome de skin peeling
 syndrome de surdité neurosensorielle-paralysie ponto-bulbaire
 syndrome de syndrome de Foville-Brücke
 syndrome de syndrome de Joubert-Boltshauser
