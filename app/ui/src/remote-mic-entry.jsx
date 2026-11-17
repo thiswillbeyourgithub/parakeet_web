@@ -710,7 +710,7 @@ function RemoteMicSender() {
     // F-131: BFCache hardening on the phone side. Mirror App.jsx's
     // pagehide/pageshow pattern so a phone parked in BFCache mid-session
     // (Home button, app-switcher, deep link) does not revive with a stale
-    // MediaStream + AES-GCM sharedKey + ECDH private CryptoKey pinned in
+    // MediaStream + AES-GCM session keys + ECDH private CryptoKey pinned in
     // memory. On pagehide(persisted=true) tear down the session; on
     // pageshow(persisted=true) reload so the user lands on a fresh INIT
     // state and must re-scan QR to re-pair.
