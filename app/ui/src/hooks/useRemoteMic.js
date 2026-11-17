@@ -30,6 +30,7 @@ import {
 } from '../lib/remote-mic-handshake.js';
 import { unpackFrame, createFrameVerifier, FRAME_AUDIO } from '../lib/remote-mic-frames.js';
 import { createSerialQueue } from '../lib/writeQueue.js';
+import { REMOTE_MIC_MAX_SAMPLES } from '../lib/remote-mic-limits.js';
 
 /**
  * @param {object} deps  everything the remote mic needs from the rest of App().
@@ -66,13 +67,6 @@ export function useRemoteMic({
   maybeStartLiveTranscriber,
   stopLiveTranscriberIfRunning,
 }) {
-  // Hard cap on remote-mic PCM sample accumulation. A compromised phone that
-  // completes the handshake but never sends `audio-end` would otherwise grow
-  // pcmChunksRef without bound and OOM the tab. 10 minutes at the highest
-  // accepted sample rate (96 kHz) is the safety ceiling; in normal use the
-  // phone streams at 48 kHz so the real-time ceiling is ~20 minutes.
-  const REMOTE_MIC_MAX_SAMPLES = 10 * 60 * 96000;
-
   const remoteMicSampleCountRef = useRef(0);
   // F-82: serialises processRemoteMicBatch invocations triggered by
   // back-to-back phone audio-end messages, so concurrent transcribe()

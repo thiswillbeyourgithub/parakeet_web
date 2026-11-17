@@ -22,6 +22,7 @@ import {
     waitForDecision, verifyOkMessage, approvedFingerprint
 } from './lib/remote-mic-handshake.js';
 import { createFrameSender, packFrame, packEndFrame, FRAME_AUDIO } from './lib/remote-mic-frames.js';
+import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode } from './lib/remote-mic-limits.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
@@ -278,11 +279,6 @@ function RemoteMicSender() {
     // desktop resample is a no-op; otherwise we send native rate and the
     // desktop downsamples exactly as it does for a 48 kHz phone mic.
     const FILE_DECODE_TARGET_RATE = 16000;
-    // Match the desktop's raw-sample cap (REMOTE_MIC_MAX_SAMPLES = 10*60*96000
-    // = 57.6M samples) so we never pump samples the receiver will silently
-    // drop. The cap is on raw (pre-resample) samples, so its wall-clock length
-    // depends on the sent rate: 60 min at 16 kHz, ~20 min at 48 kHz.
-    const FILE_MAX_RAW_SAMPLES = 10 * 60 * 96000;
 
     // --- Wake lock + background-throttling helpers (shared with main app) ---
     const acquireWakeLock = useCallback(async () => {
@@ -1197,6 +1193,13 @@ function RemoteMicSender() {
             console.warn('[RemoteMic] Ignoring file send — not connected/verified');
             return;
         }
+        // Refuse a huge file BEFORE arrayBuffer()/decodeAudioData() pull it
+        // (and its decoded PCM) into memory.
+        if (fileTooLargeToDecode(file)) {
+            console.warn(`[RemoteMic] File of ${file.size} bytes is too large to decode`);
+            setFileWarning(t('mobileFileTooLarge'));
+            return;
+        }
         fileAbortRef.current = false;
         let configSent = false;
         let decodeCtx = null;
@@ -1237,9 +1240,9 @@ function RemoteMicSender() {
             }
 
             // 3. Truncate to the receiver's raw-sample cap, warn if we did.
-            if (mono.length > FILE_MAX_RAW_SAMPLES) {
-                console.warn(`[RemoteMic] File ${mono.length} samples exceeds cap ${FILE_MAX_RAW_SAMPLES}, truncating`);
-                mono = mono.subarray(0, FILE_MAX_RAW_SAMPLES);
+            if (mono.length > REMOTE_MIC_MAX_SAMPLES) {
+                console.warn(`[RemoteMic] File ${mono.length} samples exceeds cap ${REMOTE_MIC_MAX_SAMPLES}, truncating`);
+                mono = mono.subarray(0, REMOTE_MIC_MAX_SAMPLES);
                 setFileWarning(t('mobileFileTruncated'));
             }
             if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) return;
