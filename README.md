@@ -283,7 +283,9 @@ This feature was implemented with [Claude Code](https://www.anthropic.com/claude
 <details>
 <summary><strong>Details</strong></summary>
 
-**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is end-to-end encrypted (ECDH P-256 + AES-GCM-256): the server only relays encrypted data and never sees the plaintext audio.
+**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is encrypted between the two browsers (ECDH P-256 + AES-GCM-256): the signaling server and any relay only carry encrypted data and never see the plaintext audio.
+
+That guarantee has one limit worth knowing: the same server that relays the audio also serves the web page (the JavaScript doing the encryption) to both the computer and the phone. It holds against a relay or network that is hostile, or a server that is curious after the fact, but not against an instance that serves modified code: a compromised or malicious operator could ship a page that sends the audio elsewhere, and no in-page check can detect that. Use an instance you trust, or host your own.
 
 1. Click the **Phone Mic** button in the app
 2. A QR code appears, scan it with your phone

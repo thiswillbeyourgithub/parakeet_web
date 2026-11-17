@@ -283,7 +283,9 @@ Cette fonctionnalité a été implémentée avec [Claude Code](https://www.anthr
 <details>
 <summary><strong>Détails</strong></summary>
 
-**Pas de microphone ? Pas de problème !** Utilisez votre téléphone comme micro sans fil via WebRTC. L'audio est chiffré de bout en bout (ECDH P-256 + AES-GCM-256) : le serveur ne relaie que des données chiffrées et ne voit jamais l'audio en clair.
+**Pas de microphone ? Pas de problème !** Utilisez votre téléphone comme micro sans fil via WebRTC. L'audio est chiffré entre les deux navigateurs (ECDH P-256 + AES-GCM-256) : le serveur de signalisation et tout relais ne transportent que des données chiffrées et ne voient jamais l'audio en clair.
+
+Cette garantie a une limite à connaître : le serveur qui relaie l'audio sert aussi la page web (le JavaScript qui chiffre) à l'ordinateur et au téléphone. Elle tient face à un relais ou un réseau hostile, ou à un serveur curieux après coup, mais pas face à une instance qui sert du code modifié : un opérateur compromis ou malveillant pourrait livrer une page qui envoie l'audio ailleurs, et aucune vérification dans la page ne peut le détecter. Utilisez une instance de confiance, ou hébergez la vôtre.
 
 1. Cliquez sur le bouton **Micro téléphone** dans l'application
 2. Un QR code apparaît, scannez-le avec votre téléphone
