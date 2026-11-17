@@ -1251,12 +1251,102 @@ function _findLpSlotByToken(r, providedToken) {
     return null;
 }
 
+// Run fn once when the response is sent or the connection drops.
+function onResponseDone(res, fn) {
+    let done = false;
+    const once = () => {
+        if (done) return;
+        done = true;
+        fn();
+    };
+    res.on('finish', once);
+    res.on('close', once);
+}
+
+// Per-client cap on relay HTTP requests in flight (/up and /down), keyed like
+// the rate limiter (an IPv4 address or an IPv6 /64). The rate limit counts
+// requests per minute, not how many are open at once, so without this one
+// client could hold thousands of 25 s long-polls and 256 KiB uploads. An
+// honest session keeps one /down and at most one /up open per side, so a room
+// whose desktop and phone share a NAT holds 4. A client key cannot own more
+// than ROOMS_MAX_PER_CLIENT rooms, so 4 per room (80 by default) covers a
+// hospital NAT running that many sessions at once.
+const RELAY_IN_FLIGHT_PER_ROOM = 4;
+const RELAY_IN_FLIGHT_PER_CLIENT = ROOMS_MAX_PER_CLIENT * RELAY_IN_FLIGHT_PER_ROOM;
+const _relayInFlight = new Map();
+
+function relayInFlightLimit(req, res, next) {
+    if (TEST_DISABLE_RATE_LIMIT) return next();
+    const key = getClientIp(req);
+    const n = _relayInFlight.get(key) || 0;
+    if (n >= RELAY_IN_FLIGHT_PER_CLIENT) {
+        res.set('Retry-After', '5');
+        return res.status(429).json({ error: 'Too many relay requests in flight' });
+    }
+    _relayInFlight.set(key, n + 1);
+    onResponseDone(res, () => {
+        const left = _relayInFlight.get(key) - 1;
+        if (left > 0) _relayInFlight.set(key, left);
+        else _relayInFlight.delete(key);
+    });
+    next();
+}
+
+// Process-wide budget of /up body bytes being read at once. Each request
+// reserves its Content-Length (or the frame limit when it has none) before
+// express.raw buffers anything, so many slow uploads from many client keys
+// cannot together pin unbounded memory. 32 MiB is 128 full-size frames being
+// read at the same moment; real frames are under 100 KiB and read in
+// milliseconds.
+const RELAY_BODY_BUDGET_BYTES = 32 * 1024 * 1024;
+// Time allowed to read one /up body. server.requestTimeout (35 s) covers the
+// whole request and is sized for the long-polls; a 256 KiB body has no reason
+// to take more than a few seconds even on a poor link.
+const RELAY_BODY_READ_TIMEOUT_MS = 10_000;
+let _relayBodyBytesReserved = 0;
+
+function relayBodyGuard(req, res, next) {
+    const declared = Number(req.headers['content-length']);
+    const reserve = Number.isFinite(declared) && declared >= 0
+        ? Math.min(declared, RELAY_FRAME_MAX_BYTES)
+        : RELAY_FRAME_MAX_BYTES;
+    if (_relayBodyBytesReserved + reserve > RELAY_BODY_BUDGET_BYTES) {
+        res.set('Retry-After', '5');
+        return res.status(503).json({ error: 'Server temporarily overloaded' });
+    }
+    _relayBodyBytesReserved += reserve;
+    const timer = setTimeout(() => {
+        if (res.headersSent) return;
+        res.set('Connection', 'close');
+        res.status(408).json({ error: 'Request body too slow' });
+        // express.raw is still waiting on the socket: drop it once the 408 is
+        // out, which also makes express.raw give up.
+        res.on('finish', () => req.destroy());
+    }, RELAY_BODY_READ_TIMEOUT_MS);
+    req.relayBodyTimer = timer;
+    onResponseDone(res, () => {
+        clearTimeout(timer);
+        _relayBodyBytesReserved -= reserve;
+    });
+    next();
+}
+
+// Placed right after express.raw: the body is in, stop the read timer.
+function relayBodyRead(req, res, next) {
+    clearTimeout(req.relayBodyTimer);
+    if (res.headersSent) return;
+    next();
+}
+
 // Send a frame to the peer slot.
 app.post(
     '/api/rooms/:id/relay/up',
     rateLimitMiddleware('relayData'),
+    relayInFlightLimit,
     validateRoomSecret,
+    relayBodyGuard,
     express.raw({ type: '*/*', limit: RELAY_LP_FRAME_BODY_LIMIT }),
+    relayBodyRead,
     (req, res) => {
         if (!RELAY_ENABLE) return res.status(404).json({ error: 'Relay disabled' });
         const room = req.room;
@@ -1297,7 +1387,7 @@ app.post(
 );
 
 // Long-poll for incoming frames.
-app.get('/api/rooms/:id/relay/down', rateLimitMiddleware('relayData'), validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/relay/down', rateLimitMiddleware('relayData'), relayInFlightLimit, validateRoomSecret, (req, res) => {
     if (!RELAY_ENABLE) return res.status(404).json({ error: 'Relay disabled' });
     const room = req.room;
     const r = room.relay;
