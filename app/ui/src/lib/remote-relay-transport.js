@@ -20,6 +20,8 @@
  *   - onConnected()
  */
 
+import { signalingFetch } from './signaling-fetch.js';
+
 // Helper: turn an http(s) signaling base path into the matching ws(s)
 // origin. Works for absolute base URLs and for the common
 // same-origin '/api/signal' case (no scheme).
@@ -243,7 +245,7 @@ export class RelayHttpTransport {
      */
     async connect() {
         try {
-            const response = await fetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/handshake`, {
+            const response = await signalingFetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/handshake`, {
                 method: 'POST',
                 headers: this._authHeaders(),
             });
@@ -282,7 +284,7 @@ export class RelayHttpTransport {
             this._downAbort = controller;
             let response;
             try {
-                response = await fetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/down?wait=true`, {
+                response = await signalingFetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/down?wait=true`, {
                     headers: this._authHeaders(),
                     signal: controller.signal,
                 });
@@ -433,7 +435,7 @@ export class RelayHttpTransport {
         while (attempt < this._SEND_MAX_ATTEMPTS && !this.closed) {
             let response;
             try {
-                response = await fetch(url, {
+                response = await signalingFetch(url, {
                     method: 'POST',
                     headers: this._authHeaders({ 'Content-Type': item.contentType }),
                     body: item.body,
@@ -520,7 +522,7 @@ export class RelayHttpTransport {
         if (this.token) {
             // Best-effort close so the server-side slot frees up
             // immediately. The peer is torn down server-side too.
-            fetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/close`, {
+            signalingFetch(`${this.baseUrl}/rooms/${encodeURIComponent(this.roomId)}/relay/close`, {
                 method: 'POST',
                 headers: this._authHeaders(),
                 keepalive: true,

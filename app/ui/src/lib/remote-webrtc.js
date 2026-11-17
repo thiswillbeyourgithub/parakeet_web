@@ -13,6 +13,7 @@
 
 import { CONFIG } from '../config.js';
 import { RelayWsTransport, RelayHttpTransport } from './remote-relay-transport.js';
+import { signalingFetch } from './signaling-fetch.js';
 
 export class RemoteMicRTC {
     /**
@@ -76,7 +77,7 @@ export class RemoteMicRTC {
     }
 
     async _fetch(path, opts = {}) {
-        const response = await fetch(`${this.signalingBaseUrl}${path}`, opts);
+        const response = await signalingFetch(`${this.signalingBaseUrl}${path}`, opts);
         // Monkey-patch .json() to log the raw body on parse failure
         const originalJson = response.json.bind(response);
         let bodyText = null;
