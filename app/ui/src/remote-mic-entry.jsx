@@ -19,7 +19,7 @@ import {
 } from './lib/remote-crypto.js';
 import {
     getAdaptiveFingerprintLength, computePairFingerprintForRole,
-    waitForDecision, verifyOkMessage, approvedFingerprint
+    waitForDecision, verifyOkMessage, approvedFingerprint, controlNeedsPairing
 } from './lib/remote-mic-handshake.js';
 import { createFrameSender, packFrame, packEndFrame, FRAME_AUDIO } from './lib/remote-mic-frames.js';
 import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode, isAcceptedRemoteMicGain } from './lib/remote-mic-limits.js';
@@ -990,6 +990,8 @@ function RemoteMicSender() {
                                 setStatus(STATUS.ERROR);
                                 rtc.close();
                             }
+                        } else if (controlNeedsPairing(msg, Boolean(sharedKeyRef.current))) {
+                            console.warn(`[RemoteMic] Ignoring ${msg.type} before pairing is verified`);
                         } else if (msg.type === 'stop-recording') {
                             // Computer requested end of current recording (keep connection alive)
                             stopRecording();

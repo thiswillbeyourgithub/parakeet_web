@@ -10,7 +10,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    waitForDecision, verifyOkMessage, approvedFingerprint, VERIFY_TTL_MS,
+    waitForDecision, verifyOkMessage, approvedFingerprint, VERIFY_TTL_MS, controlNeedsPairing,
 } from '../../app/ui/src/lib/remote-mic-handshake.js';
 
 describe('waitForDecision', () => {
@@ -47,5 +47,23 @@ describe('verify-ok binds the fingerprint', () => {
         assert.equal(approvedFingerprint({ type: 'verify-ok' }), '');
         assert.equal(approvedFingerprint({ type: 'verify-ok', fp: 42 }), '');
         assert.equal(approvedFingerprint(null), '');
+    });
+});
+
+// Regression guard: the phone used to obey stop/pause/resume/audio-settings
+// from whoever was on the channel, even before the pair was verified.
+describe('controlNeedsPairing', () => {
+    test('desktop commands are dropped until the pair is bound', () => {
+        for (const type of ['stop-recording', 'stop', 'pause', 'resume', 'audio-settings']) {
+            assert.equal(controlNeedsPairing({ type }, false), true, type);
+            assert.equal(controlNeedsPairing({ type }, true), false, type);
+        }
+    });
+
+    test('handshake messages are never gated', () => {
+        for (const type of ['public-key', 'verify-ok', 'verify-deny']) {
+            assert.equal(controlNeedsPairing({ type }, false), false, type);
+        }
+        assert.equal(controlNeedsPairing(null, false), false);
     });
 });

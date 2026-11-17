@@ -121,6 +121,22 @@ export function verifyOkMessage(fp) {
     return { type: 'verify-ok', fp };
 }
 
+/**
+ * Desktop-to-phone commands the phone obeys only once the pair is verified
+ * (shared key bound). Before that, anyone holding the room link could send
+ * them, e.g. {type:'audio-settings', gain:0} or {type:'stop'} while the
+ * fingerprint modal is still up. The desktop sends none of them before binding:
+ * its audio-settings push fires when it flips to connected, which is after its
+ * own verify-ok went out on the same ordered channel, so the phone has bound by
+ * the time it arrives.
+ */
+const PAIRED_ONLY_CONTROL_TYPES = new Set(['stop-recording', 'stop', 'pause', 'resume', 'audio-settings']);
+
+/** Whether the phone must drop control message `msg` (not yet paired). */
+export function controlNeedsPairing(msg, paired) {
+    return !paired && PAIRED_ONLY_CONTROL_TYPES.has(msg?.type);
+}
+
 /** The fingerprint a received verify-ok approves ('' when it names none). */
 export function approvedFingerprint(msg) {
     return msg && typeof msg.fp === 'string' ? msg.fp : '';
