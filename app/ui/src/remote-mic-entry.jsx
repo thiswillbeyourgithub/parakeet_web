@@ -22,7 +22,7 @@ import {
     waitForDecision, verifyOkMessage, approvedFingerprint
 } from './lib/remote-mic-handshake.js';
 import { createFrameSender, packFrame, packEndFrame, FRAME_AUDIO } from './lib/remote-mic-frames.js';
-import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode } from './lib/remote-mic-limits.js';
+import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode, isAcceptedRemoteMicGain } from './lib/remote-mic-limits.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
@@ -1016,7 +1016,7 @@ function RemoteMicSender() {
                             if (typeof msg.autoGainControl === 'boolean') {
                                 audioSettingsRef.current.autoGainControl = msg.autoGainControl;
                             }
-                            if (typeof msg.gain === 'number' && Number.isFinite(msg.gain) && msg.gain >= 0) {
+                            if (isAcceptedRemoteMicGain(msg.gain)) {
                                 audioSettingsRef.current.gain = msg.gain;
                                 if (gainNodeRef.current && audioCtxRef.current) {
                                     // Ramp instead of step to avoid an

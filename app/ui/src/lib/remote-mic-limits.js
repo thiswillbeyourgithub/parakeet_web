@@ -38,6 +38,26 @@ export const FILE_MAX_BYTES = 512 * 1024 * 1024;
 export const RELAY_FRAME_MAX_BYTES = 256 * 1024;
 export const RELAY_CONTROL_MAX_BYTES = 16 * 1024;
 
+/**
+ * Range of the remote-mic gain (a GainNode multiplier on the phone). The desktop
+ * input clamps to it, and the phone refuses an `audio-settings` gain above the
+ * max: it used to accept any finite value >= 0, so a peer could push e.g. 1e6
+ * and turn the capture into clipped noise. The phone keeps 0 as its floor (a
+ * mute) so that only the upper bound is new behaviour.
+ */
+export const REMOTE_MIC_GAIN_MIN = 0.5;
+export const REMOTE_MIC_GAIN_MAX = 5;
+
+/** Clamp a desktop-side gain to the range above. @param {number} v */
+export function clampRemoteMicGain(v) {
+    return Math.max(REMOTE_MIC_GAIN_MIN, Math.min(REMOTE_MIC_GAIN_MAX, v));
+}
+
+/** Whether the phone applies a received gain. @param {unknown} g */
+export function isAcceptedRemoteMicGain(g) {
+    return typeof g === 'number' && Number.isFinite(g) && g >= 0 && g <= REMOTE_MIC_GAIN_MAX;
+}
+
 /** @param {{size: number}} file */
 export function fileTooLargeToDecode(file) {
     return !file || !Number.isFinite(file.size) || file.size > FILE_MAX_BYTES;

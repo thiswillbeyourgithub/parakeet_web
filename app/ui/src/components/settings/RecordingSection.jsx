@@ -1,5 +1,6 @@
 import CollapsibleSection from '../CollapsibleSection.jsx';
 import InfoTooltip from '../InfoTooltip.jsx';
+import { REMOTE_MIC_GAIN_MIN, REMOTE_MIC_GAIN_MAX, clampRemoteMicGain } from '../../lib/remote-mic-limits.js';
 
 // The sidebar's Recording group: what the browser does to the microphone
 // signal, the remote-mic gain (shown only when a phone is acting as the mic),
@@ -64,13 +65,13 @@ export default function RecordingSection({
           <input
             type="number"
             inputMode="decimal"
-            min="0.5"
-            max="5"
+            min={REMOTE_MIC_GAIN_MIN}
+            max={REMOTE_MIC_GAIN_MAX}
             step="0.1"
             value={remoteMicGain}
             onChange={e => {
               const v = Number(e.target.value);
-              if (Number.isFinite(v)) setRemoteMicGain(Math.max(0.5, Math.min(5, v)));
+              if (Number.isFinite(v)) setRemoteMicGain(clampRemoteMicGain(v));
             }}
             style={{ width: '5rem' }}
           />
