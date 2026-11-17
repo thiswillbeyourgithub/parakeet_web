@@ -27,6 +27,8 @@ import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLevelMonitor, pickRemoteMicCaptureRate, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
 import { parseRemoteMicLink } from './lib/remote-mic-link.js';
+import { createVad } from './lib/vad.js';
+import { createSerialQueue } from './lib/writeQueue.js';
 
 const STATUS = {
     INIT: 'init',
@@ -46,6 +48,28 @@ const SESSION_STATUSES = new Set([
     STATUS.RECONNECTING, STATUS.WAITING_KEY, STATUS.RECORDING,
     STATUS.PAUSED, STATUS.READY, STATUS.SENDING_FILE,
 ]);
+
+// Hands-free mode: the mic stays open (STATUS.RECORDING doubles as
+// "listening") and the VAD turns each detected utterance into its own
+// recording on the wire, so the desktop sees ordinary recordings.
+const HANDS_FREE_STORAGE_KEY = 'parakeetweb_remote_mic_hands_free';
+const VAD_PHASE = {
+    LISTENING: 'listening', // mic open, no speech
+    SPEECH: 'speech',       // utterance in progress
+    SENDING: 'sending',     // utterance just closed (flush + audio-end)
+};
+// How long the "sending" indicator stays up after an utterance closes.
+const SENDING_INDICATOR_MS = 1000;
+// Minimum gap between an audio-end and the next audio-config. The desktop
+// clears its per-recording state asynchronously after audio-end and treats
+// an audio-config arriving before that as a protocol violation (closing the
+// session), so back-to-back utterances (the 60 s forced split) wait here.
+// Audio keeps queueing meanwhile, so nothing is lost.
+const MIN_RECORDING_GAP_MS = 1500;
+
+function loadHandsFree() {
+    try { return localStorage.getItem(HANDS_FREE_STORAGE_KEY) === '1'; } catch (_) { return false; }
+}
 
 // Global log buffer so we can capture logs before React renders.
 // Previously the buffer was an Array with a `_notify` property hung off
@@ -188,6 +212,20 @@ function RemoteMicSender() {
     // BFCache eviction, error) instead of pushing into a dead transport.
     const fileInputRef = useRef(null);
     const fileAbortRef = useRef(false);
+    // Hands-free mode. The switch is only shown between recordings, so the
+    // state is stable for the whole capture; handsFreeRef mirrors it for the
+    // callbacks the RTC message handler captured at connect time.
+    const [handsFree, setHandsFree] = useState(loadHandsFree);
+    const handsFreeRef = useRef(handsFree);
+    const [vadPhase, setVadPhase] = useState(VAD_PHASE.LISTENING);
+    // While a hands-free capture is open: the VAD, the serial queue its
+    // events are handled on (keeps audio-config / frames / audio-end in
+    // order across async encrypts), and the capture rate for audio-config.
+    const vadRef = useRef(null);
+    const vadQueueRef = useRef(null);
+    const captureRateRef = useRef(0);
+    const lastAudioEndRef = useRef(0);
+    const sendingTimerRef = useRef(null);
     // Audio capture settings pushed from the desktop. Defaults match the
     // historical hardcoded values; overwritten when the desktop sends an
     // `audio-settings` control message. Toggles are read inside
@@ -272,8 +310,18 @@ function RemoteMicSender() {
         if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
         sourceRef.current = null;
         pendingBatchRef.current = { buf: null, len: 0 };
+        vadRef.current = null;
+        vadQueueRef.current = null;
+        if (sendingTimerRef.current) { clearTimeout(sendingTimerRef.current); sendingTimerRef.current = null; }
         releaseWakeLock();
     }, [releaseWakeLock]);
+
+    // Persist the mode switch and mirror it into the ref the RTC message
+    // handler's callbacks read.
+    useEffect(() => {
+        handsFreeRef.current = handsFree;
+        try { localStorage.setItem(HANDS_FREE_STORAGE_KEY, handsFree ? '1' : '0'); } catch (_) { /* private mode */ }
+    }, [handsFree]);
 
     // Quantise Float32 PCM (range [-1, 1]) to little-endian Int16.
     // Lossless for our pipeline because the desktop writes the WAV at
@@ -289,13 +337,19 @@ function RemoteMicSender() {
         return int16;
     }
 
-    // Flush whatever partial batch is pending so the trailing fragment of
-    // a recording reaches the desktop. Detaches the worklet port first so
-    // no new quanta race the snapshot. Safe to call multiple times.
-    const flushPendingBatch = useCallback(async () => {
+    // Stop the worklet delivering more quanta so a final flush cannot race
+    // new audio. Called before tearing a capture down.
+    const detachWorklet = useCallback(() => {
         if (workletRef.current) {
             try { workletRef.current.port.onmessage = null; } catch (_) { /* ignore */ }
         }
+    }, []);
+
+    // Flush whatever partial batch is pending so the trailing fragment of
+    // a recording reaches the desktop. Safe to call multiple times. Does NOT
+    // detach the worklet: hands-free mode closes recordings while the mic
+    // keeps listening (callers tearing the capture down use detachWorklet).
+    const flushPendingBatch = useCallback(async () => {
         const p = pendingBatchRef.current;
         if (!p.buf || p.len === 0) return;
         if (!sharedKeyRef.current || !rtcRef.current) {
@@ -348,6 +402,99 @@ function RemoteMicSender() {
             setSendErrorCount((n) => n + 1);
         }
     }, []);
+
+    // Open a recording on the wire: announce the rate (audio-config, which
+    // the desktop also reads as "new recording started") and reset the
+    // batch buffer, sized to one batch plus a worklet quantum of headroom.
+    // `format: 'pcm-s16'` opts in to Int16 wire encoding (-50% bytes vs
+    // Float32, no quality loss because the desktop quantises to Int16 anyway
+    // when writing the WAV); older desktops default to 'pcm-f32'. `extra`
+    // carries optional hints such as source:'file'.
+    const beginWireRecording = useCallback((sampleRate, extra = {}) => {
+        if (rtcRef.current) {
+            rtcRef.current.sendMessage({ type: 'audio-config', sampleRate, format: 'pcm-s16', ...extra });
+        }
+        batchTargetSamplesRef.current = Math.max(128, Math.round(sampleRate * SEND_BATCH_MS / 1000));
+        pendingBatchRef.current = {
+            buf: new Float32Array(batchTargetSamplesRef.current + 128),
+            len: 0,
+        };
+    }, []);
+
+    // Close a recording on the wire. Flush before audio-end so the trailing
+    // <500 ms that has not filled a batch yet still reaches the desktop. Both
+    // frames enqueue in order on the transport, so audio-end stays the last
+    // thing the receiver sees for this recording.
+    const endWireRecording = useCallback(async () => {
+        await flushPendingBatch();
+        if (rtcRef.current) {
+            try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
+        }
+        lastAudioEndRef.current = Date.now();
+    }, [flushPendingBatch]);
+
+    // Hands-free: act on one VAD event. Always runs on vadQueueRef so events
+    // are handled strictly in order, each awaiting its sends.
+    const handleVadEvent = useCallback(async (ev) => {
+        switch (ev.type) {
+            case 'onset':
+                setVadPhase(VAD_PHASE.SPEECH);
+                return;
+            case 'start': {
+                setVadPhase(VAD_PHASE.SPEECH);
+                const wait = lastAudioEndRef.current + MIN_RECORDING_GAP_MS - Date.now();
+                if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+                if (!sharedKeyRef.current || !rtcRef.current || !vadRef.current) return;
+                beginWireRecording(captureRateRef.current);
+                setHasRecorded(true);
+                // The preroll can hold seconds of held-back audio: feed it in
+                // batch-sized slices so no single frame is oversized.
+                const batch = batchTargetSamplesRef.current;
+                for (let off = 0; off < ev.preroll.length; off += batch) {
+                    await pushPcmIntoBatch(ev.preroll.subarray(off, Math.min(off + batch, ev.preroll.length)));
+                }
+                return;
+            }
+            case 'audio':
+                await pushPcmIntoBatch(ev.samples);
+                return;
+            case 'end':
+                setVadPhase(VAD_PHASE.SENDING);
+                await endWireRecording();
+                if (sendingTimerRef.current) clearTimeout(sendingTimerRef.current);
+                sendingTimerRef.current = setTimeout(() => {
+                    sendingTimerRef.current = null;
+                    setVadPhase((p) => (p === VAD_PHASE.SENDING ? VAD_PHASE.LISTENING : p));
+                }, SENDING_INDICATOR_MS);
+                return;
+            case 'discard':
+                setVadPhase(VAD_PHASE.LISTENING);
+                return;
+            default:
+                console.warn('[RemoteMic] Unknown VAD event:', ev.type);
+        }
+    }, [beginWireRecording, pushPcmIntoBatch, endWireRecording]);
+
+    // Hands-free: close the utterance in progress, if any (sent if started,
+    // dropped if still a candidate). Queued behind every pending event so it
+    // lands after the audio already detected.
+    const finishUtterance = useCallback(() => {
+        const vad = vadRef.current;
+        const enqueue = vadQueueRef.current;
+        if (!vad || !enqueue) return Promise.resolve();
+        return enqueue(async () => {
+            for (const ev of vad.finish()) await handleVadEvent(ev);
+        });
+    }, [handleVadEvent]);
+
+    // End the open capture's audio on the wire before tearing it down: a
+    // button-press recording is always open, a hands-free one only while an
+    // utterance is in progress.
+    const closeCapture = useCallback(async () => {
+        detachWorklet();
+        if (vadRef.current) await finishUtterance();
+        else await endWireRecording();
+    }, [detachWorklet, finishUtterance, endWireRecording]);
 
     // --- Full cleanup (audio + RTC) ---
     const cleanupAll = useCallback(() => {
@@ -931,14 +1078,16 @@ function RemoteMicSender() {
             const actualRate = audioCtx.sampleRate;
             console.log(`[RemoteMic] Capture rate: requested=${requestedRate ?? 'native'} reported=${reportedRate ?? 'n/a'} actual=${actualRate}`);
 
-            // Always tell computer the sample rate (also serves as "new recording started" signal).
-            // `format: 'pcm-s16'` opts us in to Int16 wire encoding (-50% bytes vs Float32, no
-            // quality loss because the desktop quantises to Int16 anyway when writing the WAV).
-            // Older desktops missing this awareness default to 'pcm-f32' on receive, so omitting
-            // the field is the backwards-compatible signal — but we always send it from this
-            // build so the format is observable in logs.
-            if (rtcRef.current) {
-                rtcRef.current.sendMessage({ type: 'audio-config', sampleRate: actualRate, format: 'pcm-s16' });
+            // Button press: the recording starts now. Hands-free: the mic only
+            // listens; each utterance the VAD detects opens its own recording.
+            const handsFreeCapture = handsFreeRef.current;
+            captureRateRef.current = actualRate;
+            if (handsFreeCapture) {
+                vadRef.current = createVad({ sampleRate: actualRate });
+                vadQueueRef.current = createSerialQueue();
+                setVadPhase(VAD_PHASE.LISTENING);
+            } else {
+                beginWireRecording(actualRate);
             }
 
             const source = audioCtx.createMediaStreamSource(stream);
@@ -962,21 +1111,19 @@ function RemoteMicSender() {
             const worklet = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
             workletRef.current = worklet;
 
-            // Reset the batch buffer for this recording. Size it to one full
-            // batch plus a quantum of headroom; the worklet appends in
-            // 128-sample increments, so this never grows in practice.
-            batchTargetSamplesRef.current = Math.max(128, Math.round(actualRate * SEND_BATCH_MS / 1000));
-            pendingBatchRef.current = {
-                buf: new Float32Array(batchTargetSamplesRef.current + 128),
-                len: 0,
-            };
-
             worklet.port.onmessage = (e) => {
                 const pcmChunk = e.data; // Float32Array
                 // Defensive: the worklet should only ever post 128-sample
                 // Float32Arrays. Anything else is a bug or a hijacked port.
                 if (!(pcmChunk instanceof Float32Array)) {
                     console.warn('[RemoteMic] Dropping non-Float32 worklet payload:', typeof pcmChunk);
+                    return;
+                }
+                const vad = vadRef.current;
+                const enqueue = vadQueueRef.current;
+                if (handsFreeCapture) {
+                    if (!vad || !enqueue) return; // torn down
+                    for (const ev of vad.push(pcmChunk)) enqueue(() => handleVadEvent(ev));
                     return;
                 }
                 // Fire-and-forget: the worklet is rate-limited by real time,
@@ -991,7 +1138,7 @@ function RemoteMicSender() {
             worklet.connect(audioCtx.destination);
 
             setStatus(STATUS.RECORDING);
-            setHasRecorded(true);
+            if (!handsFreeCapture) setHasRecorded(true);
             setElapsed(0);
 
             // Start elapsed timer
@@ -1012,7 +1159,7 @@ function RemoteMicSender() {
                 setErrorMsg(t('mobileMicFailed') + e.message);
             }
         }
-    }, [acquireWakeLock, t, pushPcmIntoBatch]);
+    }, [acquireWakeLock, t, pushPcmIntoBatch, beginWireRecording, handleVadEvent]);
 
     // Decode a saved audio file ON THE PHONE and stream it through the SAME
     // encrypted Int16 tunnel the live mic uses (audio-config -> chunks ->
@@ -1076,26 +1223,14 @@ function RemoteMicSender() {
             }
             if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) return;
 
-            // 4. Announce config (identical framing to a live recording) at the
-            //    decoded rate. source:'file' is an optional hint older desktops
-            //    ignore.
-            rtcRef.current.sendMessage({
-                type: 'audio-config',
-                sampleRate: sentRate,
-                format: 'pcm-s16',
-                source: 'file',
-            });
+            // 4. Announce config and reset the batch buffer (identical framing
+            //    to a live recording) at the decoded rate. source:'file' is an
+            //    optional hint older desktops ignore.
+            beginWireRecording(sentRate, { source: 'file' });
             configSent = true;
             setHasRecorded(true);
 
-            // 5. Fresh batch buffer sized to the sent rate (mirrors startMicCapture).
-            batchTargetSamplesRef.current = Math.max(128, Math.round(sentRate * SEND_BATCH_MS / 1000));
-            pendingBatchRef.current = {
-                buf: new Float32Array(batchTargetSamplesRef.current + 128),
-                len: 0,
-            };
-
-            // 6. Paced pump: one batch worth at a time, awaiting the send and a
+            // 5. Paced pump: one batch worth at a time, awaiting the send and a
             //    drain so we throttle to the link instead of overrunning it.
             const batch = batchTargetSamplesRef.current;
             const total = mono.length;
@@ -1107,8 +1242,7 @@ function RemoteMicSender() {
                     // it received. A disconnect-driven abort instead nulls rtcRef
                     // and owns its own teardown, so we just return there.
                     if (rtcRef.current) {
-                        try { await flushPendingBatch(); } catch (_) { /* ignore */ }
-                        try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
+                        try { await endWireRecording(); } catch (_) { /* ignore */ }
                         setStatus(STATUS.READY);
                     }
                     return;
@@ -1119,9 +1253,8 @@ function RemoteMicSender() {
             }
             if (fileAbortRef.current || !rtcRef.current) return;
 
-            // 8. Flush trailing partial batch, then close the recording.
-            await flushPendingBatch();
-            if (rtcRef.current) rtcRef.current.sendMessage({ type: 'audio-end' });
+            // 6. Flush trailing partial batch, then close the recording.
+            await endWireRecording();
             setFileProgress(1);
             setStatus(STATUS.READY);
         } catch (e) {
@@ -1131,8 +1264,7 @@ function RemoteMicSender() {
             // we already announced audio-config, close the recording cleanly
             // so the desktop finalises what it got instead of waiting forever.
             if (configSent && rtcRef.current) {
-                try { await flushPendingBatch(); } catch (_) { /* ignore */ }
-                try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
+                try { await endWireRecording(); } catch (_) { /* ignore */ }
             }
             setFileWarning(
                 (e?.name === 'EncodingError' || e?.name === 'NotSupportedError')
@@ -1143,7 +1275,7 @@ function RemoteMicSender() {
         } finally {
             if (decodeCtx) { try { await decodeCtx.close(); } catch (_) { /* ignore */ } }
         }
-    }, [t, pushPcmIntoBatch, flushPendingBatch]);
+    }, [t, beginWireRecording, pushPcmIntoBatch, endWireRecording]);
 
     // Cancel an in-flight saved-file send. The pump detects the flag on its
     // next iteration and finalises the recording in order (see sendFile).
@@ -1151,22 +1283,19 @@ function RemoteMicSender() {
         fileAbortRef.current = true;
     }, []);
 
-    // Stop current recording but keep RTC alive for next recording
+    // Stop current recording (hands-free: stop listening, sending the
+    // utterance in progress) but keep RTC alive for the next one.
     const stopRecording = useCallback(async () => {
-        // Flush before audio-end so the trailing <500 ms of audio that
-        // hasn't filled a batch yet still reaches the desktop. Both
-        // frames enqueue in order on the transport, so audio-end stays
-        // the last thing the receiver sees for this recording.
-        await flushPendingBatch();
-        if (rtcRef.current) {
-            rtcRef.current.sendMessage({ type: 'audio-end' });
-        }
+        await closeCapture();
         cleanupAudio();
         setAudioLevel(0);
         setStatus(STATUS.READY);
-    }, [cleanupAudio, flushPendingBatch]);
+    }, [cleanupAudio, closeCapture]);
 
-    // Pause: suspend AudioContext (no data sent, timer paused)
+    // Pause: suspend AudioContext (no data sent, timer paused). Hands-free
+    // closes the utterance in progress instead of leaving it open across the
+    // pause, and sends no paused/resumed (the desktop only honours them
+    // inside a recording, and there is none between utterances).
     const pauseRecording = useCallback(() => {
         if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
             audioCtxRef.current.suspend().catch(() => {});
@@ -1176,8 +1305,12 @@ function RemoteMicSender() {
         releaseWakeLock();
         setAudioLevel(0);
         setStatus(STATUS.PAUSED);
-        if (rtcRef.current) rtcRef.current.sendMessage({ type: 'paused' });
-    }, [releaseWakeLock]);
+        if (vadRef.current) {
+            finishUtterance();
+        } else if (rtcRef.current) {
+            rtcRef.current.sendMessage({ type: 'paused' });
+        }
+    }, [releaseWakeLock, finishUtterance]);
 
     // Resume from pause
     const resumeRecording = useCallback(async () => {
@@ -1197,24 +1330,25 @@ function RemoteMicSender() {
         }, 1000);
         await acquireWakeLock();
         setStatus(STATUS.RECORDING);
-        if (rtcRef.current) rtcRef.current.sendMessage({ type: 'resumed' });
+        if (vadRef.current) {
+            setVadPhase(VAD_PHASE.LISTENING);
+        } else if (rtcRef.current) {
+            rtcRef.current.sendMessage({ type: 'resumed' });
+        }
     }, [elapsed, acquireWakeLock]);
 
     // Full disconnect — close RTC, show goodbye screen. This is a DELIBERATE
     // teardown (user tapped Disconnect, or the desktop sent 'stop'), so clear
     // roomInfoRef and reset the retry budget: we must NOT auto-reconnect.
     const stopAndDisconnect = useCallback(async () => {
-        await flushPendingBatch();
-        if (rtcRef.current) {
-            try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) {}
-        }
+        await closeCapture();
         roomInfoRef.current = null;
         reconnectAttemptsRef.current = 0;
         setReconnectAttempt(0);
         cleanupAll();
         setAudioLevel(0);
         setStatus(STATUS.STOPPED);
-    }, [cleanupAll, flushPendingBatch]);
+    }, [cleanupAll, closeCapture]);
 
     // Keep startRef pointing at the latest start() so the stable
     // handleConnectionLost can re-invoke it without depending on it.
@@ -1228,6 +1362,20 @@ function RemoteMicSender() {
     const audioHint = audioLevel < 5 ? t('mobileNoAudio')
         : audioLevel < 20 ? t('mobileSpeakLouder')
         : t('mobileGoodLevel');
+
+    // Live indicator colour/label: button-press recording is red; hands-free
+    // is blue while listening, red on speech, green while sending; paused is
+    // amber in both modes.
+    const HANDS_FREE_PHASE_UI = {
+        [VAD_PHASE.LISTENING]: { color: '#60a5fa', rgb: '96,165,250', label: t('mobileListening') },
+        [VAD_PHASE.SPEECH]: { color: '#ef4444', rgb: '239,68,68', label: t('mobileSpeechDetected') },
+        [VAD_PHASE.SENDING]: { color: '#10b981', rgb: '16,185,129', label: t('mobileSendingUtterance') },
+    };
+    const captureUi = status === STATUS.PAUSED
+        ? { color: '#fbbf24', rgb: '251,191,36', label: t('mobilePaused') }
+        : handsFree
+            ? HANDS_FREE_PHASE_UI[vadPhase]
+            : { color: '#ef4444', rgb: '239,68,68', label: t('mobileRecording') };
 
     return (
         <div style={{ textAlign: 'center', position: 'relative' }}>
@@ -1470,9 +1618,9 @@ function RemoteMicSender() {
                     <div style={{
                         width: '120px', height: '120px', borderRadius: '50%',
                         background: status === STATUS.PAUSED
-                            ? 'radial-gradient(circle, rgba(251,191,36,0.3) 0%, rgba(251,191,36,0.1) 70%)'
-                            : `radial-gradient(circle, rgba(239,68,68,${0.3 + audioLevel / 150}) 0%, rgba(239,68,68,0.1) 70%)`,
-                        border: `3px solid ${status === STATUS.PAUSED ? '#fbbf24' : '#ef4444'}`,
+                            ? `radial-gradient(circle, rgba(${captureUi.rgb},0.3) 0%, rgba(${captureUi.rgb},0.1) 70%)`
+                            : `radial-gradient(circle, rgba(${captureUi.rgb},${0.3 + audioLevel / 150}) 0%, rgba(${captureUi.rgb},0.1) 70%)`,
+                        border: `3px solid ${captureUi.color}`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         margin: '1rem auto',
                         transition: 'background 0.1s',
@@ -1484,17 +1632,17 @@ function RemoteMicSender() {
                                 width: `${30 + audioLevel * 0.5}px`,
                                 height: `${30 + audioLevel * 0.5}px`,
                                 borderRadius: '50%',
-                                background: '#ef4444',
-                                transition: 'width 0.1s, height 0.1s',
+                                background: captureUi.color,
+                                transition: 'width 0.1s, height 0.1s, background 0.2s',
                             }} />
                         )}
                     </div>
 
                     <p style={{
-                        color: status === STATUS.PAUSED ? '#fbbf24' : '#ef4444',
+                        color: captureUi.color,
                         fontWeight: 'bold', fontSize: '1.2rem',
                     }}>
-                        {status === STATUS.PAUSED ? t('mobilePaused') : t('mobileRecording')} {formatTime(elapsed)}
+                        {captureUi.label} {formatTime(elapsed)}
                     </p>
 
                     {/* Level bar */}
@@ -1533,7 +1681,7 @@ function RemoteMicSender() {
                             </button>
                         )}
                         <button onClick={stopRecording} style={styles.stopButton}>
-                            {t('mobileStopBtn')}
+                            {handsFree ? t('mobileStopListeningBtn') : t('mobileStopBtn')}
                         </button>
                     </div>
                 </div>
@@ -1554,9 +1702,32 @@ function RemoteMicSender() {
                             ⚠ {fileWarning}
                         </p>
                     )}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center', marginTop: hasRecorded ? 0 : '1.5rem' }}>
+                    {/* Recording mode switch, remembered across sessions */}
+                    <div style={{ marginTop: hasRecorded ? 0 : '1.5rem', marginBottom: '1rem' }}>
+                        <p style={styles.sidebarHeading}>{t('mobileModeLabel')}</p>
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                            <button
+                                onClick={() => setHandsFree(false)}
+                                style={{ ...styles.langBtn, ...(!handsFree ? styles.langBtnActive : {}) }}
+                            >
+                                {t('mobileModePushBtn')}
+                            </button>
+                            <button
+                                onClick={() => setHandsFree(true)}
+                                style={{ ...styles.langBtn, ...(handsFree ? styles.langBtnActive : {}) }}
+                            >
+                                {t('mobileModeHandsFreeBtn')}
+                            </button>
+                        </div>
+                        {handsFree && (
+                            <p style={{ color: '#9ca3af', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                                {t('mobileHandsFreeHint')}
+                            </p>
+                        )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
                         <button onClick={startMicCapture} style={styles.newRecordingButton}>
-                            {t('mobileStartNewBtn')}
+                            {handsFree ? t('mobileStartListeningBtn') : t('mobileStartNewBtn')}
                         </button>
                         <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={styles.sendFileButton}>
                             {t('mobileSendFileBtn')}
