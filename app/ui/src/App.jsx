@@ -105,6 +105,10 @@ const devMode = CONFIG.VITE_DEV_MODE === 'true';
 // banner is one nobody reads. An instance with no stamped start time (the dev
 // server) keeps the banner, see isFresherThanDays.
 const DEV_BANNER_MAX_AGE_DAYS = 5;
+// Cap on captures buffered for transcription (lib/captureQueue.js). Far above
+// what a person queues by hand while the model loads, low enough that a
+// flooding paired phone cannot grow the tab's memory without bound.
+const MAX_PENDING_CAPTURES = 20;
 const devBannerVisible = devMode
   && isFresherThanDays(CONFIG.CONTAINER_STARTED_AT, DEV_BANNER_MAX_AGE_DAYS);
 
@@ -763,6 +767,8 @@ export default function App() {
   // Number of captures buffered by the queue (audio finished before the model
   // was ready). Surfaces a small "waiting for the model" note.
   const [pendingCaptureCount, setPendingCaptureCount] = useState(0);
+  // Captures refused because MAX_PENDING_CAPTURES were already queued.
+  const [droppedCaptureCount, setDroppedCaptureCount] = useState(0);
   const [verboseLog, setVerboseLog] = useState(false);
   // Collect per-token decode introspection (logits, boost bonus, beam
   // timeline) on every transcription and expose a per-entry "Debug" view.
@@ -3043,6 +3049,11 @@ export default function App() {
       canRun: () => !!modelRef.current && !isRecordingRef.current && !isTranscribingRef.current,
       runJob: (job) => runTranscriptionRef.current(job.pcm, job.opts),
       onCountChange: (n) => setPendingCaptureCount(n),
+      maxPending: MAX_PENDING_CAPTURES,
+      onOverflow: () => {
+        console.warn(`[CaptureQueue] ${MAX_PENDING_CAPTURES} captures already queued, dropping a new one`);
+        setDroppedCaptureCount((n) => n + 1);
+      },
     });
   }
   const captureQueue = captureQueueRef.current;
@@ -5630,6 +5641,12 @@ export default function App() {
       {pendingCaptureCount > 0 && (
         <Banner tone="info" style={{ marginTop: '0.5rem', justifyContent: 'center' }}>
           ⏳ {t('capturesQueued').replace('{n}', String(pendingCaptureCount))}
+        </Banner>
+      )}
+      {droppedCaptureCount > 0 && (
+        <Banner tone="warning" style={{ marginTop: '0.5rem', justifyContent: 'center' }}>
+          {t('capturesDropped').replace('{n}', String(droppedCaptureCount))}
+          <button onClick={() => setDroppedCaptureCount(0)} style={{ marginLeft: '0.5em' }}>{t('dismiss')}</button>
         </Banner>
       )}
 

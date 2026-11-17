@@ -145,4 +145,27 @@ describe('createCaptureQueue', () => {
     assert.equal(counts.at(-1), 0);
     assert.equal(q.size, 0);
   });
+
+  test('maxPending refuses jobs past the cap (flooding phone), never runs them', async () => {
+    let ready = false;
+    const ran = [];
+    const refused = [];
+    const q = createCaptureQueue({
+      canRun: () => ready,
+      runJob: async (job) => { ran.push(job.id); },
+      maxPending: 2,
+      onOverflow: (job) => refused.push(job.id),
+    });
+    q.submit({ id: 1 });
+    q.submit({ id: 2 });
+    q.submit({ id: 3 });
+    assert.equal(q.size, 2);
+    assert.deepEqual(refused, [3]);
+    ready = true;
+    await q.drain();
+    assert.deepEqual(ran, [1, 2]);
+    // Room again once drained.
+    await q.submit({ id: 4 });
+    assert.deepEqual(ran, [1, 2, 4]);
+  });
 });

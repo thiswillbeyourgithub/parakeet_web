@@ -457,6 +457,7 @@ const translations = {
     loadModelFirst: 'Load model first',
     modelStillLoading: 'The model is still loading. Please wait until it finishes, then add the file again. It was not accepted.',
     capturesQueued: '{n} audio clip(s) queued, they transcribe automatically as soon as the model is free.',
+    capturesDropped: '{n} audio clip(s) were discarded because too many were already waiting for transcription.',
     failedCopyClipboard: 'Failed to copy to clipboard',
 
     // Dictation device
@@ -986,6 +987,7 @@ const translations = {
     loadModelFirst: "Chargez d'abord le mod\u00e8le",
     modelStillLoading: "Le mod\u00e8le est encore en cours de chargement. Patientez jusqu'\u00e0 la fin, puis ajoutez de nouveau le fichier\u00a0: il n'a pas \u00e9t\u00e9 accept\u00e9.",
     capturesQueued: "{n} audio(s) en file d'attente, ils seront transcrits automatiquement d\u00e8s que le mod\u00e8le sera libre.",
+    capturesDropped: "{n} audio(s) ont \u00e9t\u00e9 ignor\u00e9s car trop d'audios attendaient d\u00e9j\u00e0 leur transcription.",
     failedCopyClipboard: '\u00c9chec de la copie dans le presse-papiers',
 
     // Dictation device

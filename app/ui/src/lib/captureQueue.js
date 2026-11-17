@@ -21,10 +21,19 @@
 //                 job cannot wedge the rest.
 //   - onCountChange(n): optional; called with the new pending count whenever it
 //                 changes, for a "N clip(s) queued" indicator.
+//   - maxPending: optional cap on buffered (not-yet-started) jobs. A paired
+//                 phone can finish recordings faster than the model transcribes
+//                 them (or while it is still loading), and each buffered job
+//                 holds its PCM in memory, so an unbounded buffer let a flooding
+//                 phone grow the tab without limit. A job submitted while the
+//                 buffer is full is refused: onOverflow(job) is called and it
+//                 never runs.
 //
 // Built with Claude Code.
 
-export function createCaptureQueue({ canRun, runJob, onCountChange = () => {} }) {
+export function createCaptureQueue({
+  canRun, runJob, onCountChange = () => {}, maxPending = Infinity, onOverflow = () => {},
+}) {
   const pending = [];
   // Guards against two overlapping drains (submit() racing an explicit drain(),
   // or a re-entrant drain() from runJob's completion): only one loop consumes
@@ -61,6 +70,10 @@ export function createCaptureQueue({ canRun, runJob, onCountChange = () => {} })
     // Buffer a capture and try to drain immediately. Returns the drain promise
     // so a caller may await the buffer emptying if it wants to.
     submit(job) {
+      if (pending.length >= maxPending) {
+        onOverflow(job);
+        return drain();
+      }
       pending.push(job);
       setCount();
       return drain();
