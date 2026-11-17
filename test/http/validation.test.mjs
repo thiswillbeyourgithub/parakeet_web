@@ -15,31 +15,31 @@ const icePath = () => `/api/rooms/${room.roomId}/ice/offer`;
 
 describe('SDP validation', () => {
   test('a well-formed offer is accepted', async () => {
-    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: SAMPLE_SDP }, room.secret);
+    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: SAMPLE_SDP }, room.hostSecret);
     assert.equal(res.status, 200);
   });
   test('a wrong type is rejected (400)', async () => {
-    const res = await apiPost(srv, offerPath(), { type: 'banana', sdp: SAMPLE_SDP }, room.secret);
+    const res = await apiPost(srv, offerPath(), { type: 'banana', sdp: SAMPLE_SDP }, room.hostSecret);
     assert.equal(res.status, 400);
   });
   test('a missing sdp is rejected (400)', async () => {
-    const res = await apiPost(srv, offerPath(), { type: 'offer' }, room.secret);
+    const res = await apiPost(srv, offerPath(), { type: 'offer' }, room.hostSecret);
     assert.equal(res.status, 400);
   });
   test('an SDP line outside the RFC-4566 alphabet is rejected (400)', async () => {
     const bad = SAMPLE_SDP + '\r\nx=not-a-valid-line-type';
-    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: bad }, room.secret);
+    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: bad }, room.hostSecret);
     assert.equal(res.status, 400);
   });
   test('an embedded NUL byte is rejected (400)', async () => {
-    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: 'v=0\0' }, room.secret);
+    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: 'v=0\0' }, room.hostSecret);
     assert.equal(res.status, 400);
   });
 });
 
 describe('ICE candidate validation', () => {
   test('a malformed candidate string is rejected (400)', async () => {
-    const res = await apiPost(srv, icePath(), { candidate: 'not a candidate' }, room.secret);
+    const res = await apiPost(srv, icePath(), { candidate: 'not a candidate' }, room.hostSecret);
     assert.equal(res.status, 400);
   });
 });
@@ -48,7 +48,7 @@ describe('request-size + auth ordering', () => {
   test('a body over the 50 KB JSON limit is rejected (413)', async () => {
     // Oversized but still valid JSON shape; the body parser caps at 50kb.
     const huge = 'a'.repeat(60 * 1024);
-    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: huge }, room.secret);
+    const res = await apiPost(srv, offerPath(), { type: 'offer', sdp: huge }, room.hostSecret);
     assert.equal(res.status, 413);
   });
 

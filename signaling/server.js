@@ -517,26 +517,47 @@ function secureCompare(a, b) {
 // emits so a wrong-alphabet header (F-45) still trips the same branch.
 const DUMMY_ROOM_SECRET = crypto.randomBytes(16).toString('base64url');
 
-function validateRoomSecret(req, res, next) {
-    // Always return the same shape for "room missing" and "secret wrong"
-    // so an unauthenticated client cannot distinguish the two and use
-    // the response code as an enumeration oracle over the 30-bit room
-    // ID space. Run secureCompare against a dummy secret on the
-    // missing-room branch so a timing observer sees the same work.
-    const room = rooms.get(req.params.id);
-    const providedSecret = req.headers['x-room-secret'];
-
-    if (!room) {
-        secureCompare(typeof providedSecret === 'string' ? providedSecret : '', DUMMY_ROOM_SECRET);
-        return res.status(401).json({ error: 'Invalid room secret' });
-    }
-
-    if (!providedSecret) return res.status(401).json({ error: 'Invalid room secret' });
-    if (!secureCompare(providedSecret, room.secret)) return res.status(401).json({ error: 'Invalid room secret' });
-
-    req.room = room;
-    next();
+// Each room has TWO credentials, one per role, so the secret printed in the
+// QR code (the phone's) cannot be used to impersonate the desktop:
+//   - room.hostSecret: returned only to the desktop that created the room;
+//     required to store the offer, re-arm, post offer-side ICE, and read the
+//     answer + answer-side ICE.
+//   - room.secret: the phone's credential, carried in the QR fragment; it can
+//     only read the offer + offer-side ICE and post the answer + answer ICE.
+// A phone-secret holder (anyone who saw the QR) therefore cannot re-arm the
+// room, replace the offer, or read the answer meant for the desktop.
+//
+// Returns 'host', 'phone', or null. Both comparisons always run (against a
+// dummy when the room is missing) so the timing does not reveal which branch
+// matched or whether the room exists.
+function roomRoleForSecret(room, providedSecret) {
+    const provided = typeof providedSecret === 'string' ? providedSecret : '';
+    const isHost = secureCompare(provided, room ? room.hostSecret : DUMMY_ROOM_SECRET);
+    const isPhone = secureCompare(provided, room ? room.secret : DUMMY_ROOM_SECRET);
+    if (!room || !provided) return null;
+    if (isHost) return 'host';
+    if (isPhone) return 'phone';
+    return null;
 }
+
+// Middleware factory: admit the request only if X-Room-Secret matches one of
+// the given roles. Always return the same shape for "room missing", "secret
+// wrong" and "wrong role" so an unauthenticated client cannot use the response
+// code as an enumeration oracle over the 30-bit room ID space.
+function requireRoomRole(...roles) {
+    return (req, res, next) => {
+        const room = rooms.get(req.params.id);
+        const role = roomRoleForSecret(room, req.headers['x-room-secret']);
+        if (!role || !roles.includes(role)) return res.status(401).json({ error: 'Invalid room secret' });
+        req.room = room;
+        req.roomRole = role;
+        next();
+    };
+}
+
+const validateRoomSecret = requireRoomRole('host', 'phone');
+const requireHost = requireRoomRole('host');
+const requirePhone = requireRoomRole('phone');
 
 // ============ Body Validation ============
 //
@@ -923,10 +944,11 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
     } while (rooms.has(roomId));
 
     const secret = generateRoomSecret();
-
+    const hostSecret = generateRoomSecret();
     rooms.set(roomId, {
         created: Date.now(),
         secret,
+        hostSecret,
         offer: null,
         answer: null,
         iceCandidatesOffer: [],
@@ -944,11 +966,11 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
 
     console.log(`Room ${roomId} created`);
     debugLog('ROOM', 'Room created', { roomId, clientIp: getClientIp(req) });
-    res.json({ roomId, secret });
+    res.json({ roomId, secret, hostSecret });
 });
 
 // Store SDP offer
-app.post('/api/rooms/:id/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.post('/api/rooms/:id/offer', rateLimitMiddleware('general'), requireHost, (req, res) => {
     const err = validateSdp(req.body);
     if (err) return res.status(400).json({ error: err });
     req.room.offer = { type: req.body.type, sdp: req.body.sdp };
@@ -957,13 +979,13 @@ app.post('/api/rooms/:id/offer', rateLimitMiddleware('general'), validateRoomSec
 });
 
 // Get SDP offer
-app.get('/api/rooms/:id/offer', rateLimitMiddleware('roomLookup'), validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/offer', rateLimitMiddleware('roomLookup'), requirePhone, (req, res) => {
     if (!req.room.offer) return res.status(404).json({ error: 'Offer not ready yet' });
     res.json(req.room.offer);
 });
 
 // Store SDP answer
-app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), requirePhone, (req, res) => {
     const err = validateSdp(req.body);
     if (err) return res.status(400).json({ error: err });
     req.room.answer = { type: req.body.type, sdp: req.body.sdp };
@@ -978,7 +1000,7 @@ app.post('/api/rooms/:id/answer', rateLimitMiddleware('general'), validateRoomSe
 
 // Get SDP answer (long-polling). Rate-limited so a peer holding a valid room
 // secret cannot pin many concurrent 30s polls and exhaust file descriptors.
-app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), validateRoomSecret, async (req, res) => {
+app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), requireHost, async (req, res) => {
     if (req.room.answer) return res.json(req.room.answer);
 
     if (req.query.wait === 'true') {
@@ -1033,7 +1055,7 @@ app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), validateRoom
 // offer and long-poll for the returning phone's new answer. Any waiter
 // currently long-polling /answer is woken so it re-evaluates (and 204s)
 // against the now-empty answer instead of hanging on the prior one.
-app.post('/api/rooms/:id/rearm', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.post('/api/rooms/:id/rearm', rateLimitMiddleware('general'), requireHost, (req, res) => {
     req.room.offer = null;
     req.room.answer = null;
     req.room.iceCandidatesOffer = [];
@@ -1047,7 +1069,7 @@ app.post('/api/rooms/:id/rearm', rateLimitMiddleware('general'), validateRoomSec
 });
 
 // ICE candidates for offer side
-app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), requireHost, (req, res) => {
     const err = validateIceCandidate(req.body);
     if (err) return res.status(400).json({ error: err });
     if (req.room.iceCandidatesOffer.length >= MAX_ICE_CANDIDATES_PER_ROOM) {
@@ -1071,12 +1093,12 @@ app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoo
 // is also gated by validateRoomSecret so it is not an enumeration
 // oracle, and matching its limit keeps the trickle-ICE round-trip
 // inside one consistent bucket.
-app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), requirePhone, (req, res) => {
     res.json({ candidates: req.room.iceCandidatesOffer });
 });
 
 // ICE candidates for answer side
-app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), requirePhone, (req, res) => {
     const err = validateIceCandidate(req.body);
     if (err) return res.status(400).json({ error: err });
     if (req.room.iceCandidatesAnswer.length >= MAX_ICE_CANDIDATES_PER_ROOM) {
@@ -1093,7 +1115,7 @@ app.post('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRo
 
 // Same rationale as /ice/offer above: moved to `general` to match
 // the 1 Hz client polling and avoid 429 storms under shared-NAT.
-app.get('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), validateRoomSecret, (req, res) => {
+app.get('/api/rooms/:id/ice/answer', rateLimitMiddleware('general'), requireHost, (req, res) => {
     res.json({ candidates: req.room.iceCandidatesAnswer });
 });
 
@@ -1569,9 +1591,8 @@ server.on('upgrade', (req, socket, head) => {
     // Compare against DUMMY_ROOM_SECRET on missing-room branch so a
     // timing observer cannot distinguish "wrong room id" from "wrong
     // secret" (same enumeration-oracle concern as validateRoomSecret).
-    const compareTarget = room ? room.secret : DUMMY_ROOM_SECRET;
-    const ok = providedSecret && secureCompare(providedSecret, compareTarget);
-    if (!room || !ok) return denyAndClose('401 Unauthorized');
+    const role = roomRoleForSecret(room, providedSecret);
+    if (!role) return denyAndClose('401 Unauthorized');
 
     const r = room.relay || { a: null, b: null, sessionBytes: 0 };
     let slotName;

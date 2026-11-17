@@ -4,7 +4,7 @@
 // The bug: the button was wired as `onClick={startRemoteMic}`, so Preact passed
 // the click PointerEvent as startRemoteMic's `existingRoom` argument. A truthy
 // `existingRoom` sends the function down the reconnect branch, which calls
-// `rtc.adoptRoom(existingRoom.roomId, existingRoom.secret)` (both undefined) and
+// `rtc.adoptRoom(existingRoom.roomId, existingRoom.hostSecret)` (both undefined) and
 // then `rearmRoom()` -> `POST /api/signal/rooms/undefined/rearm` with no
 // X-Room-Secret header -> HTTP 401. The catch then drops the modal straight to
 // the 'disconnected' ("Phone disconnected") state on the very first click, so
@@ -42,7 +42,7 @@ test('Phone Mic button mints a new room instead of re-arming (no spurious "Phone
       return;
     }
     if (req.method() === 'POST' && path.endsWith('/api/signal/rooms')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ roomId: 'TST123', secret: 'sekret' }) });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ roomId: 'TST123', secret: 'sekret', hostSecret: 'hostsekret' }) });
       return;
     }
     if (req.method() === 'POST' && (path.endsWith('/offer') || path.includes('/ice/'))) {

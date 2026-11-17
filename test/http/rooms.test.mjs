@@ -14,11 +14,14 @@ before(async () => { srv = await startServer(); });
 after(async () => { await stopServer(srv); });
 
 describe('room creation + lookup', () => {
-  test('POST /api/rooms mints a 6-char id and a secret', async () => {
-    const { roomId, secret } = await createRoom(srv);
+  test('POST /api/rooms mints a 6-char id and one secret per role', async () => {
+    const { roomId, secret, hostSecret } = await createRoom(srv);
     assert.match(roomId, /^[A-Z0-9]{6}$/);
     assert.equal(typeof secret, 'string');
     assert.ok(secret.length >= 16);
+    assert.equal(typeof hostSecret, 'string');
+    assert.ok(hostSecret.length >= 16);
+    assert.notEqual(hostSecret, secret);
   });
 
   test('GET /api/rooms/:id with the right secret reports empty state', async () => {
@@ -50,12 +53,12 @@ describe('room creation + lookup', () => {
 
 describe('SDP offer/answer relay round trip', () => {
   test('offer posted by one peer is retrievable by the other', async () => {
-    const { roomId, secret } = await createRoom(srv);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
 
     // Before an offer exists the GET is a 404 "not ready".
     assert.equal((await apiGet(srv, `/api/rooms/${roomId}/offer`, secret)).status, 404);
 
-    const post = await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, secret);
+    const post = await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, hostSecret);
     assert.equal(post.status, 200);
     assert.deepEqual(await post.json(), { success: true });
 
@@ -69,18 +72,18 @@ describe('SDP offer/answer relay round trip', () => {
   });
 
   test('answer non-waiting GET is 204 until an answer is posted', async () => {
-    const { roomId, secret } = await createRoom(srv);
-    assert.equal((await apiGet(srv, `/api/rooms/${roomId}/answer`, secret)).status, 204);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
+    assert.equal((await apiGet(srv, `/api/rooms/${roomId}/answer`, hostSecret)).status, 204);
 
     await apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret);
-    const get = await apiGet(srv, `/api/rooms/${roomId}/answer`, secret);
+    const get = await apiGet(srv, `/api/rooms/${roomId}/answer`, hostSecret);
     assert.equal(get.status, 200);
     assert.deepEqual(await get.json(), { type: 'answer', sdp: SAMPLE_SDP });
   });
 
   test('a long-poll GET (wait=true) resolves when the answer arrives', async () => {
-    const { roomId, secret } = await createRoom(srv);
-    const pollPromise = apiGet(srv, `/api/rooms/${roomId}/answer?wait=true`, secret);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
+    const pollPromise = apiGet(srv, `/api/rooms/${roomId}/answer?wait=true`, hostSecret);
     // Post the answer shortly after the poll is in flight.
     setTimeout(() => { apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret); }, 100);
     const res = await pollPromise;
@@ -91,19 +94,19 @@ describe('SDP offer/answer relay round trip', () => {
 
 describe('room re-arm for reconnection', () => {
   test('rearm clears offer/answer/ICE but keeps the room and secret valid', async () => {
-    const { roomId, secret } = await createRoom(srv);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
 
     // First handshake: offer, answer, and ICE on both sides.
-    await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, hostSecret);
     await apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret);
-    await apiPost(srv, `/api/rooms/${roomId}/ice/offer`, { candidate: SAMPLE_CANDIDATE }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/ice/offer`, { candidate: SAMPLE_CANDIDATE }, hostSecret);
     await apiPost(srv, `/api/rooms/${roomId}/ice/answer`, { candidate: SAMPLE_CANDIDATE }, secret);
 
     let status = await (await apiGet(srv, `/api/rooms/${roomId}`, secret)).json();
     assert.deepEqual(status, { exists: true, hasOffer: true, hasAnswer: true });
 
     // Re-arm.
-    const rearm = await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, secret);
+    const rearm = await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, hostSecret);
     assert.equal(rearm.status, 200);
     assert.deepEqual(await rearm.json(), { success: true });
 
@@ -111,26 +114,26 @@ describe('room re-arm for reconnection', () => {
     status = await (await apiGet(srv, `/api/rooms/${roomId}`, secret)).json();
     assert.deepEqual(status, { exists: true, hasOffer: false, hasAnswer: false });
     assert.equal((await apiGet(srv, `/api/rooms/${roomId}/offer`, secret)).status, 404);
-    assert.equal((await apiGet(srv, `/api/rooms/${roomId}/answer`, secret)).status, 204);
+    assert.equal((await apiGet(srv, `/api/rooms/${roomId}/answer`, hostSecret)).status, 204);
     const offerIce = await (await apiGet(srv, `/api/rooms/${roomId}/ice/offer`, secret)).json();
-    const answerIce = await (await apiGet(srv, `/api/rooms/${roomId}/ice/answer`, secret)).json();
+    const answerIce = await (await apiGet(srv, `/api/rooms/${roomId}/ice/answer`, hostSecret)).json();
     assert.deepEqual(offerIce.candidates, []);
     assert.deepEqual(answerIce.candidates, []);
 
     // A second handshake works on the same room/secret.
-    await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, hostSecret);
     const get = await apiGet(srv, `/api/rooms/${roomId}/offer`, secret);
     assert.equal(get.status, 200);
   });
 
   test('rearm wakes a pending answer long-poll so it does not return the stale answer', async () => {
-    const { roomId, secret } = await createRoom(srv);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
     await apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret);
-    await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, secret);
+    await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, hostSecret);
 
     // After rearm there is no answer, so a waiting long-poll must block then
     // 204 at the timeout boundary rather than returning the cleared answer.
-    const pollPromise = apiGet(srv, `/api/rooms/${roomId}/answer?wait=true`, secret);
+    const pollPromise = apiGet(srv, `/api/rooms/${roomId}/answer?wait=true`, hostSecret);
     // A fresh answer posted after rearm is what it should ultimately resolve to.
     setTimeout(() => { apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, secret); }, 100);
     const res = await pollPromise;
@@ -147,13 +150,13 @@ describe('room re-arm for reconnection', () => {
 
 describe('ICE candidate trickle relay', () => {
   test('candidates posted to the offer side are listed back', async () => {
-    const { roomId, secret } = await createRoom(srv);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
     const empty = await (await apiGet(srv, `/api/rooms/${roomId}/ice/offer`, secret)).json();
     assert.deepEqual(empty.candidates, []);
 
     const post = await apiPost(
       srv, `/api/rooms/${roomId}/ice/offer`,
-      { candidate: SAMPLE_CANDIDATE, sdpMid: '0', sdpMLineIndex: 0 }, secret,
+      { candidate: SAMPLE_CANDIDATE, sdpMid: '0', sdpMLineIndex: 0 }, hostSecret,
     );
     assert.equal(post.status, 200);
 
@@ -164,11 +167,45 @@ describe('ICE candidate trickle relay', () => {
   });
 
   test('offer-side and answer-side candidate lists are independent', async () => {
-    const { roomId, secret } = await createRoom(srv);
+    const { roomId, secret, hostSecret } = await createRoom(srv);
     await apiPost(srv, `/api/rooms/${roomId}/ice/answer`, { candidate: SAMPLE_CANDIDATE }, secret);
     const offerSide = await (await apiGet(srv, `/api/rooms/${roomId}/ice/offer`, secret)).json();
-    const answerSide = await (await apiGet(srv, `/api/rooms/${roomId}/ice/answer`, secret)).json();
+    const answerSide = await (await apiGet(srv, `/api/rooms/${roomId}/ice/answer`, hostSecret)).json();
     assert.equal(offerSide.candidates.length, 0);
     assert.equal(answerSide.candidates.length, 1);
+  });
+});
+
+// Per-role credentials: the phone secret (the one in the QR) must not be able
+// to act as the desktop, and vice versa. Without this split anyone who saw the
+// QR could re-arm the room, replace the offer, or read the phone's answer.
+describe('per-role room secrets', () => {
+  test('the phone secret cannot use host-only routes', async () => {
+    const { roomId, secret } = await createRoom(srv);
+    const hostOnly = [
+      apiPost(srv, `/api/rooms/${roomId}/offer`, { type: 'offer', sdp: SAMPLE_SDP }, secret),
+      apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, secret),
+      apiPost(srv, `/api/rooms/${roomId}/ice/offer`, { candidate: SAMPLE_CANDIDATE }, secret),
+      apiGet(srv, `/api/rooms/${roomId}/answer`, secret),
+      apiGet(srv, `/api/rooms/${roomId}/ice/answer`, secret),
+    ];
+    for (const res of await Promise.all(hostOnly)) assert.equal(res.status, 401);
+  });
+
+  test('the host secret cannot use phone-only routes', async () => {
+    const { roomId, hostSecret } = await createRoom(srv);
+    const phoneOnly = [
+      apiGet(srv, `/api/rooms/${roomId}/offer`, hostSecret),
+      apiPost(srv, `/api/rooms/${roomId}/answer`, { type: 'answer', sdp: SAMPLE_SDP }, hostSecret),
+      apiPost(srv, `/api/rooms/${roomId}/ice/answer`, { candidate: SAMPLE_CANDIDATE }, hostSecret),
+      apiGet(srv, `/api/rooms/${roomId}/ice/offer`, hostSecret),
+    ];
+    for (const res of await Promise.all(phoneOnly)) assert.equal(res.status, 401);
+  });
+
+  test('both secrets can read the shared room status', async () => {
+    const { roomId, secret, hostSecret } = await createRoom(srv);
+    assert.equal((await apiGet(srv, `/api/rooms/${roomId}`, secret)).status, 200);
+    assert.equal((await apiGet(srv, `/api/rooms/${roomId}`, hostSecret)).status, 200);
   });
 });

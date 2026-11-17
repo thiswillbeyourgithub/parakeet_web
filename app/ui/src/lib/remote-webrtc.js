@@ -440,16 +440,18 @@ export class RemoteMicRTC {
     // ============ Signaling ============
 
     /**
-     * Create a room (computer/receiver side).
-     * @returns {Promise<{roomId: string, secret: string}>}
+     * Create a room (computer/receiver side). The server mints one secret
+     * per role: `hostSecret` authenticates THIS side and never leaves the
+     * desktop, `secret` is the phone's and is the only one put in the QR.
+     * @returns {Promise<{roomId: string, secret: string, hostSecret: string}>}
      */
     async createRoom() {
         const response = await this._fetch('/rooms', { method: 'POST' });
         const data = await response.json();
         this.roomId = data.roomId;
-        this.roomSecret = data.secret;
+        this.roomSecret = data.hostSecret;
         console.log(`[RemoteMicRTC] Created room: ${this.roomId}`);
-        return { roomId: this.roomId, secret: this.roomSecret };
+        return { roomId: this.roomId, secret: data.secret, hostSecret: data.hostSecret };
     }
 
     /**
@@ -457,13 +459,13 @@ export class RemoteMicRTC {
      * instead of minting a new one. Used when the phone drops and we want to
      * keep the same QR (room id + secret) on screen and wait for it to come
      * back: the dead RTCPeerConnection cannot be reused, so a new RemoteMicRTC
-     * adopts the room id/secret, re-arms it, and stores a fresh offer.
+     * adopts the room id/host secret, re-arms it, and stores a fresh offer.
      * @param {string} roomId
-     * @param {string} secret
+     * @param {string} hostSecret the desktop's credential from createRoom
      */
-    adoptRoom(roomId, secret) {
+    adoptRoom(roomId, hostSecret) {
         this.roomId = roomId;
-        this.roomSecret = secret;
+        this.roomSecret = hostSecret;
         console.log(`[RemoteMicRTC] Adopted existing room: ${this.roomId}`);
     }
 
@@ -487,7 +489,7 @@ export class RemoteMicRTC {
 
     /**
      * Create offer, gather ICE, store on server (computer/receiver side).
-     * @returns {Promise<{roomId: string, secret: string}>}
+     * @returns {Promise<void>}
      */
     async createOfferAndStore() {
         this.isOfferer = true;
@@ -513,7 +515,6 @@ export class RemoteMicRTC {
 
         if (!response.ok) throw new Error(`Failed to store offer (HTTP ${response.status})`);
         console.log('[RemoteMicRTC] Offer stored on server');
-        return { roomId: this.roomId, secret: this.roomSecret };
     }
 
     /**

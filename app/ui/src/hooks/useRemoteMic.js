@@ -284,7 +284,7 @@ export function useRemoteMic({
 
   // ============ Remote Microphone (Phone as Mic) ============
 
-  // `existingRoom` ({ roomId, secret }) re-arms a dropped session on the SAME
+  // `existingRoom` ({ roomId, secret, hostSecret }) re-arms a dropped session on the SAME
   // room instead of minting a new one: the phone disconnected and we want to
   // keep the same QR on screen and wait for it to come back. A fresh offer
   // alone is not enough (the server still holds the prior session's answer +
@@ -309,13 +309,15 @@ export function useRemoteMic({
       remoteMicRtcRef.current = rtc;
 
       await rtc.init();
-      let roomId, secret;
+      // `secret` is the phone's credential (goes in the QR); `hostSecret`
+      // authenticates this desktop and is never displayed.
+      let roomId, secret, hostSecret;
       if (existingRoom) {
-        rtc.adoptRoom(existingRoom.roomId, existingRoom.secret);
+        rtc.adoptRoom(existingRoom.roomId, existingRoom.hostSecret);
         await rtc.rearmRoom();
-        ({ roomId, secret } = existingRoom);
+        ({ roomId, secret, hostSecret } = existingRoom);
       } else {
-        ({ roomId, secret } = await rtc.createRoom());
+        ({ roomId, secret, hostSecret } = await rtc.createRoom());
       }
 
       // Generate ECDH key pair for E2E encryption
@@ -351,7 +353,7 @@ export function useRemoteMic({
         // QR. The QR URL is left in place so it stays on screen meanwhile.
         setRemoteMicStatus('waiting');
         setRemoteMicModal(true);
-        startRemoteMic({ roomId, secret });
+        startRemoteMic({ roomId, secret, hostSecret });
       };
 
       // Handle incoming messages (JSON control + binary audio)
