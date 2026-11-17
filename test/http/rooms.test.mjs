@@ -154,6 +154,35 @@ describe('room re-arm for reconnection', () => {
     assert.deepEqual(await res.json(), { type: 'answer', sdp: SAMPLE_SDP });
   });
 
+  test('rearm drops the relay slots and frames of the dropped session', async () => {
+    const { roomId, secret, hostSecret } = await createRoom(srv);
+    const handshake = async (roomSecret) => {
+      const res = await apiPost(srv, `/api/rooms/${roomId}/relay/handshake`, {}, roomSecret);
+      return { status: res.status, token: res.status === 200 ? (await res.json()).token : null };
+    };
+    const lp = (roomSecret, token) => ({ Origin: srv.origin, 'X-Room-Secret': roomSecret, 'X-Slot-Token': token });
+    const host = await handshake(hostSecret);
+    const phone = await handshake(secret);
+    // The old phone leaves a frame queued for the desktop
+    const up = await fetch(`${srv.baseUrl}/api/rooms/${roomId}/relay/up`, {
+      method: 'POST',
+      headers: { ...lp(secret, phone.token), 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(16),
+    });
+    assert.equal(up.status, 204);
+
+    await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, hostSecret);
+
+    // The old slot no longer delivers, and both sides can claim fresh slots
+    const stale = await fetch(`${srv.baseUrl}/api/rooms/${roomId}/relay/down`, { headers: lp(hostSecret, host.token) });
+    assert.notEqual(stale.status, 200);
+    const newHost = await handshake(hostSecret);
+    assert.equal((await handshake(secret)).status, 200);
+    assert.equal(newHost.status, 200);
+    const fresh = await fetch(`${srv.baseUrl}/api/rooms/${roomId}/relay/down`, { headers: lp(hostSecret, newHost.token) });
+    assert.equal(fresh.status, 204, 'the frame queued for the old session is gone');
+  });
+
   test('rearm requires the room secret', async () => {
     const { roomId } = await createRoom(srv);
     const res = await apiPost(srv, `/api/rooms/${roomId}/rearm`, {}, 'wrong-secret');

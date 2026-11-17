@@ -693,6 +693,23 @@ function validateIceCandidate(body) {
     return null;
 }
 
+// Closes both relay slots of `room` (LP: queued frames dropped, pollers get
+// 410; WS: closed with `code`) and forgets the relay session, so the next
+// handshake starts from an empty relay.
+function closeRelay(room, code, reason) {
+    if (!room.relay) return;
+    for (const slotName of ['a', 'b']) {
+        const s = room.relay[slotName];
+        if (!s) continue;
+        if (s.kind === 'lp') {
+            closeLpSlot(s, reason);
+        } else if (s.readyState !== s.CLOSED) {
+            try { s.close(code, reason); } catch (_) { /* ignore */ }
+        }
+    }
+    room.relay = null;
+}
+
 function cleanupRooms() {
     const now = Date.now();
     for (const [id, room] of rooms.entries()) {
@@ -704,18 +721,7 @@ function cleanupRooms() {
             }
             // Tear down any open relay slots so dangling WS or LP peers
             // do not outlive the room entry they reference.
-            if (room.relay) {
-                for (const slotName of ['a', 'b']) {
-                    const s = room.relay[slotName];
-                    if (!s) continue;
-                    if (s.kind === 'lp') {
-                        closeLpSlot(s, 'Room expired');
-                    } else if (s.readyState !== s.CLOSED) {
-                        try { s.close(1001, 'Room expired'); } catch (_) { /* ignore */ }
-                    }
-                }
-                room.relay = null;
-            }
+            closeRelay(room, 1001, 'Room expired');
             rooms.delete(id);
             console.log(`Room ${id} expired and removed`);
         }
@@ -1191,7 +1197,12 @@ app.get('/api/rooms/:id/answer', rateLimitMiddleware('roomLookup'), requireHost,
 // offer and long-poll for the returning phone's new answer. Any waiter
 // currently long-polling /answer is woken so it re-evaluates (and 204s)
 // against the now-empty answer instead of hanging on the prior one.
+// The relay slots of the dropped session are closed too: the desktop opens a
+// fresh transport after a re-arm, and a stale slot would keep the room "full"
+// (409 on the returning phone's handshake) and hand the new session frames
+// queued for the old one.
 app.post('/api/rooms/:id/rearm', rateLimitMiddleware('general'), requireHost, (req, res) => {
+    closeRelay(req.room, 1000, 'Room re-armed');
     req.room.offer = null;
     req.room.answer = null;
     req.room.iceCandidatesOffer = [];
