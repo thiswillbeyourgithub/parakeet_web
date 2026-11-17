@@ -15,13 +15,15 @@ import { createRoot } from 'react-dom/client';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSharedKey, encrypt
+    deriveSessionKeys, decrypt
 } from './lib/remote-crypto.js';
 import {
     getAdaptiveFingerprintLength, computePairFingerprintForRole,
-    waitForDecision, verifyOkMessage, approvedFingerprint, controlNeedsPairing
+    waitForDecision, verifyOkMessage, approvedFingerprint,
+    REMOTE_MIC_PROTOCOL, peerProtocolMatches, mustBeEncrypted
 } from './lib/remote-mic-handshake.js';
-import { createFrameSender, packFrame, packEndFrame, FRAME_AUDIO } from './lib/remote-mic-frames.js';
+import { packFrame, packEndFrame, unpackFrame, createSeqGate, FRAME_AUDIO, FRAME_CONTROL } from './lib/remote-mic-frames.js';
+import { createFrameChannel } from './lib/remote-mic-channel.js';
 import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode, isAcceptedRemoteMicGain } from './lib/remote-mic-limits.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
@@ -165,10 +167,10 @@ function RemoteMicSender() {
     // remoteMicEarlyPeerVerifyRef. Cleared on every cleanup path.
     const earlyPeerVerifyRef = useRef(null);
     // F-137: synchronous handshake-in-progress flag. The duplicate-handshake
-    // guard at the top of the 'public-key' branch checks sharedKeyRef /
+    // guard at the top of the 'public-key' branch checks channelRef /
     // verifyResolveRef / peerAckResolveRef, but those refs are only
     // populated AFTER several awaits (generateKeyPair, importPublicKey,
-    // deriveSharedKey, exportPublicKey, getAdaptiveFingerprintLength,
+    // deriveSessionKeys, exportPublicKey, getAdaptiveFingerprintLength,
     // computePairFingerprintForRole). A hostile receiver that sends two
     // public-key messages back-to-back would otherwise see both pass the
     // guard and clobber the resolver. Set true synchronously before the
@@ -199,7 +201,12 @@ function RemoteMicSender() {
     const scanVideoRef = useRef(null);   // <video> showing the camera feed
 
     const rtcRef = useRef(null);
-    const sharedKeyRef = useRef(null);
+    // Bound once the pairing is verified (null before): channelRef sends our
+    // audio, END and control frames (phone-to-desktop key), controlInRef
+    // decrypts the desktop's control frames (desktop-to-phone key) and gates
+    // their seq so a replayed frame is refused.
+    const channelRef = useRef(null);
+    const controlInRef = useRef(null);
     const streamRef = useRef(null);
     const audioCtxRef = useRef(null);
     const workletRef = useRef(null);
@@ -261,12 +268,6 @@ function RemoteMicSender() {
     const RECONNECT_MAX_ATTEMPTS = 6;
     const pendingBatchRef = useRef({ buf: null, len: 0 });
     const batchTargetSamplesRef = useRef(0);
-    // Integrity framing (lib/remote-mic-frames.js): session seq + per-recording
-    // totals. Replaced with a fresh sender whenever a new key is bound.
-    const frameSenderRef = useRef(createFrameSender());
-    // Encrypt+send runs through one serial queue so frames leave in the order
-    // their seq was stamped, even though each encrypt() is async.
-    const sendQueueRef = useRef(createSerialQueue());
 
     // Saved-file send: decode + downmix to mono ON THE PHONE, then stream the
     // Int16 PCM through the exact same batch framing the mic uses and let the
@@ -349,28 +350,20 @@ function RemoteMicSender() {
         }
     }, []);
 
-    // Encrypt and send one framed message through the serial send queue. The
-    // caller stamps the seq synchronously; key and transport are captured now
-    // so a teardown while the frame waits in the queue fails cleanly.
-    const sendFrame = useCallback((frame) => {
-        const key = sharedKeyRef.current;
-        const rtc = rtcRef.current;
-        return sendQueueRef.current(async () => {
-            try {
-                const encrypted = await encrypt(frame, key);
-                await rtc.sendBinary(encrypted);
-            } catch (err) {
-                console.warn('[RemoteMic] Encrypt/send error:', err.message);
-                setSendErrorCount((n) => n + 1);
-            }
-        });
+    // Cut one Int16 audio chunk into a seq-stamped AUDIO frame and send it
+    // (lib/remote-mic-channel.js: encrypted, sent in seq order).
+    const sendAudioChunk = useCallback((int16) => {
+        const ch = channelRef.current;
+        if (!ch) return Promise.resolve();
+        return ch.send(packFrame(FRAME_AUDIO, ch.sender.nextAudio(int16.length), int16));
     }, []);
 
-    // Cut one Int16 audio chunk into a seq-stamped AUDIO frame and send it.
-    const sendAudioChunk = useCallback((int16) => {
-        const seq = frameSenderRef.current.nextAudio(int16.length);
-        return sendFrame(packFrame(FRAME_AUDIO, seq, int16));
-    }, [sendFrame]);
+    // Encrypted control message to the desktop ({type:'paused'}...); dropped
+    // before pairing, when nothing may be sent anyway.
+    const sendControl = useCallback((msg) => {
+        const ch = channelRef.current;
+        return ch ? ch.sendControl(msg) : Promise.resolve();
+    }, []);
 
     // Flush whatever partial batch is pending so the trailing fragment of
     // a recording reaches the desktop. Safe to call multiple times. Does NOT
@@ -379,7 +372,7 @@ function RemoteMicSender() {
     const flushPendingBatch = useCallback(async () => {
         const p = pendingBatchRef.current;
         if (!p.buf || p.len === 0) return;
-        if (!sharedKeyRef.current || !rtcRef.current) {
+        if (!channelRef.current || !rtcRef.current) {
             pendingBatchRef.current = { buf: null, len: 0 };
             return;
         }
@@ -398,7 +391,7 @@ function RemoteMicSender() {
     // clobbering the one in flight. Awaiting the returned promise lets the
     // file pump apply backpressure (the worklet handler fires-and-forgets).
     const pushPcmIntoBatch = useCallback(async (float32) => {
-        if (!sharedKeyRef.current || !rtcRef.current) return;
+        if (!channelRef.current || !rtcRef.current) return;
         const p = pendingBatchRef.current;
         if (!p.buf) return; // torn down mid-flight
         if (p.len + float32.length > p.buf.length) {
@@ -426,16 +419,14 @@ function RemoteMicSender() {
     // when writing the WAV); older desktops default to 'pcm-f32'. `extra`
     // carries optional hints such as source:'file'.
     const beginWireRecording = useCallback((sampleRate, extra = {}) => {
-        if (rtcRef.current) {
-            rtcRef.current.sendMessage({ type: 'audio-config', sampleRate, format: 'pcm-s16', ...extra });
-        }
-        frameSenderRef.current.beginRecording();
+        channelRef.current?.sender.beginRecording();
+        sendControl({ type: 'audio-config', sampleRate, format: 'pcm-s16', ...extra });
         batchTargetSamplesRef.current = Math.max(128, Math.round(sampleRate * SEND_BATCH_MS / 1000));
         pendingBatchRef.current = {
             buf: new Float32Array(batchTargetSamplesRef.current + 128),
             len: 0,
         };
-    }, []);
+    }, [sendControl]);
 
     // Close a recording on the wire. Flush before audio-end so the trailing
     // <500 ms that has not filled a batch yet still reaches the desktop. Then
@@ -445,15 +436,14 @@ function RemoteMicSender() {
     // receiver sees for this recording.
     const endWireRecording = useCallback(async () => {
         await flushPendingBatch();
-        if (sharedKeyRef.current && rtcRef.current) {
-            const { seq, totals } = frameSenderRef.current.nextEnd();
-            await sendFrame(packEndFrame(seq, totals));
-        }
-        if (rtcRef.current) {
-            try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
+        const ch = channelRef.current;
+        if (ch) {
+            const { seq, totals } = ch.sender.nextEnd();
+            await ch.send(packEndFrame(seq, totals));
+            await ch.sendControl({ type: 'audio-end' });
         }
         lastAudioEndRef.current = Date.now();
-    }, [flushPendingBatch, sendFrame]);
+    }, [flushPendingBatch]);
 
     // Hands-free: act on one VAD event. Always runs on vadQueueRef so events
     // are handled strictly in order, each awaiting its sends.
@@ -466,7 +456,7 @@ function RemoteMicSender() {
                 setVadPhase(VAD_PHASE.SPEECH);
                 const wait = lastAudioEndRef.current + MIN_RECORDING_GAP_MS - Date.now();
                 if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-                if (!sharedKeyRef.current || !rtcRef.current || !vadRef.current) return;
+                if (!channelRef.current || !rtcRef.current || !vadRef.current) return;
                 beginWireRecording(captureRateRef.current);
                 setHasRecorded(true);
                 // The preroll can hold seconds of held-back audio: feed it in
@@ -530,7 +520,8 @@ function RemoteMicSender() {
         if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
         cleanupAudio();
         if (rtcRef.current) { rtcRef.current.close(); rtcRef.current = null; }
-        sharedKeyRef.current = null;
+        channelRef.current = null;
+        controlInRef.current = null;
         // Release any pending fingerprint or peer-ack waits so the awaiting
         // Promises in start() don't pin the ECDH private key in a dead
         // closure if cleanup runs mid-handshake.
@@ -840,7 +831,7 @@ function RemoteMicSender() {
             // If the receiver never sends its public key, give up after 30s
             // instead of hanging in CONNECTING/WAITING_KEY forever.
             keyTimeout = setTimeout(() => {
-                if (!sharedKeyRef.current) {
+                if (!channelRef.current) {
                     console.warn('[RemoteMic] Timed out waiting for receiver public key');
                     setErrorMsg(t('mobileConnectionError'));
                     setStatus(STATUS.ERROR);
@@ -848,7 +839,75 @@ function RemoteMicSender() {
                 }
             }, 30000);
 
-            // Handle incoming messages (JSON control messages)
+            // A control message from the desktop, already decrypted and
+            // seq-checked (only FRAME_CONTROL frames reach this).
+            const handleDesktopControl = (msg) => {
+                if (msg.type === 'stop-recording') {
+                    // Computer requested end of current recording (keep connection alive)
+                    stopRecording();
+                } else if (msg.type === 'stop') {
+                    // Computer requested full disconnect
+                    stopAndDisconnect();
+                } else if (msg.type === 'pause') {
+                    // Computer requested pause
+                    pauseRecording();
+                } else if (msg.type === 'resume') {
+                    // Computer requested resume
+                    resumeRecording();
+                } else if (msg.type === 'audio-settings') {
+                    // Desktop is pushing the user's audio toggles.
+                    // Toggles are stored; getUserMedia constraints
+                    // are applied on the next startMicCapture
+                    // (mid-recording changes don't retroactively
+                    // mutate an active track). Gain is also pushed
+                    // live onto the active GainNode so the slider
+                    // moves the volume in real time.
+                    if (typeof msg.noiseSuppression === 'boolean') {
+                        audioSettingsRef.current.noiseSuppression = msg.noiseSuppression;
+                    }
+                    if (typeof msg.autoGainControl === 'boolean') {
+                        audioSettingsRef.current.autoGainControl = msg.autoGainControl;
+                    }
+                    if (isAcceptedRemoteMicGain(msg.gain)) {
+                        audioSettingsRef.current.gain = msg.gain;
+                        if (gainNodeRef.current && audioCtxRef.current) {
+                            // Ramp instead of step to avoid an
+                            // audible click when the slider moves.
+                            try {
+                                gainNodeRef.current.gain.setTargetAtTime(
+                                    msg.gain,
+                                    audioCtxRef.current.currentTime,
+                                    0.02,
+                                );
+                            } catch (e) {
+                                gainNodeRef.current.gain.value = msg.gain;
+                            }
+                        }
+                    }
+                } else {
+                    console.warn(`[RemoteMic] Unknown control ${msg.type}`);
+                }
+            };
+            // Desktop control frames are decrypted on one serial queue so they
+            // apply in the order they were sent.
+            const controlQueue = createSerialQueue();
+            const onBinary = (data) => controlQueue(async () => {
+                const ctl = controlInRef.current;
+                if (!ctl) return; // before pairing nothing binary is expected
+                try {
+                    const frame = unpackFrame(await decrypt(data, ctl.key));
+                    if (frame.kind !== FRAME_CONTROL || !ctl.gate.accept(frame.seq)) {
+                        console.warn('[RemoteMic] Dropping unexpected or replayed frame from the computer');
+                        return;
+                    }
+                    handleDesktopControl(frame.control);
+                } catch (e) {
+                    console.warn('[RemoteMic] Undecryptable frame from the computer:', e.message);
+                }
+            });
+
+            // Handshake messages arrive as JSON text, control frames as
+            // encrypted binary.
             rtc.onMessage = async (data) => {
                 if (typeof data === 'string') {
                     try {
@@ -866,21 +925,31 @@ function RemoteMicSender() {
                             // awaits below, so a flood of public-key messages
                             // would all pass this guard before any of them
                             // reached the verifyResolveRef assignment.
-                            if (sharedKeyRef.current || verifyResolveRef.current || peerAckResolveRef.current || handshakeInProgressRef.current) {
+                            if (channelRef.current || verifyResolveRef.current || peerAckResolveRef.current || handshakeInProgressRef.current) {
                                 console.warn('[RemoteMic] Ignoring duplicate public-key — handshake already bound or in-flight');
                                 return;
                             }
                             handshakeInProgressRef.current = true;
                             clearTimeout(keyTimeout);
+                            if (!peerProtocolMatches(msg)) {
+                                // An old (or newer) computer page: it would not
+                                // understand our frames, say so instead.
+                                console.warn(`[RemoteMic] Computer speaks protocol ${msg.v}, we speak ${REMOTE_MIC_PROTOCOL}`);
+                                rtc.sendMessage({ type: 'verify-deny' });
+                                setErrorMsg(t('remoteMicComputerVersionMismatch'));
+                                setStatus(STATUS.ERROR);
+                                rtc.close();
+                                return;
+                            }
                             // Computer sent its public key, derive shared key
                             setStatus(STATUS.WAITING_KEY);
                             const keyPair = await generateKeyPair();
                             const theirKey = await importPublicKey(msg.key);
-                            const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey, { receiverPub: theirKey, senderPub: keyPair.publicKey });
+                            const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, { receiverPub: theirKey, senderPub: keyPair.publicKey });
 
                             // Send our public key back
                             const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);
-                            rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64 });
+                            rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64, v: REMOTE_MIC_PROTOCOL });
 
                             // Compute the same short fingerprint as the
                             // receiver via the shared helper, which enforces a
@@ -935,10 +1004,13 @@ function RemoteMicSender() {
                                 rtc.close();
                                 return;
                             }
-                            frameSenderRef.current = createFrameSender();
-                            sharedKeyRef.current = sharedKey;
+                            channelRef.current = createFrameChannel(sessionKeys.phoneToDesktop, rtc, (err) => {
+                                console.warn('[RemoteMic] Encrypt/send error:', err.message);
+                                setSendErrorCount((n) => n + 1);
+                            });
+                            controlInRef.current = { key: sessionKeys.desktopToPhone, gate: createSeqGate() };
                             // F-137: handshake is now bound, future public-key
-                            // messages are caught by the sharedKeyRef guard.
+                            // messages are caught by the channelRef guard.
                             handshakeInProgressRef.current = false;
                             // Session bound: a stable connection refills the
                             // auto-reconnect budget for the next drop.
@@ -960,7 +1032,7 @@ function RemoteMicSender() {
                             //      and surfaces a misleading abort.
                             if (peerAckResolveRef.current) {
                                 peerAckResolveRef.current(approvedFingerprint(msg));
-                            } else if (sharedKeyRef.current) {
+                            } else if (channelRef.current) {
                                 console.warn('[RemoteMic] Stray verify-ok ignored (session already bound)');
                             } else {
                                 earlyPeerVerifyRef.current = approvedFingerprint(msg);
@@ -976,7 +1048,7 @@ function RemoteMicSender() {
                                 verifyResolveRef.current(false);
                             } else if (peerAckResolveRef.current) {
                                 peerAckResolveRef.current(false);
-                            } else if (sharedKeyRef.current) {
+                            } else if (channelRef.current) {
                                 // F-136: a malicious peer can send verify-deny
                                 // mid-session to wipe an in-flight recording
                                 // and surface a misleading 'fingerprints did
@@ -990,54 +1062,16 @@ function RemoteMicSender() {
                                 setStatus(STATUS.ERROR);
                                 rtc.close();
                             }
-                        } else if (controlNeedsPairing(msg, Boolean(sharedKeyRef.current))) {
-                            console.warn(`[RemoteMic] Ignoring ${msg.type} before pairing is verified`);
-                        } else if (msg.type === 'stop-recording') {
-                            // Computer requested end of current recording (keep connection alive)
-                            stopRecording();
-                        } else if (msg.type === 'stop') {
-                            // Computer requested full disconnect
-                            stopAndDisconnect();
-                        } else if (msg.type === 'pause') {
-                            // Computer requested pause
-                            pauseRecording();
-                        } else if (msg.type === 'resume') {
-                            // Computer requested resume
-                            resumeRecording();
-                        } else if (msg.type === 'audio-settings') {
-                            // Desktop is pushing the user's audio toggles.
-                            // Toggles are stored; getUserMedia constraints
-                            // are applied on the next startMicCapture
-                            // (mid-recording changes don't retroactively
-                            // mutate an active track). Gain is also pushed
-                            // live onto the active GainNode so the slider
-                            // moves the volume in real time.
-                            if (typeof msg.noiseSuppression === 'boolean') {
-                                audioSettingsRef.current.noiseSuppression = msg.noiseSuppression;
-                            }
-                            if (typeof msg.autoGainControl === 'boolean') {
-                                audioSettingsRef.current.autoGainControl = msg.autoGainControl;
-                            }
-                            if (isAcceptedRemoteMicGain(msg.gain)) {
-                                audioSettingsRef.current.gain = msg.gain;
-                                if (gainNodeRef.current && audioCtxRef.current) {
-                                    // Ramp instead of step to avoid an
-                                    // audible click when the slider moves.
-                                    try {
-                                        gainNodeRef.current.gain.setTargetAtTime(
-                                            msg.gain,
-                                            audioCtxRef.current.currentTime,
-                                            0.02,
-                                        );
-                                    } catch (e) {
-                                        gainNodeRef.current.gain.value = msg.gain;
-                                    }
-                                }
-                            }
+                        } else if (mustBeEncrypted(msg)) {
+                            // Only the relay (or a peer on another protocol)
+                            // sends these in plaintext.
+                            console.warn(`[RemoteMic] Dropping plaintext ${msg.type}`);
                         }
                     } catch (e) {
                         console.error('[RemoteMic] Error handling message:', e);
                     }
+                } else {
+                    await onBinary(data);
                 }
             };
 
@@ -1191,7 +1225,7 @@ function RemoteMicSender() {
     const sendFile = useCallback(async (file) => {
         if (!file) return;
         // Reuse the recording gate: only stream once the handshake is bound.
-        if (!sharedKeyRef.current || !rtcRef.current) {
+        if (!channelRef.current || !rtcRef.current) {
             console.warn('[RemoteMic] Ignoring file send — not connected/verified');
             return;
         }
@@ -1247,7 +1281,7 @@ function RemoteMicSender() {
                 mono = mono.subarray(0, REMOTE_MIC_MAX_SAMPLES);
                 setFileWarning(t('mobileFileTruncated'));
             }
-            if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) return;
+            if (fileAbortRef.current || !channelRef.current || !rtcRef.current) return;
 
             // 4. Announce config and reset the batch buffer (identical framing
             //    to a live recording) at the decoded rate. source:'file' is an
@@ -1261,7 +1295,7 @@ function RemoteMicSender() {
             const batch = batchTargetSamplesRef.current;
             const total = mono.length;
             for (let off = 0; off < total; off += batch) {
-                if (fileAbortRef.current || !sharedKeyRef.current || !rtcRef.current) {
+                if (fileAbortRef.current || !channelRef.current || !rtcRef.current) {
                     console.warn('[RemoteMic] File send aborted mid-pump');
                     // User cancelled while the transport is still alive: finalise
                     // in order (flush + audio-end) so the desktop transcribes what
@@ -1334,9 +1368,9 @@ function RemoteMicSender() {
         if (vadRef.current) {
             finishUtterance();
         } else if (rtcRef.current) {
-            rtcRef.current.sendMessage({ type: 'paused' });
+            sendControl({ type: 'paused' });
         }
-    }, [releaseWakeLock, finishUtterance]);
+    }, [releaseWakeLock, finishUtterance, sendControl]);
 
     // Resume from pause
     const resumeRecording = useCallback(async () => {
@@ -1359,9 +1393,9 @@ function RemoteMicSender() {
         if (vadRef.current) {
             setVadPhase(VAD_PHASE.LISTENING);
         } else if (rtcRef.current) {
-            rtcRef.current.sendMessage({ type: 'resumed' });
+            sendControl({ type: 'resumed' });
         }
-    }, [elapsed, acquireWakeLock]);
+    }, [elapsed, acquireWakeLock, sendControl]);
 
     // Full disconnect — close RTC, show goodbye screen. This is a DELIBERATE
     // teardown (user tapped Disconnect, or the desktop sent 'stop'), so clear

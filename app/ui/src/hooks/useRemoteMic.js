@@ -22,13 +22,15 @@ import { resamplePcmTo16k, createWavBlob } from '../lib/audio.js';
 import { sanitizeDeviceName } from '../lib/format.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSharedKey, decrypt
+    deriveSessionKeys, decrypt
 } from '../lib/remote-crypto.js';
 import {
     getAdaptiveFingerprintLength, computePairFingerprintForRole,
-    waitForDecision, verifyOkMessage, approvedFingerprint
+    waitForDecision, verifyOkMessage, approvedFingerprint,
+    REMOTE_MIC_PROTOCOL, peerProtocolMatches, mustBeEncrypted
 } from '../lib/remote-mic-handshake.js';
-import { unpackFrame, createFrameVerifier, FRAME_AUDIO } from '../lib/remote-mic-frames.js';
+import { unpackFrame, createFrameVerifier, FRAME_AUDIO, FRAME_CONTROL } from '../lib/remote-mic-frames.js';
+import { createFrameChannel } from '../lib/remote-mic-channel.js';
 import { createSerialQueue } from '../lib/writeQueue.js';
 import { REMOTE_MIC_MAX_SAMPLES } from '../lib/remote-mic-limits.js';
 
@@ -111,7 +113,11 @@ export function useRemoteMic({
   const [remoteMicPaused, setRemoteMicPaused] = useState(false);
   const [remoteMicRecording, setRemoteMicRecording] = useState(false);
   const remoteMicRtcRef = useRef(null);
+  // phone-to-desktop key (decrypts the phone's frames); set once verified.
   const remoteMicKeyRef = useRef(null);
+  // desktop-to-phone encrypted channel for our control messages
+  // (lib/remote-mic-channel.js); set together with remoteMicKeyRef.
+  const remoteMicChannelRef = useRef(null);
   const remoteMicSampleRateRef = useRef(16000);
   // Wire format of incoming binary chunks for the current recording. Set
   // from the audio-config message: 'pcm-s16' (Int16, ~v5.4.6+ phone) or
@@ -275,16 +281,12 @@ export function useRemoteMic({
   // feedback mid-recording.
   useEffect(() => {
     if (!isRemoteMic) return;
-    const rtc = remoteMicRtcRef.current;
-    if (!rtc) return;
-    try {
-      rtc.sendMessage({
-        type: 'audio-settings',
-        noiseSuppression,
-        autoGainControl,
-        gain: remoteMicGain,
-      });
-    } catch (_) { /* channel may be closing */ }
+    sendRemoteMicControl({
+      type: 'audio-settings',
+      noiseSuppression,
+      autoGainControl,
+      gain: remoteMicGain,
+    });
   }, [isRemoteMic, noiseSuppression, autoGainControl, remoteMicGain]);
 
   // ============ Remote Microphone (Phone as Mic) ============
@@ -346,6 +348,7 @@ export function useRemoteMic({
         try { remoteMicRtcRef.current?.close(); } catch (_) { /* already closing */ }
         remoteMicRtcRef.current = null;
         remoteMicKeyRef.current = null;
+        remoteMicChannelRef.current = null;
         resetRemoteMicBuffer();
         setRemoteMicVerifiedAt(null);
         setIsRemoteMic(false);
@@ -361,6 +364,126 @@ export function useRemoteMic({
         startRemoteMic({ roomId, secret, hostSecret });
       };
 
+      // The phone refused or sent a bad audio configuration: close the session.
+      const refuseAudioConfig = (why, value) => {
+        console.error(`[RemoteMic] ${why}:`, value);
+        setRemoteMicError(t('remoteMicInvalidConfig'));
+        setRemoteMicStatus('error');
+        rtc.close();
+      };
+
+      // Apply one decrypted phone control message (audio-config, audio-end,
+      // paused, resumed). Runs ON the frame queue, so it sees frames in arrival
+      // order: frames before an audio-config count against the previous
+      // recording, and audio-end judges the recording after every earlier
+      // frame. Returns the integrity verdict for audio-end (the batch is then
+      // processed off the queue, see finishPhoneRecording), null otherwise.
+      const applyPhoneControl = (frame) => {
+        const msg = frame.control;
+        const verifier = remoteMicFramesRef.current;
+        if (msg.type === 'audio-config') {
+          // Validate the phone-supplied sample rate before letting it
+          // reach the resampler / live transcriber. NaN, 0, negatives,
+          // strings, and absurd values would otherwise wedge UI in a
+          // stuck "connected" state via an unhandled rejection from
+          // OfflineAudioContext or a divide-by-zero in totalSec math.
+          //
+          // F-81: refuse a second audio-config inside the same
+          // recording. The live transcriber binds to the first rate
+          // and won't re-bind; the batch resampler reads the current
+          // ref, so a mid-stream rate swap would corrupt the final
+          // transcript in a way that looks like model error.
+          if (remoteMicAudioConfiguredRef.current) {
+            refuseAudioConfig('Duplicate audio-config mid-recording', msg.sampleRate);
+            return null;
+          }
+          const sr = msg.sampleRate;
+          if (!Number.isInteger(sr) || sr < 8000 || sr > 96000) {
+            refuseAudioConfig('Invalid audio-config sampleRate', sr);
+            return null;
+          }
+          // F-138: an unknown format would decode Int16 bytes as Float32
+          // (or vice versa) into noise without any visible error. Every
+          // protocol-3 phone sends 'pcm-s16'; 'pcm-f32' stays accepted.
+          if (msg.format !== 'pcm-f32' && msg.format !== 'pcm-s16') {
+            refuseAudioConfig('Invalid audio-config format', msg.format);
+            return null;
+          }
+          // Optional source hint: 'mic' (live recording, default) or
+          // 'file' (a saved file the phone decoded and is pumping faster
+          // than real time). Refused rather than ignored when unknown so
+          // protocol drift is visible. The only behavioural effect is
+          // skipping the live transcriber for files (see below).
+          const source = msg.source === undefined ? 'mic' : msg.source;
+          if (source !== 'mic' && source !== 'file') {
+            refuseAudioConfig('Invalid audio-config source', msg.source);
+            return null;
+          }
+          // Begin before accepting, so a gap right before this audio-config
+          // (a lost frame) fails the new recording instead of vanishing.
+          verifier.beginRecording();
+          verifier.accept(frame);
+          remoteMicAudioConfiguredRef.current = true;
+          remoteMicSampleRateRef.current = sr;
+          remoteMicFormatRef.current = msg.format;
+          console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${msg.format}, source: ${source}`);
+          setRemoteMicRecording(true);
+          startRemoteMicTimer();
+          // Phone audio is buffered into the same pcmChunksRef the local
+          // path uses, so the live transcriber works without any other
+          // wiring. Skip it for a saved file: the phone pumps faster than
+          // real time, so the sliding-window live pass is pure wasted
+          // compute (and competes with the final batch for the shared ORT
+          // session); the audio-end batch is the authoritative transcript.
+          if (source !== 'file') {
+            maybeStartLiveTranscriber({ sampleRate: remoteMicSampleRateRef.current });
+          }
+          return null;
+        }
+        verifier.accept(frame);
+        if (msg.type === 'audio-end') {
+          return verifier.finish({ requireEnd: true });
+        }
+        if (msg.type === 'paused' || msg.type === 'resumed') {
+          // F-89: only honour paused/resumed during a recording (between
+          // audio-config and the batch reset). Outside one they can only
+          // desync the UI from reality. Read from the ref: the
+          // remoteMicRecording state captured by this closure is stale.
+          if (remoteMicAudioConfiguredRef.current) setRemoteMicPaused(msg.type === 'paused');
+          else console.warn(`[RemoteMic] Ignoring ${msg.type}: not recording`);
+          return null;
+        }
+        // Catches protocol drift between desktop and phone bundles.
+        console.warn('[RemoteMic] Unknown control message type:', msg.type);
+        return null;
+      };
+
+      // The phone ended a recording (audio-end): transcribe it, unless the
+      // integrity verdict says frames went missing.
+      const finishPhoneRecording = async (verdict) => {
+        console.log('[RemoteMic] Phone stopped recording, processing batch...');
+        // Set awaitingFinal before flipping remoteMicRecording so the
+        // live transcript banner stays visible without flicker.
+        setAwaitingFinal(true);
+        setRemoteMicRecording(false);
+        await stopLiveTranscriberIfRunning();
+        // F-82: serialise batch processing. processRemoteMicBatch
+        // calls modelRef.current.transcribe against a SHARED ORT
+        // session; concurrent invocations either queue silently
+        // (breaking the live-pcm freshness invariant) or race on
+        // the encoder's intermediate tensors and emit garbage
+        // tokens into the user's transcript. await any prior
+        // in-flight batch before starting the next.
+        if (inFlightBatchRef.current) {
+          try { await inFlightBatchRef.current; } catch (_) { /* prior batch error already surfaced */ }
+        }
+        const thisBatch = processRemoteMicBatch(verdict);
+        inFlightBatchRef.current = thisBatch;
+        thisBatch.finally(() => {
+          if (inFlightBatchRef.current === thisBatch) inFlightBatchRef.current = null;
+        });
+      };
+
       // Handle incoming messages (JSON control + binary audio)
       rtc.onMessage = async (data) => {
         if (typeof data === 'string') {
@@ -374,18 +497,11 @@ export function useRemoteMic({
           }
           try {
             const msg = JSON.parse(data);
-            // F-83: gate audio-* and pause/resume control messages on a
-            // verified session. Before peer-ack completes (and thus
-            // before remoteMicKeyRef is bound), the only legitimate
-            // control messages are the handshake set (sender-public-key,
-            // verify-ok, verify-deny). audio-config / audio-end /
-            // paused / resumed sent during the verify modal must NOT
-            // flip recording state, start the live transcriber, or
-            // poison sample-rate refs. The binary path already gates on
-            // remoteMicKeyRef.current; mirror that here.
-            const SESSION_GATED_TYPES = new Set(['audio-config', 'audio-end', 'paused', 'resumed']);
-            if (SESSION_GATED_TYPES.has(msg.type) && !remoteMicKeyRef.current) {
-              console.warn(`[RemoteMic] Ignoring ${msg.type} before peer-ack (no shared key yet)`);
+            // Session control messages only travel encrypted (FRAME_CONTROL
+            // on the binary path). A plaintext copy comes from the relay or
+            // from a phone page running another protocol: never act on it.
+            if (mustBeEncrypted(msg)) {
+              console.warn(`[RemoteMic] Ignoring plaintext ${msg.type}`);
               return;
             }
             if (msg.type === 'sender-public-key') {
@@ -405,10 +521,20 @@ export function useRemoteMic({
                 console.warn('[RemoteMic] Ignoring duplicate sender-public-key — handshake already bound or in-flight');
                 return;
               }
+              if (!peerProtocolMatches(msg)) {
+                // A phone page from another release (a tab left open across
+                // a deploy): it would not understand our encrypted controls.
+                console.warn(`[RemoteMic] Phone speaks protocol ${msg.v}, we speak ${REMOTE_MIC_PROTOCOL}`);
+                rtc.sendMessage({ type: 'verify-deny' });
+                setRemoteMicError(t('remoteMicVersionMismatch'));
+                setRemoteMicStatus('error');
+                rtc.close();
+                return;
+              }
               remoteMicHandshakeInProgressRef.current = true;
-              // Derive shared key from phone's public key
+              // Derive both directional keys from the phone's public key
               const theirKey = await importPublicKey(msg.key);
-              const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey, { receiverPub: keyPair.publicKey, senderPub: theirKey });
+              const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, { receiverPub: keyPair.publicKey, senderPub: theirKey });
               console.log('[RemoteMic] Shared key derived, asking user to verify fingerprint');
 
               // Compute a short adaptive fingerprint over both pubkeys.
@@ -468,7 +594,9 @@ export function useRemoteMic({
               }
 
               remoteMicFramesRef.current = createFrameVerifier();
-              remoteMicKeyRef.current = sharedKey;
+              remoteMicKeyRef.current = sessionKeys.phoneToDesktop;
+              remoteMicChannelRef.current = createFrameChannel(sessionKeys.desktopToPhone, rtc,
+                (err) => console.warn('[RemoteMic] Encrypt/send error:', err.message));
               // F-137: handshake is now bound, future sender-public-key
               // messages are caught by the remoteMicKeyRef guard.
               remoteMicHandshakeInProgressRef.current = false;
@@ -521,119 +649,6 @@ export function useRemoteMic({
               } else {
                 console.warn('[RemoteMic] Ignoring verify-deny after peer-ack (session already bound)');
               }
-            } else if (msg.type === 'audio-config') {
-              // Validate the phone-supplied sample rate before letting it
-              // reach the resampler / live transcriber. NaN, 0, negatives,
-              // strings, and absurd values would otherwise wedge UI in a
-              // stuck "connected" state via an unhandled rejection from
-              // OfflineAudioContext or a divide-by-zero in totalSec math.
-              //
-              // F-81: refuse a second audio-config inside the same
-              // recording. The live transcriber binds to the first rate
-              // and won't re-bind; the batch resampler reads the current
-              // ref, so a mid-stream rate swap would corrupt the final
-              // transcript in a way that looks like model error.
-              if (remoteMicAudioConfiguredRef.current) {
-                console.error('[RemoteMic] Duplicate audio-config mid-recording, closing');
-                setRemoteMicError(t('remoteMicInvalidConfig'));
-                setRemoteMicStatus('error');
-                rtc.close();
-                return;
-              }
-              const sr = msg.sampleRate;
-              if (!Number.isInteger(sr) || sr < 8000 || sr > 96000) {
-                console.error('[RemoteMic] Invalid audio-config sampleRate:', sr);
-                setRemoteMicError(t('remoteMicInvalidConfig'));
-                setRemoteMicStatus('error');
-                rtc.close();
-                return;
-              }
-              // F-138: validate the optional format hint. An unknown
-              // format string would silently land us in the f32 branch
-              // and decode Int16 bytes as Float32 (or vice versa),
-              // producing a buffer of NaN-or-near-zero noise without any
-              // user-visible error. Fall back to 'pcm-f32' for legacy
-              // phones that don't send the field, refuse anything else.
-              let format = 'pcm-f32';
-              if (msg.format !== undefined) {
-                if (msg.format !== 'pcm-f32' && msg.format !== 'pcm-s16') {
-                  console.error('[RemoteMic] Invalid audio-config format:', msg.format);
-                  setRemoteMicError(t('remoteMicInvalidConfig'));
-                  setRemoteMicStatus('error');
-                  rtc.close();
-                  return;
-                }
-                format = msg.format;
-              }
-              // Optional source hint: 'mic' (live recording, default) or
-              // 'file' (a saved file the phone decoded and is pumping faster
-              // than real time). Validate it like format; an unknown value is
-              // refused rather than silently ignored so protocol drift is
-              // visible. The only behavioural effect is skipping the live
-              // transcriber for files (see below).
-              let source = 'mic';
-              if (msg.source !== undefined) {
-                if (msg.source !== 'mic' && msg.source !== 'file') {
-                  console.error('[RemoteMic] Invalid audio-config source:', msg.source);
-                  setRemoteMicError(t('remoteMicInvalidConfig'));
-                  setRemoteMicStatus('error');
-                  rtc.close();
-                  return;
-                }
-                source = msg.source;
-              }
-              remoteMicAudioConfiguredRef.current = true;
-              // Queued so frames still in flight from the previous recording
-              // are counted against it, not against this one.
-              remoteMicFrameQueueRef.current(() => remoteMicFramesRef.current.beginRecording());
-              remoteMicSampleRateRef.current = sr;
-              remoteMicFormatRef.current = format;
-              console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${format}, source: ${source}`);
-              setRemoteMicRecording(true);
-              startRemoteMicTimer();
-              // Phone audio is buffered into the same pcmChunksRef the local
-              // path uses, so the live transcriber works without any other
-              // wiring. Pass a getSampleRate() that reads the phone's rate.
-              // Skip it for a saved file: the phone pumps faster than real
-              // time, so the sliding-window live pass is pure wasted compute
-              // (and competes with the final batch for the shared ORT
-              // session); the audio-end batch is the authoritative transcript.
-              if (source !== 'file') {
-                maybeStartLiveTranscriber({ sampleRate: remoteMicSampleRateRef.current });
-              }
-            } else if (msg.type === 'audio-end') {
-              console.log('[RemoteMic] Phone stopped recording, processing batch...');
-              // Set awaitingFinal before flipping remoteMicRecording so the
-              // live transcript banner stays visible without flicker.
-              setAwaitingFinal(true);
-              setRemoteMicRecording(false);
-              await stopLiveTranscriberIfRunning();
-              // F-82: serialise batch processing. processRemoteMicBatch
-              // calls modelRef.current.transcribe against a SHARED ORT
-              // session; concurrent invocations either queue silently
-              // (breaking the live-pcm freshness invariant) or race on
-              // the encoder's intermediate tensors and emit garbage
-              // tokens into the user's transcript. await any prior
-              // in-flight batch before starting the next.
-              if (inFlightBatchRef.current) {
-                try { await inFlightBatchRef.current; } catch (_) { /* prior batch error already surfaced */ }
-              }
-              // Judge integrity after every earlier frame has been counted.
-              const thisBatch = processRemoteMicBatch(await judgeRemoteMicRecording(true));
-              inFlightBatchRef.current = thisBatch;
-              thisBatch.finally(() => {
-                if (inFlightBatchRef.current === thisBatch) inFlightBatchRef.current = null;
-              });
-            } else if (msg.type === 'paused') {
-              // F-89: only honour paused/resumed while remoteMicRecording
-              // is active. Outside a recording these messages can only
-              // desync the UI from reality (showing "paused" while the
-              // phone is idle, or "resumed" with nothing to resume).
-              if (remoteMicRecording) setRemoteMicPaused(true);
-              else console.warn('[RemoteMic] Ignoring paused: not recording');
-            } else if (msg.type === 'resumed') {
-              if (remoteMicRecording) setRemoteMicPaused(false);
-              else console.warn('[RemoteMic] Ignoring resumed: not recording');
             } else {
               // Catches protocol drift between desktop and phone bundles —
               // silently dropping unknown types makes mismatches invisible.
@@ -656,9 +671,10 @@ export function useRemoteMic({
             try { rtc.close(); } catch (_) { /* already closing */ }
           }
         } else {
-          // Binary data: encrypted, framed audio chunk. Runs on the frame
-          // queue so frames are handled strictly in arrival order.
-          return remoteMicFrameQueueRef.current(async () => {
+          // Binary data: an encrypted frame (audio, END or a control
+          // message). Runs on the frame queue so frames are handled strictly
+          // in arrival order.
+          const verdict = await remoteMicFrameQueueRef.current(async () => {
             if (!remoteMicKeyRef.current) return;
             // F-85: reject oversized binary messages BEFORE allocating the
             // Float32Array. F-01 caps cumulative samples but a single
@@ -679,6 +695,7 @@ export function useRemoteMic({
               // Unwrap the integrity frame and count it BEFORE any local drop
               // decision: the verifier judges what the transport delivered.
               const frame = unpackFrame(await decrypt(data, remoteMicKeyRef.current));
+              if (frame.kind === FRAME_CONTROL) return applyPhoneControl(frame);
               const bytesPerSample = remoteMicFormatRef.current === 'pcm-s16' ? 2 : 4;
               remoteMicFramesRef.current.accept(frame, Math.floor(frame.payload.byteLength / bytesPerSample));
               if (frame.kind !== FRAME_AUDIO) return;
@@ -770,6 +787,8 @@ export function useRemoteMic({
               setRemoteMicError(`Decryption failed (${e.message})`);
             }
           });
+          // Off the queue: processing the batch awaits work queued behind us.
+          if (verdict) await finishPhoneRecording(verdict);
         }
       };
 
@@ -786,7 +805,7 @@ export function useRemoteMic({
       const originalOnConnected = rtc.onConnected;
       rtc.onConnected = () => {
         if (originalOnConnected) originalOnConnected();
-        rtc.sendMessage({ type: 'public-key', key: ourKeyBase64 });
+        rtc.sendMessage({ type: 'public-key', key: ourKeyBase64, v: REMOTE_MIC_PROTOCOL });
       };
 
       // Long-poll for the phone's answer (blocks until phone joins)
@@ -870,9 +889,7 @@ export function useRemoteMic({
     // Stop current recording but keep phone session alive
     setAwaitingFinal(true);
     await processRemoteMicBatch(await judgeRemoteMicRecording(false));
-    if (remoteMicRtcRef.current) {
-      try { remoteMicRtcRef.current.sendMessage({ type: 'stop-recording' }); } catch (_) {}
-    }
+    sendRemoteMicControl({ type: 'stop-recording' });
     setRemoteMicRecording(false);
     setRemoteMicPaused(false);
   }
@@ -881,14 +898,17 @@ export function useRemoteMic({
     // Full teardown, close RTC, phone goes to STOPPED
     setAwaitingFinal(true);
     await processRemoteMicBatch(await judgeRemoteMicRecording(false));
-    if (remoteMicRtcRef.current) {
-      try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
-      remoteMicRtcRef.current.close();
-      remoteMicRtcRef.current = null;
+    const rtc = remoteMicRtcRef.current;
+    if (rtc) {
+      // Close only once the encrypted stop has been handed to the transport.
+      await sendRemoteMicControl({ type: 'stop' });
+      rtc.close();
+      if (remoteMicRtcRef.current === rtc) remoteMicRtcRef.current = null;
     }
     resolveRemoteMicVerify(false);
     resolveRemoteMicPeerAck(false);
     remoteMicKeyRef.current = null;
+    remoteMicChannelRef.current = null;
     stopRemoteMicTimer();
     setRemoteMicVerifiedAt(null);
     setIsRemoteMic(false);
@@ -898,17 +918,21 @@ export function useRemoteMic({
     setRemoteMicPaused(false);
   }
 
+  // Desktop-to-phone commands travel encrypted on the verified channel; with no
+  // verified session there is nobody to obey them, so they are dropped.
+  function sendRemoteMicControl(msg) {
+    const channel = remoteMicChannelRef.current;
+    if (!channel) return Promise.resolve();
+    return channel.sendControl(msg);
+  }
+
   function pauseRemoteMic() {
-    if (remoteMicRtcRef.current) {
-      remoteMicRtcRef.current.sendMessage({ type: 'pause' });
-    }
+    sendRemoteMicControl({ type: 'pause' });
     setRemoteMicPaused(true);
   }
 
   function resumeRemoteMic() {
-    if (remoteMicRtcRef.current) {
-      remoteMicRtcRef.current.sendMessage({ type: 'resume' });
-    }
+    sendRemoteMicControl({ type: 'resume' });
     setRemoteMicPaused(false);
   }
 
@@ -922,6 +946,7 @@ export function useRemoteMic({
       remoteMicRtcRef.current = null;
     }
     remoteMicKeyRef.current = null;
+    remoteMicChannelRef.current = null;
     resetRemoteMicBuffer();
     setRemoteMicQrUrl('');
     setRemoteMicLevel(0);
@@ -940,6 +965,7 @@ export function useRemoteMic({
       remoteMicRtcRef.current = null;
     }
     remoteMicKeyRef.current = null;
+    remoteMicChannelRef.current = null;
     setRemoteMicVerifiedAt(null);
     setIsRemoteMic(false);
     setRemoteMicRecording(false);
