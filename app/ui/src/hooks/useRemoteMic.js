@@ -27,6 +27,8 @@ import {
 import {
     getAdaptiveFingerprintLength, computePairFingerprintForRole
 } from '../lib/remote-mic-handshake.js';
+import { unpackFrame, createFrameVerifier, FRAME_AUDIO } from '../lib/remote-mic-frames.js';
+import { createSerialQueue } from '../lib/writeQueue.js';
 
 /**
  * @param {object} deps  everything the remote mic needs from the rest of App().
@@ -83,6 +85,14 @@ export function useRemoteMic({
   // protocol violation that we close the channel on, rather than letting
   // it silently switch the resampler's source rate.
   const remoteMicAudioConfiguredRef = useRef(false);
+  // Integrity check of the phone's framed stream (lib/remote-mic-frames.js):
+  // contiguous seq + the END frame's totals. Replaced on every bound key.
+  const remoteMicFramesRef = useRef(createFrameVerifier());
+  // Binary frames are decrypted asynchronously; running them (and the
+  // verifier bookkeeping triggered by audio-config / audio-end) through one
+  // FIFO keeps them in arrival order, so audio-end judges the recording only
+  // after every frame sent before it has been counted.
+  const remoteMicFrameQueueRef = useRef(createSerialQueue());
 
   // Clear the shared PCM slabs AND this feature's own counters. clearPcmChunks
   // used to reset the two refs below itself, which meant a helper shared with
@@ -468,6 +478,7 @@ export function useRemoteMic({
                 return;
               }
 
+              remoteMicFramesRef.current = createFrameVerifier();
               remoteMicKeyRef.current = sharedKey;
               // F-137: handshake is now bound, future sender-public-key
               // messages are caught by the remoteMicKeyRef guard.
@@ -583,6 +594,9 @@ export function useRemoteMic({
                 source = msg.source;
               }
               remoteMicAudioConfiguredRef.current = true;
+              // Queued so frames still in flight from the previous recording
+              // are counted against it, not against this one.
+              remoteMicFrameQueueRef.current(() => remoteMicFramesRef.current.beginRecording());
               remoteMicSampleRateRef.current = sr;
               remoteMicFormatRef.current = format;
               console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${format}, source: ${source}`);
@@ -615,7 +629,8 @@ export function useRemoteMic({
               if (inFlightBatchRef.current) {
                 try { await inFlightBatchRef.current; } catch (_) { /* prior batch error already surfaced */ }
               }
-              const thisBatch = processRemoteMicBatch();
+              // Judge integrity after every earlier frame has been counted.
+              const thisBatch = processRemoteMicBatch(await judgeRemoteMicRecording(true));
               inFlightBatchRef.current = thisBatch;
               thisBatch.finally(() => {
                 if (inFlightBatchRef.current === thisBatch) inFlightBatchRef.current = null;
@@ -652,111 +667,120 @@ export function useRemoteMic({
             try { rtc.close(); } catch (_) { /* already closing */ }
           }
         } else {
-          // Binary data: encrypted audio chunk
-          if (!remoteMicKeyRef.current) return;
-          // F-84: refuse binary chunks until the phone has announced its
-          // sample rate via audio-config. Without this gate a hostile
-          // phone bundle (e.g. a coerced spousal-monitoring build) could
-          // skip the audio-config step entirely and stream chunks against
-          // the default 16 kHz rate. pcmChunksRef would accumulate and
-          // reach the model on the next
-          // audio-end, but remoteMicRecording would stay false the whole
-          // time so the desktop's UI would show no recording indicator.
-          // Dropping chunks until audio-config arrives keeps the
-          // "phone is sending audio" state observable on screen.
-          if (!remoteMicAudioConfiguredRef.current) {
-            console.warn('[RemoteMic] Dropping binary chunk: no audio-config received yet');
-            return;
-          }
-          // F-85: reject oversized binary messages BEFORE allocating the
-          // Float32Array. F-01 caps cumulative samples but a single
-          // decrypt of an N-byte ciphertext still allocates Float32Array
-          // of length N/4 and synchronously RMS-scans it on the main
-          // thread. 256 KiB caps a single chunk well above any honest
-          // phone payload (16 kHz mono Float32 at 100 ms = 6400 bytes;
-          // 96 kHz at 100 ms = 38400 bytes; even a 500 ms burst at
-          // 96 kHz is 192 000 bytes) while bounding the main-thread
-          // stall a flooding phone can inflict.
-          const REMOTE_MIC_MAX_BINARY_BYTES = 256 * 1024;
-          if (data.byteLength > REMOTE_MIC_MAX_BINARY_BYTES) {
-            console.warn(`[RemoteMic] Dropping binary chunk: ${data.byteLength} bytes exceeds ${REMOTE_MIC_MAX_BINARY_BYTES}`);
-            setRemoteMicDecryptErrors((n) => n + 1);
-            return;
-          }
-          try {
-            const decrypted = await decrypt(data, remoteMicKeyRef.current);
-            // Dispatch on the per-session format. 'pcm-s16' phones send
-            // little-endian Int16 (~v5.4.6+, halves the wire size);
-            // 'pcm-f32' phones send native-endian Float32 (legacy). Both
-            // sides run on little-endian hardware in practice, so the
-            // bare typed-array view is byte-order-correct without a
-            // DataView pass. The format ref is set from audio-config and
-            // is validated there; an unknown value can't reach this code.
-            let float32;
-            let sum = 0;
-            const fmt = remoteMicFormatRef.current;
-            if (fmt === 'pcm-s16') {
-              if (decrypted.byteLength % 2 !== 0) {
-                console.warn('[RemoteMic] Dropped pcm-s16 chunk: byteLength not a multiple of 2');
-                setRemoteMicDecryptErrors((n) => n + 1);
-                return;
-              }
-              const int16 = new Int16Array(decrypted);
-              float32 = new Float32Array(int16.length);
-              for (let i = 0; i < int16.length; i++) {
-                const s = int16[i] / 0x8000;
-                float32[i] = s;
-                sum += s * s;
-              }
-            } else {
-              if (decrypted.byteLength % 4 !== 0) {
-                console.warn('[RemoteMic] Dropped pcm-f32 chunk: byteLength not a multiple of 4');
-                setRemoteMicDecryptErrors((n) => n + 1);
-                return;
-              }
-              float32 = new Float32Array(decrypted);
-              // AES-GCM authenticates the bytes but a peer holding the
-              // legitimate key can still encrypt arbitrary 4-byte
-              // patterns; NaN/Infinity would otherwise propagate into the
-              // level meter, the resampler, and the model input,
-              // silently corrupting the user's transcript. (No equivalent
-              // check needed for pcm-s16: every 16-bit integer maps to a
-              // finite float on the / 0x8000 line above.)
-              let finite = true;
-              for (let i = 0; i < float32.length; i++) {
-                const s = float32[i];
-                if (!Number.isFinite(s)) { finite = false; break; }
-                sum += s * s;
-              }
-              if (!finite) {
-                console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
-                setRemoteMicDecryptErrors((n) => n + 1);
-                return;
-              }
-            }
-            // Drop chunks once the per-session sample cap is reached. The
-            // first overflow surfaces an error; later chunks short-circuit
-            // silently so a flooding phone can't spam the UI.
-            if (remoteMicSampleCountRef.current >= REMOTE_MIC_MAX_SAMPLES) return;
-            const newCount = remoteMicSampleCountRef.current + float32.length;
-            if (newCount > REMOTE_MIC_MAX_SAMPLES) {
-              remoteMicSampleCountRef.current = REMOTE_MIC_MAX_SAMPLES;
-              console.error('[RemoteMic] Sample cap reached, dropping further audio chunks');
-              setRemoteMicError(t('remoteMicCapExceeded'));
+          // Binary data: encrypted, framed audio chunk. Runs on the frame
+          // queue so frames are handled strictly in arrival order.
+          return remoteMicFrameQueueRef.current(async () => {
+            if (!remoteMicKeyRef.current) return;
+            // F-85: reject oversized binary messages BEFORE allocating the
+            // Float32Array. F-01 caps cumulative samples but a single
+            // decrypt of an N-byte ciphertext still allocates Float32Array
+            // of length N/4 and synchronously RMS-scans it on the main
+            // thread. 256 KiB caps a single chunk well above any honest
+            // phone payload (16 kHz mono Float32 at 100 ms = 6400 bytes;
+            // 96 kHz at 100 ms = 38400 bytes; even a 500 ms burst at
+            // 96 kHz is 192 000 bytes) while bounding the main-thread
+            // stall a flooding phone can inflict.
+            const REMOTE_MIC_MAX_BINARY_BYTES = 256 * 1024;
+            if (data.byteLength > REMOTE_MIC_MAX_BINARY_BYTES) {
+              console.warn(`[RemoteMic] Dropping binary chunk: ${data.byteLength} bytes exceeds ${REMOTE_MIC_MAX_BINARY_BYTES}`);
+              setRemoteMicDecryptErrors((n) => n + 1);
               return;
             }
-            appendPcmChunk(float32);
-            remoteMicSampleCountRef.current = newCount;
-            const rms = Math.sqrt(sum / float32.length);
-            setRemoteMicLevel(Math.min(100, rms * 250));
-          } catch (e) {
-            // Don't swallow this: the user thinks audio is being received,
-            // but every chunk is failing — surface a running count so the
-            // modal shows the loss instead of just the first error.
-            console.warn('[RemoteMic] Decrypt error:', e.message);
-            setRemoteMicDecryptErrors((n) => n + 1);
-            setRemoteMicError(`Decryption failed (${e.message})`);
-          }
+            try {
+              // Unwrap the integrity frame and count it BEFORE any local drop
+              // decision: the verifier judges what the transport delivered.
+              const frame = unpackFrame(await decrypt(data, remoteMicKeyRef.current));
+              const bytesPerSample = remoteMicFormatRef.current === 'pcm-s16' ? 2 : 4;
+              remoteMicFramesRef.current.accept(frame, Math.floor(frame.payload.byteLength / bytesPerSample));
+              if (frame.kind !== FRAME_AUDIO) return;
+              // F-84: refuse binary chunks until the phone has announced its
+              // sample rate via audio-config. Without this gate a hostile
+              // phone bundle (e.g. a coerced spousal-monitoring build) could
+              // skip the audio-config step entirely and stream chunks against
+              // the default 16 kHz rate. pcmChunksRef would accumulate and
+              // reach the model on the next
+              // audio-end, but remoteMicRecording would stay false the whole
+              // time so the desktop's UI would show no recording indicator.
+              // Dropping chunks until audio-config arrives keeps the
+              // "phone is sending audio" state observable on screen.
+              if (!remoteMicAudioConfiguredRef.current) {
+                console.warn('[RemoteMic] Dropping binary chunk: no audio-config received yet');
+                return;
+              }
+              const decrypted = frame.payload;
+              // Dispatch on the per-session format. 'pcm-s16' phones send
+              // little-endian Int16 (~v5.4.6+, halves the wire size);
+              // 'pcm-f32' phones send native-endian Float32 (legacy). Both
+              // sides run on little-endian hardware in practice, so the
+              // bare typed-array view is byte-order-correct without a
+              // DataView pass. The format ref is set from audio-config and
+              // is validated there; an unknown value can't reach this code.
+              let float32;
+              let sum = 0;
+              const fmt = remoteMicFormatRef.current;
+              if (fmt === 'pcm-s16') {
+                if (decrypted.byteLength % 2 !== 0) {
+                  console.warn('[RemoteMic] Dropped pcm-s16 chunk: byteLength not a multiple of 2');
+                  setRemoteMicDecryptErrors((n) => n + 1);
+                  return;
+                }
+                const int16 = new Int16Array(decrypted);
+                float32 = new Float32Array(int16.length);
+                for (let i = 0; i < int16.length; i++) {
+                  const s = int16[i] / 0x8000;
+                  float32[i] = s;
+                  sum += s * s;
+                }
+              } else {
+                if (decrypted.byteLength % 4 !== 0) {
+                  console.warn('[RemoteMic] Dropped pcm-f32 chunk: byteLength not a multiple of 4');
+                  setRemoteMicDecryptErrors((n) => n + 1);
+                  return;
+                }
+                float32 = new Float32Array(decrypted);
+                // AES-GCM authenticates the bytes but a peer holding the
+                // legitimate key can still encrypt arbitrary 4-byte
+                // patterns; NaN/Infinity would otherwise propagate into the
+                // level meter, the resampler, and the model input,
+                // silently corrupting the user's transcript. (No equivalent
+                // check needed for pcm-s16: every 16-bit integer maps to a
+                // finite float on the / 0x8000 line above.)
+                let finite = true;
+                for (let i = 0; i < float32.length; i++) {
+                  const s = float32[i];
+                  if (!Number.isFinite(s)) { finite = false; break; }
+                  sum += s * s;
+                }
+                if (!finite) {
+                  console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
+                  setRemoteMicDecryptErrors((n) => n + 1);
+                  return;
+                }
+              }
+              // Drop chunks once the per-session sample cap is reached. The
+              // first overflow surfaces an error; later chunks short-circuit
+              // silently so a flooding phone can't spam the UI.
+              if (remoteMicSampleCountRef.current >= REMOTE_MIC_MAX_SAMPLES) return;
+              const newCount = remoteMicSampleCountRef.current + float32.length;
+              if (newCount > REMOTE_MIC_MAX_SAMPLES) {
+                remoteMicSampleCountRef.current = REMOTE_MIC_MAX_SAMPLES;
+                console.error('[RemoteMic] Sample cap reached, dropping further audio chunks');
+                setRemoteMicError(t('remoteMicCapExceeded'));
+                return;
+              }
+              appendPcmChunk(float32);
+              remoteMicSampleCountRef.current = newCount;
+              const rms = Math.sqrt(sum / float32.length);
+              setRemoteMicLevel(Math.min(100, rms * 250));
+            } catch (e) {
+              // Don't swallow this: the user thinks audio is being received,
+              // but every chunk is failing — surface a running count so the
+              // modal shows the loss instead of just the first error.
+              console.warn('[RemoteMic] Decrypt error:', e.message);
+              setRemoteMicDecryptErrors((n) => n + 1);
+              setRemoteMicError(`Decryption failed (${e.message})`);
+            }
+          });
         }
       };
 
@@ -793,9 +817,18 @@ export function useRemoteMic({
     }
   }
 
+  // Integrity verdict for the current recording, judged on the frame queue so
+  // every frame received before this call has been counted. requireEnd is
+  // false when the desktop itself stopped the recording (no END will come).
+  function judgeRemoteMicRecording(requireEnd) {
+    return remoteMicFrameQueueRef.current(() => remoteMicFramesRef.current.finish({ requireEnd }));
+  }
+
   // Process the current batch of remote mic audio and reset for next recording.
-  // Keeps the RTC connection alive.
-  async function processRemoteMicBatch() {
+  // Keeps the RTC connection alive. `verdict` comes from
+  // judgeRemoteMicRecording: a recording with a missing, reordered or
+  // miscounted frame is discarded instead of transcribed as if it were whole.
+  async function processRemoteMicBatch(verdict) {
     // Stop elapsed timer and reset level
     stopRemoteMicTimer();
     setRemoteMicLevel(0);
@@ -810,6 +843,13 @@ export function useRemoteMic({
       console.log('[RemoteMic] No audio received in this batch');
       // Nothing to transcribe, so processAudioFile will not run and clear
       // the awaiting flag for us.
+      setAwaitingFinal(false);
+      return;
+    }
+
+    if (!verdict.ok) {
+      console.error(`[RemoteMic] Discarding incomplete recording: ${verdict.reason}`);
+      setRemoteMicError(t('remoteMicIncomplete'));
       setAwaitingFinal(false);
       return;
     }
@@ -840,7 +880,7 @@ export function useRemoteMic({
   async function stopRemoteMic() {
     // Stop current recording but keep phone session alive
     setAwaitingFinal(true);
-    await processRemoteMicBatch();
+    await processRemoteMicBatch(await judgeRemoteMicRecording(false));
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.sendMessage({ type: 'stop-recording' }); } catch (_) {}
     }
@@ -851,7 +891,7 @@ export function useRemoteMic({
   async function disconnectRemoteMic() {
     // Full teardown, close RTC, phone goes to STOPPED
     setAwaitingFinal(true);
-    await processRemoteMicBatch();
+    await processRemoteMicBatch(await judgeRemoteMicRecording(false));
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.sendMessage({ type: 'stop' }); } catch (_) {}
       remoteMicRtcRef.current.close();

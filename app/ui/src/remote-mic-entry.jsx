@@ -20,6 +20,7 @@ import {
 import {
     getAdaptiveFingerprintLength, computePairFingerprintForRole
 } from './lib/remote-mic-handshake.js';
+import { createFrameSender, packFrame, packEndFrame, FRAME_AUDIO } from './lib/remote-mic-frames.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
@@ -258,6 +259,12 @@ function RemoteMicSender() {
     const RECONNECT_MAX_ATTEMPTS = 6;
     const pendingBatchRef = useRef({ buf: null, len: 0 });
     const batchTargetSamplesRef = useRef(0);
+    // Integrity framing (lib/remote-mic-frames.js): session seq + per-recording
+    // totals. Replaced with a fresh sender whenever a new key is bound.
+    const frameSenderRef = useRef(createFrameSender());
+    // Encrypt+send runs through one serial queue so frames leave in the order
+    // their seq was stamped, even though each encrypt() is async.
+    const sendQueueRef = useRef(createSerialQueue());
 
     // Saved-file send: decode + downmix to mono ON THE PHONE, then stream the
     // Int16 PCM through the exact same batch framing the mic uses and let the
@@ -345,6 +352,29 @@ function RemoteMicSender() {
         }
     }, []);
 
+    // Encrypt and send one framed message through the serial send queue. The
+    // caller stamps the seq synchronously; key and transport are captured now
+    // so a teardown while the frame waits in the queue fails cleanly.
+    const sendFrame = useCallback((frame) => {
+        const key = sharedKeyRef.current;
+        const rtc = rtcRef.current;
+        return sendQueueRef.current(async () => {
+            try {
+                const encrypted = await encrypt(frame, key);
+                await rtc.sendBinary(encrypted);
+            } catch (err) {
+                console.warn('[RemoteMic] Encrypt/send error:', err.message);
+                setSendErrorCount((n) => n + 1);
+            }
+        });
+    }, []);
+
+    // Cut one Int16 audio chunk into a seq-stamped AUDIO frame and send it.
+    const sendAudioChunk = useCallback((int16) => {
+        const seq = frameSenderRef.current.nextAudio(int16.length);
+        return sendFrame(packFrame(FRAME_AUDIO, seq, int16));
+    }, [sendFrame]);
+
     // Flush whatever partial batch is pending so the trailing fragment of
     // a recording reaches the desktop. Safe to call multiple times. Does NOT
     // detach the worklet: hands-free mode closes recordings while the mic
@@ -358,14 +388,8 @@ function RemoteMicSender() {
         }
         const int16 = _quantiseFloat32ToInt16(p.buf.subarray(0, p.len));
         pendingBatchRef.current = { buf: null, len: 0 };
-        try {
-            const encrypted = await encrypt(int16.buffer, sharedKeyRef.current);
-            await rtcRef.current.sendBinary(encrypted);
-        } catch (err) {
-            console.warn('[RemoteMic] Flush encrypt/send error:', err.message);
-            setSendErrorCount((n) => n + 1);
-        }
-    }, []);
+        await sendAudioChunk(int16);
+    }, [sendAudioChunk]);
 
     // Append Float32 PCM into the pending batch; once a full batch
     // (batchTargetSamplesRef samples) has accumulated, quantise to Int16,
@@ -394,14 +418,8 @@ function RemoteMicSender() {
 
         const int16 = _quantiseFloat32ToInt16(p.buf.subarray(0, p.len));
         p.len = 0;
-        try {
-            const encrypted = await encrypt(int16.buffer, sharedKeyRef.current);
-            await rtcRef.current.sendBinary(encrypted);
-        } catch (err) {
-            console.warn('[RemoteMic] Encrypt/send error:', err.message);
-            setSendErrorCount((n) => n + 1);
-        }
-    }, []);
+        await sendAudioChunk(int16);
+    }, [sendAudioChunk]);
 
     // Open a recording on the wire: announce the rate (audio-config, which
     // the desktop also reads as "new recording started") and reset the
@@ -414,6 +432,7 @@ function RemoteMicSender() {
         if (rtcRef.current) {
             rtcRef.current.sendMessage({ type: 'audio-config', sampleRate, format: 'pcm-s16', ...extra });
         }
+        frameSenderRef.current.beginRecording();
         batchTargetSamplesRef.current = Math.max(128, Math.round(sampleRate * SEND_BATCH_MS / 1000));
         pendingBatchRef.current = {
             buf: new Float32Array(batchTargetSamplesRef.current + 128),
@@ -422,16 +441,22 @@ function RemoteMicSender() {
     }, []);
 
     // Close a recording on the wire. Flush before audio-end so the trailing
-    // <500 ms that has not filled a batch yet still reaches the desktop. Both
-    // frames enqueue in order on the transport, so audio-end stays the last
-    // thing the receiver sees for this recording.
+    // <500 ms that has not filled a batch yet still reaches the desktop. Then
+    // an encrypted END frame carries this recording's chunk/sample totals so
+    // the desktop can tell a whole recording from a truncated one. All frames
+    // enqueue in order on the transport, so audio-end stays the last thing the
+    // receiver sees for this recording.
     const endWireRecording = useCallback(async () => {
         await flushPendingBatch();
+        if (sharedKeyRef.current && rtcRef.current) {
+            const { seq, totals } = frameSenderRef.current.nextEnd();
+            await sendFrame(packEndFrame(seq, totals));
+        }
         if (rtcRef.current) {
             try { rtcRef.current.sendMessage({ type: 'audio-end' }); } catch (_) { /* ignore */ }
         }
         lastAudioEndRef.current = Date.now();
-    }, [flushPendingBatch]);
+    }, [flushPendingBatch, sendFrame]);
 
     // Hands-free: act on one VAD event. Always runs on vadQueueRef so events
     // are handled strictly in order, each awaiting its sends.
@@ -919,6 +944,7 @@ function RemoteMicSender() {
                                 rtc.close();
                                 return;
                             }
+                            frameSenderRef.current = createFrameSender();
                             sharedKeyRef.current = sharedKey;
                             // F-137: handshake is now bound, future public-key
                             // messages are caught by the sharedKeyRef guard.
