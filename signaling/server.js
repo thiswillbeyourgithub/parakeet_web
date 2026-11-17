@@ -133,6 +133,12 @@ const RELAY_LP_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
 // instead of letting the relay buffer for it without bound. Same 4 MiB as the
 // LP queue so both transports bound a stuck receiver alike.
 const RELAY_WS_MAX_BUFFERED_BYTES = RELAY_LP_QUEUE_MAX_BYTES;
+// Bytes queued in all LP slots together. The per-slot cap times ROOMS_MAX x 2
+// slots would be ~40 GB, far over the container's 256 MiB: past this budget a
+// new frame is refused (429 to an LP sender, who retries) instead of the relay
+// being OOM-killed with every room in it.
+const RELAY_QUEUE_BUDGET_BYTES = 64 * 1024 * 1024;
+let _relayQueuedBytes = 0;
 // Reap an LP slot after this much silence. Slightly above the /down
 // hold timeout so a slow consumer that round-trips at the maximum
 // interval is still considered live.
@@ -755,6 +761,8 @@ function closeLpSlot(slot, reason) {
     if (slot.closed) return;
     slot.closed = true;
     if (slot.idleTimer) { clearTimeout(slot.idleTimer); slot.idleTimer = null; }
+    // Nobody will poll it again: give its bytes back to the relay budget
+    while (slot.queue.length > 0) lpDequeue(slot);
     // Drain pending waiters with a 410 Gone signal so the client knows
     // the slot is dead and can stop polling.
     const waiters = slot.waiters.splice(0);
@@ -862,21 +870,29 @@ function frameBytes(data) {
 }
 
 // The LP queue goes through these two so queueBytes always matches queue.
+// They also keep _relayQueuedBytes, the sum over all slots, in step.
 function lpEnqueue(slot, frame) {
+    const n = frameBytes(frame.data);
     slot.queue.push(frame);
-    slot.queueBytes += frameBytes(frame.data);
+    slot.queueBytes += n;
+    _relayQueuedBytes += n;
 }
 
 function lpDequeue(slot) {
     const frame = slot.queue.shift();
-    if (frame) slot.queueBytes -= frameBytes(frame.data);
+    if (frame) {
+        const n = frameBytes(frame.data);
+        slot.queueBytes -= n;
+        _relayQueuedBytes -= n;
+    }
     return frame;
 }
 
+// Returns false only when the relay-wide queue budget refused the frame.
 function deliverToPeer(peerSlot, data, isBinary) {
-    if (!peerSlot) return;
+    if (!peerSlot) return true;
     if (peerSlot.kind === 'lp') {
-        if (peerSlot.closed) return;
+        if (peerSlot.closed) return true;
         // Drop oldest under overflow (frame count or bytes) so a stuck
         // consumer cannot pin unbounded memory on the server. The protocol
         // is interactive and dropped audio frames result in a perceptible
@@ -887,10 +903,11 @@ function deliverToPeer(peerSlot, data, isBinary) {
                 || peerSlot.queueBytes + len > RELAY_LP_QUEUE_MAX_BYTES)) {
             lpDequeue(peerSlot);
         }
+        if (_relayQueuedBytes + len > RELAY_QUEUE_BUDGET_BYTES) return false;
         lpEnqueue(peerSlot, { data, isBinary });
         const w = peerSlot.waiters.shift();
         if (w) w.send(lpDequeue(peerSlot));
-        return;
+        return true;
     }
     // WS slot: forward verbatim. ws.send is async but errors propagate
     // via the 'error' event handler attached in attachRelay.
@@ -901,10 +918,11 @@ function deliverToPeer(peerSlot, data, isBinary) {
             // would queue behind the backlog) fires 'close', which tears
             // the sending half down too.
             try { peerSlot.terminate(); } catch (_) { /* ignore */ }
-            return;
+            return true;
         }
         try { peerSlot.send(data, { binary: isBinary }); } catch (_) { /* ignore */ }
     }
+    return true;
 }
 
 // ============ TURN Credential Generation ============
@@ -1381,7 +1399,10 @@ app.post(
         }
         armLpIdleTimer(slot);
         const peer = slotName === 'a' ? r.b : r.a;
-        deliverToPeer(peer, data, isBinary);
+        if (!deliverToPeer(peer, data, isBinary)) {
+            res.set('Retry-After', '1');
+            return res.status(429).json({ error: 'Relay queue full' });
+        }
         res.status(204).send();
     }
 );
