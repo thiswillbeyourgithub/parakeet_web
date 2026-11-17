@@ -879,7 +879,7 @@ function RemoteMicSender() {
                             setStatus(STATUS.WAITING_KEY);
                             const keyPair = await generateKeyPair();
                             const theirKey = await importPublicKey(msg.key);
-                            const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
+                            const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey, { receiverPub: theirKey, senderPub: keyPair.publicKey });
 
                             // Send our public key back
                             const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);

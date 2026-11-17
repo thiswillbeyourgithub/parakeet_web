@@ -74,12 +74,54 @@ export async function importPublicKey(base64Key) {
 }
 
 /**
+ * receiverPub || senderPub as raw bytes, the one canonical byte order both
+ * the pair fingerprint and the HKDF info use.
+ * @param {CryptoKey} receiverPub
+ * @param {CryptoKey} senderPub
+ * @returns {Promise<Uint8Array>}
+ */
+async function concatPairPublicKeys(receiverPub, senderPub) {
+    const aBytes = new Uint8Array(await crypto.subtle.exportKey('raw', receiverPub));
+    const bBytes = new Uint8Array(await crypto.subtle.exportKey('raw', senderPub));
+    const combined = new Uint8Array(aBytes.length + bBytes.length);
+    combined.set(aBytes, 0);
+    combined.set(bBytes, aBytes.length);
+    return combined;
+}
+
+/** The only direction that is encrypted today: phone audio to the desktop. */
+export const DIRECTION_PHONE_TO_DESKTOP = 'phone-to-desktop';
+
+/**
  * Derive a shared AES-256 key from ECDH key agreement + HKDF.
+ *
+ * The HKDF info binds the traffic direction and both public keys
+ * (receiver first, sender second), so each direction gets its own key and the
+ * key is tied to the exact pair the users compared on screen. It used to be
+ * the constant 'AES-GCM-256-key': had the desktop ever encrypted too, both
+ * directions would have shared one key (a frame could be reflected back to its
+ * sender and still authenticate).
+ *
+ * Example: info = utf8('ParakeetWeb-RemoteMic-v2|phone-to-desktop|')
+ *                 || receiverPub(65 bytes) || senderPub(65 bytes)
+ *
  * @param {CryptoKey} privateKey - Our ECDH private key
  * @param {CryptoKey} theirPublicKey - Their ECDH public key
+ * @param {{receiverPub: CryptoKey, senderPub: CryptoKey, direction?: string}} pair
+ *   receiverPub is the desktop's key, senderPub the phone's, on BOTH sides.
  * @returns {Promise<CryptoKey>} AES-GCM-256 key
  */
-export async function deriveSharedKey(privateKey, theirPublicKey) {
+export async function deriveSharedKey(privateKey, theirPublicKey, pair) {
+    if (!pair || !pair.receiverPub || !pair.senderPub) {
+        throw new Error('deriveSharedKey: receiverPub and senderPub are required');
+    }
+    const direction = pair.direction || DIRECTION_PHONE_TO_DESKTOP;
+    const label = new TextEncoder().encode(`ParakeetWeb-RemoteMic-v2|${direction}|`);
+    const keys = await concatPairPublicKeys(pair.receiverPub, pair.senderPub);
+    const info = new Uint8Array(label.length + keys.length);
+    info.set(label, 0);
+    info.set(keys, label.length);
+
     const sharedSecret = await crypto.subtle.deriveBits(
         { name: 'ECDH', public: theirPublicKey },
         privateKey,
@@ -96,7 +138,7 @@ export async function deriveSharedKey(privateKey, theirPublicKey) {
             hash: 'SHA-256',
             // Domain-separated from WebSend to avoid key reuse across apps
             salt: new TextEncoder().encode('ParakeetWeb-RemoteMic-v1'),
-            info: new TextEncoder().encode('AES-GCM-256-key')
+            info
         },
         hkdfKey,
         { name: 'AES-GCM', length: 256 },
@@ -173,11 +215,7 @@ export async function getPairFingerprint(receiverPub, senderPub, hexLength = 16)
     const len = Number.isFinite(hexLength)
         ? Math.max(16, Math.min(64, Math.floor(hexLength)))
         : 16;
-    const aBytes = new Uint8Array(await crypto.subtle.exportKey('raw', receiverPub));
-    const bBytes = new Uint8Array(await crypto.subtle.exportKey('raw', senderPub));
-    const combined = new Uint8Array(aBytes.length + bBytes.length);
-    combined.set(aBytes, 0);
-    combined.set(bBytes, aBytes.length);
+    const combined = await concatPairPublicKeys(receiverPub, senderPub);
     const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', combined));
     const bytesNeeded = Math.ceil(len / 2);
     const hex = Array.from(hash.slice(0, bytesNeeded))

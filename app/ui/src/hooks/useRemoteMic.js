@@ -413,7 +413,7 @@ export function useRemoteMic({
               remoteMicHandshakeInProgressRef.current = true;
               // Derive shared key from phone's public key
               const theirKey = await importPublicKey(msg.key);
-              const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey);
+              const sharedKey = await deriveSharedKey(keyPair.privateKey, theirKey, { receiverPub: keyPair.publicKey, senderPub: theirKey });
               console.log('[RemoteMic] Shared key derived, asking user to verify fingerprint');
 
               // Compute a short adaptive fingerprint over both pubkeys.

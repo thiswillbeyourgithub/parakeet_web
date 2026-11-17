@@ -17,10 +17,35 @@ import {
 async function pair() {
   const a = await generateKeyPair();
   const b = await generateKeyPair();
-  const aKey = await deriveSharedKey(a.privateKey, b.publicKey);
-  const bKey = await deriveSharedKey(b.privateKey, a.publicKey);
+  const keys = { receiverPub: a.publicKey, senderPub: b.publicKey };
+  const aKey = await deriveSharedKey(a.privateKey, b.publicKey, keys);
+  const bKey = await deriveSharedKey(b.privateKey, a.publicKey, keys);
   return { a, b, aKey, bKey };
 }
+
+describe('HKDF info binds direction and both public keys', () => {
+  test('another direction label yields a key that cannot decrypt', async () => {
+    const { a, b, aKey } = await pair();
+    const other = await deriveSharedKey(b.privateKey, a.publicKey,
+      { receiverPub: a.publicKey, senderPub: b.publicKey, direction: 'desktop-to-phone' });
+    const packet = await encrypt(new TextEncoder().encode('x').buffer, aKey);
+    await assert.rejects(() => decrypt(packet, other));
+  });
+
+  test('swapped receiver/sender order yields a different key', async () => {
+    const { a, b, aKey } = await pair();
+    const swapped = await deriveSharedKey(b.privateKey, a.publicKey,
+      { receiverPub: b.publicKey, senderPub: a.publicKey });
+    const packet = await encrypt(new TextEncoder().encode('x').buffer, aKey);
+    await assert.rejects(() => decrypt(packet, swapped));
+  });
+
+  test('the pair is required', async () => {
+    const a = await generateKeyPair();
+    const b = await generateKeyPair();
+    await assert.rejects(() => deriveSharedKey(a.privateKey, b.publicKey), /required/);
+  });
+});
 
 describe('ECDH key agreement + AES-GCM round trip', () => {
   test('both peers derive the same key (encrypt on A, decrypt on B)', async () => {
