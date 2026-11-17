@@ -745,7 +745,6 @@ Coagulopathie intravasculaire disséminée
 Coccidioïdes immitis
 Cochliomyia hominivorax
 Cockett perforante
-Codman triangle de
 Coenorhabditis elegans
 Coltivirus
 Conidiobolus brefeldianus
@@ -1048,6 +1047,7 @@ FE CO2
 FE O2
 FEVD
 FEVG
+FFT
 FGF
 FGF 23
 FGF 8
@@ -1206,12 +1206,15 @@ Glossina morsitans
 Glossina palpalis
 GnRH
 Gnathostoma spinigerum
+Goméga
 Goméga gradient de codage en fréquence en IRM
 Gordona
+Gphi
 Gram
 Granular Cell Stimulating Factor
 Grenz ray therapy
 Gs gradient de sélection de coupe en IRM
+Gz ou Gs
 H hypertension artérielle
 H plus K plus ATPase, pompe à proton H plus K plus adénosyltriphosphatase
 H19 gene s
@@ -1319,6 +1322,7 @@ Herpesvirus humain 6
 Heterophyes heterophyes
 Hib
 Hickey-Hare épreuve de
+High Intensity Transient Signals
 Hijmans van den réaction d'Bergh
 Histoplasma capsulatum capsulatum
 Histoplasma capsulatum duboisii
@@ -1327,6 +1331,7 @@ Horner
 Hox-c
 Huguier's disease
 Huguier's sign
+Hutchinson melanotic freckle
 Hydrophiidae
 Hylesia urticans
 Hymenolepis diminuta
@@ -1862,7 +1867,7 @@ OPD
 OPG
 OPRI
 OPS
-OPT,
+OPT
 ORIT
 ORL
 ORL et thermalisme
@@ -2645,7 +2650,7 @@ VLDL
 VMA
 VMM
 VO2 max
-VP16,
+VP16
 VPPB
 VRE
 VREF
@@ -3458,7 +3463,6 @@ acide parinarique
 acide pentanedioïque
 acide pentanoïque
 acide pentétique:::fph
-acide peptidique nucléique
 acide peptidonucléique
 acide phocénique
 acide phosphatidique
@@ -7551,7 +7555,7 @@ antithromboplastine
 antithrombotique
 antithyroglobuline
 antithyroïdiens
-antithyroïdiens de synthèse,
+antithyroïdiens de synthèse
 antithyroïdiens naturels
 antitoxine
 antitoxine diphtérique
@@ -9864,6 +9868,7 @@ aspergillose
 aspergillose invasive
 aspergillose oculaire
 aspergillose pleurale
+aspergillose pulmonaire chronique nécrosante
 aspergillose pulmonaire diffuse
 aspergillose pulmonaire invasive
 aspergillose sinusienne
@@ -13778,7 +13783,7 @@ canalicules aberrants de l'épididyme
 canalicules efférents
 canalicules efférents du testicule
 canalicules excréteurs de la glande lacrymale
-canalicules prostatiques,
+canalicules prostatiques
 canalicules séminaux
 canalicules séminifères
 canalicules séminipares
@@ -14402,7 +14407,6 @@ carcinome épidermoïde bronchique
 carcinome épidermoïde conjonctival
 carcinome épidermoïde cutané
 carcinome érysipéloïde
-carcinome,
 carcinosarcome
 carcinosarcome utérin
 carcinose pelvienne
@@ -14780,7 +14784,7 @@ cathéter de Tenckhoff
 cathéter guide
 cathéter périphérique
 cathéter sus-pubien
-cathéter veineux central,
+cathéter veineux central
 cathéter veineux ombilical
 cathéter à ballonnet
 cathéter à membrane
@@ -18529,7 +18533,7 @@ constipation
 constitutif
 constitution
 constitution hémophiloïde
-constitution hémophyloïde,
+constitution hémophyloïde
 constitutive androstan receptor
 constitutivité
 constricteur de la vulve
@@ -20800,20 +20804,10 @@ cœur pulmonaire chronique
 cœur sénile
 cœur triatrial
 cœur triloculaire
-d'un appareil de radiothérapie moniteur
 d'un atome ou d'une molécule excitation
-d'un essai randomisé éthique
-d'un faisceau pénombre
 d'un médicament dénomination spéciale
-d'un rayonnement indice de qualité
 d'un rayonnement spectre
-d'un signal périodique période
 d'un échographe gain
-d'une cellule lésion directement létale
-d'une cellule lésion sublétale
-d'une irradiation facteurs temps
-d'une lentille troncature
-d'une maladie phase
 d'une particule trajectoire
 d,l-hydrogénomalate d'almotriptan:::fph
 d-alpha-tocophérol:::fph
@@ -20916,15 +20910,10 @@ davier
 ddC
 ddI
 de Gratiolet radiation optique
-de Hutchinson melanotic freckle
-de Sjögren et Larsson microphtalmie et déficience mentale
 de contrôle sanitaire laboratoire agréé
-de hanche profil médical
 de l'abdomen diastasis des droits
 de l'abdomen transverse
 de la cuisse nerf musculo-cutané externe
-de la scapula surélévation congénitale de l'omoplate
-de radiothérapie imageur
 de type 1 osteogenèse imparfaite avec sclères bleues
 debridat enfant:::fph
 debridat:::fph
@@ -21208,7 +21197,6 @@ dermoïde épibulbaire
 deroxat:::fph
 des cellules hypoxiques réoxygénation
 des particules parcours
-des unités multiple
 des-γ-carboxyprothrombine
 descellement prothétique
 descemétite
@@ -21557,6 +21545,7 @@ diaphanoscopie du sein
 diaphorase
 diaphragmatique
 diaphragmatocèle
+diaphragme
 diaphragme accessoire
 diaphragme cervical
 diaphragme coccypérinéal
@@ -21570,7 +21559,6 @@ diaphragme périnéal
 diaphragme stylien
 diaphragme urogénital
 diaphragme vaginal
-diaphragme,
 diaphysaire
 diaphyse
 diaphysectomie
@@ -22453,8 +22441,6 @@ drusen radiaires maculaires
 druses
 dryocola clanedunensis sulfonylureivorans:::fph
 drépanocytose
-du crâne face haute
-du film gamma
 du globe oculaire paralysie du mucle droit latéral
 du globe oculaire paralysie du muscle oblique inférieur
 du globe oculaire paralysie du muscle oblique supérieur
@@ -23676,7 +23662,7 @@ déflexion intrinsécoïde
 déflexion primitive de la tête fœtale
 déflexion secondaire de la tête fœtale
 défloration
-défléchi,
+défléchi
 défocalisation
 déformation
 déformation de Bessel-Hagen
@@ -24026,7 +24012,7 @@ dérencéphale
 déridage
 dérivation
 dérivation biliaire
-dérivation de Pescador,
+dérivation de Pescador
 dérivation digestive du suc pancréatique
 dérivation du liquide céphalorachidien
 dérivation péritonéoveineuse
@@ -24696,37 +24682,21 @@ emtricitabine, ténofovir disoproxil, elvitégravir et cobicistat:::fph
 emtricitabine:::fph
 emtriva:::fph
 emylif:::fph
-en IRM FFT
-en IRM Goméga
-en IRM Gphi
-en IRM Gz ou Gs
-en IRM High Intensity Transient Signals
 en IRM IRMOD
 en IRM TOF
 en IRM bobine de gradient
 en IRM fréquence de précession
-en IRM gamma
-en IRM hypersignal
-en IRM hyposignal
-en IRM imagerie de l'eau
-en IRM imagerie en tenseur de diffusion
 en IRM quench
 en IRM suppression des liquides
 en IRM sélection du plan de coupe
-en IRM technique 3DFT
 en amont
 en aval
 en bois vert
-en dermatologie laser
 en imagerie définition
-en informatique incrément
 en mm de Hg pressions circulatoires en différents points du corps
-en médecine nucléaire réseau coordonné de soins
 en obstétrique abaissement du bras antérieur
 en obstétrique abaissement du bras postérieur
-en radiologie ombre compagne
 en scanographie hélicoïdale interpolation
-en scanographie incrément
 en échographie artefact de cône d'ombre
 en échographie artefact de renforcement postérieur
 en échographie artefact de réverbération
@@ -26118,6 +26088,7 @@ face fœtale
 face fœtale du placenta
 face gastrique de la rate
 face glutéale de l'ilion
+face haute du crâne
 face hippocratique
 face infratemporale de la grande aile de l'os sphénoïde
 face infratemporale du corps du maxillaire
@@ -26389,6 +26360,7 @@ facteurs de risques vasculaires
 facteurs de terminaison
 facteurs génétiques du mélanome uvéal
 facteurs pro-angiogéniques
+facteurs temps d'une irradiation
 factorielle
 facès hippocratique
 fadenoperation
@@ -29409,8 +29381,10 @@ galsulfase:::fph
 galvus:::fph
 galéa aponévrotique
 gamie
+gamma
+gamma du film
 gamma-angioencéphalographie
-gamma-angiographie,
+gamma-angiographie
 gamma-butyrobétaïne
 gamma-encéphalographie
 gamma-glutamyl-transférase
@@ -29529,7 +29503,7 @@ ganglion lymphatique maxillaire inférieur
 ganglion lymphatique principal de Küttner
 ganglion lymphatique prélaryngé
 ganglion lymphatique péronier
-ganglion lymphatique rétrocrural externe de Cunéo et Marcille,
+ganglion lymphatique rétrocrural externe de Cunéo et Marcille
 ganglion lymphatique sous-digastrique
 ganglion lymphatique sous-orbitaire
 ganglion lymphatique suprafémoral externe
@@ -33169,7 +33143,7 @@ hypergranulose
 hypergueusie
 hyperhidrose
 hyperhomocystéinémie
-hyperhormonal,
+hyperhormonal
 hyperhydratation
 hyperhémie
 hyperhémie conjonctivale
@@ -33335,6 +33309,7 @@ hypersensibilité électromagnétique
 hypersialie
 hypersialorrhée
 hypersidérémie
+hypersignal
 hypersignaux transitoires en Doppler
 hypersomnie
 hypersomnie dépressive
@@ -33656,6 +33631,7 @@ hyposensibilisation
 hyposialie
 hyposialorrhée
 hyposidérémie
+hyposignal
 hypospade
 hypospadias
 hypospadias vulviforme
@@ -34765,7 +34741,6 @@ image MinIP
 image animée
 image d'addition
 image d'œuf au nid
-image de
 image de Lachapèle
 image de Stierlin
 image de bord
@@ -34837,10 +34812,12 @@ imagerie cérébrale et psychiatrie
 imagerie cérébrale schizophrénie
 imagerie de diffusion
 imagerie de diffusion en IRM
+imagerie de l'eau
 imagerie de la… polyarthrite rhumatoïde
 imagerie de perfusion
 imagerie de perfusion en IRM
 imagerie en demi-plan de Fourier
+imagerie en tenseur de diffusion
 imagerie fonctionnelle
 imagerie instantanée
 imagerie interventionnelle
@@ -34856,6 +34833,7 @@ imagerie parallèle en IRM
 imagerie rapide
 images d'Arias-Stella
 imageur
+imageur de radiothérapie
 imageur laser
 imaginaire
 imago
@@ -35319,6 +35297,7 @@ incoordination du premier degré
 increlex:::fph
 incruse ellipta:::fph
 incrustation
+incrément
 incrément de reconstruction
 incrémentation
 incrétine
@@ -35435,6 +35414,7 @@ indice de gravité en traumatologie
 indice de gravité simplifié
 indice de masse corporelle
 indice de perméabilité
+indice de qualité d'un rayonnement
 indice de qualité de survie
 indice de résistance cardiaque
 indice de saponification
@@ -39304,7 +39284,7 @@ lipomatose de Launois-Bensaude
 lipomatose douloureuse de Dercum
 lipomatose familiale multiple
 lipomatose multiple circonscrite mésosomatique de Roch-Léri
-lipomatose mésosomatique de Roch-Léri,
+lipomatose mésosomatique de Roch-Léri
 lipomatose pelvienne
 lipomatose péri-vésicale
 lipomatose sinusale
@@ -40350,12 +40330,14 @@ lésion de grattage
 lésion de jet
 lésion de l'adn
 lésion de ou par souffle
+lésion directement létale
 lésion lympho-épithéliale bénigne de Godwin
 lésion par effet de souffle
 lésion potentiellement létale
 lésion précancéreuse
 lésion prénéoplasique
 lésion radio-induite
+lésion sublétale
 lésion tuberculoïde
 lésion élémentaire
 lésions anatomiques des dilatations des bronches
@@ -41219,7 +41201,6 @@ maladie du cri du chat
 maladie du foehn
 maladie du fromage
 maladie du greffon contre l'hôte
-maladie du mamelon de Paget
 maladie du mouton de Nairobi
 maladie du poumon de fermier
 maladie du poumon des éleveurs d'oiseaux
@@ -42628,6 +42609,7 @@ microphtalmie avec hypermétropie dégénérescence rétinienne, macrophakie et 
 microphtalmie avec kyste
 microphtalmie avec myopie et corectopie
 microphtalmie et déficience mentale de Pinsky-DiGeorge-Harley
+microphtalmie et déficience mentale de Sjögren et Larsson
 microphtalmie et kyste colobomateux
 microphtalmie et macrosomie
 microphtalmie et progéria
@@ -43034,6 +43016,7 @@ monilethrix
 monilia
 moniliase
 moniteur
+moniteur d'un appareil de radiothérapie
 monitorage
 monitorage de l'hémodynamique
 monitorage de la curarisation
@@ -48316,6 +48299,7 @@ ombilication du cristallin
 ombitasvir
 ombitasvir-paritaprévir-ritonavir
 ombre acoustique
+ombre compagne
 ombre de bord
 ombre de réfraction
 ombrelle
@@ -49569,7 +49553,6 @@ ou parostal ostéosarcome parostéal
 ou plutôt χ² X²
 ou pubis Phtirius inguinalis
 ou sclérosante de la verge lymphangite circulaire du prépuce
-ou semi-invasive aspergillose pulmonaire chronique nécrosante
 ou suppurée phlébite septique
 ouabaïne
 ouabaïnomimétique
@@ -50469,7 +50452,6 @@ papulose pagétoïde de la peau
 papulose à cellules claires
 paquet adipeux antérieur du genou
 paquet adipeux sous-rotulien de Vallois
-par alcoolisation réduction septale
 par séquence de semaines développement de l'embryon et du fœtus humain
 para-amygdalien
 para-amyloïdose familiale portugaise
@@ -50829,7 +50811,6 @@ paralysie diaphragmatique
 paralysie du nerf interosseux postérieur
 paralysie du nerf oculo-moteur
 paralysie du nerf phrénique
-paralysie du nouveau-né faciale
 paralysie du plexus brachial
 paralysie faciale
 paralysie faciale a frigore
@@ -52079,6 +52060,7 @@ phase anagène
 phase catagène
 phase d', période d'invasion
 phase d'imminence de rupture utérine
+phase d'une maladie
 phase de latence
 phase de repos physiologique
 phase dictyotène
@@ -54834,6 +54816,7 @@ profil d'un faisceau
 profil de coiffe
 profil de densité
 profil de pression uréthrale
+profil médical de hanche
 profil transthoracique d'épaule
 profil uréthral
 profilage ribosomique
@@ -56937,6 +56920,7 @@ pénicillé
 pénil
 pénis
 péniscopie
+pénombre d'un faisceau
 pénombre ischémique
 pénétrance
 pénétration transcutanée
@@ -59760,6 +59744,7 @@ réduction embryonnaire
 réduction mitotique
 réduction méiotique
 réduction néphronique
+réduction septale par alcoolisation
 réduction somatique
 réductone
 réduve
@@ -59781,7 +59766,7 @@ réflexe bulbo-anal
 réflexe bulbocaverneux
 réflexe cerviconeurohypophysaire
 réflexe cochléopalpébral
-réflexe contracteur de l'anus,
+réflexe contracteur de l'anus
 réflexe cornéen
 réflexe cornéomandibulaire
 réflexe cornéoptérygoïdien
@@ -60148,6 +60133,7 @@ réseau artériel
 réseau calcanéen
 réseau capillaire lymphatique
 réseau carpien dorsal
+réseau coordonné de soins en médecine nucléaire
 réseau de Gonin-Vogt
 réseau de Haller
 réseau de Jerne
@@ -66795,6 +66781,7 @@ syndrome de Luder Sheldon
 syndrome de Lundberg
 syndrome de Lundberg type 1
 syndrome de Lutembacher
+syndrome de Lyell
 syndrome de Lynch
 syndrome de Léri
 syndrome de Léri et Johanny
@@ -67378,6 +67365,7 @@ syndrome de myopathie, cataracte, hypogonadisme
 syndrome de méthylmercure fœtal
 syndrome de paralysie périodique sensible au potassium-dysrythmie cardiaque
 syndrome de paumes rouges de Lane
+syndrome de peeling cutané
 syndrome de phocomélie SC
 syndrome de polyneuropathie-cataracte-surdité
 syndrome de prédisposition héréditaire aux hémopathies malignes
@@ -67796,7 +67784,6 @@ syndrome sclérodermiforme
 syndrome sec
 syndrome sensitif cortical de Dejerine
 syndrome sinuaortique
-syndrome skin peeling
 syndrome sphérophakie-brachymorphie
 syndrome subjectif des traumatisés crâniens
 syndrome supérieur du noyau rouge
@@ -68596,6 +68583,7 @@ technicien de laboratoire
 technique 2D
 technique 2DFT en IRM
 technique 3D
+technique 3DFT
 technique A.O.
 technique Delphes
 technique ELISA
@@ -70979,6 +70967,7 @@ tronc veineux supérieur du poumon gauche
 tronc ventroparacardiaque de l'artère pulmonaire gauche
 tronc vertébrobasilaire
 tronc villositaire
+troncature
 troncométrie échographique
 troncs du plexus brachial
 troncs intestinaux
@@ -76606,7 +76595,7 @@ zézaiement
 épreuves de Volhard
 épreuves vestibulaires
 épuisement
-épuisement professionnel,
+épuisement professionnel
 épulis
 épulis gravidique
 épuration digestive
