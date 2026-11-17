@@ -328,9 +328,10 @@ const { clientIpKey } = require('./client-ip.js');
 // park 300 rooms an hour, and a client rotating addresses park any number.
 // ROOMS_MAX bounds the whole instance (503 when full), ROOMS_MAX_PER_CLIENT
 // bounds one client key (an IPv4 or an IPv6 /64, 429 when reached). A real
-// user holds one room per open desktop tab.
+// user holds one room per open desktop tab; 100 leaves room for a hospital
+// whose desktops all share one NAT address.
 const ROOMS_MAX = parseInt(process.env.ROOMS_MAX, 10) || 5000;
-const ROOMS_MAX_PER_CLIENT = parseInt(process.env.ROOMS_MAX_PER_CLIENT, 10) || 20;
+const ROOMS_MAX_PER_CLIENT = parseInt(process.env.ROOMS_MAX_PER_CLIENT, 10) || 100;
 
 function liveRoomsOf(clientKey) {
     let n = 0;
@@ -1287,7 +1288,7 @@ function onResponseDone(res, fn) {
 // client could hold thousands of 25 s long-polls and 256 KiB uploads. An
 // honest session keeps one /down and at most one /up open per side, so a room
 // whose desktop and phone share a NAT holds 4. A client key cannot own more
-// than ROOMS_MAX_PER_CLIENT rooms, so 4 per room (80 by default) covers a
+// than ROOMS_MAX_PER_CLIENT rooms, so 4 per room (400 by default) covers a
 // hospital NAT running that many sessions at once.
 const RELAY_IN_FLIGHT_PER_ROOM = 4;
 const RELAY_IN_FLIGHT_PER_CLIENT = ROOMS_MAX_PER_CLIENT * RELAY_IN_FLIGHT_PER_ROOM;
