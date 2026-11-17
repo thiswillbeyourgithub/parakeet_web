@@ -299,6 +299,24 @@ app.use(express.json({ limit: '50kb' }));
 const rooms = new Map();
 // Expiry policy (idle TTL, hard cap) lives in room-expiry.js
 const { sweepRoom } = require('./room-expiry.js');
+const { clientIpKey } = require('./client-ip.js');
+
+// Live-room caps. Rooms only leave memory through the expiry sweep (up to
+// ROOM_MAX_LIFETIME), so the 5/min creation rate alone still let one client
+// park 300 rooms an hour, and a client rotating addresses park any number.
+// ROOMS_MAX bounds the whole instance (503 when full), ROOMS_MAX_PER_CLIENT
+// bounds one client key (an IPv4 or an IPv6 /64, 429 when reached). A real
+// user holds one room per open desktop tab.
+const ROOMS_MAX = parseInt(process.env.ROOMS_MAX, 10) || 5000;
+const ROOMS_MAX_PER_CLIENT = parseInt(process.env.ROOMS_MAX_PER_CLIENT, 10) || 20;
+
+function liveRoomsOf(clientKey) {
+    let n = 0;
+    for (const room of rooms.values()) {
+        if (room.creator === clientKey) n += 1;
+    }
+    return n;
+}
 
 // ============ Rate Limiting ============
 const rateLimiters = new Map();
@@ -342,8 +360,9 @@ const RATE_LIMIT_CONFIG = {
     relayData: { windowMs: 60 * 1000, maxRequests: 15000 }
 };
 
+// Keyed by clientIpKey: an IPv6 client counts as its whole /64.
 function getClientIp(req) {
-    return req.ip || 'unknown';
+    return clientIpKey(req.ip);
 }
 
 // Global cap on the rateLimiters Map. Each entry is ~200 B, so 10k
@@ -938,6 +957,18 @@ app.get('/api/config', rateLimitMiddleware('iceConfig'), (req, res) => {
 
 // Create a new room
 app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
+    if (rooms.size >= ROOMS_MAX) {
+        console.warn(`[rooms] refusing room creation: instance-wide cap of ${ROOMS_MAX} live rooms reached`);
+        res.set('Retry-After', '60');
+        return res.status(503).json({ error: 'Too many rooms', message: 'The server is busy, try again in a minute' });
+    }
+    const creator = getClientIp(req);
+    // Bypassed with the other per-IP limits by the test escape hatch: every
+    // tier-2 test runs from loopback, so they would all share one budget.
+    if (!TEST_DISABLE_RATE_LIMIT && liveRoomsOf(creator) >= ROOMS_MAX_PER_CLIENT) {
+        res.set('Retry-After', '60');
+        return res.status(429).json({ error: 'Too many rooms for this client', retryAfter: 60 });
+    }
     let roomId;
     do {
         roomId = generateRoomId();
@@ -947,6 +978,8 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
     const hostSecret = generateRoomSecret();
     rooms.set(roomId, {
         created: Date.now(),
+        // Client key of the creator, for ROOMS_MAX_PER_CLIENT.
+        creator,
         secret,
         hostSecret,
         offer: null,
@@ -965,7 +998,7 @@ app.post('/api/rooms', rateLimitMiddleware('roomCreation'), (req, res) => {
     });
 
     console.log(`Room ${roomId} created`);
-    debugLog('ROOM', 'Room created', { roomId, clientIp: getClientIp(req) });
+    debugLog('ROOM', 'Room created', { roomId, clientIp: creator });
     res.json({ roomId, secret, hostSecret });
 });
 
@@ -1546,10 +1579,10 @@ function _getUpgradeClientIp(req) {
         const xff = req.headers['x-forwarded-for'];
         if (typeof xff === 'string' && xff.length) {
             const first = xff.split(',')[0].trim();
-            if (first) return first;
+            if (first) return clientIpKey(first);
         }
     }
-    return peer || 'unknown';
+    return clientIpKey(peer);
 }
 
 server.on('upgrade', (req, socket, head) => {

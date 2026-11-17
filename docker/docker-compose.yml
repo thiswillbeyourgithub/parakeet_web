@@ -123,6 +123,10 @@ services:
       # per-IP 3/min, so an address-rotating flood cannot reach the file cap
       # in minutes.
       - BENCHMARK_REPORTS_MAX_PER_MINUTE=${BENCHMARK_REPORTS_MAX_PER_MINUTE:-}
+      # Live-room caps on the signaling server: whole instance (503 when
+      # full, default 5000) and per client IPv4 or IPv6 /64 (429, default 20).
+      - ROOMS_MAX=${ROOMS_MAX:-}
+      - ROOMS_MAX_PER_CLIENT=${ROOMS_MAX_PER_CLIENT:-}
       # Remote microphone signaling server (shares coturn with WebSend)
       - STUN_SERVER=${STUN_SERVER:-}
       - TURN_SERVER=${TURN_SERVER:-}
