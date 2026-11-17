@@ -9,7 +9,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  generateKeyPair, exportPublicKey, importPublicKey, deriveSharedKey,
+  generateKeyPair, exportPublicKey, importPublicKey, deriveSharedKey, deriveSessionKeys,
   encrypt, decrypt, getPairFingerprint, computeFingerprintLength,
 } from '../../app/ui/src/lib/remote-crypto.js';
 
@@ -38,6 +38,21 @@ describe('HKDF info binds direction and both public keys', () => {
       { receiverPub: b.publicKey, senderPub: a.publicKey });
     const packet = await encrypt(new TextEncoder().encode('x').buffer, aKey);
     await assert.rejects(() => decrypt(packet, swapped));
+  });
+
+  test('session keys: both sides agree per direction, directions never cross', async () => {
+    const a = await generateKeyPair(); // desktop
+    const b = await generateKeyPair(); // phone
+    const keys = { receiverPub: a.publicKey, senderPub: b.publicKey };
+    const desk = await deriveSessionKeys(a.privateKey, b.publicKey, keys);
+    const phone = await deriveSessionKeys(b.privateKey, a.publicKey, keys);
+    const msg = new TextEncoder().encode('{"type":"stop"}').buffer;
+    const down = await encrypt(msg, desk.desktopToPhone);
+    assert.deepEqual(new Uint8Array(await decrypt(down, phone.desktopToPhone)), new Uint8Array(msg));
+    // A desktop frame reflected back to the desktop does not decrypt there.
+    await assert.rejects(() => decrypt(down, desk.phoneToDesktop));
+    const up = await encrypt(msg, phone.phoneToDesktop);
+    await assert.rejects(() => decrypt(up, phone.desktopToPhone));
   });
 
   test('the pair is required', async () => {

@@ -89,8 +89,10 @@ async function concatPairPublicKeys(receiverPub, senderPub) {
     return combined;
 }
 
-/** The only direction that is encrypted today: phone audio to the desktop. */
+/** Phone audio and phone control messages to the desktop. */
 export const DIRECTION_PHONE_TO_DESKTOP = 'phone-to-desktop';
+/** Desktop control messages (stop, pause, audio-settings...) to the phone. */
+export const DIRECTION_DESKTOP_TO_PHONE = 'desktop-to-phone';
 
 /**
  * Derive a shared AES-256 key from ECDH key agreement + HKDF.
@@ -145,6 +147,24 @@ export async function deriveSharedKey(privateKey, theirPublicKey, pair) {
         false,
         ['encrypt', 'decrypt']
     );
+}
+
+/**
+ * Both directional keys of a session, derived from the same ECDH agreement.
+ * Each side encrypts with its own direction and decrypts with the other, so a
+ * frame reflected back to its sender never authenticates.
+ *
+ * @param {CryptoKey} privateKey - Our ECDH private key
+ * @param {CryptoKey} theirPublicKey - Their ECDH public key
+ * @param {{receiverPub: CryptoKey, senderPub: CryptoKey}} pair - as in deriveSharedKey
+ * @returns {Promise<{phoneToDesktop: CryptoKey, desktopToPhone: CryptoKey}>}
+ */
+export async function deriveSessionKeys(privateKey, theirPublicKey, pair) {
+    const [phoneToDesktop, desktopToPhone] = await Promise.all([
+        deriveSharedKey(privateKey, theirPublicKey, { ...pair, direction: DIRECTION_PHONE_TO_DESKTOP }),
+        deriveSharedKey(privateKey, theirPublicKey, { ...pair, direction: DIRECTION_DESKTOP_TO_PHONE }),
+    ]);
+    return { phoneToDesktop, desktopToPhone };
 }
 
 /**

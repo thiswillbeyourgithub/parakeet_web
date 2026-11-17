@@ -122,19 +122,36 @@ export function verifyOkMessage(fp) {
 }
 
 /**
- * Desktop-to-phone commands the phone obeys only once the pair is verified
- * (shared key bound). Before that, anyone holding the room link could send
- * them, e.g. {type:'audio-settings', gain:0} or {type:'stop'} while the
- * fingerprint modal is still up. The desktop sends none of them before binding:
- * its audio-settings push fires when it flips to connected, which is after its
- * own verify-ok went out on the same ordered channel, so the phone has bound by
- * the time it arrives.
+ * Wire protocol version, announced in the handshake ({type:'public-key', v:3}
+ * and {type:'sender-public-key', v:3}). Bump it whenever the two pages stop
+ * understanding each other. The phone page is a separate entry point that can
+ * sit open in a tab across a deploy (and an old desktop tab can too), so each
+ * side refuses a peer announcing another version instead of failing in
+ * confusing ways later. 3: control messages moved inside the encryption.
  */
-const PAIRED_ONLY_CONTROL_TYPES = new Set(['stop-recording', 'stop', 'pause', 'resume', 'audio-settings']);
+export const REMOTE_MIC_PROTOCOL = 3;
 
-/** Whether the phone must drop control message `msg` (not yet paired). */
-export function controlNeedsPairing(msg, paired) {
-    return !paired && PAIRED_ONLY_CONTROL_TYPES.has(msg?.type);
+/** Whether a handshake message announces our protocol version. */
+export function peerProtocolMatches(msg) {
+    return msg?.v === REMOTE_MIC_PROTOCOL;
+}
+
+/**
+ * Control messages that only travel encrypted, as FRAME_CONTROL frames
+ * (lib/remote-mic-frames.js). Either side drops a plaintext copy: it can only
+ * come from the relay or from a peer running another protocol, e.g. a relay
+ * injecting {type:'audio-settings', gain:0} or {type:'stop'}.
+ */
+const ENCRYPTED_ONLY_TYPES = new Set([
+    // desktop to phone
+    'stop-recording', 'stop', 'pause', 'resume', 'audio-settings',
+    // phone to desktop
+    'audio-config', 'audio-end', 'paused', 'resumed',
+]);
+
+/** Whether a plaintext message must be dropped (its type only travels encrypted). */
+export function mustBeEncrypted(msg) {
+    return ENCRYPTED_ONLY_TYPES.has(msg?.type);
 }
 
 /** The fingerprint a received verify-ok approves ('' when it names none). */

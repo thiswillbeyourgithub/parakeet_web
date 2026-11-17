@@ -10,7 +10,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    waitForDecision, verifyOkMessage, approvedFingerprint, VERIFY_TTL_MS, controlNeedsPairing,
+    waitForDecision, verifyOkMessage, approvedFingerprint, VERIFY_TTL_MS,
+    mustBeEncrypted, peerProtocolMatches, REMOTE_MIC_PROTOCOL,
 } from '../../app/ui/src/lib/remote-mic-handshake.js';
 
 describe('waitForDecision', () => {
@@ -50,20 +51,33 @@ describe('verify-ok binds the fingerprint', () => {
     });
 });
 
-// Regression guard: the phone used to obey stop/pause/resume/audio-settings
-// from whoever was on the channel, even before the pair was verified.
-describe('controlNeedsPairing', () => {
-    test('desktop commands are dropped until the pair is bound', () => {
-        for (const type of ['stop-recording', 'stop', 'pause', 'resume', 'audio-settings']) {
-            assert.equal(controlNeedsPairing({ type }, false), true, type);
-            assert.equal(controlNeedsPairing({ type }, true), false, type);
+// Regression guard: control messages used to travel in plaintext, so the relay
+// could forge {type:'audio-settings', gain:0} or {type:'stop'}, or rewrite
+// sampleRate in audio-config. They now only travel as encrypted frames and a
+// plaintext copy is dropped.
+describe('mustBeEncrypted', () => {
+    test('every control message type must be encrypted', () => {
+        for (const type of ['stop-recording', 'stop', 'pause', 'resume', 'audio-settings',
+            'audio-config', 'audio-end', 'paused', 'resumed']) {
+            assert.equal(mustBeEncrypted({ type }), true, type);
         }
     });
 
-    test('handshake messages are never gated', () => {
-        for (const type of ['public-key', 'verify-ok', 'verify-deny']) {
-            assert.equal(controlNeedsPairing({ type }, false), false, type);
+    test('handshake messages stay plaintext', () => {
+        for (const type of ['public-key', 'sender-public-key', 'verify-ok', 'verify-deny']) {
+            assert.equal(mustBeEncrypted({ type }), false, type);
         }
-        assert.equal(controlNeedsPairing(null, false), false);
+        assert.equal(mustBeEncrypted(null), false);
+    });
+});
+
+// A page left open across a deploy must refuse a peer on another protocol.
+describe('peerProtocolMatches', () => {
+    test('only the current version matches', () => {
+        assert.equal(peerProtocolMatches({ type: 'public-key', v: REMOTE_MIC_PROTOCOL }), true);
+        assert.equal(peerProtocolMatches({ type: 'public-key' }), false);
+        assert.equal(peerProtocolMatches({ type: 'public-key', v: REMOTE_MIC_PROTOCOL - 1 }), false);
+        assert.equal(peerProtocolMatches({ type: 'public-key', v: String(REMOTE_MIC_PROTOCOL) }), false);
+        assert.equal(peerProtocolMatches(null), false);
     });
 });

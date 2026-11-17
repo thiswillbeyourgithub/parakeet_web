@@ -3,10 +3,17 @@
 // Every encrypted binary frame the phone sends carries an 8-byte header INSIDE
 // the AES-GCM plaintext, so the header is authenticated along with the audio:
 //
-//   byte 0      kind: FRAME_AUDIO (0) or FRAME_END (1)
+//   byte 0      kind: FRAME_AUDIO (0), FRAME_END (1) or FRAME_CONTROL (2)
 //   bytes 1-3   reserved, zero
 //   bytes 4-7   seq, uint32 little-endian
-//   bytes 8..   payload (PCM for AUDIO; END_PAYLOAD for END)
+//   bytes 8..   payload (PCM for AUDIO; END_PAYLOAD for END; UTF-8 JSON for
+//               CONTROL, e.g. {"type":"audio-config","sampleRate":48000})
+//
+// Control messages travel as FRAME_CONTROL once the pair is verified, in both
+// directions (each direction has its own key, see deriveSessionKeys). They used
+// to be plaintext JSON, so the relay could read the phone's sample rate and
+// when it paused, and could inject {"type":"stop"} or a gain of 0. Only the
+// handshake (public keys, verify-ok/deny) stays plaintext.
 //
 // 8 bytes keeps the payload aligned for both Int16Array and Float32Array views.
 //
@@ -35,11 +42,14 @@
 
 export const FRAME_AUDIO = 0;
 export const FRAME_END = 1;
+export const FRAME_CONTROL = 2;
 export const FRAME_HEADER_BYTES = 8;
 const END_PAYLOAD_BYTES = 8;
+// Same 4 KiB bound the plaintext control path always had (F-122).
+export const CONTROL_MAX_BYTES = 4096;
 
 /**
- * @param {number} kind FRAME_AUDIO or FRAME_END
+ * @param {number} kind FRAME_AUDIO, FRAME_END or FRAME_CONTROL
  * @param {number} seq uint32 session sequence number
  * @param {ArrayBufferView|null} payload bytes to append after the header
  * @returns {ArrayBuffer}
@@ -64,10 +74,27 @@ export function packEndFrame(seq, { chunks, samples }) {
     return packFrame(FRAME_END, seq, payload);
 }
 
+/** Build a CONTROL frame carrying `msg` as JSON. */
+export function packControlFrame(seq, msg) {
+    const bytes = new TextEncoder().encode(JSON.stringify(msg));
+    if (bytes.byteLength > CONTROL_MAX_BYTES) throw new Error('control message too large');
+    return packFrame(FRAME_CONTROL, seq, bytes);
+}
+
+/** The control message a CONTROL payload carries: a JSON object with a string type. */
+function parseControl(payload) {
+    if (payload.byteLength > CONTROL_MAX_BYTES) throw new Error('control frame too large');
+    const msg = JSON.parse(new TextDecoder().decode(payload));
+    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') {
+        throw new Error('control frame without a type');
+    }
+    return msg;
+}
+
 /**
  * Parse a decrypted frame. Throws on a malformed header.
  * @param {ArrayBuffer} buf
- * @returns {{kind: number, seq: number, payload: ArrayBuffer, end?: {chunks: number, samples: number}}}
+ * @returns {{kind: number, seq: number, payload: ArrayBuffer, end?: {chunks: number, samples: number}, control?: object}}
  */
 export function unpackFrame(buf) {
     if (!(buf instanceof ArrayBuffer) || buf.byteLength < FRAME_HEADER_BYTES) {
@@ -83,12 +110,13 @@ export function unpackFrame(buf) {
         const p = new DataView(payload);
         return { kind, seq, payload, end: { chunks: p.getUint32(0, true), samples: p.getUint32(4, true) } };
     }
+    if (kind === FRAME_CONTROL) return { kind, seq, payload, control: parseControl(payload) };
     throw new Error(`unknown frame kind ${kind}`);
 }
 
 /**
  * Sender-side counters: one session-wide seq plus per-recording totals.
- * `nextAudio(samples)` / `nextEnd()` return the seq to stamp; call them
+ * `nextAudio(samples)` / `nextEnd()` / `nextControl()` return the seq to stamp; call them
  * synchronously when the frame is cut so the seq order is the cut order.
  */
 export function createFrameSender() {
@@ -99,6 +127,7 @@ export function createFrameSender() {
         beginRecording() { chunks = 0; samples = 0; },
         nextAudio(sampleCount) { chunks += 1; samples += sampleCount; return seq++; },
         nextEnd() { return { seq: seq++, totals: { chunks, samples } }; },
+        nextControl() { return seq++; },
     };
 }
 
@@ -126,6 +155,9 @@ export function createFrameVerifier() {
             }
             // Resync so a later recording can still verify cleanly.
             expectedSeq = frame.seq + 1;
+            // Control frames share the seq stream (a lost audio-config shows
+            // up as a gap) but carry no audio.
+            if (frame.kind === FRAME_CONTROL) return;
             if (frame.kind === FRAME_AUDIO) {
                 if (ended && !problem) problem = 'audio after the END frame';
                 chunks += 1;
@@ -147,6 +179,25 @@ export function createFrameVerifier() {
             if (problem) return { ok: false, reason: problem };
             if (requireEnd && !(ended && endOk)) return { ok: false, reason: 'no valid END frame' };
             return { ok: true };
+        },
+    };
+}
+
+/**
+ * Replay guard for the desktop's control frames: the phone obeys a frame only
+ * if its seq is above every seq seen so far. Gaps are allowed (a lost
+ * audio-settings must not block every later command), going back is not, so a
+ * relay cannot replay an old {"type":"stop"}.
+ *
+ * Example: accept(0) true, accept(2) true, accept(1) false, accept(2) false.
+ */
+export function createSeqGate() {
+    let next = 0;
+    return {
+        accept(seq) {
+            if (!Number.isInteger(seq) || seq < next) return false;
+            next = seq + 1;
+            return true;
         },
     };
 }

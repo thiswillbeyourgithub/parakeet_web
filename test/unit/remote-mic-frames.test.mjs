@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
     FRAME_AUDIO, FRAME_END, FRAME_HEADER_BYTES,
     packFrame, packEndFrame, unpackFrame, createFrameSender, createFrameVerifier,
+    FRAME_CONTROL, CONTROL_MAX_BYTES, packControlFrame, createSeqGate,
 } from '../../app/ui/src/lib/remote-mic-frames.js';
 
 // Simulate the phone: returns the list of decrypted frames the desktop would see.
@@ -100,5 +101,52 @@ describe('remote-mic frames', () => {
         bad[0] = 9;
         assert.throws(() => unpackFrame(bad.buffer), /unknown frame kind/);
         assert.throws(() => unpackFrame(packFrame(FRAME_END, 0, new Uint8Array(3))), /bad payload size/);
+    });
+});
+
+// Control messages ride inside the encryption since protocol 3 (they used to be
+// plaintext JSON the relay could forge or rewrite).
+describe('remote-mic control frames', () => {
+    test('round trip carries the message and the seq', () => {
+        const f = unpackFrame(packControlFrame(7, { type: 'audio-config', sampleRate: 16000 }));
+        assert.equal(f.kind, FRAME_CONTROL);
+        assert.equal(f.seq, 7);
+        assert.deepEqual(f.control, { type: 'audio-config', sampleRate: 16000 });
+    });
+
+    test('oversized or typeless control frames are refused', () => {
+        assert.throws(() => packControlFrame(0, { type: 'x', pad: 'a'.repeat(CONTROL_MAX_BYTES) }), /too large/);
+        const enc = (obj) => new TextEncoder().encode(JSON.stringify(obj));
+        assert.throws(() => unpackFrame(packFrame(FRAME_CONTROL, 0, enc({ nope: 1 }))));
+        assert.throws(() => unpackFrame(packFrame(FRAME_CONTROL, 0, enc([1]))));
+        assert.throws(() => unpackFrame(packFrame(FRAME_CONTROL, 0, new TextEncoder().encode('{bad'))));
+    });
+
+    test('control frames share the seq stream without breaking verification', () => {
+        const sender = createFrameSender();
+        const verifier = createFrameVerifier();
+        sender.beginRecording();
+        verifier.beginRecording();
+        const frames = [
+            unpackFrame(packControlFrame(sender.nextControl(), { type: 'audio-config', sampleRate: 16000, format: 'pcm-s16' })),
+            unpackFrame(packFrame(FRAME_AUDIO, sender.nextAudio(4), new Int16Array(4))),
+            unpackFrame(packControlFrame(sender.nextControl(), { type: 'paused' })),
+            unpackFrame(packFrame(FRAME_AUDIO, sender.nextAudio(2), new Int16Array(2))),
+        ];
+        const { seq, totals } = sender.nextEnd();
+        frames.push(unpackFrame(packEndFrame(seq, totals)));
+        for (const f of frames) verifier.accept(f, f.kind === FRAME_AUDIO ? f.payload.byteLength / 2 : 0);
+        assert.deepEqual(verifier.finish({ requireEnd: true }), { ok: true });
+    });
+
+    test('the seq gate refuses replays and garbage but tolerates gaps', () => {
+        const gate = createSeqGate();
+        assert.equal(gate.accept(0), true);
+        assert.equal(gate.accept(0), false); // replay
+        assert.equal(gate.accept(3), true);  // gap (a frame lost in transit)
+        assert.equal(gate.accept(2), false); // older than the last one
+        assert.equal(gate.accept(1.5), false);
+        assert.equal(gate.accept('4'), false);
+        assert.equal(gate.accept(4), true);
     });
 });
