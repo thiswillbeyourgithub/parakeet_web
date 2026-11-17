@@ -14122,7 +14122,6 @@ capsule de Glisson
 capsule de Glisson réfléchie
 capsule de Malpighi
 capsule de Tenon
-capsule de réfléchie Glisson
 capsule du cristallin
 capsule endoscopique
 capsule exter
