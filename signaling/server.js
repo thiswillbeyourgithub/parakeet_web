@@ -120,6 +120,19 @@ const RELAY_LP_DOWN_TIMEOUT_MS = parseInt(process.env.RELAY_LP_DOWN_TIMEOUT_MS, 
 // audio chunks the sender keeps pushing.
 const RELAY_LP_QUEUE_MAX_FRAMES = parseInt(process.env.RELAY_LP_QUEUE_MAX_FRAMES, 10) || 32;
 const RELAY_LP_FRAME_BODY_LIMIT = process.env.RELAY_LP_FRAME_BODY_LIMIT || '256kb';
+// The same limit in bytes, parsed by `bytes` (the parser express.raw itself
+// applies to RELAY_LP_FRAME_BODY_LIMIT, installed with express) so the WS
+// relay and the long-poll relay refuse exactly the same frame size.
+const RELAY_FRAME_MAX_BYTES = require('bytes').parse(RELAY_LP_FRAME_BODY_LIMIT);
+// Byte cap on one LP slot's queue, next to the frame-count cap above. With the
+// defaults, 32 frames of 256 KiB would already be 8 MiB, so this is what really
+// bounds a slot whose receiver stopped polling. Real frames are at most ~94 KiB
+// (500 ms of 96 kHz Int16 mono plus framing), so 32 of them (~3 MiB) still fit.
+const RELAY_LP_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
+// A WS peer whose socket buffer passes this is not reading: it is closed
+// instead of letting the relay buffer for it without bound. Same 4 MiB as the
+// LP queue so both transports bound a stuck receiver alike.
+const RELAY_WS_MAX_BUFFERED_BYTES = RELAY_LP_QUEUE_MAX_BYTES;
 // Reap an LP slot after this much silence. Slightly above the /down
 // hold timeout so a slow consumer that round-trips at the maximum
 // interval is still considered live.
@@ -772,7 +785,9 @@ function teardownPeer(peer, reason) {
 // fed by the http.Server-level 'upgrade' listener at the bottom of this
 // file; we use { noServer: true } so we control auth/origin/rate-limit
 // BEFORE handshakeUpgrade allocates a socket per request.
-const _relayWss = new WebSocketServer({ noServer: true });
+// maxPayload: ws defaults to 100 MiB per message, which a peer could send in
+// one frame; refuse anything the LP /up route would refuse (close 1009).
+const _relayWss = new WebSocketServer({ noServer: true, maxPayload: RELAY_FRAME_MAX_BYTES });
 
 function attachRelay(room, ws, slotName) {
     if (!room.relay) {
@@ -787,7 +802,7 @@ function attachRelay(room, ws, slotName) {
     ws.on('pong', () => { ws.isAlive = true; });
 
     ws.on('message', (data, isBinary) => {
-        const len = Buffer.isBuffer(data) ? data.length : (data && data.byteLength) || 0;
+        const len = frameBytes(data);
         if (!isBinary && len > RELAY_MAX_CONTROL_MSG_BYTES) {
             // Hostile peer pumping multi-MB text frames: close this half.
             // Peer is left intact so it observes the disconnect.
@@ -842,28 +857,52 @@ setInterval(() => {
     }
 }, RELAY_WS_PING_INTERVAL_MS).unref();
 
+function frameBytes(data) {
+    return Buffer.isBuffer(data) ? data.length : (data && data.byteLength) || 0;
+}
+
+// The LP queue goes through these two so queueBytes always matches queue.
+function lpEnqueue(slot, frame) {
+    slot.queue.push(frame);
+    slot.queueBytes += frameBytes(frame.data);
+}
+
+function lpDequeue(slot) {
+    const frame = slot.queue.shift();
+    if (frame) slot.queueBytes -= frameBytes(frame.data);
+    return frame;
+}
+
 function deliverToPeer(peerSlot, data, isBinary) {
     if (!peerSlot) return;
     if (peerSlot.kind === 'lp') {
         if (peerSlot.closed) return;
-        if (peerSlot.queue.length >= RELAY_LP_QUEUE_MAX_FRAMES) {
-            // Drop oldest under overflow so a stuck consumer cannot pin
-            // unbounded memory on the server. The protocol is interactive
-            // and dropped audio frames result in a perceptible glitch on
-            // the receiver, not a stuck session.
-            peerSlot.queue.shift();
+        // Drop oldest under overflow (frame count or bytes) so a stuck
+        // consumer cannot pin unbounded memory on the server. The protocol
+        // is interactive and dropped audio frames result in a perceptible
+        // glitch on the receiver, not a stuck session.
+        const len = frameBytes(data);
+        while (peerSlot.queue.length > 0
+            && (peerSlot.queue.length >= RELAY_LP_QUEUE_MAX_FRAMES
+                || peerSlot.queueBytes + len > RELAY_LP_QUEUE_MAX_BYTES)) {
+            lpDequeue(peerSlot);
         }
-        peerSlot.queue.push({ data, isBinary });
+        lpEnqueue(peerSlot, { data, isBinary });
         const w = peerSlot.waiters.shift();
-        if (w) {
-            const next = peerSlot.queue.shift();
-            w.send(next);
-        }
+        if (w) w.send(lpDequeue(peerSlot));
         return;
     }
     // WS slot: forward verbatim. ws.send is async but errors propagate
     // via the 'error' event handler attached in attachRelay.
     if (peerSlot.readyState === peerSlot.OPEN) {
+        if (peerSlot.bufferedAmount > RELAY_WS_MAX_BUFFERED_BYTES) {
+            // The peer stopped reading: ws would keep every further frame
+            // in relay memory. terminate() (not close(), whose close frame
+            // would queue behind the backlog) fires 'close', which tears
+            // the sending half down too.
+            try { peerSlot.terminate(); } catch (_) { /* ignore */ }
+            return;
+        }
         try { peerSlot.send(data, { binary: isBinary }); } catch (_) { /* ignore */ }
     }
 }
@@ -1184,6 +1223,7 @@ app.post('/api/rooms/:id/relay/handshake', rateLimitMiddleware('general'), valid
         token,
         slotName,
         queue: [],
+        queueBytes: 0,
         waiters: [],
         closed: false,
         idleTimer: null,
@@ -1285,7 +1325,7 @@ app.get('/api/rooms/:id/relay/down', rateLimitMiddleware('relayData'), validateR
     };
 
     if (slot.queue.length > 0) {
-        return sendFrame(slot.queue.shift());
+        return sendFrame(lpDequeue(slot));
     }
     if (req.query.wait !== 'true') return res.status(204).send();
 
