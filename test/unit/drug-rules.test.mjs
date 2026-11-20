@@ -21,7 +21,7 @@ import {
 } from '../../app/ui/src/lib/drugRules.js';
 
 // Build stage then runtime stage, through a real JSON round trip, exactly the
-// path the rules take from the model repo to the browser.
+// path the rules take from the regex repo to the browser.
 const compileDrugRules = (jsonl) => loadDrugRules(JSON.parse(JSON.stringify(compileDrugRuleSource(jsonl))));
 
 const WB = '(?<![0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u024F\'-])';
@@ -216,13 +216,13 @@ describe('committed drug_rules.json', () => {
   test('loads whole, with its provenance', () => {
     assert.ok(c, 'loadDrugRules refused the committed file');
     // A truncated or half-written compile, not a count to track: since
-    // 03_merge_rules.py folds same-replacement rules, ~13.8k variants ship as
-    // ~3.4k rules.
-    assert.ok(c.rules.length > 3000, `only ${c.rules.length} rules`);
-    // The hand-written rules, then the drug rules, then the medical-term
-    // rules, each with its own hash.
+    // 03_merge_rules.py folds same-replacement rules, ~55k variants ship as
+    // ~25k rules.
+    assert.ok(c.rules.length > 20000, `only ${c.rules.length} rules`);
+    // The UltiMed v2 regex repo's six files in their apply order (the
+    // hand-written rules LAST), each with its own hash.
     assert.deepEqual(data.sources.map((s) => s.source.split('/').pop()),
-      ['manual_fix_rules.jsonl', 'drug_fix_rules.jsonl', 'term_fix_rules.jsonl']);
+      ['drug', 'dictionary', 'parhaf', 'parrot', 'acronyms', 'manual'].map((n) => `${n}_fix_rules.jsonl`));
     for (const s of data.sources) assert.match(s.sha256, /^[0-9a-f]{64}$/);
     const indexed = new Set([...c.always, ...Object.keys(data.anchors).flatMap((t) => anchorRuleIds(c, t))]);
     assert.equal(indexed.size, c.rules.length, 'every rule must be reachable through the index');
@@ -234,18 +234,19 @@ describe('committed drug_rules.json', () => {
   });
 
   test('fixes known mishearings', () => {
-    assert.equal(
-      applyDrugRules("Traitement par l'ananas de l'umab et jy c'est le cas.", c),
-      'Traitement par lanadelumab et Jyseleca.',
-    );
-    // A medical-term rule, which runs after the drug rules.
-    assert.equal(applyDrugRules('Une ostéophite au niveau L4.', c), 'Une ostéophyte au niveau L4.');
-    // A hand-written rule, which runs first: without it the drug rules would
-    // turn lodose into the brand Lodoz.
-    assert.equal(applyDrugRules('deux Lodoses et du ceresta.', c), 'deux Lowdose et du Seresta.');
+    // A drug rule.
+    assert.equal(applyDrugRules('Traitement par voltaren.', c), 'Traitement par Voltarène.');
+    // Medical-term rules (dictionary, PARHAF).
+    assert.equal(applyDrugRules('Une paniculite cutanée aux muqueuses.', c), 'Une panniculite cutanéomuqueuse.');
+    // A hand-written rule, and one that depends on context.
+    assert.equal(applyDrugRules('Sous albuffine, scanner lodose.', c), 'Sous nalbuphine, scanner low-dose.');
+    // The order: the hand-written avirus -> "à virus" runs LAST, so the
+    // dictionary rule for the whole phrase gets to match first.
+    assert.equal(applyDrugRules('Une leucémie avirus.', c), 'Une leukemia virus.');
     // And the trace names the misheard words, not just the fixed text.
-    const { rewrites } = traceDrugRules("Traitement par l'ananas de l'umab.", c);
-    assert.deepEqual(rewrites.map((r) => [r.from, r.to]), [["l'ananas de l'umab", 'lanadelumab']]);
+    const { rewrites } = traceDrugRules('Traitement par voltaren et ultibro-bris-jaller.', c);
+    assert.deepEqual(rewrites.map((r) => [r.from, r.to]),
+      [['voltaren', 'Voltarène'], ['ultibro-bris-jaller', 'Ultibro Breezhaler']]);
   });
 
   test('indexed output equals the in-order pass on a sample of the real rules', () => {

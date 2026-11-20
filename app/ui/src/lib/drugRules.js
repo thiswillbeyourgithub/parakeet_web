@@ -1,13 +1,15 @@
 // Drug-name and medical-term fix rules: regexes learned from the errors of
-// the UltiMed and parakeet-ultra models ("l'ananas de l'umab" -> "lanadelumab",
-// "ostéophite" -> "ostéophyte").
+// the UltiMed v2 model ("voltaren" -> "Voltarène", "paniculite" ->
+// "panniculite"), plus hand-written ones, from the UltiMed v2 regex repo
+// (UltiMed-ASR-FR-v2-regex-fixes).
 //
 // Two stages, so the browser does as little as possible:
 //  - BUILD (compileDrugRuleSource, run by scripts/compile-drug-rules.mjs):
-//    the model repo's regex-fixes/ drug then term rule files become the
-//    committed public/drug-rules/drug_rules.json, keeping only
-//    [pattern, replacement] per rule plus a prebuilt anchor index and the
-//    SHA-256 of each source (which deploy.sh checks against the model repo).
+//    the regex repo's six rules/ files (drug, dictionary, PARHAF, PARROT,
+//    acronyms, then the hand-written rules LAST) become the committed
+//    public/drug-rules/drug_rules.json, keeping only [pattern, replacement]
+//    per rule plus a prebuilt anchor index and the SHA-256 of each source
+//    (which deploy.sh checks against the regex repo).
 //  - RUNTIME (loadDrugRules + applyDrugRules): parse that JSON and build each
 //    RegExp only the first time a text contains its anchor, since most rules
 //    never fire for a given speaker.
@@ -17,7 +19,7 @@
 // through the anchor index: a rule only runs when its anchor (the longest
 // accent-folded word of a variant it fixes) is one of the text's words.
 // Same output, ~400x faster. Port of compile_rules() from the rule builder
-// (UltiMed-ASR-FR-v1-scripts, 08_drug_asr_rules/02_build_fix_rules.py).
+// (UltiMed-ASR-FR-v2-regex-fixes, scripts/02_build_fix_rules.py).
 //
 // Kept free of DOM/React so all of it is unit-testable
 // (test/unit/drug-rules.test.mjs).
@@ -34,7 +36,7 @@ const UNSAFE_REPLACEMENT = /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/;
 
 /** Where the app serves the compiled rules (app/ui/public/drug-rules/). */
 export const DRUG_RULES_URL = '/drug-rules/drug_rules.json';
-/** Fetch cap: the compiled drug + term rules are ~13.4 MB, so leave room for them to grow. */
+/** Fetch cap: the compiled v2 rules are ~11.1 MB, so leave room for them to grow. */
 export const DRUG_RULES_MAX_BYTES = 48 * 1024 * 1024;
 /** Bumped whenever the compiled layout changes; loadDrugRules refuses others. */
 export const DRUG_RULES_FORMAT = 1;
@@ -119,8 +121,8 @@ export function loadDrugRules(data) {
     rules: data.rules,
     res: new Array(n),
     // Raw served index; each anchor's ids are checked on first lookup
-    // (anchorRuleIds), because validating ~84k anchors up front blocked the
-    // page for ~0.5 s with the term rules merged in.
+    // (anchorRuleIds), because validating the v1 file's ~84k anchors up
+    // front blocked the page for ~0.5 s (the v2 file has ~49k).
     anchors: data.anchors,
     byAnchor: new Map(),
     ok,
