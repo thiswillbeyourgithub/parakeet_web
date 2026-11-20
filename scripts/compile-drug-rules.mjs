@@ -1,19 +1,26 @@
 #!/usr/bin/env node
-// Compile the UltiMed model repo's regex-fixes/ rule files (the hand-written
-// rules, then the drug rules, then the medical-term rules) into the ONE committed
+// Compile the UltiMed v2 regex repo's rules/ files (drug, dictionary, PARHAF,
+// PARROT, acronyms, then the hand-written rules LAST) into the ONE committed
 // app/ui/public/drug-rules/drug_rules.json the app serves (see
 // app/ui/src/lib/drugRules.js for the format and why it is split in two).
-// The term rules are meant to run after the drug rules, and one ordered list
-// gives exactly that, so the app keeps a single "Drugs" layer.
+// The files are meant to run in that order, and one ordered list gives
+// exactly that, so the app keeps a single "Drugs" layer. The v1 rules came
+// from the v1 model repo's regex-fixes/ with the hand-written rules FIRST;
+// v2 reverses that, so manual rules get the final word.
 //
-//   node scripts/compile-drug-rules.mjs            # (re)compile from the model repo
-//   node scripts/compile-drug-rules.mjs --check    # exit 1 unless in sync (deploy.sh)
+//   node scripts/compile-drug-rules.mjs                 # (re)compile from the regex repo
+//   node scripts/compile-drug-rules.mjs --repo DIR      # regex repo checked out elsewhere
+//   node scripts/compile-drug-rules.mjs --check         # exit 1 unless in sync (deploy.sh)
 //   node scripts/compile-drug-rules.mjs --source a.jsonl --source b.jsonl  # in order
+//
+// The regex repo is expected at fallback_models/UltiMed-ASR-FR-v2-regex-fixes
+// unless --repo says otherwise (relative paths resolve from the cwd).
 //
 // --check fails when a source no longer hashes to the sha256 recorded for it
 // in the COMMITTED compiled file, or when the compiled file has uncommitted
 // changes: the server pulls from git, so a compiled file that only exists in
-// this working copy would not deploy.
+// this working copy would not deploy. It also fails (source not found) when
+// the regex repo is not checked out, so deploy.sh then asks before deploying.
 //
 // Built with Claude Code.
 
@@ -26,14 +33,17 @@ import { compileDrugRuleSource, loadDrugRules } from '../app/ui/src/lib/drugRule
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'app/ui/public/drug-rules/drug_rules.json');
-const REPO = 'fallback_models/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
-const HF = 'https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx/blob/main';
-const DEFAULT_SOURCES = ['regex-fixes/manual_fix_rules.jsonl', 'regex-fixes/drug_fix_rules.jsonl', 'regex-fixes/term_fix_rules.jsonl'];
+const DEFAULT_REPO = resolve(root, 'fallback_models/UltiMed-ASR-FR-v2-regex-fixes');
+const UPSTREAM = 'https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v2-regex-fixes/blob/main';
+const DEFAULT_SOURCES = ['drug', 'dictionary', 'parhaf', 'parrot', 'acronyms', 'manual']
+  .map((name) => `rules/${name}_fix_rules.jsonl`);
 
 const args = process.argv.slice(2);
 const check = args.includes('--check');
-const given = args.flatMap((a, i) => (a === '--source' ? [resolve(args[i + 1])] : []));
-const sources = given.length ? given : DEFAULT_SOURCES.map((f) => resolve(root, REPO, f));
+const flag = (name) => args.flatMap((a, i) => (a === name ? [resolve(args[i + 1])] : []));
+const given = flag('--source');
+const repo = flag('--repo').pop() || DEFAULT_REPO;
+const sources = given.length ? given : DEFAULT_SOURCES.map((f) => resolve(repo, f));
 
 function die(msg) {
   console.error(`[drug-rules] ${msg}`);
@@ -87,9 +97,9 @@ const meta = sources.map((p, i) => {
   const commit = git(dir, 'log', '-1', '--format=%H', '--', p);
   const dirty = git(dir, 'status', '--porcelain', '--', p);
   if (dirty) console.warn(`[drug-rules] WARNING: ${relative(root, p)} has uncommitted changes in its repo.`);
-  const rel = relative(resolve(root, REPO), p);
+  const rel = relative(repo, p);
   return {
-    source: rel.startsWith('..') ? relative(root, p) : `${HF}/${rel}`,
+    source: rel.startsWith('..') ? relative(root, p) : `${UPSTREAM}/${rel}`,
     commit: commit ? `${commit}${dirty ? ' (plus uncommitted changes)' : ''}` : 'unknown',
     sha256: shas[i],
   };

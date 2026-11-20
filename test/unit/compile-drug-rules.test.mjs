@@ -1,7 +1,7 @@
 // Tier-1 test for scripts/compile-drug-rules.mjs --check, the gate deploy.sh
-// runs so the app's compiled drug rules cannot drift from the model repo.
+// runs so the app's compiled drug rules cannot drift from the UltiMed v2 regex repo.
 //
-// Only the failure direction is testable here (the model repo is not checked
+// Only the failure direction is testable here (the regex repo is not checked
 // out in CI), and that is the one that matters: a gate that fails for the
 // WRONG reason trains you to ignore it. The first version read the committed
 // 1.9 MB file through execFileSync's default 1 MB buffer and so answered "not
@@ -30,4 +30,10 @@ test('--check fails on a missing source instead of passing', () => {
   const r = run('--check', '--source', join(tmpdir(), 'no-such-drug-rules.jsonl'));
   assert.equal(r.status, 1);
   assert.match(r.stderr, /source not found/);
+});
+
+test('--check fails when the regex repo is not checked out, naming its first rule file', () => {
+  const r = run('--check', '--repo', mkdtempSync(join(tmpdir(), 'no-regex-repo-')));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /source not found: .*rules\/drug_fix_rules\.jsonl/);
 });
