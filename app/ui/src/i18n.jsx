@@ -68,7 +68,7 @@ const translations = {
     drugFixView: 'Drugs',
     drugFixHint: 'Correct misheard drug names and medical terms ({n} rules, applied before Dictation)',
     drugFixSetting: 'Correct misheard drug names and medical terms',
-    tooltipDrugFix: 'Adds a "Drugs" view, right of Raw, that repairs French drug names and medical terms the model tends to mishear ("l’ananas de l’umab" becomes "lanadelumab", "ostéophite" becomes "ostéophyte"). About 28,000 rules learned from the errors of the UltiMed and parakeet-ultra models, applied to the raw text before the Dictation cleanup. French only. They changed none of 602,813 correct labels, but ordinary speech can still occasionally be rewritten, so switch the view off on any entry to see what the model actually heard.',
+    tooltipDrugFix: 'Adds a "Drugs" view, right of Raw, that repairs French drug names and medical terms the model tends to mishear ("dolut et gravir" becomes "dolutégravir", "paniculite" becomes "panniculite"). About 25,000 rules learned from the errors of the v2 UltiMed model on the UltiMed v2 dataset, applied to the raw text before the Dictation cleanup. French only. They change none of its 602,776 correct labels, but ordinary speech can still occasionally be rewritten, so switch the view off on any entry to see what the model actually heard.',
     speakers: 'Speakers',
     speaker: 'Speaker',
     // Gap-free default speaker labels: positions 0..11 use these ordinals; a
@@ -609,7 +609,7 @@ const translations = {
     drugFixView: 'M\u00e9dicaments',
     drugFixHint: 'Corriger les noms de médicaments et termes médicaux mal entendus ({n} règles, appliquées avant la Dictée)',
     drugFixSetting: 'Corriger les noms de médicaments et termes médicaux mal entendus',
-    tooltipDrugFix: 'Ajoute un affichage « Médicaments », à droite de Brut, qui répare les noms de médicaments et les termes médicaux que le modèle entend mal (« l’ananas de l’umab » devient « lanadelumab », « ostéophite » devient « ostéophyte »). Environ 28 000 règles apprises sur les erreurs des modèles UltiMed et parakeet-ultra, appliquées au texte brut avant le nettoyage Dictée. Français uniquement. Elles n’ont modifié aucune de 602 813 étiquettes correctes, mais un propos ordinaire peut encore être réécrit de temps en temps : désactivez l’affichage sur une entrée pour voir ce que le modèle a réellement entendu.',
+    tooltipDrugFix: 'Ajoute un affichage « Médicaments », à droite de Brut, qui répare les noms de médicaments et les termes médicaux que le modèle entend mal (« dolut et gravir » devient « dolutégravir », « paniculite » devient « panniculite »). Environ 25 000 règles apprises sur les erreurs du modèle UltiMed v2 sur le jeu de données UltiMed v2, appliquées au texte brut avant le nettoyage Dictée. Français uniquement. Elles ne modifient aucune de ses 602 776 étiquettes correctes, mais un propos ordinaire peut encore être réécrit de temps en temps : désactivez l’affichage sur une entrée pour voir ce que le modèle a réellement entendu.',
     speakers: 'Locuteurs',
     speaker: 'Locuteur',
     speakerOrdinals: 'Premier,Deuxième,Troisième,Quatrième,Cinquième,Sixième,Septième,Huitième,Neuvième,Dixième,Onzième,Douzième',
