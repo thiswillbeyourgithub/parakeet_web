@@ -2111,7 +2111,7 @@ Plasmodium vivax
 Plerixafor
 Pneumococcus
 Pneumocystis carinii
-Pneumocystis jiroveci
+Pneumocystis jirovecii
 Polyomavirus
 Porocephalus armillatus
 Porocephalus moniliformis
@@ -7061,7 +7061,7 @@ anneau de Kayser-Fleischer
 anneau de Liesegang
 anneau de Schatzki
 anneau de Schwalbe
-anneau de Soemmering
+anneau de Sömmerring
 anneau de Vieussens
 anneau de Waldeyer
 anneau de Winkler-Waldeyer
@@ -9252,9 +9252,9 @@ artère médiane de l'avant-bras
 artère médiastinale antérieure de l'artère pulmonaire gauche
 artère médiastinale de l'artère pulmonaire droite
 artère médiastinale ventrale de l'artère pulmonaire gauche ou droite
-artère médulaire segmentaire de l'artère vertébrale
-artère médulaire segmentaire des artères intercostales postérieures
-artère médulaire segmentaire des artères lombales
+artère médullaire segmentaire de l'artère vertébrale
+artère médullaire segmentaire des artères intercostales postérieures
+artère médullaire segmentaire des artères lombales
 artère méningée antérieure
 artère méningée de Cruveilhier
 artère méningée moyenne
@@ -12213,7 +12213,7 @@ bourse de Fabricius
 bourse de Hencke
 bourse de Luschka
 bourse de Monro
-bourse de Thornwaldt
+bourse de Tornwaldt
 bourse de l'os hyoïde
 bourse de la patte d'oie
 bourse du muscle coraco-brachial
@@ -13464,7 +13464,6 @@ calicotomie
 calicule gustatif
 californium 252
 callicréine
-callidine
 calliphore
 callosité
 callosotomie
@@ -16205,7 +16204,6 @@ cholériforme
 cholérique
 cholérèse
 cholérétique
-choléstyramine
 choléstéatome du conduit auditif externe
 chondrectomie
 chondriome
@@ -19072,7 +19070,6 @@ correction de Yates
 correction de l'astigmatisme
 correction optique
 correction prismatique
-correctopie
 correspondance rétinienne anormale
 corridor biologique
 corrine
@@ -19695,7 +19692,7 @@ crise épileptique vertigineuse
 crise épileptique épigastrique
 crises comitiales fébriles familiales
 crises comitiales plus de type 7
-crises familiales infantiles bégnines
+crises familiales infantiles bénignes
 crises partielles migrantes malignes du nourrisson
 crises partielles migratrices malignes de l'enfance
 crista galli
@@ -19918,7 +19915,7 @@ crête du soléaire
 crête du vestibule
 crête ethmoïdale du maxillaire
 crête ethmoïdale du palatin
-crête falsiforme
+crête falciforme
 crête frontale
 crête fémorale
 crête glénoïdienne
@@ -20858,7 +20855,6 @@ dalton
 daltonisme
 daltéparine sodique:::fph
 daltéparine:::fph
-damètre bi-ischiatique
 danaparoïde sodique:::fph
 danaparoïde:::fph
 danaporoïde
@@ -21450,6 +21446,7 @@ diamètre antéropostérieur vrai du détroit supérieur
 diamètre bi-acromial
 diamètre bi-crêtal
 diamètre bi-iliaque
+diamètre bi-ischiatique
 diamètre bi-épineux
 diamètre bi-épineux antérieur
 diamètre bi-épineux postérieur
@@ -23195,6 +23192,7 @@ dystrophie prédescemétique de Grayson-Wilbrandt
 dystrophie pseudo-inflammatoire de Sorsby
 dystrophie pseudo-inflammatoire rétinienne
 dystrophie pseudovitelliforme
+dystrophie pulmonaire progressive
 dystrophie péripapillaire choroïdienne
 dystrophie récidivante atraumatique de Franceschetti
 dystrophie réticulée de l'épithélium pigmenté rétinien
@@ -23230,7 +23228,6 @@ dystrophies musculaires oculopharyngées
 dystrophies élastiquses
 dystrophine
 dystrophinopathie
-dystropnie pulmonaire progressive
 dysurie
 dysurique
 dysversion papillaire
@@ -24274,8 +24271,8 @@ ectasie veineuse distale
 ectasies cornéennes non inflammatoires
 ecthyma
 ecthyma contagiosum
-ecthyma gangraenosum
-ecthyma gangraenosum de Ehlers
+ecthyma gangrenosum
+ecthyma gangrenosum de Ehlers
 ecthyma gangréneux
 ectobacillus antri:::fph
 ectobacillus funiculus:::fph
@@ -26447,7 +26444,7 @@ faisceau fronto-pontin
 faisceau gracile
 faisceau géniculé
 faisceau habéno-pédonculaire
-faisceau hyo-thyroïdien de Soemmerring
+faisceau hyo-thyroïdien de Sömmerring
 faisceau hypothalamo-hypophysaire
 faisceau hypothalamo-mésencéphalique
 faisceau hétérogène
@@ -28634,7 +28631,6 @@ fossette de Ionescu
 fossette de Krause
 fossette de Mohrenheim
 fossette de Morgagni
-fossette de Rosenmüler
 fossette de Rosenmüller
 fossette de l'anthélix
 fossette de la fenêtre de la cochlée
@@ -30786,7 +30782,7 @@ glycogénolyse
 glycogénose
 glycogénose de type I
 glycogénose hépatique de type VI
-glycogénose hépatomusculaire bégnine
+glycogénose hépatomusculaire bénigne
 glycogénose hépatorénale
 glycogénoses cardiaques
 glycogénoses de type I à VII
@@ -32368,6 +32364,7 @@ hidradénocarcinome
 hidradénocarcinome à cellules claires
 hidradénome
 hidradénome apocrine
+hidradénome de la vulve
 hidradénome des paupières
 hidradénome nodulaire
 hidradénome papillaire de la vulve
@@ -32377,6 +32374,7 @@ hidradénome vulvaire
 hidradénome à cellules claires
 hidradénome éruptif de Darier et Jacquet
 hidroacanthome
+hidrocystome
 hidrocystome apocrine
 hidrocystome des paupières
 hidrocystome eccrine
@@ -32880,7 +32878,6 @@ hydrocortisone acéponate:::fph
 hydrocortisone butyrate:::fph
 hydrocortisone:::fph
 hydrocution
-hydrocystome
 hydrocytose
 hydrocèle
 hydrocèle de la femme
@@ -34649,7 +34646,6 @@ idiotype dominant
 idiotype public
 idioventriculaire
 idose
-idradénome de la vulve
 idursulfase:::fph
 idéal du moi
 idéalisme passionné
@@ -34741,14 +34737,14 @@ image MinIP
 image animée
 image d'addition
 image d'œuf au nid
-image de Lachapèle
+image de Lachapelle
 image de Stierlin
 image de bord
 image de défilé
 image de scissure
 image de soustraction
 image de synthèse
-image des petits chiens de Lachapèle
+image des petits chiens de Lachapelle
 image diverticulaire
 image en
 image en J de l'uretère
@@ -36611,7 +36607,6 @@ kanokad:::fph
 kaolin lourd:::fph
 kaolinose
 kardegic:::fph
-karyophérine
 karyoplaste
 kath
 kayexalate:::fph
@@ -37530,8 +37525,8 @@ lame musculaire de la muqueuse gastrique
 lame musculaire de la muqueuse œsophagienne
 lame médiale du cartilage du tube auditif
 lame médiale du processus ptérygoïde de l'os sphénoïde
-lame médulaire latérale de l'amygdale
 lame médullaire externe du noyau lenticulaire
+lame médullaire latérale de l'amygdale
 lame médullaire médiale de l'amygdale
 lame orbitaire de l'os ethmoïde
 lame papyracée de l'ethmoïde
@@ -39241,10 +39236,9 @@ lipoblastome bénin
 lipobrachie
 lipocalcinogranulomatose de Teustchländer
 lipocalcinogranulomatose de Teutschländer
-lipocalicine
+lipocaline
 lipocaline 2
 lipocaline associée à la gélatinase des neutrophiles
-lipocalycine
 lipocaïne
 lipocaïque
 lipochrome
@@ -39299,7 +39293,7 @@ lipome de la queue de cheval
 lipome frontal sous-aponévrotique
 lipome mammaire
 lipome naso-palpébral-colobome des paupières
-lipome pléiomorphe
+lipome pléomorphe
 lipome rénal
 lipome utérin
 lipome à cellules fusiformes
@@ -40732,7 +40726,7 @@ maladie de Caroli-Schiff
 maladie de Carrington
 maladie de Carrión
 maladie de Carré
-maladie de Castelman
+maladie de Castleman
 maladie de Chagas
 maladie de Chanarin-Dorfman
 maladie de Charcot
@@ -40873,7 +40867,7 @@ maladie de Kozlowski
 maladie de Kubisagari
 maladie de Kufs
 maladie de Kuskokwim
-maladie de Kußmaul-Maier
+maladie de Kussmaul-Maier
 maladie de Kyrle
 maladie de Kyrle et cataracte
 maladie de Köhler-Mouchet
@@ -41411,7 +41405,7 @@ mamelon surnuméraire
 mamelonnaire
 mamelons gastriques
 mammectomie
-mammectomie souscutanée
+mammectomie sous-cutanée
 mammite
 mammite du nouveau-né
 mammogenèse
@@ -45445,7 +45439,7 @@ mésothérapie
 mésovarium
 mésuser, abuser
 mésylate d'osimertinib:::fph
-mésylate de déferrioxamine
+mésylate de desferrioxamine
 mésylate de nétarsudil:::fph
 méta-analyse
 méta-iodobenzyl-guanidine
@@ -45804,7 +45798,6 @@ naissance après terme
 naissance avant terme
 naissance vivante
 naissance à terme
-nalbufine:::fph
 nalbuphine:::fph
 naldémédine:::fph
 nalméfène:::fph
@@ -49326,7 +49319,7 @@ ostium uro-génital
 ostium utérin de la trompe utérine
 ostium éjaculateur
 ostéite
-ostéite bégnine circonscrite du conduit auditif externe
+ostéite bénigne circonscrite du conduit auditif externe
 ostéite cystoïde
 ostéite déformante hypertrophique
 ostéite fibreuse de la face
@@ -53438,7 +53431,6 @@ plèvre médiastinale
 plèvre pariétale
 plèvre pulmonaire
 plèvre viscérale
-pléiomorphe
 pléiotrope
 pléiotropique
 plélomazie, pléomazie
@@ -58569,7 +58561,7 @@ respiration abdominale paradoxale
 respiration contrôlée
 respiration de Biot
 respiration de Cheyne Stokes
-respiration de Kußmaul
+respiration de Kussmaul
 respiration fœtale intra-utérine
 respiration glossopharyngée
 respiration paradoxale
@@ -59556,11 +59548,9 @@ réaction de Prausnitz-Küstner
 réaction de Reiprich
 réaction de Rivalta
 réaction de Sabin et Feldman
-réaction de Sanarelli-Schwartzman
 réaction de Sanarelli-Shwartzman
 réaction de Schultz-Charlton
 réaction de Schutz-Dale
-réaction de Schwartzman
 réaction de Shwartzman
 réaction de Singer et Plotz
 réaction de Teichmann
@@ -66654,7 +66644,7 @@ syndrome de Jackson
 syndrome de Jackson-Weiss
 syndrome de Jacobsen
 syndrome de Jacod
-syndrome de Jadassohn-Levandovsky
+syndrome de Jadassohn-Lewandowsky
 syndrome de Jaeken
 syndrome de Jaffe
 syndrome de Jahnke
@@ -70544,7 +70534,7 @@ triangle d'Einthoven
 triangle de Béclard
 triangle de Codman
 triangle de Fochier et Gonnet
-triangle de Grynfelt
+triangle de Grynfeltt
 triangle de Henke
 triangle de Hesselbach
 triangle de Jean-Louis Petit
@@ -71538,7 +71528,7 @@ tumeur intracanalaire papillaire mucineuse du pancréas
 tumeur juxtaglomérulaire
 tumeur lympho-épithéliale
 tumeur maligne conjonctive
-tumeur maligne d'Abrikossof
+tumeur maligne d'Abrikossoff
 tumeur maligne à cellules de Langerhans
 tumeur maligne épithéliale
 tumeur mixte
@@ -73692,7 +73682,6 @@ veines parotidiennes
 veines pectorales
 veines perforantes
 veines perforantes de Cockett
-veines perforantes de Cokett
 veines perforantes de cuisse
 veines pharyngées
 veines phréniques inférieures
