@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The "Drugs" view now uses the UltiMed v2 rules
+
+The fix rules behind the **Drugs** transcript view now come from the new [UltiMed v2 regex repo](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v2-regex-fixes) (AGPL-3.0-or-later) instead of the v1 model repo: 25,091 rules in six files, mined from the errors of the UltiMed v2 model on the v2 corpus, applied in the order drug names (2,447), dictionary terms (18,261), PARHAF (2,173), PARROT (117), acronyms (43), then the 2,050 hand-written rules last (v1 ran them first). The compiled file shrinks from 23.6 MB to 11.1 MB (about 0.7 MB as served). For operators: `scripts/compile-drug-rules.mjs` now expects the regex repo checked out at `fallback_models/UltiMed-ASR-FR-v2-regex-fixes` (or takes `--repo DIR`).
+
 ### A "Dictation commands" reference, and the dictation templates now work
 
 A new **Dictation commands** link on the main screen (also a button in the settings sidebar) opens a table of what to say in Dictation view to get each line break, punctuation mark, abbreviation or template, with the recommended phrase in bold (for example "nouveau tiret" for a list dash, since a bare "tiret" is not understood). The phrases are tried against the rules this instance actually loaded, so the table only lists what really works here.

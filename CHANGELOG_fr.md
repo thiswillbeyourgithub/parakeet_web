@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### L'affichage « Médicaments » utilise désormais les règles UltiMed v2
+
+Les règles de correction de l'affichage **Médicaments** viennent désormais du nouveau [dépôt de regex UltiMed v2](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v2-regex-fixes) (AGPL-3.0-or-later) au lieu du dépôt du modèle v1 : 25 091 règles réparties en six fichiers, tirées des erreurs du modèle UltiMed v2 sur le corpus v2, appliquées dans l'ordre noms de médicaments (2 447), termes du dictionnaire (18 261), PARHAF (2 173), PARROT (117), acronymes (43), puis les 2 050 règles écrites à la main en dernier (la v1 les appliquait en premier). Le fichier compilé passe de 23,6 Mo à 11,1 Mo (environ 0,7 Mo tel que servi). Pour les opérateurs : `scripts/compile-drug-rules.mjs` attend désormais le dépôt de regex cloné dans `fallback_models/UltiMed-ASR-FR-v2-regex-fixes` (ou prend `--repo DIR`).
+
 ### Un aide-mémoire des « commandes de dictée », et les modèles de dictée fonctionnent enfin
 
 Un nouveau lien **Commandes de dictée** sur l'écran principal (aussi un bouton dans la barre latérale des réglages) ouvre un tableau de ce qu'il faut dire en vue Dictée pour obtenir chaque retour à la ligne, signe de ponctuation, abréviation ou modèle, avec la formulation recommandée en gras (par exemple « nouveau tiret » pour un tiret de liste, car « tiret » seul n'est pas compris). Les formulations sont testées contre les règles réellement chargées par cette instance, donc le tableau ne liste que ce qui fonctionne ici.
