@@ -444,7 +444,8 @@ const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') 
 const BENCHMARK_UPLOAD_PATH = '/api/signal/benchmark-report';
 
 // A ?model=<query> query param lets a shareable link pin which model repo the
-// page loads, e.g. ?model=ultra-ultimed for Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx.
+// page loads, e.g. ?model=ultra-ultimed for Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx
+// (an old link naming a pre-v2 UltiMed repo id resolves to v2 too).
 // Read once at module load (the query string doesn't change within a session).
 //
 // UNLIKE ?phrase_boost above, this one DOES override a returning visitor's

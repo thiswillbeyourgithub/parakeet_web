@@ -20,7 +20,7 @@ import { routeSyntheticLocalMirror } from './routes.mjs';
 import { readSetting, seedSettings } from './seed.mjs';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
 
 // The list the preset selects, served from test/e2e/fixtures/boost-phrases/.
 const MED_LIST = 'french_medical.txt';

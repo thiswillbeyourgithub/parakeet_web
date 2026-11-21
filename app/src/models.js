@@ -5,6 +5,8 @@
  * rather than scattered hardcoded constants.
  */
 
+import { ULTIMED_MODEL_REPO } from './defaultRepos.js';
+
 /**
  * Language display names for supported languages.
  * @type {Object.<string, string>}
@@ -80,10 +82,11 @@ export const MODELS = {
   // vocabulary (8193 lines), 128 mel bins and TDT prediction network, so it
   // rides every code path the base model does. Listed here rather than left to
   // getModelConfig's null fallback so it gets a display name and the same
-  // revision pin; the app offers it through the VITE_MODEL_REPO list.
+  // revision pin; the app offers it through the VITE_MODEL_REPO list. The
+  // repo id is UltiMed v2, owned by ./defaultRepos.js with the renamed-id map.
   'parakeet-tdt-0.6b-v3-ultra-ultimed': {
-    repoId: 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx',
-    displayName: 'Parakeet TDT 0.6B v3 ultra UltiMed (French medical)',
+    repoId: ULTIMED_MODEL_REPO,
+    displayName: 'Parakeet TDT 0.6B v3 ultra UltiMed v2 (French medical)',
     languages: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'ru', 'uk', 'ja', 'ko', 'zh'],
     defaultLanguage: 'fr',
     vocabSize: 4097,

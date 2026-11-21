@@ -18,7 +18,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchModelRepo } from '../../app/ui/src/lib/modelRepos.js';
+import { matchModelRepo, parseModelRepos } from '../../app/ui/src/lib/modelRepos.js';
 
 import {
   MED_MODE_ALIASES,
@@ -86,17 +86,28 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
   test('pins the medical model query, resolved against the offered repos', () => {
     // Deliberately a QUERY for matchModelRepo, not a repo id: the preset has to
     // resolve against whatever the operator put in VITE_MODEL_REPO.
-    assert.equal(MED_MODE_PRESET.modelQuery, 'ultra-ultimed');
+    assert.equal(MED_MODE_PRESET.modelQuery, 'ultra-ultimed-v2');
   });
 
   test('resolves to the ultra finetune even when redux-UltiMed-experimental is offered too', () => {
     const repos = [
       'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx',
-      'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx',
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx',
       'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx',
     ];
     assert.equal(matchModelRepo(MED_MODE_PRESET.modelQuery, repos),
-      'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx');
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx');
+  });
+
+  test('picks UltiMed v2 when v1 is offered too, and on an env still naming the pre-v2 id', () => {
+    // "ultra-ultimed" alone is a prefix of both v1 and v2 labels, so a list
+    // offering both would be ambiguous (null) and ?mode=med would keep the
+    // current model. The pre-v2 id is migrated by parseModelRepos.
+    const V1 = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx';
+    const V2 = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
+    assert.equal(matchModelRepo(MED_MODE_PRESET.modelQuery, ['Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx', V1, V2]), V2);
+    const legacyEnv = parseModelRepos('Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx');
+    assert.equal(matchModelRepo(MED_MODE_PRESET.modelQuery, legacyEnv), V2);
   });
 
   test('pins the French medical phrase list', () => {

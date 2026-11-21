@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 import { seedSettings, readSetting } from './seed.mjs';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
 
 /** Boot the app with a two-repo instance config. */
 async function configureTwoRepos(page) {

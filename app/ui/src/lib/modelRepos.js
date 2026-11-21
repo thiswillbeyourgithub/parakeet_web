@@ -8,31 +8,14 @@
 // local mirror and goes back to HuggingFace for weights it was told to
 // self-host.
 
-/** Repo used when the operator configured nothing at all (shared with the container's HF relay allowlist). */
-import { DEFAULT_MODEL_REPO } from '../../../src/defaultRepos.js';
-
-export { DEFAULT_MODEL_REPO };
-
 /**
- * Repos renamed on the hub (2026-10-19), old id -> new id. The hub redirects
- * the old URLs, but a visitor's SAVED pick is compared to the offered list by
- * exact id, so without this a returning UltiMed user silently fell back to
- * the default model.
+ * Repo used when the operator configured nothing at all, and the renamed-repo
+ * map (both shared with the container's HF relay allowlist, see
+ * defaultRepos.js for why they live there).
  */
-export const RENAMED_REPOS = Object.freeze({
-  'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx',
-  'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx',
-});
+import { DEFAULT_MODEL_REPO, RENAMED_REPOS, migrateRepoId } from '../../../src/defaultRepos.js';
 
-/**
- * Map a possibly pre-rename repo id to its current id (identity otherwise).
- *
- * @param {string|null|undefined} repoId
- * @returns {string|null|undefined}
- */
-export function migrateRepoId(repoId) {
-  return RENAMED_REPOS[repoId] ?? repoId;
-}
+export { DEFAULT_MODEL_REPO, RENAMED_REPOS, migrateRepoId };
 
 // A HuggingFace repo id: `owner/name`, both segments limited to the characters
 // HF itself allows. Deliberately the same shape entrypoint.sh validates, so an
@@ -47,7 +30,9 @@ const REPO_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * a visitor with no saved choice. Blank entries, surrounding whitespace and
  * duplicates are dropped; anything that is not a valid repo id is dropped too,
  * because a malformed entry would otherwise become a picker option that fails
- * at download time with a confusing 404.
+ * at download time with a confusing 404. A renamed id is replaced by its
+ * current id (migrateRepoId) before deduplication, so an operator env that
+ * still lists a pre-v2 UltiMed id offers UltiMed v2.
  *
  * @param {string|undefined|null} raw The configured value.
  * @returns {string[]} Repo ids, at least one (falls back to DEFAULT_MODEL_REPO).
@@ -56,7 +41,7 @@ export function parseModelRepos(raw) {
   const seen = new Set();
   const out = [];
   for (const part of String(raw ?? '').split(',')) {
-    const id = part.trim();
+    const id = migrateRepoId(part.trim());
     if (!id || !REPO_ID_RE.test(id) || seen.has(id)) continue;
     seen.add(id);
     out.push(id);
@@ -91,7 +76,8 @@ export function shortRepoLabel(repoId) {
  *
  * The point of the param is shareable links, so it must tolerate what someone
  * would actually type: `?model=ultimed` rather than the full
- * `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx`. Matching runs in decreasing
+ * `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`. A renamed repo id
+ * (an old shared link) is first replaced by its current id. Matching runs in decreasing
  * order of confidence and stops at the first tier that yields exactly one
  * candidate:
  *
@@ -111,7 +97,7 @@ export function shortRepoLabel(repoId) {
  * @returns {string|null} The matched repo id, or null when nothing matches.
  */
 export function matchModelRepo(query, repos) {
-  const q = String(query ?? '').trim().toLowerCase();
+  const q = String(migrateRepoId(String(query ?? '').trim())).toLowerCase();
   if (!q || !Array.isArray(repos) || repos.length === 0) return null;
 
   const only = (list) => (list.length === 1 ? list[0] : null);

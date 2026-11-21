@@ -23,7 +23,7 @@ import { loadedModelDiverges, describeLoadedModel, reconcileSelection, effective
 
 const LABELS = { wasm: 'CPU', webgpu: 'GPU', fromHub: 'from HuggingFace', fromLocal: 'from this server', fromRelay: 'relayed by this server' };
 const REPO = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const OTHER = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
+const OTHER = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
 
 const loaded = (over = {}) => ({
   repoId: REPO, backend: 'wasm', encoderQuant: 'int8', servedFrom: 'hf', ...over,
