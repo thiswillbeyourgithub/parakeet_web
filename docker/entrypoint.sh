@@ -276,6 +276,19 @@ case "$HF_MODEL_RELAY" in
     ;;
 esac
 
+# Renamed model repos (e.g. a pre-v2 UltiMed id, now UltiMed v2): replace each
+# VITE_MODEL_REPO entry by its current id HERE, once, using the map the bundle
+# also uses (RENAMED_REPOS in defaultRepos.js). The browser would migrate the
+# entry anyway, so without this the relay below would allowlist the old id and
+# refuse the new one the app actually asks for.
+if [ -n "${VITE_MODEL_REPO:-}" ]; then
+  _migrated_repos="$(node --input-type=module -e 'const m = await import("/opt/parakeet/app/src/defaultRepos.js"); process.stdout.write(process.argv[1].split(",").map(m.migrateRepoId).join(","));' "$VITE_MODEL_REPO")"
+  if [ "$_migrated_repos" != "$VITE_MODEL_REPO" ]; then
+    echo "[entrypoint] VITE_MODEL_REPO names renamed repo(s); using ${_migrated_repos} (update docker/.env to silence this)."
+    VITE_MODEL_REPO="$_migrated_repos"
+  fi
+fi
+
 echo "[entrypoint] === Environment variables ==="
 echo "[entrypoint] VITE_DEV_MODE=${VITE_DEV_MODE:-(not set)}"
 echo "[entrypoint] VITE_ANALYTICS_URL=${VITE_ANALYTICS_URL:-(not set)}"

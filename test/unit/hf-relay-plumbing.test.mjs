@@ -18,6 +18,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -124,6 +125,30 @@ describe('HF relay: the entrypoint', () => {
     // or it would trip on its own value.
     assert.ok(ENTRYPOINT.indexOf('for _old_var in') < ENTRYPOINT.indexOf('VITE_MODEL_SOURCE="both"'));
     assert.match(ENTRYPOINT, /if \[ -d \/models \] && \[ -n "\$\(ls -A \/models[\s\S]{0,400}?exit 1/);
+  });
+});
+
+describe('HF relay: renamed repos are migrated before the allowlist is built', () => {
+  // The browser replaces a renamed VITE_MODEL_REPO entry (a v1-era UltiMed
+  // id) by its current id, so if the entrypoint allowlisted the raw value the
+  // relay would refuse the exact repo the app asks for.
+  const m = ENTRYPOINT.match(/_migrated_repos="\$\(node --input-type=module -e '([^']+)'/);
+
+  test('the migration runs before the relay loop', () => {
+    assert.ok(m, 'no VITE_MODEL_REPO migration in the entrypoint');
+    assert.ok(ENTRYPOINT.indexOf(m[0]) < ENTRYPOINT.indexOf('for _repo in ${VITE_MODEL_REPO'));
+  });
+
+  test('the shipped one-liner maps the v1-era UltiMed ids to v2', () => {
+    const local = new URL('../../app/src/defaultRepos.js', import.meta.url).href;
+    assert.ok(m[1].includes('/opt/parakeet/app/src/defaultRepos.js'));
+    const js = m[1].replace('/opt/parakeet/app/src/defaultRepos.js', local);
+    const run = (v) => execFileSync(process.execPath, ['--input-type=module', '-e', js, v], { encoding: 'utf8' });
+    assert.equal(
+      run('Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx'),
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx',
+    );
+    assert.equal(run('Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx'), 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx');
   });
 });
 
