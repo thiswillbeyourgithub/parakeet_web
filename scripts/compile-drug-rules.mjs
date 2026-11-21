@@ -34,7 +34,7 @@ import { compileDrugRuleSource, loadDrugRules } from '../app/ui/src/lib/drugRule
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'app/ui/public/drug-rules/drug_rules.json');
 const DEFAULT_REPO = resolve(root, 'fallback_models/UltiMed-ASR-FR-v2-regex-fixes');
-const UPSTREAM = 'https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v2-regex-fixes/blob/main';
+const UPSTREAM = 'https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes/blob/main';
 const DEFAULT_SOURCES = ['drug', 'dictionary', 'parhaf', 'parrot', 'acronyms', 'manual']
   .map((name) => `rules/${name}_fix_rules.jsonl`);
 
