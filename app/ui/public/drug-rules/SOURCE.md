@@ -1,6 +1,6 @@
 # Compiled drug-name and medical-term fix rules
 
-- File: `drug_rules.json`, compiled by `scripts/compile-drug-rules.mjs` from the six rule files of the UltiMed v2 regex repo, in this order (25,099 rules at the last refresh, regex repo commit `474d172`):
+- File: `drug_rules.json`, compiled by `scripts/compile-drug-rules.mjs` from the six rule files of the UltiMed v2 regex repo, in this order (25,099 rules at the last refresh, regex repo commit `596bcf2`):
   1. `rules/drug_fix_rules.jsonl`: drug names (2,447 rules)
   2. `rules/dictionary_fix_rules.jsonl`: medical terms, dictionary subset (18,261 rules)
   3. `rules/parhaf_fix_rules.jsonl`: medical terms, PARHAF subset (2,172 rules)
