@@ -54,7 +54,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 **The reference deployment offers three models**, and you switch between them from the model picker in the sidebar (see [Offering several models](#offering-several-models)):
 
 - [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) (the default): an ONNX export of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), a further-trained Parakeet TDT 0.6B v3. On the full 25-language FLEURS validation split (greedy, int8) it scores 11.57 % macro WER against 13.14 % for the plain v3 export ([Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), which it supersedes and which is no longer offered). `?model=ultra`.
-- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx): moondream's parakeet-ultra (a post-trained Parakeet TDT 0.6B v3) fine-tuned on [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2) (3,348 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultra-ultimed`.
+- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx): moondream's parakeet-ultra (a post-trained Parakeet TDT 0.6B v3) fine-tuned on [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2) (3,348 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultra-ultimed`. This is UltiMed **v2**; the earlier model is still on the hub as [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx), and its former id `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx` (which the hub now redirects to v1) is read by the app as v2, so saved settings, old links and old `VITE_MODEL_REPO` values keep working.
 - [**Olicorne/parakeet-tdt-0.6b-v3-redux-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx): an ONNX export of [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), whose encoder weights are ternary (each weight is -a, 0 or +a). That makes a 2-bit encoder lossless, so this repo also ships **w2a8**, a 190 MB encoder, about a third of the int8 download, which scores 12.64 % macro WER on the same split, identical to Redux int8 and fp32. `?model=redux`.
 
 All three are listed with the rest of the stack under [Related repositories](#related-repositories).
@@ -463,7 +463,7 @@ gets:
 
 ```bash
 # In docker/.env:
-VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx
 ```
 
 That pair is what `docker/env.example` suggests: the multilingual default
@@ -479,12 +479,19 @@ switching back downloads again.
 
 A link can pin one of them with `?model=<query>`, matched loosely against
 the list, so `https://your-host/?model=ultra-ultimed` selects
-`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx`. Unlike `?phrase_boost=`, this
+`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`. Unlike `?phrase_boost=`, this
 one **does** override a returning visitor's saved choice, since a link that
 landed on whatever the recipient last used would not be worth sharing. It
 is deliberately not saved over their choice: their own pick is back on their
 next ordinary visit. A `?model=` value that matches nothing, or that matches
 two repos equally well, is ignored rather than guessed.
+
+The pre-v2 UltiMed ids (`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx` and
+the older `Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`) are replaced by the v2
+id wherever they appear: in `VITE_MODEL_REPO` (the entrypoint logs the
+substitution and the relay allowlists v2), in a visitor's saved choice, and in
+a `?model=` link. To serve UltiMed v1 on purpose, list
+`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`.
 
 Built with [Claude Code](https://claude.com/claude-code).
 
@@ -626,7 +633,7 @@ The models this app loads, and the French medical ASR stack behind them, are all
 | Repository | What it is |
 | --- | --- |
 | [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2) | The dataset the fine-tune was trained on: 601,228 clips / 3,348 h of synthesized French medical speech, plus an eval-only [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) subset. |
-| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
+| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) | [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-redux-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) | [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), a ternary-weight model, exported to ONNX (fp32 / fp16 / int8 / w4a8 / w2a8, the last three packing the ternary weights exactly). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The plain v3 export the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. Superseded by the ultra export and no longer offered by the app; kept online so existing links keep working. |
