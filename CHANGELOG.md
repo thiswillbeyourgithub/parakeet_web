@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The medical model is now UltiMed v2
+
+The French medical model is now UltiMed v2, [`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx), the model whose errors the v2 drug rules below were mined from. On the hub the previous model was renamed to `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`. The old ids (`...-ultra-UltiMed-onnx` and the older `...-UltiMed-onnx`) still resolve, to v2: a saved model choice, an old `?model=` link and an operator's `VITE_MODEL_REPO` all keep working, and the entrypoint logs the substitution so the relay allowlists the right repo. `?model=ultra-ultimed` and **Mode Dictée Médical** select v2; to serve v1 on purpose, list its `-v1-onnx` id. A returning UltiMed user downloads the v2 weights once (the browser cache is keyed by repo id), and the v1 files are then dropped from the cache.
+
 ### The "Drugs" view now uses the UltiMed v2 rules
 
 The fix rules behind the **Drugs** transcript view now come from the new [UltiMed v2 regex repo](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (AGPL-3.0-or-later) instead of the v1 model repo: 25,099 rules in six files, mined from the errors of the UltiMed v2 model on the v2 corpus, applied in the order drug names (2,447), dictionary terms (18,261), PARHAF (2,172), PARROT (117), acronyms (43), then the 2,059 hand-written rules last (v1 ran them first). The compiled file shrinks from 23.6 MB to 11.1 MB (about 0.7 MB as served). For operators: `scripts/compile-drug-rules.mjs` now expects the regex repo checked out at `fallback_models/UltiMed-ASR-FR-v2-regex-fixes` (or takes `--repo DIR`).
