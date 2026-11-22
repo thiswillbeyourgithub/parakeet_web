@@ -24,15 +24,33 @@ const FIXTURE_AUDIO = resolve(here, '../fixtures/jfk.mp3');
 const GOLDEN = readFileSync(resolve(here, '../fixtures/jfk.expected.txt'), 'utf-8').trim();
 
 function watch(page) {
-  const seen = { variants: [], fallbacks: [], errors: [] };
+  const seen = { variants: [], fallbacks: [], errors: [], poolWorkers: 0 };
   page.on('console', (m) => {
     const t = m.text();
     if (m.type() === 'error') seen.errors.push(t);
     const v = /ORT runtime variant: (\S+) \((main|worker)\)/.exec(t);
     if (v) seen.variants.push(`${v[1]} (${v[2]})`);
+    const pool = /\[Encode\] pool starting: (\d+) workers/.exec(t);
+    if (pool) seen.poolWorkers += Number(pool[1]);
     if (/runtime unavailable|failed its smoke session/.test(t)) seen.fallbacks.push(t);
   });
   return seen;
+}
+
+// Wait until every encode-pool worker the page announced has reported its
+// runtime variant. The pool starts AFTER the load reaches ready and each worker
+// logs its variant about a second later, so the check mark alone is too early.
+// Without this wait an assertion right after the check mark never sees the
+// workers at all (a stock assertion then passes without checking them), and in
+// the switching test the OLD page's workers reported after the reset and were
+// counted against the new runtime (seen live: 'custom-relaxed (worker)' x2
+// logged before the reload, failing the run). On a machine below the pool's
+// hardware gate no pool starts and this returns at once.
+async function poolWorkersReported(seen) {
+  await expect.poll(
+    () => seen.variants.filter((v) => v.endsWith('(worker)')).length,
+    { timeout: 60 * 1000, message: `${seen.poolWorkers} pool worker(s) announced, not all reported a runtime variant` },
+  ).toBeGreaterThanOrEqual(seen.poolWorkers);
 }
 
 async function bootAndLoad(page, path, extra) {
@@ -70,6 +88,7 @@ test('every WASM context runs the custom runtime and JFK still matches the golde
 test('?ortep=stock keeps every context on the npm runtime', async ({ page }) => {
   const seen = watch(page);
   await bootAndLoad(page, '/?ortep=stock', {});
+  await poolWorkersReported(seen);
   expect(seen.variants.length).toBeGreaterThan(0);
   expect(seen.variants.filter((v) => v.startsWith('custom')),
     `contexts on the custom runtime despite ?ortep=stock: ${seen.variants.join(', ')}`).toEqual([]);
@@ -79,6 +98,7 @@ test('?ortep=stock keeps every context on the npm runtime', async ({ page }) => 
 test('the sidebar Stock choice keeps every context on the npm runtime', async ({ page }) => {
   const seen = watch(page);
   await bootAndLoad(page, '/', { cpuRuntime: 'stock' });
+  await poolWorkersReported(seen);
   expect(seen.variants.length).toBeGreaterThan(0);
   expect(seen.variants.filter((v) => v.startsWith('custom')),
     `contexts on the custom runtime despite cpuRuntime=stock: ${seen.variants.join(', ')}`).toEqual([]);
@@ -88,16 +108,21 @@ test('switching the sidebar runtime with a model loaded reloads onto the other r
   const seen = watch(page);
   await bootAndLoad(page, '/', {});
   expect(seen.variants).toContain('custom-relaxed (main)');
+  // Let the old page's pool workers report BEFORE the reset, or their late
+  // variant lines land after it and are blamed on the new runtime.
+  await poolWorkersReported(seen);
 
   await page.locator('.settings-toggle').click();
   await expandSettingsSection(page, 'Model and performance');
   seen.variants.length = 0;
+  seen.poolWorkers = 0;
   // The choice reloads the page, and the reloaded page resumes the load itself.
   await Promise.all([
     page.waitForEvent('load', { timeout: 60 * 1000 }),
     page.locator('input[name="cpuRuntime"][value="stock"]').check(),
   ]);
   await expect(page.locator('body')).toContainText('✔', { timeout: 6 * 60 * 1000 });
+  await poolWorkersReported(seen);
   expect(seen.variants.length).toBeGreaterThan(0);
   expect(seen.variants.filter((v) => v.startsWith('custom')),
     `contexts still on the custom runtime after switching: ${seen.variants.join(', ')}`).toEqual([]);
