@@ -15,7 +15,7 @@
 # Then paste the new sha256:... values below and commit.
 
 # ── Stage 1: build the static UI bundle and install signaling deps ──────────
-FROM node:24-alpine@sha256:6a1c190e17215d844926b0677f4bf87273ff7d5e54db06d3b5b5863ab0b09a3d AS builder
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS builder
 WORKDIR /build
 
 # Each `npm ci` runs with --ignore-scripts so a compromised dep's
@@ -133,7 +133,7 @@ RUN cd app/ui && npm run build
 RUN node scripts/precompress.mjs --static app/ui/dist
 
 # ── Stage 2: runtime image — Caddy serves dist/, Node runs signaling ───────
-FROM caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+FROM caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
 
 # F-107: the nodejs binary runs both the signaling server (which
 # untrusted phones connect to) and the entrypoint's config-generator
