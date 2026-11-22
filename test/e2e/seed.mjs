@@ -64,6 +64,34 @@ const SETTINGS_PREFIX = 'parakeetweb_';
 // bug this guards against.
 const STORM_SENTINEL = 'wasmEncoderQuant';
 
+// Poll an ASYNC in-page predicate until it resolves to exactly `true`.
+//
+// Why not page.waitForFunction: it does NOT await an async predicate. It calls
+// it, gets a Promise back, finds the Promise truthy and resolves after ONE
+// evaluation, whatever the Promise later settles to (measured with Playwright
+// 1.64: an `async () => false` predicate resolved after 42 ms and 1 call). Both
+// seedSettings guards below were written that way, so the boot gate never
+// waited and the stable-hold loop never held: the seed raced the first boot's
+// version purge, and boost-applies-to-queued-capture failed intermittently
+// with every seeded setting silently back at its default. The loop lives on
+// the Node side so each evaluation is awaited; it sleeps between polls rather
+// than spinning (a spinning poll starves the WASM e2e, see CLAUDE.md).
+// Evaluation errors (e.g. a context destroyed by a navigation) count as "not
+// yet" and the last one is reported if the wait times out.
+export async function pollInPage(page, fn, arg, { interval = 100, timeout = 30 * 1000, what = 'an in-page condition' } = {}) {
+  const deadline = Date.now() + timeout;
+  let lastError = null;
+  for (;;) {
+    const ok = await page.evaluate(fn, arg).catch((e) => { lastError = e; return false; });
+    if (ok === true) return;
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeout} ms waiting for ${what}`
+        + (lastError ? ` (last evaluation error: ${lastError.message})` : ''));
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
+
 // Seed the app's settings DB. Every spec gets the base config it needs to boot:
 // load the int8 weights from the local /models route (serve.mjs) on the WASM
 // backend, since headless Chromium has no WebGPU and the int8 encoder is the
@@ -98,7 +126,8 @@ export async function seedSettings(page, { modelSource = 'local', ...extra } = {
   // effect pass, so once one lands the rest are immediate, and the hold loop
   // below absorbs the remainder. Polled in-page; opening the DB read-only each
   // tick is cheap for a short wait.
-  await page.waitForFunction(
+  await pollInPage(
+    page,
     async ({ DB, STORE, PREFIX, SENTINEL }) => {
       // Existence gate: a bare indexedDB.open(name) CREATES a missing DB as an
       // empty version-1 shell with no store. This poll can land exactly in the
@@ -136,12 +165,13 @@ export async function seedSettings(page, { modelSource = 'local', ...extra } = {
       PREFIX: SETTINGS_PREFIX,
       SENTINEL: STORM_SENTINEL,
     },
-    { polling: 100, timeout: 30 * 1000 },
+    { interval: 100, timeout: 30 * 1000, what: 'the first boot to stamp version and start its default-persist storm' },
   );
 
   // Write the seed, then keep re-writing until a read-back confirms it survived
   // STABLE_CHECKS consecutive polls (see the default-persist-storm note above).
-  await page.waitForFunction(
+  await pollInPage(
+    page,
     async ({ extra, version, DB, STORE, PREFIX, STABLE_CHECKS }) => {
       const settings = { version, backend: 'wasm', ...extra };
       // VersionLESS open: the app's openIdb self-heal can bump the DB past
@@ -196,7 +226,7 @@ export async function seedSettings(page, { modelSource = 'local', ...extra } = {
       PREFIX: SETTINGS_PREFIX,
       STABLE_CHECKS: 3,
     },
-    { polling: 150, timeout: 30 * 1000 },
+    { interval: 150, timeout: 30 * 1000, what: 'the seeded settings to hold' },
   );
 }
 
