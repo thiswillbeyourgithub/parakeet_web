@@ -23,6 +23,12 @@
 // (lib/encoderQuants.js) rather than restated here, and every precision in it
 // has to come back unservable through the filtered listing.
 //
+// The third invariant is the other direction: the helper must hide ENCODERS and
+// nothing else. It used to hide the whole fp32/ directory, which took the fp32
+// decoder (the WASM default, decoderQuant 'fp32') with it, and the decoder then
+// resolved to a stale scratch copy elsewhere in the listing. The earlier tests
+// here only asked about the int8 decoder, so they could not see it.
+//
 // Built with Claude Code.
 
 import { test, describe } from 'node:test';
@@ -31,6 +37,7 @@ import { routeLocalMirrorWithoutGpuEncoders } from '../../test/e2e/routes.mjs';
 import { MANIFEST_FILE } from '../../scripts/model-manifest.mjs';
 import { quantSatisfiable, resolveModelQuant } from '../../app/src/hub.js';
 import { WEBGPU_ENCODER_QUANTS } from '../../app/ui/src/lib/encoderQuants.js';
+import { findRepoFile } from '../../app/src/modelLayout.js';
 
 const ORIGIN = 'http://127.0.0.1:4178';
 
@@ -62,6 +69,12 @@ const MANIFEST = [
   'fp32/encoder-model.onnx',
   'fp32/encoder-model.onnx.data.000',
   'fp32/encoder-model.onnx.data.001',
+  'fp32/decoder_joint-model.onnx',
+  'fp32/decoder_joint-model.onnx.data',
+  // A decoy with the same basename outside the layout dirs, like the
+  // gitignored local/ scratch copy a generated manifest once listed: if the
+  // real fp32 decoder is hidden, findRepoFile's last-resort match lands here.
+  'local/nemo-export/web/decoder_joint-model.onnx',
   'sharded/encoder-model.onnx.data.000',
   'w4a8/encoder-model.w4a8.onnx',
   'w2a8/encoder-model.w2a8.onnx',
@@ -88,7 +101,26 @@ describe('routeLocalMirrorWithoutGpuEncoders', () => {
   test('strips the same files from the mirror manifest, leaving the rest', async () => {
     const call = await install();
     const { json } = await call(`${ORIGIN}/models/repo/${MANIFEST_FILE}`, MANIFEST);
-    assert.deepEqual(json, ['vocab.txt', 'int8/encoder-model.int8.onnx', 'int8/decoder_joint-model.int8.onnx']);
+    assert.deepEqual(json, [
+      'vocab.txt',
+      'int8/encoder-model.int8.onnx',
+      'int8/decoder_joint-model.int8.onnx',
+      'fp32/decoder_joint-model.onnx',
+      'fp32/decoder_joint-model.onnx.data',
+      'local/nemo-export/web/decoder_joint-model.onnx',
+    ]);
+  });
+
+  test('keeps the fp32 decoder the WASM retry loads by default', async () => {
+    // The WASM fallback asks for decoderQuant 'fp32' (lib/modelRequest.js), so
+    // the decoder must survive in BOTH arms: its bytes pass through, and the
+    // filtered listing still resolves it to fp32/, not to the decoy.
+    const call = await install();
+    for (const path of ['fp32/decoder_joint-model.onnx', 'fp32/decoder_joint-model.onnx.data']) {
+      assert.deepEqual(await call(`${ORIGIN}/models/repo/${path}`), { continued: true }, path);
+    }
+    const { json } = await call(`${ORIGIN}/models/repo/${MANIFEST_FILE}`, MANIFEST);
+    assert.equal(findRepoFile(json, 'decoder_joint-model.onnx'), 'fp32/decoder_joint-model.onnx');
   });
 
   test('the filtered manifest serves NO GPU precision, not merely no fp32', async () => {

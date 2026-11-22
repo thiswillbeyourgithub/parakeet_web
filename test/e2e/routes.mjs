@@ -37,8 +37,18 @@ const LOCAL_MODELS_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/models
 // unasked, but it is not the condition this helper is meant to build, and
 // hiding the default alone would leave the fallback spec green while the
 // premise (a source with nothing for the GPU) had quietly evaporated.
+//
+// It matches ENCODER FILES, never whole directories. It used to hide every path
+// under fp32/, which also took fp32/decoder_joint-model.onnx (+ .data), the
+// decoder the WASM retry loads by default (decoderQuant 'fp32'). Nothing
+// failed at once: findRepoFile's last-resort basename match picked a stale
+// copy of that decoder out of the gitignored local/ scratch folder still listed
+// in the generated mirror manifest, and the spec only broke once that scratch
+// copy was deleted. Covers the fp32 graph and its sidecar or shards in any
+// directory (fp32/, sharded/, flat root) and the single-file GPU precisions;
+// int8 (encoder-model.int8.onnx) is deliberately not matched.
 const GPU_ENCODER_RE =
-  /(?:^|\/)(?:fp32|sharded|w4a8|w2a8|fp16)\/|encoder-model\.onnx\.data\.\d+|encoder-model\.(?:w4a8|w2a8|fp16)\.onnx/;
+  /(?:^|\/)encoder-model(?:\.(?:w4a8|w2a8|fp16))?\.onnx(?:\.data(?:\.\d+)?)?(?:\.zst)?(?:$|[?#])/;
 const isGpuEncoderPath = (path) => GPU_ENCODER_RE.test(path);
 
 /** Serve `files` as the repo's HuggingFace file listing (the /api/... endpoints). */
