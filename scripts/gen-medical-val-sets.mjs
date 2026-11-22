@@ -32,7 +32,7 @@
 //
 // Usage:
 //   node scripts/gen-medical-val-sets.mjs \
-//     --source "/media/USER/ssd1TO/audio_datasets/NeMO_files" \
+//     --source "$ULTIMED_NEMO_FILES" \
 //     --per-subset 100 --seed 1234
 //
 //   node scripts/grid_search_benchmark.mjs \
@@ -59,7 +59,7 @@ const DEFAULT_SUBSETS = 'dictionary:val,drugs:val,PARHAF:val,PARROT:test';
 // --- args -----------------------------------------------------------------
 function parseArgs(argv) {
   const a = {
-    source: '/media/USER/ssd1TO/audio_datasets/NeMO_files',
+    source: process.env.ULTIMED_NEMO_FILES ?? null, // required: --source or ULTIMED_NEMO_FILES
     audioRoot: null,      // null => resolve audio_filepath relative to each manifest
     subsets: DEFAULT_SUBSETS,
     perSubset: 100,
@@ -111,7 +111,8 @@ function printHelp() {
   console.log(`Build the per-subset French-medical validation sets.
 
   --source DIR          UltiMed NeMo manifest root, holding <subset>/<split>.jsonl
-                        (default: /media/USER/ssd1TO/audio_datasets/NeMO_files)
+                        (default: $ULTIMED_NEMO_FILES; the v2 corpus manifests,
+                        e.g. <audio_datasets>/v2/NeMO_files)
   --audio-root DIR      Resolve each manifest's audio_filepath against DIR instead
                         of against the manifest's own directory.
   --subsets LIST        Comma-separated subset:split pairs
@@ -186,6 +187,9 @@ function main() {
   const subsets = parseSubsets(args.subsets);
   const rng = mulberry32(args.seed);
 
+  if (args.source === null) {
+    throw new Error('--source is required (or set ULTIMED_NEMO_FILES): the UltiMed NeMo manifest root');
+  }
   if (!existsSync(args.source)) {
     throw new Error(`--source not found: ${args.source}`);
   }
