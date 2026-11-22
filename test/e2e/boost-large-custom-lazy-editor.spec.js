@@ -13,7 +13,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { expandSettingsSection } from './seed.mjs';
+import { expandSettingsSection, seedSettings } from './seed.mjs';
 
 // Comfortably past BOOST_CUSTOM_COLLAPSE_MIN_LINES (1000) in App.jsx.
 const BIG_LIST = Array.from({ length: 1200 }, (_, i) => `phrase${i}`).join('\n');
@@ -25,49 +25,13 @@ const boostSelect = (page) =>
 const boostTextarea = (page) =>
   page.locator('textarea[placeholder^="One phrase per line"]');
 
-async function waitForBoot(page) {
-  await page.waitForFunction(async () => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store';
-    try {
-      const db = await new Promise((res, rej) => {
-        const req = indexedDB.open(DB);
-        req.onsuccess = () => res(req.result);
-        req.onerror = () => rej(req.error);
-      });
-      if (!db.objectStoreNames.contains(STORE)) return false;
-      return await new Promise((res) => {
-        const tx = db.transaction([STORE], 'readonly');
-        const g = tx.objectStore(STORE).get('parakeetweb_version');
-        g.onsuccess = () => res(g.result != null);
-        g.onerror = () => res(false);
-      });
-    } catch { return false; }
-  }, null, { timeout: 15 * 1000 });
-}
-
-async function seedCustomList(page, text) {
-  await page.evaluate(async (text) => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store', PREFIX = 'parakeetweb_';
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      os.put('__custom__', PREFIX + 'boostSource');
-      os.put(text, PREFIX + 'boostCustomText');
-      os.put(text, PREFIX + 'boostPhrases');
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  }, text);
-}
+// Seed a saved Custom list (a returning Custom user's textarea is restored
+// from boostPhrases, so the text goes in both keys).
+const seedCustomList = (page, text) => seedSettings(page, {
+  boostSource: '__custom__',
+  boostCustomText: text,
+  boostPhrases: text,
+});
 
 async function openBoostSection(page) {
   await page.locator('.settings-toggle').click();
@@ -76,7 +40,6 @@ async function openBoostSection(page) {
 
 test('a large custom list is summarised, not mounted, until the editor is asked for', async ({ page }) => {
   await page.goto('/');
-  await waitForBoot(page);
   await seedCustomList(page, BIG_LIST);
   await page.reload();
   await openBoostSection(page);
@@ -95,7 +58,6 @@ test('a large custom list is summarised, not mounted, until the editor is asked 
 
 test('the editor re-collapses after switching source away and back', async ({ page }) => {
   await page.goto('/');
-  await waitForBoot(page);
   await seedCustomList(page, BIG_LIST);
   await page.reload();
   await openBoostSection(page);
@@ -116,7 +78,6 @@ test('the editor re-collapses after switching source away and back', async ({ pa
 
 test('reopening the section does not re-mount the editor', async ({ page }) => {
   await page.goto('/');
-  await waitForBoot(page);
   await seedCustomList(page, BIG_LIST);
   await page.reload();
   await openBoostSection(page);
@@ -137,7 +98,6 @@ test('an ordinary hand-written list is still editable inline', async ({ page }) 
   // The gate must not get in the way of the normal case: a small list opens
   // straight into the textarea, with no extra click.
   await page.goto('/');
-  await waitForBoot(page);
   await seedCustomList(page, SMALL_LIST);
   await page.reload();
   await openBoostSection(page);
@@ -149,7 +109,6 @@ test('an ordinary hand-written list is still editable inline', async ({ page }) 
 
 test('Clear empties an oversized custom list', async ({ page }) => {
   await page.goto('/');
-  await waitForBoot(page);
   await seedCustomList(page, BIG_LIST);
   await page.reload();
   await openBoostSection(page);

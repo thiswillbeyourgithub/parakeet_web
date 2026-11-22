@@ -16,11 +16,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { expandSettingsSection, readSetting } from './seed.mjs';
-
-const DB = 'parakeetweb-settings-db';
-const STORE = 'settings-store';
-const PREFIX = 'parakeetweb_';
+import { expandSettingsSection, readSetting, seedSettings } from './seed.mjs';
 
 const boostSelect = (page) =>
   page.locator('select', { has: page.locator('option[value="__custom__"]') });
@@ -28,59 +24,15 @@ const boostSelect = (page) =>
 const boostTextarea = (page) =>
   page.locator('textarea[placeholder^="One phrase per line"]');
 
-// Wait for the app's first-load boot (it purges a fresh/mismatched DB and writes
-// the `version` key); seeding before that lands races the purge.
-async function waitForBoot(page) {
-  await page.waitForFunction(async () => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store';
-    try {
-      const db = await new Promise((res, rej) => {
-        const req = indexedDB.open(DB);
-        req.onsuccess = () => res(req.result);
-        req.onerror = () => rej(req.error);
-      });
-      if (!db.objectStoreNames.contains(STORE)) return false;
-      return await new Promise((res) => {
-        const tx = db.transaction([STORE], 'readonly');
-        const g = tx.objectStore(STORE).get('parakeetweb_version');
-        g.onsuccess = () => res(g.result != null);
-        g.onerror = () => res(false);
-      });
-    } catch { return false; }
-  }, null, { timeout: 15 * 1000 });
-}
-
-async function putSettings(page, entries) {
-  await page.evaluate(async ({ entries, DB, STORE, PREFIX }) => {
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      for (const [k, v] of entries) os.put(v, PREFIX + k);
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  }, { entries, DB, STORE, PREFIX });
-}
-
 
 test('a legacy curated-list profile does not seed the Custom slot with the list', async ({ page }) => {
   // Simulate a pre-`boostCustomText` profile that had a curated list selected:
   // the list text is in `boostPhrases` and there is no `boostCustomText`.
   await page.goto('/');
-  await waitForBoot(page);
-  await putSettings(page, [
-    ['boostSource', 'clinical-cjk.txt'],
-    ['boostPhrases', 'venlafaxine:5\nacetaminophen\nmetoprolol'],
-  ]);
+  await seedSettings(page, {
+    boostSource: 'clinical-cjk.txt',
+    boostPhrases: 'venlafaxine:5\nacetaminophen\nmetoprolol',
+  });
 
   await page.reload();
   await page.locator('.settings-toggle').click();
@@ -98,11 +50,10 @@ test('a genuine legacy Custom profile still keeps its typed text', async ({ page
   // The other half of the migration: when the saved source IS Custom, the
   // pre-feature `boostPhrases` is still the user's own text and must survive.
   await page.goto('/');
-  await waitForBoot(page);
-  await putSettings(page, [
-    ['boostSource', '__custom__'],
-    ['boostPhrases', 'mytypedword'],
-  ]);
+  await seedSettings(page, {
+    boostSource: '__custom__',
+    boostPhrases: 'mytypedword',
+  });
 
   await page.reload();
   await page.locator('.settings-toggle').click();

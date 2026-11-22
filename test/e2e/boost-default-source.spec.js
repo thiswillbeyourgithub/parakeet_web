@@ -10,7 +10,7 @@
 // Built with Claude Code.
 
 import { test, expect } from '@playwright/test';
-import { expandSettingsSection } from './seed.mjs';
+import { expandSettingsSection, seedSettings } from './seed.mjs';
 
 // The boost source <select> is the one carrying the Custom sentinel option.
 const boostSelect = (page) =>
@@ -20,57 +20,6 @@ const boostSelect = (page) =>
 // the locator is independent of the value it currently holds.
 const boostTextarea = (page) =>
   page.locator('textarea[placeholder^="One phrase per line"]');
-
-// Wait for the app's first-load boot to finish: it purges a fresh/mismatched DB
-// and writes the `version` key. Seeding before this lands races the purge (which
-// would wipe the seed); poll for the key so the subsequent seed sticks.
-async function waitForBoot(page) {
-  await page.waitForFunction(async () => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store';
-    try {
-      const db = await new Promise((res, rej) => {
-        const req = indexedDB.open(DB);
-        req.onsuccess = () => res(req.result);
-        req.onerror = () => rej(req.error);
-      });
-      if (!db.objectStoreNames.contains(STORE)) return false;
-      return await new Promise((res) => {
-        const tx = db.transaction([STORE], 'readonly');
-        const g = tx.objectStore(STORE).get('parakeetweb_version');
-        g.onsuccess = () => res(g.result != null);
-        g.onerror = () => res(false);
-      });
-    } catch { return false; }
-  }, null, { timeout: 15 * 1000 });
-}
-
-// Seed a saved boost choice into the settings DB (to prove it isn't overridden).
-async function seedSavedBoost(page, source, customText) {
-  await page.evaluate(async ({ source, customText }) => {
-    const DB = 'parakeetweb-settings-db', STORE = 'settings-store', PREFIX = 'parakeetweb_';
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(DB, 1);
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-      };
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const os = tx.objectStore(STORE);
-      os.put(source, PREFIX + 'boostSource');
-      if (customText !== undefined) {
-        os.put(customText, PREFIX + 'boostCustomText');
-        // A returning Custom user's live textarea is restored from boostPhrases.
-        os.put(customText, PREFIX + 'boostPhrases');
-      }
-      tx.oncomplete = () => res();
-      tx.onerror = () => rej(tx.error);
-    });
-  }, { source, customText });
-}
 
 test('?phrase_boost= pre-selects a curated list for a fresh visitor', async ({ page }) => {
   // Fresh profile (no seeded settings) + a shareable link naming the list by its
@@ -131,8 +80,13 @@ test('?phrase_boost= does NOT override a returning user\'s saved choice', async 
   // First load creates the DB; seed a saved Custom choice with custom text, then
   // reload WITH the query param. The saved choice must win.
   await page.goto('/');
-  await waitForBoot(page);
-  await seedSavedBoost(page, '__custom__', 'mysavedword');
+  // A returning Custom user's live textarea is restored from boostPhrases, so
+  // the saved text goes in both keys.
+  await seedSettings(page, {
+    boostSource: '__custom__',
+    boostCustomText: 'mysavedword',
+    boostPhrases: 'mysavedword',
+  });
   await page.goto('/?phrase_boost=clinical-cjk');
   await page.locator('.settings-toggle').click();
   // The boost controls live in the (collapsed) Phrase boosting section.
