@@ -29,7 +29,6 @@ import { applyDictationRules } from './dictationRegex.js';
 const LAYOUT = 'dictCmdGroupLayout';
 const PUNCT = 'dictCmdGroupPunctuation';
 const ABBREV = 'dictCmdGroupAbbreviations';
-const TEMPLATE = 'dictCmdGroupTemplates';
 
 /** @type {DictationCommand[]} */
 export const DICTATION_COMMANDS = [
@@ -70,14 +69,6 @@ export const DICTATION_COMMANDS = [
   { group: ABBREV, target: 'SpO2 98%', expect: 'SpO2 98%', forms: ['saturation 98'] },
   { group: ABBREV, target: 'FC 75 bpm', expect: 'FC 75 bpm', forms: ['pouls 75', 'fréquence cardiaque 75'], noRecommended: true },
   { group: ABBREV, target: 'T° 38,2', expect: 'T° 38,2', forms: ['température 38 2'] },
-  ...[
-    'examen clinique', 'examen simplifié', 'examen anaphylaxie', 'examen infectieux',
-    'examen traumatologie', 'examen traumatisme cranien', 'examen conclusion',
-    "examen d'un patient alcoolisé", 'électrisation', 'drain thoracique', 'intubation',
-    'luxation épaule', 'sédation procédurale', 'sortie contre avis',
-    'entorse cheville droite', 'entorse cheville gauche', 'ordonnance entorse cheville',
-    'ordonnance botte de marche', 'ordonnance brûlures', 'échographie urgentiste',
-  ].map(name => ({ group: TEMPLATE, target: name, targetKey: 'dictCmdTemplate', forms: [`ajoute la commande ${name}`] })),
 ];
 
 const norm = s => s.toLowerCase().replace(/\s+/g, ' ');
@@ -90,8 +81,7 @@ const words = s => s.toLowerCase().match(/\p{L}+/gu) ?? [];
  * With an `expect`, every word of the phrase must also be consumed (bar the
  * ones the target itself contains, like "matin" in matin/midi/soir): a rule
  * for "à la ligne" turns "aller à la ligne" into "aller\n", which is not the
- * phrase working. Templates have no `expect` (their text may contain any word),
- * so for them the whole phrase being gone is the test.
+ * phrase working. Without an `expect`, the whole phrase being gone is the test.
  * @param {string} form
  * @param {DictationCommand} cmd
  * @param {object[]} rules Loaded dictation rules.

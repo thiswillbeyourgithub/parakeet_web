@@ -29,9 +29,7 @@ export default function DictationCommandsModal({ t, rules, onClose }) {
     rows.push(
       <tr key={i} data-testid="dict-command-row">
         <td className="dict-commands__target">
-          {cmd.targetKey === 'dictCmdTemplate'
-            ? <>{cmd.target} <span className="dict-commands__desc">({t(cmd.targetKey)})</span></>
-            : <><code>{cmd.target}</code>{cmd.targetKey && <span className="dict-commands__desc"> {t(cmd.targetKey)}</span>}</>}
+          <code>{cmd.target}</code>{cmd.targetKey && <span className="dict-commands__desc"> {t(cmd.targetKey)}</span>}
         </td>
         <td>
           {cmd.working.map((form, j) => (

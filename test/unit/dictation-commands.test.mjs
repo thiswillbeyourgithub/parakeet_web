@@ -51,7 +51,7 @@ test('a phrase is not "working" when the output lacks the expected text', () => 
 });
 
 test('every curated row has at least one form and a known group', () => {
-  const groups = new Set(['dictCmdGroupLayout', 'dictCmdGroupPunctuation', 'dictCmdGroupAbbreviations', 'dictCmdGroupTemplates']);
+  const groups = new Set(['dictCmdGroupLayout', 'dictCmdGroupPunctuation', 'dictCmdGroupAbbreviations']);
   for (const c of DICTATION_COMMANDS) {
     assert.ok(c.forms.length > 0, c.target);
     assert.ok(groups.has(c.group), c.group);
@@ -79,8 +79,6 @@ test('a row never lists two forms that sound the same', () => {
 const MURMURE =resolve(root, 'framagit_murmure/regex.csv');
 test('every curated phrase works with the local Murmure regex.csv', { skip: !existsSync(MURMURE) && 'framagit_murmure/regex.csv not present' }, () => {
   const rules = parseDictationCsv(readFileSync(MURMURE, 'utf8'), 'regex');
-  // "ajoute la commande <name>" templates are excluded: they are being
-  // removed from the Murmure repo (superseded upstream).
-  const broken = DICTATION_COMMANDS.filter(c => c.group !== 'dictCmdGroupTemplates').flatMap(c => c.forms.filter(f => !formWorks(f, c, rules)));
+  const broken = DICTATION_COMMANDS.flatMap(c => c.forms.filter(f => !formWorks(f, c, rules)));
   assert.deepEqual(broken, []);
 });
