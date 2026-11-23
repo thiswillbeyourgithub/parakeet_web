@@ -1,0 +1,220 @@
+# 11.0.0 (2026-09-08)
+
+## Un choix de modèles, et un lien qui en sélectionne un
+
+Une instance peut désormais proposer plus d'un modèle. Là où la configuration ne nommait qu'un seul dépôt HuggingFace, elle accepte une liste séparée par des virgules, et la section *Modèle et performances* de la barre latérale affiche un sélecteur qui les liste ; le premier est celui que reçoit un visiteur n'ayant jamais choisi. Une instance qui ne nomme qu'un dépôt, c'est-à-dire toute instance jusqu'à ce que son opérateur en décide autrement, se comporte exactement comme avant : un sélecteur à une seule option ne serait que du bruit, donc aucun n'est affiché.
+
+Changer de modèle est traité comme changer de moteur ou de précision : le modèle chargé est libéré et le nouveau chargé à sa place, et le contrôle est verrouillé pendant une transcription. Comme le navigateur ne conserve qu'un modèle sur le disque à la fois, changer télécharge les nouveaux poids et retire les anciens : revenir en arrière retéléchargera.
+
+Un lien peut aussi imposer un modèle, avec `?model=` et une correspondance souple sur la liste proposée : `?model=ultimed` suffit à sélectionner `Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx`. Celui-ci remplace délibérément le choix enregistré du visiteur, contrairement au paramètre de lien du renforcement de phrases, car un lien qui atterrirait sur ce que le destinataire a utilisé en dernier ne vaudrait pas la peine d'être envoyé. Il n'est, tout aussi délibérément, pas enregistré par-dessus ce choix : leur propre sélection revient dès leur visite ordinaire suivante. Une valeur qui ne correspond à rien, ou qui correspond aussi bien à deux modèles, est ignorée plutôt que devinée : une mauvaise supposition produirait ici une transcription parfaitement fluide issue du mauvais modèle, sans que rien ne le laisse voir.
+
+Pour ceux qui hébergent eux-mêmes les poids sur leur instance, on sert plusieurs modèles en montant le dossier parent avec un sous-dossier par dépôt. Un modèle listé sans copie locale ne produit qu'un avertissement au démarrage ; il est récupéré depuis HuggingFace exactement comme s'il n'existait aucun miroir local.
+
+## Un miroir auto-hébergé indique désormais à l'application ce qu'il contient
+
+Une instance servant sa propre copie des poids avait un angle mort. Un dossier derrière un serveur web ne peut pas être listé : l'application vérifiait donc la poignée de dispositions qu'elle connaît en espérant que l'une corresponde. Cela couvre toutes les dispositions documentées et rien d'autre, si bien qu'un dépôt de modèle rangeant une variante à un endroit inhabituel se téléchargeait très bien depuis HuggingFace tout en apparaissant indisponible depuis un miroir local, sans rien pour expliquer la différence.
+
+Le conteneur écrit désormais, à chaque démarrage, une petite liste de ce que contient réellement le dossier monté, et la sert à côté des poids. Il n'y a rien à configurer ni à tenir à jour : elle est générée à partir du dossier lui-même, elle ne peut donc pas annoncer un fichier absent, et elle est réécrite à chaque démarrage, elle ne peut donc pas devenir périmée. Elle va dans un dossier temporaire à l'intérieur du conteneur plutôt que dans le montage : monter les modèles en lecture seule fonctionne donc toujours. Si elle ne peut pas être écrite, l'application retombe sur le comportement précédent, raison pour laquelle une instance qui met à jour sans rien changer ne voit aucune différence.
+
+## Corrigé : un dépôt contenant un second modèle pouvait casser le téléchargement fp32
+
+Le dépôt de modèle optimisé contient un second modèle complet dans un sous-dossier, et l'encodeur fp32 n'est pas un fichier unique mais un ensemble de fragments numérotés. Les deux copies portant les mêmes noms de fragments, le chargeur voyait chaque fragment deux fois et le téléchargeait deux fois : environ 4,8 Go récupérés au lieu de 2,4, assemblés en un encodeur impossible à charger. Il choisit désormais un seul dossier et ne prend que ses fragments.
+
+La même réorganisation avait déplacé l'encodeur int8 allégé dans ce sous-dossier. L'application n'était pas touchée, car elle demande au dépôt où se trouvent ses fichiers au lieu de le supposer, mais le script qui prépare les modèles de test, lui, le supposait : il récupérait un chemin qui n'existe plus. Il demande désormais lui aussi. Rien ne change quant aux modèles proposés ; le point est qu'un dépôt peut se réorganiser sans que l'application perde la trace des poids, ce qui est aussi ce qui garde utilisable la disposition du dépôt amont.
+
+## Corrigé : un miroir local pouvait servir les poids d'un modèle sous le nom d'un autre
+
+Le chargeur cherchait dans un miroir servi localement un ensemble de fichiers de modèle à plat avant de chercher le dépôt demandé par son nom. Avec un seul modèle configuré, c'est sans conséquence et c'est la disposition documentée. Avec un choix de modèles, ça ne l'était pas : sur un miroir contenant un modèle à plat et les autres dans des sous-dossiers, tous les modèles se résolvaient vers celui à plat, si bien que sélectionner le deuxième modèle chargeait les poids du premier sous le nom du deuxième. Rien de cette défaillance n'était visible, puisque le mauvais modèle transcrit tout aussi couramment. Le miroir est désormais interrogé d'abord par nom de dépôt, et la disposition à plat ne répond que pour un dépôt dont il n'a aucun sous-dossier.
+
+
+## Un ONNX Runtime plus léger, environ 11 Mo de moins à chaque chargement
+
+L'application charge désormais la version plus récente d'ONNX Runtime, celle dont la prise en charge de WebGPU est écrite en C++ et suspend la pile WebAssembly via l'intégration des promesses JavaScript, à la place de l'ancienne qui implémente WebGPU en JavaScript et y repasse à chaque étape de l'exécution d'un modèle.
+
+La raison est la taille, pas la vitesse. Le nouveau moteur pèse 16 Mo contre 27 Mo pour l'ancien, et son chargeur 112 Ko contre 404 Ko : environ 11 Mo de moins téléchargés à chaque visite, pour une application dont le reproche principal a toujours été son temps de démarrage. Côté vitesse, les deux sont à égalité : mesuré sur la machine de référence avec trois exécutions alternées de chaque côté et le moteur vérifié à chaque exécution, la voie GPU donne 13,0 secondes contre 13,8, et un extrait de trois minutes sur la voie processeur 125 secondes contre 114. Ces écarts tiennent dans la dispersion d'une exécution à l'autre : ni l'un ni l'autre n'est un gain à annoncer.
+
+Les navigateurs qui n'implémentent pas l'intégration des promesses, c'est-à-dire aujourd'hui tout ce qui n'est pas fondé sur Chromium, conservent automatiquement l'ancien moteur et ne voient aucun changement. `?ortep=jsep` dans la barre d'adresse le force partout, le temps d'un chargement de page, pour le support et pour la mesure.
+
+Rien ne change du côté des modèles, des précisions ou des transcriptions : toute la suite de tests navigateur passe sur le nouveau moteur, et les deux moteurs produisent la même transcription sur le même extrait.
+
+
+## L'encodage parallèle exige désormais deux fois plus de cœurs pour se lancer
+
+La voie optionnelle d'encodage parallèle fait tourner deux copies supplémentaires de l'encodeur dans des workers d'arrière-plan : une bonne affaire sur une machine aux cœurs inoccupés, une mauvaise sur une machine qui n'en a pas. Mesuré sur la machine de référence, c'est environ 4 % plus rapide quand la machine est au repos et environ 15 % plus lent quand elle est chargée, pour environ 1,7 Go de mémoire supplémentaire dans les deux cas. Le verrou qui décidait de prendre ce pari lisait le nombre de cœurs annoncé par le navigateur, qui compte l'hyperthreading : un chiffre de 8 correspond soit à un portable à quatre cœurs (aucune marge, précisément le cas du ralentissement), soit à un vrai ordinateur de bureau à huit cœurs, et rien ne les distingue. La barre est maintenant à 12, le premier chiffre qui exclut une machine à quatre cœurs et celui qu'annonce la machine de référence elle-même ; une machine qui n'annonce aucun nombre de cœurs est écartée plutôt que supposée capable. Les machines qui ne passent plus le verrou utilisent simplement la voie ordinaire, qui a toujours été le repli de toute façon.
+
+## fp16 revient sur WebGPU, sur les GPU capables de l'exécuter
+
+L'encodeur fp16 avait été retiré en août, dans la conviction qu'aucun GPU accessible n'expose la fonctionnalité `shader-f16` dont ses noyaux ont besoin. Un rapport de mesure envoyé depuis le portable d'un visiteur (un Intel UHD 630) indique cette fonctionnalité comme présente : la conviction était donc fausse, notre propre GPU de développement ne l'expose pas, ce qui faisait passer cette absence pour une règle générale.
+
+fp16 est donc de nouveau proposé, comme un choix et non plus comme la valeur par défaut silencieuse qu'il était. L'application demande au GPU s'il prend en charge la fonctionnalité et n'active l'option qu'ensuite ; sur un GPU qui ne l'a pas, le bouton est grisé avec la raison, et une préférence rapportée d'une autre machine charge fp32 au lieu de ne rien transcrire. C'est bien pour cela que le verrouillage est strict : sans la fonctionnalité, ONNX Runtime construit le modèle fp16, l'exécute et renvoie une transcription vide, sans la moindre erreur.
+
+L'intérêt : sur le portable à l'origine du rapport, charger le modèle a coûté 74 secondes contre 20,6 secondes de transcription réelle, et fp16 divise par deux le téléchargement GPU (environ 1,2 Go au lieu des 2,35 Go du fp32 fragmenté) pour une qualité pratiquement identique. Encore faut-il que la source du modèle héberge le fichier fp16 ; une source qui ne l'héberge pas le dit désormais au lieu de servir discrètement une précision plus lourde.
+
+## Les poids GPU sont de nouveau mis en cache, quand leur taille le permet
+
+L'encodeur fp32 fragmenté était chargé directement en mémoire sans jamais être écrit dans le cache du navigateur : chaque chargement de page le retéléchargeait intégralement, et les 74 secondes ci-dessus étaient donc payées à chaque visite. La mise en cache de ces fragments avait déjà été tentée puis annulée, parce que Chromium bascule un gros fichier stocké sur le disque et échoue ensuite à le relire. Cet échec dépend de la taille : le cache est donc désormais conditionné à un seuil, un fichier assez petit pour survivre à l'aller-retour est conservé, un plus gros se comporte exactement comme avant. Tant que le dépôt du modèle ne fournit pas de fragments plus petits, cela ne change rien en production, ce qui rend le changement sûr à intégrer dès maintenant.
+
+## Le banc d'essai se préchauffe avant de chronométrer, et dit si le chargement venait du cache
+
+Deux détails rendaient les chiffres moins comparables qu'ils n'en avaient l'air. La première mesure de chaque combinaison payait un travail ponctuel (allocation mémoire, préparation des noyaux) qu'aucune mesure suivante ne paie, si bien que la première ligne d'un rapport était systématiquement pessimiste ; un passage de préchauffage non chronométré a lieu maintenant pour chaque profil, et son résultat est jeté. Par ailleurs, un temps de chargement ne voulait rien dire en soi, un chargement servi par le cache et un téléchargement de 2,3 Go étant la même mesure à un facteur cent près. Chaque ligne indique désormais le nombre de mégaoctets réellement téléchargés et si les poids étaient déjà en cache.
+
+## Les rapports indiquent exactement quelle version les a produits, et n'emportent plus la minute
+
+Un rapport ne portait que le numéro de version, partagé par plusieurs versions compilées différentes : impossible donc de rattacher une mesure au code qui l'a produite, et le rapport évoqué plus haut venait de la dernière version poussée, pas de celle qui était déployée. Les rapports portent désormais le commit exact. Dans l'autre sens, l'horodatage d'un rapport est arrondi à l'heure inférieure, dans le fichier comme dans son nom : la minute précise à laquelle un visiteur a lancé la mesure l'identifie un peu et ne répond à aucune question que l'on pose à ces données.
+
+## Un GPU sans marge mémoire ne regroupe plus les segments de l'encodeur
+
+Sur la voie GPU, l'application regroupe plusieurs segments audio en un seul appel à l'encodeur lorsque la carte graphique annonce de la place pour cela. Le calcul pouvait conclure à une absence totale de marge et se faire quand même imposer un plancher de deux, précisément sur la machine qui ne peut pas se le permettre : un GPU intégré dont la limite de tampon annoncée est plus petite que l'encodeur lui-même. Un zéro mesuré signifie désormais un segment à la fois. Les machines où la mesure échoue ou n'est pas disponible conservent le plancher prudent, une question sans réponse n'étant pas un non.
+
+## Le banc d'essai garde la machine éveillée pendant toute sa durée
+
+Le banc d'essai de la barre latérale prend plusieurs minutes, et l'essentiel de ce temps passe à charger des modèles entre les lignes plutôt qu'à transcrire (un téléchargement fp32 de 2,3 Go domine facilement). Le verrou d'écran que l'application tient déjà pendant un enregistrement ou une transcription n'était tenu que pendant les transcriptions, si bien qu'un portable laissé seul à mesurer pouvait s'assombrir, puis s'endormir, au milieu d'un chargement et rendre une mesure jamais terminée. Le verrou est désormais tenu depuis l'appui sur Lancer jusqu'à la fin de la mesure, ce qui sur tous les systèmes de bureau bloque aussi la mise en veille sur inactivité qui suit un écran éteint. Un capot refermé ou une mise en veille manuelle l'emportent toujours, comme il se doit. Le test de bout en bout du banc d'essai enregistre maintenant les appels au verrou et échoue si celui-ci est demandé après le premier chargement de modèle ou relâché avant que le rapport n'existe.
+
+## Le récepteur de rapports vérifie ce qu'il stocke, et à quelle vitesse
+
+Le point d'entrée qui collecte les rapports du banc d'essai ne vérifiait que la chaîne de format : n'importe quel objet JSON de la bonne taille était stocké, puis rapatrié sur la machine de l'opérateur, où des outils le lisent en lui faisant confiance. Il refuse désormais les champs de premier niveau inconnus, les sections du mauvais type, les clés `__proto__`/`constructor`/`prototype` à n'importe quelle profondeur (une pollution de prototype dès qu'un rapport est fusionné dans un autre objet), une imbrication de plus de 12 niveaux, les chaînes de plus de 4 Ko et les caractères de contrôle autres que la tabulation et le saut de ligne (une séquence d'échappement dans un rapport devient une injection dans le terminal dès qu'on l'affiche). Un rapport capturé depuis la vraie application passe sans modification. Côté débit, la limite de 3 par minute et par IP était la seule, et un appelant changeant d'adresse source pouvait atteindre le plafond de 20000 fichiers en quelques minutes et réduire la fonctionnalité au silence pour tout le monde. Un quota à l'échelle de l'instance de 30 rapports acceptés par minute (`BENCHMARK_REPORTS_MAX_PER_MINUTE`) s'ajoute désormais derrière, de sorte que la même inondation prend onze heures et est journalisée à chaque refus. Les vrais visiteurs envoient un rapport toutes les quelques minutes chacun et n'approchent jamais l'une ou l'autre limite. Construit et testé avec Claude Code.
+
+## Un encodeur 4 bits, pour quand le téléchargement est le problème
+
+Une nouvelle entrée apparaît dans la liste des précisions d'encodeur : **w4a8**, un encodeur dont les poids sont stockés sur 4 bits au lieu de 32. 217 des 289 multiplications matricielles de l'encodeur en bénéficient ; les 72 restantes multiplient deux activations entre elles et n'ont aucun poids stocké à réduire, tandis que les convolutions et les normalisations restent en pleine précision. Les activations sont quantifiées sur 8 bits à l'intérieur du noyau à l'exécution, d'où vient le nom.
+
+Tout l'intérêt est la taille. L'encodeur passe d'environ 2 436 Mo à environ 638 Mo, soit à peu près 457 Mo une fois compressé pour le transfert contre 1,55 Go pour fp32, et il se charge en 7 à 9 secondes environ au lieu de 13 à 16. La précision est pour ainsi dire inchangée : sur les jeux de validation français médicaux, il mesure 4,7 % de taux d'erreur sur les mots contre 4,6 % pour la version fp32, et aucune donnée de calibration n'a été nécessaire pour le construire.
+
+Ce qu'il n'apporte pas, c'est de la vitesse, et cela mérite d'être dit clairement car l'intuition suggère le contraire. Mesuré face à l'encodeur fp32 du même modèle sur la machine de référence, médianes de trois exécutions chronométrées sur un profil de 90 s : environ 2,6x le temps réel sur le chemin CPU contre 3,6x pour fp32, et environ 28x sur WebGPU contre 42x pour fp32. L'int8 SmoothQuant du modèle d'origine est plus rapide encore sur le chemin CPU, ce qui n'est en revanche pas le cas de l'encodeur int8 propre à ce modèle, pour la raison exposée dans l'entrée suivante. Un encodeur de parole consomme environ un millier de trames en une seule passe, si bien que chaque poids est réutilisé au fil d'une grande multiplication matricielle et que le travail est limité par le calcul plutôt que par le déplacement des poids depuis la mémoire. Réduire les poids raccourcit donc le téléchargement et le chargement, puis coûte un peu de débit pour les décompresser à nouveau dans le noyau. C'est l'inverse de ce que fait la quantification 4 bits pour un agent conversationnel qui génère un jeton à la fois, où le trafic mémoire constitue tout le goulot d'étranglement.
+
+Il faut donc le choisir quand la taille de téléchargement, le stockage ou le temps de démarrage comptent davantage que la vitesse de transcription, et laisser int8 sélectionné sinon. Contrairement aux deux versions int8, il fonctionne sur les **deux** backends : WebGPU dispose d'un noyau pour ces multiplications 4 bits (il décompresse les poids en fp16 dans le shader), ce qui en fait la première précision autre que fp32 que le chemin GPU accepte réellement de charger. Comme pour int8 allégé et fp32, le choisir face à un miroir qui n'héberge pas le fichier interrompt le chargement avec un message clair plutôt que de servir discrètement une autre précision ; sur WebGPU en particulier, un miroir qui en est dépourvu retombe sur fp32.
+
+Construit et mesuré avec Claude Code ; le quantificateur est `scripts/quantize-nbits.py` et ses tests d'acceptation sont dans `scripts/check-nbits.py`.
+
+## Un encodeur int8 pour le modèle affiné, construit sans campagne de calibration
+
+Le dépôt ONNX du modèle affiné en français médical fournit désormais un encodeur `int8` à côté de ses encodeurs fp32 et `w4a8`, si bien que la précision par défaut de l'application se résout sur lui au lieu de retomber ailleurs. Il est produit par le même quantificateur que l'encodeur `w4a8`, simplement sur 8 bits au lieu de 4 : les mêmes 217 multiplications matricielles, les mêmes blocs de 32, le même `accuracy_level=4` qui fait quantifier les activations sur 8 bits par le noyau à l'exécution. L'encodeur pèse environ 905 Mo, entre la version 4 bits et fp32.
+
+C'est une recette différente de l'int8 SmoothQuant fourni avec le modèle d'origine, et la différence tient à l'origine des plages d'activation. SmoothQuant les fige à l'avance à partir d'une campagne de calibration, ce qui explique qu'une conversion int8 standard se dégrade sur de l'audio long quand les plages réelles s'écartent des plages calibrées. Ici le noyau recalcule la plage à chaque exécution : il n'y a donc aucun jeu de calibration à constituer, aucun à voir vieillir, et la construction prend quelques secondes au lieu d'une après-midi.
+
+La précision est indiscernable de fp32, et pas seulement proche. Sur les jeux de validation français médicaux, il mesure 4,60 % de taux d'erreur sur les mots contre 4,6 % pour la version fp32 (l'encodeur `w4a8` mesure 4,7 %), et jeu par jeu les deux s'accordent au dixième de point près : 3,6 / 4,5 / 5,0 / 4,1 / 12,8 contre 3,6 / 4,5 / 4,9 / 4,1 / 12,8 pour fp32. Le contrôle sur audio long, celui-là même qui justifie l'existence de SmoothQuant, ressort également propre : sur une passe ininterrompue de 6,5 minutes découpée en fenêtres d'une minute, le taux d'erreur par section de l'encodeur int8 égale celui de fp32 dans chaque fenêtre, la pire fenêtre tombant au même endroit et à la même valeur. Aucune dérive au fil du tableau.
+
+Comme pour l'encodeur 4 bits, ce que l'on gagne ici c'est de la taille et non de la vitesse, et cela mérite d'être dit puisque le nom laisse entendre le contraire. L'int8 SmoothQuant du modèle d'origine est bel et bien plus rapide que son fp32, parce qu'il exécute des noyaux de multiplication matricielle int8 réellement moins coûteux. Celui-ci non : il stocke des poids sur 8 bits que le noyau décompresse à l'entrée, si bien que sur le chemin CPU il mesure environ 2,5x le temps réel sur un profil de 90 secondes, contre environ 2,8x pour le fp32 du même modèle, l'encodeur 4 bits fermant la marche à environ 2,4x. Il faut lire ces trois encodeurs comme une échelle de taille de téléchargement (2 435 Mo, 905 Mo, 638 Mo) dont la précision reste plate et dont le débit CPU décroît lentement, et non comme une échelle de vitesse. Comme les deux autres encodeurs quantifiés, et contrairement à fp32, il ne tourne pas sur WebGPU.
+
+Construit et mesuré avec Claude Code. Le quantificateur est `scripts/quantize-nbits.py`, qui accepte désormais une option `--bits` et produit les deux largeurs depuis un seul chemin de code plutôt que deux scripts presque identiques ; ses tests d'acceptation sont dans `scripts/check-nbits.py`.
+
+## Moteur ONNX Runtime mis à jour en 1.29
+
+Le moteur ONNX Runtime Web embarqué (le runtime par lequel passe chaque transcription, sur les chemins CPU/WASM comme WebGPU) passe de 1.27.0 à 1.29.0, la version stable la plus récente publiée sur npm. C'est une mise à jour d'entretien : un A/B entrelacé des deux versions dans le navigateur, sur le clip de référence du projet, les avait déjà mesurées indistinguables au bruit près sur le chemin WASM, et les suites de tests unitaires et navigateur passent inchangées sur 1.29. La disposition des artefacts et le chargement à intégrité épinglée sont identiques, donc rien ne change dans ce qu'un visiteur télécharge.
+
+## Le banc d'essai dit sur quel matériel il a tourné, et rend la machine à la fin
+
+Un rapport de banc d'essai n'est utile que si les chiffres peuvent être rattachés à une puce. Il décrivait le processeur (nombre de cœurs, classe de mémoire, architecture) et le seul adaptateur GPU que le navigateur exposait par défaut, ce qui, sur un portable qui en a deux, ne dit rien de celui qui a réellement travaillé. Les rapports listent désormais tous les adaptateurs proposés par la machine, demandés par préférence d'alimentation, de sorte qu'un GPU intégré et un GPU dédié apparaissent tous les deux, ainsi que les noms de GPU lisibles rapportés par le navigateur via WebGL. Ces noms sont d'ailleurs la seule preuve de GPU disponible sur une machine sans WebGPU, c'est-à-dire précisément celle dont le propriétaire demande pourquoi l'option GPU est grisée. Aucun navigateur n'expose le modèle du processeur à qui que ce soit : cette absence-là est subie, pas choisie.
+
+L'exécution se comporte aussi mieux vis-à-vis du reste de l'application. Les boutons d'enregistrement, d'envoi de fichier et de micro téléphone ne restent plus affichés pendant un banc d'essai : celui-ci emprunte les mêmes chemins de chargement et de transcription, l'application semblait donc prête pour un travail qu'elle ne pouvait pas prendre, et une capture n'aurait fait que lui disputer le modèle en cours de mesure. À la fin, la barre latérale se rouvre sur les résultats, défile jusqu'au rapport et annonce que le banc d'essai est terminé, au lieu de laisser les chiffres derrière un panneau que l'utilisateur avait fermé pour suivre l'exécution. Enfin, une exécution lancée sans modèle chargé n'en laisse plus un derrière elle : les poids en mémoire sont ceux de la dernière combinaison mesurée, pas nécessairement ceux que les réglages affichent, ils sont donc libérés et le bouton de chargement du modèle réapparaît.
+
+## L'explication d'une option grisée est de nouveau lisible
+
+Une option que votre machine ne peut pas utiliser est grisée, et le « ? » à côté indique pourquoi (le cas courant étant WebGPU sans adaptateur GPU utilisable). Le grisage s'appliquait à toute la ligne, bulle d'aide comprise : le texte qui expliquait la situation ressortait donc à moitié transparent. La bulle est désormais dessinée en dehors de la ligne grisée et redevient parfaitement opaque.
+
+## L'encodeur int8 allégé est de retour, comme choix à côté de celui par défaut
+
+Le dépôt de modèles construit deux encodeurs int8 à partir de la même calibration. Ils diffèrent par le nombre de multiplications matricielles laissées en pleine précision : 18 dans la version par défaut, 11 dans la version allégée. L'encodeur allégé est donc environ 88 Mo plus petit à télécharger et, mesuré sur cette machine, environ 164 Mio plus léger en mémoire de pointe, au prix d'une erreur de transcription légèrement plus élevée.
+
+Il existait auparavant, a été retiré parce que le compromis ne semblait pas en valoir la peine, et il revient là où il a sa place : comme troisième entrée de la liste des précisions d'encodeur (int8 lite / int8 / fp32) plutôt que comme une décision prise à votre place. int8 reste la valeur par défaut et rien ne change pour qui ne touche pas au réglage. Le banc d'essai intégré gagne aussi une ligne pour lui, puisque « l'encodeur allégé est-il assez bon sur ma machine » est exactement le genre de question à laquelle il sert à répondre.
+
+Le choisir face à un miroir qui n'héberge pas le fichier allégé interrompt le chargement avec un message clair au lieu de servir discrètement l'encodeur plus lourd, la règle que fp32 suivait déjà. Sur WebGPU il se comporte exactement comme int8 : le GPU n'a aucun noyau d'encodeur int8, les deux se résolvent donc en fp32.
+
+Deux correctifs plus discrets en sont sortis. Un miroir local servant l'encodeur allégé n'était jamais interrogé à son sujet, si bien que le fichier pouvait être là et être tout de même signalé comme indisponible. Et demander un décodeur fp32 en même temps qu'une précision d'encodeur disponible était rapporté comme pleinement honoré, alors qu'il n'existe aucun décodeur fp32 à fournir : la rétrogradation est désormais signalée, donc la bannière et la sonde de bascule vers le miroir se déclenchent comme elles le doivent.
+
+## La recherche par faisceau cesse de payer pour des sorties de décodeur qu'elle jette
+
+Les décodeurs du dépôt de modèles exposent désormais des valeurs supplémentaires à l'intérieur du graphe, ce qui permet à une étape de décodage de lire quelques dizaines de flottants au lieu de la ligne complète de ~8 200 logits. Le chemin glouton demande exactement celles-là, et les obtient.
+
+Tous les autres chemins de décodage (recherche par faisceau, amplification de phrases, et toute exécution avec une température) ne demandaient rien de précis, ce qui, dans ONNX Runtime, signifie « renvoie toutes les sorties dont tu disposes ». Sur les nouveaux décodeurs, cela incluait en silence les trois sorties top-K que ces chemins ne lisent jamais, calculées et recopiées hors du moteur à chaque appel du réseau joint. Dans un micro-banc d'essai de 800 appels à une largeur de faisceau de 8, cela coûtait 27 % de la boucle : 4 334 ms contre 3 399 ms (onnxruntime-node, CPU, un seul fil d'exécution). Le gain sur une transcription entière est plus modeste, cette boucle n'en étant qu'une partie.
+
+Ces chemins nomment maintenant les sorties qu'ils lisent. Les transcriptions sont inchangées, et un décodeur dépourvu de ces sorties supplémentaires n'est pas affecté : la liste est construite à partir de ce que le modèle chargé déclare réellement, si bien qu'un décodeur plus ancien ou amont se comporte exactement comme avant.
+
+## L'application cesse de télécharger trois moteurs WebAssembly qu'elle n'exécute jamais
+
+ONNX Runtime est embarqué sous forme de quatre moteurs WebAssembly distincts (standard, JSEP, JSPI, asyncify) et l'application n'en charge jamais qu'un seul. Elle téléchargeait et vérifiait pourtant l'empreinte des quatre au démarrage : 79 772 176 octets, dont 26 874 157 réellement utilisés. Pire, elle le faisait une fois par contexte JavaScript, et chaque worker de transcription est son propre contexte : une machine qui fait tourner le pool d'encodage parallèle en plus du worker de décodage composé payait donc quatre fois l'addition, au moment précis où les poids du modèle se téléchargeaient eux aussi.
+
+Ce n'était pas que du gaspillage. Sous cette pile de transferts simultanés, l'un d'eux échouait immanquablement, et un worker dont le téléchargement du moteur échoue est perdu pour le reste de la session : sa part du travail repart discrètement sur le fil principal, la transcription sort quand même correcte, et la seule trace est une ligne dans la console. C'est notre propre test de bout en bout qui l'a attrapé, et c'est précisément pour cela qu'il vérifie la console et pas seulement le texte produit.
+
+La garantie d'intégrité ne change pas là où elle compte : les octets remis à ONNX Runtime restent épinglés à l'empreinte enregistrée à la construction, et un moteur altéré refuse toujours de se charger. Vérifier l'empreinte de trois moteurs jamais exécutés ne protégeait de rien.
+
+## L'application se télécharge environ six fois plus vite
+
+Chaque visiteur télécharge le bundle de l'application avant toute chose, et 130 de ses 138 Mo sont du WebAssembly : les moteurs ONNX Runtime, ffmpeg, et le moteur de diarisation. Caddy recompressait ces octets à chaque requête. Ils sont désormais compressés une seule fois, à la construction de l'image, puis servis tels quels.
+
+Mesuré sur le bundle livré : le moteur ONNX Runtime WebGPU passe de 26 Mo à 3,5 Mo, ffmpeg de 31 Mo à 6,9 Mo, le moteur de diarisation de 17 Mo à 2,5 Mo. Le serveur cesse aussi complètement d'y consacrer du CPU.
+
+Rien ne change pour l'application : le navigateur décode la réponse avant qu'elle ne lui parvienne, donc les octets qu'elle reçoit, et les empreintes d'intégrité qu'elle vérifie, sont exactement les mêmes. Un navigateur qui n'accepte pas brotli retombe sur le comportement précédent.
+
+Le seul coût visible est côté mainteneur : `docker build` prend environ deux minutes et demie de plus, ce qui est précisément l'intérêt de le faire là plutôt qu'à chaque requête.
+
+## Les poids servis en local peuvent désormais l'être compressés
+
+Une instance qui héberge elle-même les poids peut les compresser une fois pour toutes et laisser Caddy les servir avec `Content-Encoding: zstd`. Sur l'encodeur int8 livré, cela fait passer le fichier de 881 878 510 octets à 642 839 559 (27 % de moins à télécharger, les deux mesurés), et le navigateur le décompresse nativement en 3 secondes environ : toute connexion plus lente que ~200 Mo/s y gagne.
+
+Ce n'était pas déjà le cas par hasard : les poids sont servis en `application/octet-stream`, un type que la directive `encode` de Caddy ignore délibérément. Compresser à la volée aurait coûté 6 à 11 secondes de CPU serveur à chaque téléchargement de chaque visiteur ; les octets sont donc préparés une seule fois, par `scripts/precompress.mjs`.
+
+À retenir pour ceux qui hébergent eux-mêmes :
+
+- Lancez `node scripts/precompress.mjs --models <dossier-modele>` après avoir rempli (ou remplacé) le dossier de modèles. Le script est idempotent et ne fait jamais échouer un déploiement. Il utilise le binaire `zstd` si l'hôte en a un, sinon le zstd intégré à Node.
+- Ou définissez `PRECOMPRESS_MODELS=1` et laissez le conteneur les préparer au démarrage. Cela nécessite que le volume de modèles soit monté en écriture (retirez son `:ro`) et prend 30 à 90 secondes au premier démarrage suivant un changement de modèle ; les démarrages suivants les trouvent à jour et ne font rien.
+- Sans fichier `.zst`, ou pour un navigateur qui n'accepte pas zstd, Caddy sert le fichier brut exactement comme avant. Rien d'autre n'est à changer.
+- Un fichier `.zst` plus ancien que sa source serait servi à la place du vrai fichier : le script supprime donc ceux qu'il ne peut pas régénérer, et le conteneur avertit au démarrage s'il en trouve un périmé.
+- Les téléchargements qui reprennent en cours de route ne sont pas affectés : les navigateurs demandent les plages d'octets sans compression.
+
+Cela ne concerne que les poids servis en local. Ceux téléchargés depuis HuggingFace sont servis par HuggingFace, sans compression, et rien ici n'y change quoi que ce soit.
+
+## Une seule version par précision : les graphes optimisés sont désormais les seuls graphes
+
+Le dépôt du modèle fournissait un fichier ONNX d'origine à côté d'une variante optimisée du même fichier, sous un nom plus long, et l'application interrogeait ces noms plus longs à chaque chargement. C'est terminé : le travail sur les graphes se trouve désormais à l'intérieur des fichiers canoniques `encoder-model*.onnx` et `decoder_joint-model*.onnx`, et il n'y a plus rien à départager.
+
+Concrètement, voici ce que contiennent maintenant ces fichiers canoniques :
+
+- **Les deux encodeurs ont un graphe optimisé.** Leur tuyauterie de calcul de formes à l'exécution est pré-évaluée hors ligne, ce qui réécrit la plomberie autour des calculs, pas les calculs eux-mêmes : l'int8 passe de 3547 à 2732 nœuds, le fp32 de 4491 à 2041. Les sorties sont vérifiées identiques au bit près à celles de la version non optimisée (tolérance stricte de 0,0 sur plusieurs longueurs de séquence), les transcriptions ne bougent donc pas. Sur le temps total, la réponse honnête est que la mesure n'a pas tranché : l'A/B en fp32 donne 4,7 % en faveur de la version optimisée, avec un intervalle de confiance qui englobe encore « aucune différence ».
+- **Les deux décodeurs embarquent des sorties supplémentaires dans le graphe**, qu'une étape de décodage peut lire au lieu de refaire le même calcul en JavaScript : les log-partitions dont la recherche en faisceau a besoin, et les quelques plus forts logits de jetons dont la voie gloutonne a besoin, au lieu de relire depuis ONNX Runtime une ligne entière de 8193 flottants à chaque étape. Mesuré sur le backend GPU, le décodage est environ 5 % plus rapide avec elles ; le temps total, lui, ne bouge pas, parce que ce n'est pas le décodage qui domine là-bas.
+
+Ce que cela change pour vous :
+
+- Tout le monde bénéficie des graphes optimisés, et non plus seulement les visiteurs dont le miroir servait les fichiers supplémentaires.
+- Face à un miroir servi localement, six requêtes HEAD de moins avant chaque chargement du modèle, ainsi qu'un balayage redondant à la recherche d'un second jeu de fragments fp32 : l'application ne part plus en quête de noms de fichiers qui n'existent plus.
+- Rien à sélectionner et rien à configurer : il y a un fichier par précision.
+- Les personnes qui autohébergent doivent recopier les noms canoniques et peuvent supprimer de leur miroir tout fichier `.optimized`, `.lse` ou `.topk`. L'application les ignore désormais.
+
+Un miroir plus ancien reste parfaitement utilisable, y compris le dépôt amont `istupakov` : ses décodeurs ne déclarent simplement pas les sorties supplémentaires, le moteur s'en aperçoit au chargement et continue de calculer ces valeurs en JavaScript, exactement comme avant.
+
+## Deux versions de l'encodeur retirées : `int8 lite` et `fp16`
+
+Le dépôt du modèle fournissait quatre précisions d'encodeur. Deux d'entre elles disparaissent, du dépôt du modèle comme de l'application, ainsi que le code qui les sélectionnait.
+
+**`int8 lite`** (environ 757 Mo contre 841 Mo pour la version par défaut) gardait davantage de couches en fp32 pour récupérer un peu de la précision sacrifiée par la quantification int8 agressive. Mesurée sur les 25 langues du jeu de validation FLEURS, elle ressort à 14,82 % de WER contre 14,27 % pour la version par défaut, et sur le jeu de huit discours en audio long à 9,9 % contre 8,6 %. Elle était donc légèrement moins bonne dans les deux cas, pour 84 Mo de téléchargement en moins. Rien ne plaidait pour elle, et chaque précision supplémentaire dans le sélecteur est une combinaison de plus à tester et une chose de plus à expliquer.
+
+**`fp16`** (environ 1,2 Go) était la précision par défaut sur WebGPU. Elle n'a jamais pu être éprouvée de bout en bout ici : ses noyaux WGSL exigent que l'adaptateur WebGPU expose `shader-f16`, ce que le GPU sur lequel ce projet est développé ne fait pas, quoi qu'en dise le pilote. ONNX Runtime construisait la session sans broncher, puis renvoyait une transcription vide. La seule chose mesurable, sa précision sous onnxruntime natif avec calcul en fp16, était bonne, mais « bon sur une voie que l'on ne peut pas exécuter » n'est pas une précision publiable, et elle se trouvait devant chaque visiteur que la mesure de performance envoyait sur le GPU.
+
+Ce que cela change pour vous :
+
+- Le sélecteur de précision de l'encodeur propose désormais **int8** et **fp32**, rien d'autre.
+- Sur le backend WebGPU, l'encodeur est désormais toujours en **fp32** (environ 2,4 Go, chargé en fragments). Ce n'est pas une régression par rapport à ce qui tournait réellement : c'est ce vers quoi un GPU sans `shader-f16` se rabattait déjà.
+- Si vous aviez sélectionné `int8 lite` ou `fp16`, vous basculez vers la précision fonctionnelle de votre backend au prochain chargement.
+- Les personnes qui autohébergent peuvent supprimer `encoder-model.int8.lite.onnx`, `encoder-model.fp16.onnx` et `decoder_joint-model.fp16.onnx` de leur miroir. **Les fragments fp32 deviennent obligatoires pour toute installation qui souhaite servir des visiteurs WebGPU**, puisque fp16 n'est plus là pour compenser un miroir qui en manque. Un miroir qui ne sert ni l'un ni l'autre se dégrade toujours proprement : ces visiteurs basculent sur la voie CPU avec un avertissement, comme auparavant.
+
+Le script de génération fp16 est conservé dans le dépôt du modèle, de sorte que la version puisse être régénérée si une machine dotée de `shader-f16` la rend un jour testable.
+
+## Corrigé : plus rien ne se téléchargeait après le déménagement de HuggingFace
+
+Les fichiers de modèle ne se chargeaient plus sur les instances autohébergées. HuggingFace sert désormais les poids des dépôts migrés depuis une adresse différente de celle qu'il utilisait auparavant, et la politique de sécurité d'une instance énumère les adresses que le navigateur a le droit de joindre : la nouvelle n'y figurait pas, donc le navigateur refusait chaque téléchargement avant même qu'il ne quitte la page.
+
+L'échec prenait la forme la plus déroutante possible. L'application n'apprend jamais pourquoi une requête bloquée a échoué : elle a donc fait ce qu'elle fait pour tout téléchargement échoué et s'est tournée vers la copie locale des poids, puis a signalé ce qui manquait à cette copie. Tous les symptômes visibles désignaient le miroir local, et rien nulle part ne nommait la politique de sécurité.
+
+Les nouvelles adresses sont désormais autorisées. Une vérification (`node scripts/check-hf-cdn-hosts.mjs`) résout un vrai téléchargement et nomme toute adresse que la liste ne couvre plus, car HuggingFace déménagera de nouveau.
+
+## Une instance signale au démarrage qu'un modèle configuré n'a aucun poids derrière lui
+
+Une instance peut proposer plusieurs modèles, et le fait que l'un d'eux n'ait rien sur le miroir local était invisible : l'application va simplement chercher ce modèle sur HuggingFace, donc l'instance paraît en bonne santé et se contente d'être plus lente pour qui le choisit. Un déploiement peut ainsi livrer la moitié des modèles configurés sans que rien ne le signale. Le démarrage nomme désormais tout modèle configuré que le dossier monté ne peut pas servir. Cela reste un avertissement, car se rabattre sur HuggingFace est une façon légitime de fonctionner.
+
+## Ajustements plus modestes dans la barre latérale
+
+La liste des précisions de l'encodeur est désormais ordonnée par taille de téléchargement, de la plus petite à la plus grande : elle se lit comme une progression au lieu d'exiger la comparaison de chaque ligne. Le choix recommandé reste indiqué comme tel.
+
+Dans la section de test de performance, une précision que vous possédez déjà n'était marquée comme téléchargée que pour le backend sur lequel vous l'exécutez, alors qu'une précision est un seul fichier que les deux backends lisent : choisir la même précision sur l'autre backend semblait coûter un nouveau téléchargement de plusieurs centaines de mégaoctets, alors qu'il est gratuit. L'estimation sous la liste comptait aussi une telle précision deux fois.
+
+La ligne du modèle ne porte plus le suffixe `(nemo128)`, qui nommait un composant interne et était identique pour tous les modèles proposés.

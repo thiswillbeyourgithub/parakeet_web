@@ -1,0 +1,25 @@
+# 12.0.0 (2026-11-07)
+
+## A debug setting to check the model relay, and two fixes to the fallback it exposed
+
+The sidebar's Debug section has a new **Model source (/models relay)** setting: **Force relay** loads every model file through the server's `/models/` relay, **HuggingFace only** never touches it, and **Auto** (the default) keeps the normal behaviour. It exists because on a machine where HuggingFace works the relay is otherwise never used, so there was no way to check a deployment's relay from a browser. Checking it surfaced two bugs, both fixed. When the background check wrongly decided HuggingFace was unreachable and the server could not provide the model, the load failed instead of going back to HuggingFace as intended. And each missing file on `/models/` cost about a minute of retries before the next source was tried, because a 404 was retried like a network error; a 404 is now final.
+
+## Self-hosting: models are relayed from HuggingFace instead of mirrored on disk
+
+**Breaking for self-hosters.** The container no longer serves a locally mounted copy of the models. When a visitor cannot reach HuggingFace, the browser now asks the server's `/models/` path and the server streams the file from HuggingFace as it arrives: no disk use (the old mirror took about 25 GB with every variant) and only a few small buffers of memory per download. Interrupted downloads still resume. Only the configured model repos and the two diarization repos are relayed, so this is not an open proxy. The container checks at every start that it can reach HuggingFace for each of those repos, and refuses to boot if not. Visitors who got their model this way see a notice saying so, and the sidebar labels the model "relayed by this server". New settings: `HF_TOKEN` (optional, raises the HuggingFace rate limit), `HF_RELAY_MAX_STREAMS` and `HF_MODEL_RELAY=false` to turn it off. `LOCAL_MODEL_PATH`, `PRECOMPRESS_MODELS` and `VITE_MODEL_SOURCE` are removed, and the container refuses to start while any of them is still set or while something is still mounted at `/models`, so an old configuration cannot be silently ignored.
+
+## GPUs without shader-f16 now transcribe on the GPU at int8
+
+A GPU that does not report the `shader-f16` feature cannot run the default fp16 encoder, and the app used to send such a machine to the processor (WASM) instead. It now loads the int8 encoder on the GPU. This is the reference machine's own case (RTX 3090 Ti, whose browser does not expose `shader-f16`): through the real app on the 3-minute test recording, the GPU at int8 took 5.6 s wall (median of 3, GPU shared with other jobs), where the processor backend measured 86 s on the same recording in an earlier session (median of 3, busy machine, not interleaved with the GPU runs). The automatic CPU-versus-GPU measurement now runs on such machines too, since its answer can be acted on. A model source that does not host the int8 encoder still sends them to the processor, and fp32 and w4a8 remain hand picks only.
+
+## int8 encoder on WebGPU
+
+The int8 encoder can now be picked on the WebGPU backend. The app used to refuse it there because an older int8 format had no GPU kernel, but the shipped int8 encoder is a MatMulNBits build, which the GPU runs natively. Through the real app on the reference machine (RTX 3090 Ti shared with other jobs, 3-minute test recording, greedy, 3 interleaved runs each), int8 gave the same transcript as fp32 word for word and encoded in 1.8 s against 2.9 s (medians), from roughly a quarter of the download. The default GPU precision is unchanged (fp16). The sidebar benchmark now also times int8 on the GPU, pre-selected because it reuses the int8 file a visitor already has.
+
+## Faster encoder graph on WebGPU (model update)
+
+The [ultra model](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) now ships encoders whose attention layers realign their position scores with one lookup instead of five operations that copied the whole score matrix twice. The outputs are identical to the previous encoders (maximum difference 0.0, checked for fp32, fp16, int8 and w4a8). Measured on the WebGPU fp32 encoder alone (RTX 3090 Ti, shared with other jobs, 60 s of audio): warm run medians 542 to 609 ms against 586 to 666 ms before, over 3 interleaved rounds of 10 runs. On the processor (WASM) backend the int8 encoder runs at the same speed as before. Returning visitors download the new encoder once.
+
+## The first WebGPU transcription no longer waits for shader compilation
+
+The first time the encoder runs on the GPU, the browser compiles every shader it needs, which took 3.7 s on an RTX 3090 Ti and used to delay the first transcription after each model load. The app now does that warm-up while the model loads, right after the session is built. Through the real app on the WebGPU fp32 backend, the 3-minute test recording transcribed in 7.6, 7.8 and 8.9 s, against 10.3 to 12.7 s before (on a GPU shared with other jobs, so the spread is wide). The processor (WASM) backend is unchanged.
