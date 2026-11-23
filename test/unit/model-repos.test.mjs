@@ -18,10 +18,13 @@ import {
   matchModelRepo,
   migrateRepoId,
   diarizationFileName,
+  repoPickerLabel,
+  isExperimentalRepo,
 } from '../../app/ui/src/lib/modelRepos.js';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx';
+const ULTIMED_V2 = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
 const BOTH = [BASE, ULTIMED];
 
 describe('parseModelRepos', () => {
@@ -32,6 +35,11 @@ describe('parseModelRepos', () => {
   test('splits a comma-separated list and keeps the configured order', () => {
     assert.deepEqual(parseModelRepos(`${BASE},${ULTIMED}`), BOTH);
     assert.deepEqual(parseModelRepos(`${ULTIMED},${BASE}`), [ULTIMED, BASE]);
+  });
+
+  test('moves experimental repos (UltiMed v2) to the end, keeping the rest in order', () => {
+    assert.deepEqual(parseModelRepos(`${ULTIMED_V2},${BASE},${ULTIMED}`), [BASE, ULTIMED, ULTIMED_V2]);
+    assert.deepEqual(parseModelRepos(ULTIMED_V2), [ULTIMED_V2]);
   });
 
   test('tolerates whitespace, blank entries and a trailing comma', () => {
@@ -58,12 +66,12 @@ describe('parseModelRepos', () => {
 describe('shortRepoLabel', () => {
   test('strips owner, shared model stem and the -onnx suffix', () => {
     assert.equal(shortRepoLabel(BASE), 'optimized');
-    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed-v2');
+    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed-v1');
   });
 
   test('keeps the product casing intact', () => {
     // Lowercasing would make the picker read as a typo of the real name.
-    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed-v2');
+    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed-v1');
   });
 
   test('falls back to the bare repo name when stripping would leave nothing', () => {
@@ -100,7 +108,7 @@ describe('matchModelRepo', () => {
   });
 
   test('the bare repo name matches', () => {
-    assert.equal(matchModelRepo('parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx', BOTH), ULTIMED);
+    assert.equal(matchModelRepo('parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx', BOTH), ULTIMED);
   });
 
   test('a label prefix matches', () => {
@@ -222,7 +230,6 @@ describe('diarizationFileName', () => {
 describe('migrateRepoId', () => {
   const PRE_V2 = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx';
   const PRE_ULTRA = 'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx';
-  const V1 = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx';
 
   test('maps the pre-rename UltiMed ids to their current ids', () => {
     assert.equal(migrateRepoId(PRE_ULTRA), ULTIMED);
@@ -232,29 +239,39 @@ describe('migrateRepoId', () => {
       'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx');
   });
 
-  test('both v1-era UltiMed ids map to UltiMed v2, the explicit v1 id does not', () => {
+  test('both v1-era UltiMed ids map to UltiMed v1, the explicit v2 id does not', () => {
     // The hub renamed -ultra-UltiMed-onnx to -ultra-UltiMed-v1-onnx when v2
     // shipped. Neither old id named a version, so a saved pick, an old link or
-    // an operator env holding one means "the UltiMed model": v2.
-    assert.equal(ULTIMED, 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx');
+    // an operator env holding one means "the UltiMed model": v1 again since
+    // 2026-11-23, when v2 measured worse.
+    assert.equal(ULTIMED, 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx');
     assert.equal(migrateRepoId(PRE_V2), ULTIMED);
     assert.equal(migrateRepoId(PRE_ULTRA), ULTIMED);
-    assert.equal(migrateRepoId(V1), V1);
+    assert.equal(migrateRepoId(ULTIMED_V2), ULTIMED_V2);
   });
 
-  test('a VITE_MODEL_REPO still listing a v1-era id offers v2, without a duplicate', () => {
+  test('a VITE_MODEL_REPO still listing a v1-era id offers v1, without a duplicate', () => {
     assert.deepEqual(parseModelRepos(`${BASE},${PRE_V2}`), BOTH);
     assert.deepEqual(parseModelRepos(`${BASE},${PRE_V2},${PRE_ULTRA},${ULTIMED}`), BOTH);
   });
 
-  test('an old ?model= link naming a v1-era id, or the ultra-ultimed slug, still resolves to v2', () => {
+  test('an old ?model= link naming a v1-era id, or the ultra-ultimed slug, still resolves to v1', () => {
     assert.equal(matchModelRepo(PRE_V2, BOTH), ULTIMED);
     assert.equal(matchModelRepo(PRE_ULTRA, BOTH), ULTIMED);
     assert.equal(matchModelRepo('ultra-ultimed', BOTH), ULTIMED);
-    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed-v2');
+    assert.equal(shortRepoLabel(ULTIMED), 'ultra-UltiMed-v1');
   });
 
   test('leaves every other value alone', () => {
-    for (const id of [ULTIMED, V1, BASE, 'owner/x', null, undefined]) assert.equal(migrateRepoId(id), id);
+    for (const id of [ULTIMED, ULTIMED_V2, BASE, 'owner/x', null, undefined]) assert.equal(migrateRepoId(id), id);
+  });
+});
+
+describe('repoPickerLabel', () => {
+  test('marks only experimental repos', () => {
+    assert.equal(repoPickerLabel(ULTIMED_V2, 'experimental'), 'ultra-UltiMed-v2 (experimental)');
+    assert.equal(repoPickerLabel(ULTIMED, 'experimental'), 'ultra-UltiMed-v1');
+    assert.equal(isExperimentalRepo(ULTIMED_V2), true);
+    assert.equal(isExperimentalRepo(ULTIMED), false);
   });
 });

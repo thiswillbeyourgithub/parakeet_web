@@ -13,9 +13,9 @@
  * map (both shared with the container's HF relay allowlist, see
  * defaultRepos.js for why they live there).
  */
-import { DEFAULT_MODEL_REPO, RENAMED_REPOS, migrateRepoId } from '../../../src/defaultRepos.js';
+import { DEFAULT_MODEL_REPO, RENAMED_REPOS, migrateRepoId, isExperimentalRepo } from '../../../src/defaultRepos.js';
 
-export { DEFAULT_MODEL_REPO, RENAMED_REPOS, migrateRepoId };
+export { DEFAULT_MODEL_REPO, RENAMED_REPOS, migrateRepoId, isExperimentalRepo };
 
 // A HuggingFace repo id: `owner/name`, both segments limited to the characters
 // HF itself allows. Deliberately the same shape entrypoint.sh validates, so an
@@ -32,7 +32,9 @@ const REPO_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * because a malformed entry would otherwise become a picker option that fails
  * at download time with a confusing 404. A renamed id is replaced by its
  * current id (migrateRepoId) before deduplication, so an operator env that
- * still lists a pre-v2 UltiMed id offers UltiMed v2.
+ * still lists a pre-v2 UltiMed id offers UltiMed v1. Experimental repos
+ * (isExperimentalRepo) are moved to the end, keeping the operator's order
+ * otherwise, so the picker never leads with one.
  *
  * @param {string|undefined|null} raw The configured value.
  * @returns {string[]} Repo ids, at least one (falls back to DEFAULT_MODEL_REPO).
@@ -46,7 +48,8 @@ export function parseModelRepos(raw) {
     seen.add(id);
     out.push(id);
   }
-  return out.length ? out : [DEFAULT_MODEL_REPO];
+  if (!out.length) return [DEFAULT_MODEL_REPO];
+  return [...out.filter(r => !isExperimentalRepo(r)), ...out.filter(isExperimentalRepo)];
 }
 
 /**
@@ -72,11 +75,23 @@ export function shortRepoLabel(repoId) {
 }
 
 /**
+ * The picker's label: shortRepoLabel plus a marker on experimental repos.
+ * Kept apart from shortRepoLabel because `?model=` matching runs on that one.
+ * @param {string} repoId
+ * @param {string} experimentalTag Translated marker, e.g. 'experimental'.
+ * @returns {string}
+ */
+export function repoPickerLabel(repoId, experimentalTag) {
+  const label = shortRepoLabel(repoId);
+  return isExperimentalRepo(repoId) ? `${label} (${experimentalTag})` : label;
+}
+
+/**
  * Resolve a `?model=` value to one of the offered repos, by closest match.
  *
  * The point of the param is shareable links, so it must tolerate what someone
  * would actually type: `?model=ultimed` rather than the full
- * `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`. A renamed repo id
+ * `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`. A renamed repo id
  * (an old shared link) is first replaced by its current id. Matching runs in decreasing
  * order of confidence and stops at the first tier that yields exactly one
  * candidate:

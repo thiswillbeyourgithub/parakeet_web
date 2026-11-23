@@ -54,7 +54,7 @@ Reconnaissance vocale dans le navigateur, fonctionnant entièrement côté clien
 **Le déploiement de référence propose trois modèles**, et l'on passe de l'un à l'autre depuis le sélecteur de modèle de la barre latérale (voir [Proposer plusieurs modèles](#proposer-plusieurs-modèles)) :
 
 - [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) (celui par défaut) : un export ONNX de [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), un Parakeet TDT 0.6B v3 entraîné plus longuement. Sur la partition de validation FLEURS complète de 25 langues (glouton, int8), il obtient un WER macro de 11,57 % contre 13,14 % pour l'export v3 simple ([Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), qu'il remplace et qui n'est plus proposé). `?model=ultra`.
-- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) : le parakeet-ultra de moondream (un Parakeet TDT 0.6B v3 post-entraîné) affiné sur [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2) (3 348 h de parole médicale française synthétisée) afin de mieux transcrire les sujets médicaux. Tout s'exécutant dans votre navigateur, la dictée médicale ne quitte jamais votre machine. Un lien peut le sélectionner directement avec `?model=ultra-ultimed`. Il s'agit d'UltiMed **v2** ; le modèle précédent reste disponible sur le hub sous [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx), et son ancien identifiant `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx` (que le hub redirige désormais vers la v1) est lu par l'application comme la v2 : réglages enregistrés, anciens liens et anciennes valeurs de `VITE_MODEL_REPO` continuent donc de fonctionner.
+- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx) : le parakeet-ultra de moondream (un Parakeet TDT 0.6B v3 post-entraîné) affiné sur de la parole médicale française afin de mieux transcrire les sujets médicaux. Tout s'exécutant dans votre navigateur, la dictée médicale ne quitte jamais votre machine. Un lien peut le sélectionner directement avec `?model=ultra-ultimed-v1`. Il s'agit d'UltiMed **v1**, le modèle médical par défaut : le plus récent [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) (entraîné sur [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2)) donne souvent des résultats bien moins bons, l'application le place donc en dernier comme expérimental, prévient quand on le choisit et ne mémorise jamais ce choix. L'ancien identifiant `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx` est lu par l'application comme la v1 : réglages enregistrés, anciens liens et anciennes valeurs de `VITE_MODEL_REPO` continuent donc de fonctionner.
 - [**Olicorne/parakeet-tdt-0.6b-v3-redux-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx) : un export ONNX de [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), dont les poids de l'encodeur sont ternaires (chaque poids vaut -a, 0 ou +a). Un encodeur sur 2 bits y est donc sans perte, et ce dépôt fournit aussi **w2a8**, un encodeur de 190 Mo, environ un tiers du téléchargement int8, qui obtient un WER macro de 12,64 % sur la même partition, identique à Redux en int8 et en fp32. `?model=redux`.
 
 Les trois figurent, avec le reste de la chaîne, dans [Dépôts liés](#dépôts-liés).
@@ -468,7 +468,7 @@ première entrée est celle que reçoit un visiteur n'ayant jamais choisi :
 
 ```bash
 # Dans docker/.env :
-VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx
 ```
 
 C'est le couple que propose `docker/env.example` : le modèle multilingue par
@@ -483,8 +483,8 @@ visiteur est mémorisé, et changer de modèle télécharge les nouveaux poids e
 retire les anciens du cache du navigateur : revenir en arrière retéléchargera.
 
 Un lien peut en imposer un avec `?model=<requête>`, comparé de façon souple à
-la liste : `https://votre-hote/?model=ultra-ultimed` sélectionne donc
-`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`. Contrairement à
+la liste : `https://votre-hote/?model=ultra-ultimed-v1` sélectionne donc
+`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`. Contrairement à
 `?phrase_boost=`, ce paramètre **remplace bel et bien** le choix enregistré
 d'un visiteur de retour, car un lien qui atterrirait sur ce que le
 destinataire a utilisé en dernier n'aurait aucun intérêt à être partagé. Il

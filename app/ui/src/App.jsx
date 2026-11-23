@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from 'react';
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, LocalDownloadError, QuantUnavailableError, liveOrtServes, liveOrtVariant } from 'parakeet.js';
 import { planOrtRuntimeSwitch, readPendingOrtReload, writePendingOrtReload, clearPendingOrtReload, DEFAULT_CPU_RUNTIME, normalizeCpuRuntime, effectiveOrtVariant, pageRuntimeServes } from './lib/ortRuntimeSwitch.js';
-import { parseModelRepos, matchModelRepo, migrateRepoId } from './lib/modelRepos.js';
+import { parseModelRepos, matchModelRepo, migrateRepoId, isExperimentalRepo } from './lib/modelRepos.js';
 import './App.css';
 import { useI18n } from './i18n.jsx';
 import Banner from './components/Banner.jsx';
@@ -447,7 +447,7 @@ const coerceBackend = (b) => (WEBGPU_DISABLED && String(b).startsWith('webgpu') 
 const BENCHMARK_UPLOAD_PATH = '/api/signal/benchmark-report';
 
 // A ?model=<query> query param lets a shareable link pin which model repo the
-// page loads, e.g. ?model=ultra-ultimed for Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx
+// page loads, e.g. ?model=ultra-ultimed for Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx
 // (an old link naming a pre-v2 UltiMed repo id resolves to v2 too).
 // Read once at module load (the query string doesn't change within a session).
 //
@@ -1493,7 +1493,9 @@ export default function App() {
         // VITE_MODEL_REPO is discarded rather than loaded. A pick saved under
         // a repo's pre-rename id is read as its current id.
         const savedRepo = migrateRepoId(savedModelRepo);
-        if (!URL_MODEL_REPO && savedRepo && modelRepos.includes(savedRepo)) {
+        // An experimental repo is never restored (it is never saved either,
+        // but an older build did save UltiMed v2 when it was the default).
+        if (!URL_MODEL_REPO && savedRepo && modelRepos.includes(savedRepo) && !isExperimentalRepo(savedRepo)) {
           setRepoId(savedRepo);
         }
 
@@ -2045,8 +2047,10 @@ export default function App() {
   // Not usePersistedSetting: a repo that came from ?model= must NOT be written
   // back, or following a link once would silently redefine the visitor's
   // default for every later visit.
+  // An experimental repo (UltiMed v2) is not written either, so the default
+  // stays the default: the stored pick is left as it was.
   useEffect(() => {
-    if (!settingsLoaded || modelRepoFromUrlRef.current) return;
+    if (!settingsLoaded || modelRepoFromUrlRef.current || isExperimentalRepo(repoId)) return;
     saveSetting('modelRepo', repoId);
   }, [repoId, settingsLoaded]);
   usePersistedSetting('wasmEncoderQuant', wasmEncoderQuant, settingsLoaded);
@@ -5203,6 +5207,7 @@ export default function App() {
               // the ?model= flag and becomes persistable again.
               modelRepoFromUrlRef.current = false;
               setRepoId(value);
+              if (isExperimentalRepo(value)) alert(t('modelExperimentalWarning'));
             }}
             modelSource={modelSource}
             modelSwapBlocked={modelSwapBlocked}

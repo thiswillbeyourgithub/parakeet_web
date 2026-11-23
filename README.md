@@ -54,7 +54,7 @@ Browser-based speech-to-text running entirely client-side using NVIDIA's [Parake
 **The reference deployment offers three models**, and you switch between them from the model picker in the sidebar (see [Offering several models](#offering-several-models)):
 
 - [**Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx) (the default): an ONNX export of [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), a further-trained Parakeet TDT 0.6B v3. On the full 25-language FLEURS validation split (greedy, int8) it scores 11.57 % macro WER against 13.14 % for the plain v3 export ([Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx), which it supersedes and which is no longer offered). `?model=ultra`.
-- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx): moondream's parakeet-ultra (a post-trained Parakeet TDT 0.6B v3) fine-tuned on [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2) (3,348 h of synthesized French medical speech) to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultra-ultimed`. This is UltiMed **v2**; the earlier model is still on the hub as [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx), and its former id `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx` (which the hub now redirects to v1) is read by the app as v2, so saved settings, old links and old `VITE_MODEL_REPO` values keep working.
+- [**Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx): moondream's parakeet-ultra (a post-trained Parakeet TDT 0.6B v3) fine-tuned on French medical speech to transcribe medical topics more accurately. Since everything runs in your browser, medical dictation never leaves your machine. A link can select it directly with `?model=ultra-ultimed-v1`. This is UltiMed **v1**, the default medical model: the newer [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) (trained on [Olicorne/UltiMed-ASR-FR-v2](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v2)) turned out to give often far worse results, so the app lists it last as experimental, warns when it is picked, and never remembers that choice. The former id `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx` is read by the app as v1, so saved settings, old links and old `VITE_MODEL_REPO` values keep working.
 - [**Olicorne/parakeet-tdt-0.6b-v3-redux-onnx**](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-onnx): an ONNX export of [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux), whose encoder weights are ternary (each weight is -a, 0 or +a). That makes a 2-bit encoder lossless, so this repo also ships **w2a8**, a 190 MB encoder, about a third of the int8 download, which scores 12.64 % macro WER on the same split, identical to Redux int8 and fp32. `?model=redux`.
 
 All three are listed with the rest of the stack under [Related repositories](#related-repositories).
@@ -463,7 +463,7 @@ gets:
 
 ```bash
 # In docker/.env:
-VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx
+VITE_MODEL_REPO=Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx
 ```
 
 That pair is what `docker/env.example` suggests: the multilingual default
@@ -478,8 +478,8 @@ downloads the new weights and drops the old ones from the browser cache, so
 switching back downloads again.
 
 A link can pin one of them with `?model=<query>`, matched loosely against
-the list, so `https://your-host/?model=ultra-ultimed` selects
-`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`. Unlike `?phrase_boost=`, this
+the list, so `https://your-host/?model=ultra-ultimed-v1` selects
+`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`. Unlike `?phrase_boost=`, this
 one **does** override a returning visitor's saved choice, since a link that
 landed on whatever the recipient last used would not be worth sharing. It
 is deliberately not saved over their choice: their own pick is back on their

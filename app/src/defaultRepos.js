@@ -19,8 +19,26 @@ export const DEFAULT_DIARIZATION_REPO = 'Olicorne/Nemotron-3-Diarization-web-onn
 /** Speaker-embedding repo used when VITE_DIARIZATION_EMB_REPO is unset. */
 export const DEFAULT_DIARIZATION_EMB_REPO = 'csukuangfj/speaker-embedding-models';
 
-/** The French medical fine-tune the app ships for medical dictation (UltiMed v2). */
-export const ULTIMED_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
+/**
+ * The French medical fine-tune the app ships for medical dictation. UltiMed v1
+ * again since 2026-11-23: v2 turned out WORSE than v1 (owner finding), so v1 is
+ * the default and v2 is only offered as an experimental pick.
+ */
+export const ULTIMED_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx';
+
+/** UltiMed v2: still offerable, but experimental (often far worse than v1). */
+export const ULTIMED_V2_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
+
+/**
+ * Repos the picker labels "(experimental)", lists last, warns about when picked
+ * and never remembers as the visitor's choice.
+ */
+export const EXPERIMENTAL_REPOS = Object.freeze([ULTIMED_V2_REPO]);
+
+/** @param {string|null|undefined} repoId */
+export function isExperimentalRepo(repoId) {
+  return EXPERIMENTAL_REPOS.includes(repoId);
+}
 
 /**
  * Repo ids that no longer name the model the app should load, old id -> new
@@ -34,10 +52,10 @@ export const ULTIMED_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v
  *   `-redux-UltiMed-v2-experimental-onnx` (it already held the v2 redux).
  *  - 2026-11-21: `-ultra-UltiMed-onnx` was renamed again to
  *    `-ultra-UltiMed-v1-onnx` (the hub redirects there) and UltiMed v2 shipped
- *    as `-ultra-UltiMed-v2-onnx`. Both pre-v2 ids go to v2, because neither
- *    named a version: whoever saved or configured them wanted "the UltiMed
- *    model". The explicit `-v1-onnx` id is a deliberate choice and is NOT
- *    migrated.
+ *    as `-ultra-UltiMed-v2-onnx`. Both pre-v2 ids go to ULTIMED_MODEL_REPO,
+ *    because neither named a version: whoever saved or configured them wanted
+ *    "the UltiMed model", which is v1 again since 2026-11-23 (it was v2 for two
+ *    days, until v2 measured worse).
  *
  * A saved pick, a `?model=` link and a VITE_MODEL_REPO entry all go through
  * this map, so none of them silently falls back to the default model.

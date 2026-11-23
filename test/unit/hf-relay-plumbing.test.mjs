@@ -139,16 +139,16 @@ describe('HF relay: renamed repos are migrated before the allowlist is built', (
     assert.ok(ENTRYPOINT.indexOf(m[0]) < ENTRYPOINT.indexOf('for _repo in ${VITE_MODEL_REPO'));
   });
 
-  test('the shipped one-liner maps the v1-era UltiMed ids to v2', () => {
+  test('the shipped one-liner maps the v1-era UltiMed ids to v1', () => {
     const local = new URL('../../app/src/defaultRepos.js', import.meta.url).href;
     assert.ok(m[1].includes('/opt/parakeet/app/src/defaultRepos.js'));
     const js = m[1].replace('/opt/parakeet/app/src/defaultRepos.js', local);
     const run = (v) => execFileSync(process.execPath, ['--input-type=module', '-e', js, v], { encoding: 'utf8' });
     assert.equal(
       run('Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx'),
-      'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx',
+      'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx,Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx',
     );
-    assert.equal(run('Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx'), 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx');
+    assert.equal(run('Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx'), 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx');
   });
 });
 

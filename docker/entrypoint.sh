@@ -276,7 +276,7 @@ case "$HF_MODEL_RELAY" in
     ;;
 esac
 
-# Renamed model repos (e.g. a pre-v2 UltiMed id, now UltiMed v2): replace each
+# Renamed model repos (e.g. a pre-v2 UltiMed id, now UltiMed v1): replace each
 # VITE_MODEL_REPO entry by its current id HERE, once, using the map the bundle
 # also uses (RENAMED_REPOS in defaultRepos.js). The browser would migrate the
 # entry anyway, so without this the relay below would allowlist the old id and

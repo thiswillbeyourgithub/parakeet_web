@@ -1,6 +1,6 @@
 import CollapsibleSection from '../CollapsibleSection.jsx';
 import InfoTooltip from '../InfoTooltip.jsx';
-import { shortRepoLabel } from '../../lib/modelRepos.js';
+import { repoPickerLabel } from '../../lib/modelRepos.js';
 import { describeLoadedModel } from '../../lib/loadedModel.js';
 import { encoderQuantRows, ENCODER_QUANT_ROWS } from '../../lib/encoderQuants.js';
 import { boldRuns } from '../../lib/format.js';
@@ -89,7 +89,7 @@ export default function EngineSection({
             data-umami-event="model_repo_select"
           >
             {modelRepos.map(id => (
-              <option key={id} value={id} title={id}>{shortRepoLabel(id)}</option>
+              <option key={id} value={id} title={id}>{repoPickerLabel(id, t('modelExperimentalTag'))}</option>
             ))}
           </select>
         </div>

@@ -43,16 +43,17 @@ export const MED_MODE_ALIASES = Object.freeze([
  * Field notes:
  *  - modelQuery is fed to matchModelRepo() rather than being a hardcoded repo
  *    id, so the preset resolves against whatever the operator actually put in
- *    VITE_MODEL_REPO ("ultra-ultimed-v2" -> Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx).
+ *    VITE_MODEL_REPO ("ultra-ultimed-v1" -> Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx).
  *    An operator who offers no UltiMed repo gets a warning and keeps their
  *    model, rather than a 404 at download time. The query is the full short
  *    label, not "ultimed": that is only a substring of it, and a substring
  *    also matches the redux-UltiMed-experimental repo, so offering both made
  *    the match ambiguous (null) and the preset silently kept the current model.
- *    The "-v2" suffix is there for the same reason: an operator offering both
- *    UltiMed v1 and v2 would otherwise make "ultra-ultimed" ambiguous, and the
- *    preset's drug rules are the ones mined from v2's errors. An instance
- *    still listing a pre-v2 id gets v2 anyway (parseModelRepos migrates it).
+ *    The "-v1" suffix is there for the same reason: an operator offering both
+ *    UltiMed v1 and v2 would otherwise make "ultra-ultimed" ambiguous. It is
+ *    v1, not v2, since 2026-11-23: v2 measured worse (owner finding) and is
+ *    now an experimental pick. An instance still listing a pre-v2 id gets v1
+ *    (parseModelRepos migrates it).
  *  - chunkDurationSec 30 is half the app-wide 60 s default: dictation is short
  *    bursts, and a shorter window returns the first text sooner.
  *  - wasmEncoderQuant / webgpuEncoderQuant are set as a PAIR, not as one value
@@ -95,7 +96,7 @@ export const MED_MODE_ALIASES = Object.freeze([
  *    those views are on, which this preset also switches on.
  */
 export const MED_MODE_PRESET = Object.freeze({
-  modelQuery: 'ultra-ultimed-v2',
+  modelQuery: 'ultra-ultimed-v1',
   boostSource: 'french_medical.txt',
   boostStrength: 2,
   enableChunking: true,
