@@ -108,7 +108,7 @@ sudo docker compose -f docker/docker-compose.yml up
 
 Parakeet Web inclut un **mode dictée expérimental** qui post-traite les transcriptions à l'aide de règles regex pour nettoyer la ponctuation dictée et les abréviations d'unités. C'est particulièrement utile pour la dictée médicale en français.
 
-Les règles regex sont la liste de dictée (`rules/dictation_rules.csv`) de [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes), épinglée sur un tag de release. Elles viennent du [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) de l'association à but non lucratif [interhop.org](https://interhop.org/), écrit à l'origine pour le logiciel [Murmure](https://github.com/Kieirra/murmure), que ce dépôt remplace. Le CSV est téléchargé au démarrage du conteneur.
+Les règles regex sont la liste de dictée (`rules/dictation_rules.csv`) de [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes), qui suit sa branche `main` pour que chaque démarrage du conteneur récupère les dernières règles. Elles viennent du [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) de l'association à but non lucratif [interhop.org](https://interhop.org/), écrit à l'origine pour le logiciel [Murmure](https://github.com/Kieirra/murmure), que ce dépôt remplace. Le CSV est téléchargé au démarrage du conteneur.
 
 Les règles sont en français et couvrent la ponctuation et la mise en page dictées (virgule, à la ligne, parenthèses, guillemets) et les constantes et unités (`tension 120 80` devient `TA : 120/80`). Les corrections de médicaments et de termes médicaux sont une étape à part (les règles de correction du même dépôt).
 
@@ -116,7 +116,7 @@ Cette fonctionnalité est très précoce et s'améliorera rapidement.
 
 #### Comment ça marche
 
-- **Docker** : le script d'entrée télécharge `rules/dictation_rules.csv` de [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (tag épinglé) à chaque démarrage du conteneur.
+- **Docker** : le script d'entrée télécharge `rules/dictation_rules.csv` de [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (dernière version de `main`) à chaque démarrage du conteneur.
 - **Frontend** : l'application charge les règles CSV au démarrage via un fichier manifeste et les applique comme des remplacements JavaScript `RegExp`. Après le traitement regex, chaque ligne est débarrassée des espaces de début/fin et sa première lettre est mise en majuscule. Deux modes d'affichage sont disponibles par transcription : **Brut** et **Dictée** (nettoyé par regex).
 - **Source regex personnalisée** : définissez la variable d'environnement `DICTATION_REGEX_SOURCE` pour remplacer l'URL par défaut. Il peut s'agir de l'URL https d'un fichier `.csv`, d'une URL de dépôt compatible GitLab contenant `regex.csv` (par ex. `https://framagit.org/interhop/murmure-regex`, désormais obsolète) ou d'un chemin de dossier local contenant des fichiers regex CSV (par ex. `/path/to/my/regex-csvs`). Cela vous permet d'itérer sur les règles regex localement sans attendre les changements en amont.
 

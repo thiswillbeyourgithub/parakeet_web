@@ -299,7 +299,7 @@ echo "[entrypoint] VITE_MODEL_REVISION=${VITE_MODEL_REVISION:-(not set, uses mod
 echo "[entrypoint] HF_MODEL_RELAY=${HF_MODEL_RELAY}"
 if [ -n "${HF_TOKEN:-}" ]; then echo "[entrypoint] HF_TOKEN=(set)"; else echo "[entrypoint] HF_TOKEN=(not set, anonymous HF rate limit)"; fi
 echo "[entrypoint] HF_RELAY_MAX_STREAMS=${HF_RELAY_MAX_STREAMS:-(not set, defaults to 16)}"
-echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to Murmure)}"
+echo "[entrypoint] DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-(not set, defaults to UltiMed dictation_rules.csv on main)}"
 echo "[entrypoint] BOOST_PHRASES_SOURCE=${BOOST_PHRASES_SOURCE:-(not set, no boost lists served)}"
 echo "[entrypoint] SIGNALING_PORT=${SIGNALING_PORT:-3001}"
 echo "[entrypoint] RELAY_ENABLE=${RELAY_ENABLE:-(not set, signaling server defaults to enabled)}"
@@ -387,13 +387,13 @@ fi
 
 # ---------- Dictation regex rules ------------------------------------------
 # DICTATION_REGEX_SOURCE overrides the default: the dictation list of
-# UltiMed-ASR-FR-v2-regex-fixes, pinned to a release tag.
+# UltiMed-ASR-FR-v2-regex-fixes, tracking its main branch (latest rules).
 # - If it starts with '/' or './', it's a local folder of CSV files.
 # - If it ends in .csv, it's the URL of one CSV file, fetched as is.
 # - Otherwise it's a GitLab repo base URL (the old interhop murmure-regex
 #   layout); the raw CSV is fetched from /-/raw/main/regex.csv.
 REGEX_DIR="/var/regex"
-DEFAULT_DICTATION_REGEX_URL="https://raw.githubusercontent.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes/v2.1.0/rules/dictation_rules.csv"
+DEFAULT_DICTATION_REGEX_URL="https://raw.githubusercontent.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes/main/rules/dictation_rules.csv"
 REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_DICTATION_REGEX_URL}"
 
 if ! _validate_source "$REGEX_SOURCE"; then

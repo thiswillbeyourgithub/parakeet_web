@@ -108,7 +108,7 @@ sudo docker compose -f docker/docker-compose.yml up
 
 Parakeet Web includes an **experimental dictation mode** that post-processes transcriptions using regex rules to clean up spoken punctuation and unit abbreviations. This is especially useful for French medical dictation.
 
-The regex rules are the dictation list (`rules/dictation_rules.csv`) of [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes), pinned to a release tag. They come from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) of the non-profit [interhop.org](https://interhop.org/), originally written for the [Murmure](https://github.com/Kieirra/murmure) software, which that repository supersedes. The CSV is downloaded on container startup.
+The regex rules are the dictation list (`rules/dictation_rules.csv`) of [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes), tracking its `main` branch so every container start gets the latest rules. They come from the [murmure-regex repository](https://framagit.org/interhop/murmure-regex) of the non-profit [interhop.org](https://interhop.org/), originally written for the [Murmure](https://github.com/Kieirra/murmure) software, which that repository supersedes. The CSV is downloaded on container startup.
 
 The rules are in French and cover spoken punctuation and layout (comma, new line, parentheses, quotes) and vital signs and units (`tension 120 80` becomes `TA : 120/80`). Drug and medical term corrections are a separate step (the fix rules of the same repository).
 
@@ -116,7 +116,7 @@ This feature is very early and will improve rapidly.
 
 #### How it works
 
-- **Docker**: The entrypoint script downloads `rules/dictation_rules.csv` of [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (pinned tag) on every container start.
+- **Docker**: The entrypoint script downloads `rules/dictation_rules.csv` of [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (latest `main`) on every container start.
 - **Frontend**: The app loads the CSV rules at startup via a manifest file and applies them as JavaScript `RegExp` replacements. After regex processing, each line is stripped of leading/trailing whitespace and its first letter is capitalized. Two display modes are available per transcription: **Raw** and **Dictation** (regex-cleaned).
 - **Custom regex source**: Set the `DICTATION_REGEX_SOURCE` environment variable to override the default URL. This can be the https URL of one `.csv` file, a GitLab-compatible repo URL holding `regex.csv` (e.g. `https://framagit.org/interhop/murmure-regex`, now obsolete) or a local folder path containing CSV regex files (e.g. `/path/to/my/regex-csvs`). This allows you to iterate on regex rules locally without waiting for upstream changes.
 
