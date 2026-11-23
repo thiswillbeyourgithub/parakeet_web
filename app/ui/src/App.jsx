@@ -25,6 +25,9 @@ import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { workerReady } from './lib/workerInit.js';
 import VerificationModal from './components/VerificationModal.jsx';
 import DictationCommandsModal from './components/DictationCommandsModal.jsx';
+import ChangelogModal from './components/ChangelogModal.jsx';
+import { CHANGELOG_VERSIONS } from './lib/changelogSource.js';
+import { releasesToShow } from './lib/changelog.js';
 import DecodeDebugView from './components/DecodeDebugView.jsx';
 import { CONFIG } from './config.js';
 import { openIdb, idbGet, idbPut, idbDelete, idbClear, idbDeleteDatabase } from '../../src/idb.js';
@@ -1224,6 +1227,10 @@ export default function App() {
   const [persistTranscripts, setPersistTranscripts] = useState(false);
   // About modal visibility
   const [showAbout, setShowAbout] = useState(false);
+  // Release notes popup: null (closed), or { versions, all }. Opened once on
+  // the first boot after an upgrade with the releases since the stored
+  // version, or from the About dialog with the whole history.
+  const [changelogView, setChangelogView] = useState(null);
   const [showDictCommands, setShowDictCommands] = useState(false);
   // Show advanced info: memory/heap counters, audio metadata, transcription performance stats
   const [showAdvancedInfo, setShowAdvancedInfo] = useState(false);
@@ -1343,6 +1350,11 @@ export default function App() {
 
         if (!storedVersion || storedVersion !== VERSION) {
           console.log(`[App] Version mismatch (stored: ${storedVersion}, current: ${VERSION}). Purging old data...`);
+          // The previous version is only known here, right before it is
+          // overwritten, which also makes the popup one-shot per upgrade.
+          // First visits and downgrades get an empty list, so no popup.
+          const newReleases = releasesToShow(CHANGELOG_VERSIONS, storedVersion, VERSION);
+          if (newReleases.length) setChangelogView({ versions: newReleases, all: false });
           await clearAllSettings();
           await saveSetting('version', VERSION);
           if (booted) return;
@@ -5035,6 +5047,13 @@ export default function App() {
             <a href={lang === 'fr' ? 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/main/README_fr.md' : 'https://github.com/thiswillbeyourgithub/parakeet_web/blob/main/README.md'} target="_blank" rel="noopener noreferrer">ParakeetWeb</a>
           </p>
           <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
+            <strong>{t('releaseNotes')}:</strong>{' '}
+            <button type="button" className="link-button" data-testid="about-release-notes"
+              onClick={() => { setShowAbout(false); setChangelogView({ versions: CHANGELOG_VERSIONS, all: true }); }}>
+              v{VERSION}
+            </button>
+          </p>
+          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', marginBottom: 0 }}>
             <strong>{t('feedback')}:</strong> {t('feedbackText')}{' '}
             <a href="https://olicorne.org" target="_blank" rel="noopener noreferrer">olicorne.org</a>{' '}
             {t('orDirectlyBy')}{' '}
@@ -5052,6 +5071,17 @@ export default function App() {
             <a href="https://huggingface.co/csukuangfj/speaker-embedding-models" target="_blank" rel="noopener noreferrer">3D-Speaker CAM++</a> (Apache-2.0).
           </p>
         </Modal>
+      )}
+
+      {changelogView && (
+        <ChangelogModal
+          t={t}
+          lang={lang}
+          versions={changelogView.versions}
+          title={changelogView.all ? t('releaseNotes') : t('whatsNewTitle')}
+          onClose={() => setChangelogView(null)}
+          onShowAll={changelogView.all ? null : () => setChangelogView({ versions: CHANGELOG_VERSIONS, all: true })}
+        />
       )}
 
       {showDictCommands && (

@@ -249,6 +249,23 @@ export function readSetting(page, key) {
   }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX, key });
 }
 
+// Write one (unprefixed) key into the app's settings DB, e.g. an OLDER
+// `version` to simulate the first boot after an upgrade. Unlike seedSettings
+// it does not wait for or protect against the first boot: call it once the
+// app has booted, then reload.
+export function writeSetting(page, key, value) {
+  return page.evaluate(({ DB, STORE, PREFIX, key, value }) => new Promise((resolve) => {
+    const req = indexedDB.open(DB);
+    req.onsuccess = () => {
+      const db = req.result;
+      const put = db.transaction([STORE], 'readwrite').objectStore(STORE).put(value, `${PREFIX}${key}`);
+      put.onsuccess = () => { db.close(); resolve(true); };
+      put.onerror = () => { db.close(); resolve(false); };
+    };
+    req.onerror = () => resolve(false);
+  }), { DB: SETTINGS_DB, STORE: SETTINGS_STORE, PREFIX: SETTINGS_PREFIX, key, value });
+}
+
 // Delete one (unprefixed) key from the app's settings DB. Needed to simulate a
 // LEGACY profile: the app's default-persist storm writes every known key on
 // first boot, so a key the current version persists can only be made absent

@@ -1180,6 +1180,43 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   max-width: 640px;
 }
 
+/* Release notes ("what's new"): long prose, one article per release. */
+.modal-panel--changelog {
+  max-width: 720px;
+}
+
+.changelog-release + .changelog-release {
+  border-top: 1px solid var(--border);
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+
+.changelog-release h2 { font-size: 1.15rem; margin: 0.25rem 0 0.75rem; }
+.changelog-release h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
+.changelog-release h4 { font-size: 0.95rem; margin: 0.75rem 0 0.4rem; }
+.changelog-release p,
+.changelog-release li { font-size: 0.9rem; line-height: 1.5; }
+.changelog-release__date { font-weight: normal; font-size: 0.85rem; color: var(--text-muted); }
+
+.changelog-release table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+}
+
+.changelog-release th,
+.changelog-release td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+
+.changelog-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.25rem;
+}
+
 /* Dictation commands: a two-column reference table. */
 .modal-panel--dict-commands {
   max-width: 720px;
@@ -1218,7 +1255,9 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 0.85em;
 }
 
-.dict-commands-link {
+/* A button that reads as a link (opens a popup, not a page). */
+.dict-commands-link,
+.link-button {
   background: none;
   border: none;
   color: var(--accent);
@@ -1227,6 +1266,8 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   text-decoration: underline;
   padding: 0.25rem 0;
 }
+
+.link-button { font-size: inherit; padding: 0; }
 
 .modal-close {
   position: absolute;
