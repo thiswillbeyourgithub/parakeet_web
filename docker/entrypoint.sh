@@ -97,6 +97,31 @@ _write_served_manifest() {
   mv "$_dir/.manifest.new" "$_dir/manifest.txt" 2>/dev/null || true
 }
 
+# Refuse to start when a configured served directory ended up with nothing
+# usable: no file listed in its manifest, or a listed file that is empty. A
+# failed download, an oversize drop, a missing local folder and an empty
+# upstream file all land here. Continuing used to ship an EMPTY manifest, which
+# silently turned the feature off in production (the BusyBox wget bug went
+# unnoticed that way), so a broken source must stop the container instead.
+_require_served_files() {
+  # $1: directory, $2: env var name (for the message)
+  _n=0
+  while IFS= read -r _b; do
+    [ -n "$_b" ] || continue
+    if [ ! -s "$1/$_b" ]; then
+      echo "[entrypoint] ERROR: $2 produced an empty file: $_b"
+      echo "[entrypoint] Refusing to start with a broken $2."
+      exit 1
+    fi
+    _n=$((_n + 1))
+  done < "$1/manifest.txt"
+  if [ "$_n" -eq 0 ]; then
+    echo "[entrypoint] ERROR: $2 produced no usable file (see the warnings above)."
+    echo "[entrypoint] Refusing to start with a broken $2."
+    exit 1
+  fi
+}
+
 _finalize_served_dir() {
   # $1: directory, $2: file extension without dot (e.g. csv, txt)
   for f in "$1"/*."$2"; do
@@ -504,6 +529,7 @@ esac
 # Enforce the byte cap on every CSV (even local-folder ones, F-102) and
 # write the manifest the browser reads.
 _finalize_served_dir "$REGEX_DIR" csv
+_require_served_files "$REGEX_DIR" DICTATION_REGEX_SOURCE
 echo "[entrypoint] Dictation regex rules ready in $REGEX_DIR"
 
 # ---------- Phrase-boosting lists ------------------------------------------
@@ -569,6 +595,7 @@ if [ -n "${BOOST_PHRASES_SOURCE:-}" ]; then
       ;;
   esac
   _finalize_served_dir "$BOOST_DIR" txt
+  _require_served_files "$BOOST_DIR" BOOST_PHRASES_SOURCE
   echo "[entrypoint] Boost phrase lists ready in $BOOST_DIR"
 
   # Pre-encode each list to token ids using the local model vocab + the bundled

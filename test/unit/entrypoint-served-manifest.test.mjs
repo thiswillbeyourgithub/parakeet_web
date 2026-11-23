@@ -142,3 +142,35 @@ describe('entrypoint _write_served_manifest', () => {
     assert.deepEqual(readdirSync(dir).sort(), ['a.txt', 'manifest.txt']);
   });
 });
+
+// `_require_served_files` runs right after the manifest is written. The bug it
+// pins: a failed download (BusyBox wget rejecting --max-redirect) left an
+// EMPTY manifest and the container started anyway, so dictation formatting was
+// silently off in production. A broken source must stop the container.
+const REQUIRE = extractFunction('_require_served_files');
+
+/** Write the manifest over `dir`, then run the guard. Returns its exit status. */
+function requireServed(dir, exts) {
+  writeManifest(dir, exts);
+  const script = `${REQUIRE}\n_require_served_files "$1" DICTATION_REGEX_SOURCE\n`;
+  try {
+    execFileSync('/bin/sh', ['-c', script, 'sh', dir], { encoding: 'utf8' });
+    return 0;
+  } catch (e) {
+    return e.status;
+  }
+}
+
+describe('entrypoint _require_served_files', () => {
+  test('passes when every listed file has content', () => {
+    assert.equal(requireServed(seedDir({ 'a.csv': 'x', 'b.csv': 'y' }), ['csv']), 0);
+  });
+
+  test('fails when nothing was downloaded (empty manifest)', () => {
+    assert.equal(requireServed(seedDir({}), ['csv']), 1);
+  });
+
+  test('fails when a listed file is empty', () => {
+    assert.equal(requireServed(seedDir({ 'a.csv': 'x', 'b.csv': '' }), ['csv']), 1);
+  });
+});
