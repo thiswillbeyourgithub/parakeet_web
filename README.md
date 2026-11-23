@@ -42,7 +42,7 @@ Made by Olivier Cornelis, psychiatrist and dev / data scientist ([bio](https://o
 - [Project](#project)
   - [Architecture](#architecture)
   - [Related repositories](#related-repositories)
-  - [Changelog](./CHANGELOG.md)
+  - [Changelog](./app/ui/changelog/)
   - [License](#license)
   - [Acknowledgments](#acknowledgments)
   - [Credits](#credits)
@@ -393,7 +393,7 @@ The rule behind all of it is that a claim only survives if it was measured on a 
 
 The same rule cuts the other way, so it is worth stating plainly. Comparing the shipped 9.9.0 build against the shipped 10.0.0 build on the same 6.5-minute recording, with the arm order rotated every repetition, the GPU path got **50x faster** (1004 s to 20 s) while the CPU path got about **7 % slower** (104 s to 111 s, 20 runs per arm). That CPU cost is not several changes each taking a little: everything 10.0.0 changed about CPU work other than the chunk window measures +0.5 %, which is nothing at all. The whole of it is the chunk window going from 20 s to 60 s, and that was bought deliberately, because a longer window means fewer stitch seams and about half a point of WER better accuracy. The window is adjustable in Settings if you would rather have the 7 % back.
 
-Every measured change is listed in the [changelog](./CHANGELOG.md), and you can measure your own machine with the built-in [Benchmark](#benchmark).
+Every measured change is listed in the [release notes](./app/ui/changelog/), and you can measure your own machine with the built-in [Benchmark](#benchmark).
 
 ### A CPU runtime built for this app
 

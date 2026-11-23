@@ -42,7 +42,7 @@ Réalisé par Olivier Cornelis, psychiatre et développeur / data scientist ([bi
 - [Le projet](#le-projet)
   - [Architecture](#architecture)
   - [Dépôts liés](#dépôts-liés)
-  - [Journal des modifications](./CHANGELOG_fr.md)
+  - [Journal des modifications](./app/ui/changelog/)
   - [Licence](#licence)
   - [Remerciements](#remerciements)
   - [Crédits](#crédits)
@@ -398,7 +398,7 @@ La règle derrière tout cela : une affirmation ne survit que si elle a été me
 
 La même règle vaut dans l'autre sens, et il faut donc le dire clairement. En comparant la version 9.9.0 telle que publiée à la version 10.0.0 telle que publiée, sur le même enregistrement de 6,5 minutes, en alternant l'ordre des deux versions à chaque répétition, la voie GPU est devenue **50x plus rapide** (de 1004 s à 20 s) tandis que la voie CPU est devenue environ **7 % plus lente** (de 104 s à 111 s, 20 exécutions par version). Ce coût CPU n'est pas la somme de plusieurs changements qui coûteraient chacun un peu : tout ce que la 10.0.0 a changé au travail CPU en dehors de la fenêtre de découpage mesure +0,5 %, c'est-à-dire rien. La totalité vient du passage de la fenêtre de 20 s à 60 s, et c'était un choix délibéré, car une fenêtre plus longue signifie moins de coutures et environ un demi-point de WER de mieux. La fenêtre reste réglable dans les Paramètres si vous préférez récupérer ces 7 %.
 
-Chaque changement mesuré est listé dans le [journal des modifications](./CHANGELOG_fr.md), et vous pouvez mesurer votre propre machine avec le [banc d'essai](#banc-dessai) intégré.
+Chaque changement mesuré est listé dans le [notes de version](./app/ui/changelog/), et vous pouvez mesurer votre propre machine avec le [banc d'essai](#banc-dessai) intégré.
 
 ### Un moteur CPU compilé pour cette application
 
