@@ -45,7 +45,7 @@ services:
       - ../phrase_boosting:/boost-defaults:ro
 
       # Custom dictation regex rules: uncomment and set the host path to a folder
-      # containing your own CSV regex files (overrides the default Murmure download).
+      # containing your own CSV regex files (overrides the default UltiMed dictation list).
       # - /path/to/my/regex-csvs:/custom-regex:ro
 
       # Benchmark reports: uncomment (together with BENCHMARK_REPORTS_DIR below)
@@ -88,7 +88,7 @@ services:
       - LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-}
       - PRECOMPRESS_MODELS=${PRECOMPRESS_MODELS:-}
       - VITE_MODEL_SOURCE=${VITE_MODEL_SOURCE:-}
-      # Custom dictation regex source: GitLab repo URL or local path (e.g. /custom-regex)
+      # Custom dictation regex source: https URL of one .csv, GitLab repo URL holding regex.csv, or local path (e.g. /custom-regex)
       - DICTATION_REGEX_SOURCE=${DICTATION_REGEX_SOURCE:-}
       # Phrase-boosting lists: folder of .txt files or https URL to one .txt.
       # Defaults to the repo's curated lists bind-mounted at /boost-defaults
