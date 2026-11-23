@@ -2204,12 +2204,12 @@ export default function App() {
     // note in lib/medMode.js): dictate-then-paste is the whole workflow here.
     setAutoCopyToClipboard(MED_MODE_PRESET.autoCopyToClipboard);
 
-    // Phrase boosting: the curated French medical list at its DEFAULT tuning.
+    // Phrase boosting: the curated French medical list at the default min-p and depth scaling, and strength 2 (lib/medMode.js).
     // The three globals are re-asserted rather than left at whatever the visitor
     // happened to have, so the preset lands on the same station every time. They
     // are only multipliers: the list carries its own per-phrase weights via its
     // `*:WEIGHT:MINP:AUG` header line, which is what actually tunes it.
-    setBoostStrength(BOOST_STRENGTH_DEFAULT);
+    setBoostStrength(MED_MODE_PRESET.boostStrength);
     setBoostMinp(BOOST_MINP_DEFAULT);
     setBoostDepthScaling(DEFAULT_DEPTH_SCALING);
     if (boostFiles.includes(MED_MODE_PRESET.boostSource)) {

@@ -169,10 +169,13 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
     assert.notEqual(MED_MODE_PRESET.wasmEncoderQuant, MED_MODE_PRESET.webgpuEncoderQuant);
   });
 
-  test('carries no phrase-boost tuning knobs', () => {
+  test('boosts at strength 2 (owner instruction 2026-11-23)', () => {
+    assert.equal(MED_MODE_PRESET.boostStrength, 2);
+  });
+
+  test('carries no other phrase-boost tuning knobs', () => {
     // Those are "the app's own defaults" and are re-asserted by the applier from
     // the constants that own them. A copy here is how the two drift apart.
-    assert.equal('boostStrength' in MED_MODE_PRESET, false);
     assert.equal('boostMinp' in MED_MODE_PRESET, false);
     assert.equal('boostDepthScaling' in MED_MODE_PRESET, false);
   });

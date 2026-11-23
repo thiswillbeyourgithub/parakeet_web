@@ -35,7 +35,7 @@ export const MED_MODE_ALIASES = Object.freeze([
 
 /**
  * The preset itself. Only the MEDICAL-SPECIFIC choices live here; the phrase
- * boosting tuning knobs (strength / min-p gate / depth scaling) deliberately do
+ * boosting tuning knobs (min-p gate / depth scaling) deliberately do
  * NOT, because the requirement for those is "the app's own defaults" and
  * duplicating those numbers here is exactly how the two copies drift apart. The
  * applier in App.jsx resets them from the constants that own them.
@@ -77,6 +77,9 @@ export const MED_MODE_ALIASES = Object.freeze([
  *    here, but it IS what an adapter without shader-f16 gets for it: the
  *    shipped int8 is MatMulNBits, which has a WebGPU kernel (see
  *    WEBGPU_ENCODER_QUANTS in lib/encoderQuants.js).
+ *  - boostStrength 2 is the one boosting knob the preset owns (owner
+ *    instruction 2026-11-23): the UltiMed model seemed to need a firmer push
+ *    toward the medical lexicon than the app-wide default of 1.
  *  - lang is forced to French: the lexicon, the dictation regexes and the model
  *    are all French, so an English UI would misdescribe the station.
  *  - drugFix switches on the drug-name fix layer (lib/drugRules.js), which
@@ -94,6 +97,7 @@ export const MED_MODE_ALIASES = Object.freeze([
 export const MED_MODE_PRESET = Object.freeze({
   modelQuery: 'ultra-ultimed-v2',
   boostSource: 'french_medical.txt',
+  boostStrength: 2,
   enableChunking: true,
   chunkDurationSec: 30,
   transcriptDisplayMode: 'dictation',

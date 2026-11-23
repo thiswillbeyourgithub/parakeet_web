@@ -110,9 +110,10 @@ async function expectMedModeApplied(page) {
   await expect(page.locator('textarea[placeholder^="Une phrase par ligne"]'))
     .toHaveValue(/cholécystectomie/, { timeout: 15 * 1000 });
 
-  // Boost tuning back at the app defaults, so the preset lands on the same
-  // station regardless of what the visitor had been fiddling with.
-  await expect.poll(() => readSetting(page, 'boostStrength'), { timeout: 15 * 1000 }).toBe(1);
+  // Boost tuning re-asserted (strength from the preset, min-p at the app
+  // default), so the preset lands on the same station regardless of what the
+  // visitor had been fiddling with.
+  await expect.poll(() => readSetting(page, 'boostStrength'), { timeout: 15 * 1000 }).toBe(2);
   await expect.poll(() => readSetting(page, 'boostMinp'), { timeout: 15 * 1000 }).toBe(0.1);
 }
 
