@@ -106,19 +106,19 @@ sudo docker compose -f docker/docker-compose.yml up
 <details>
 <summary><strong>Détails</strong></summary>
 
-Parakeet Web inclut un **mode dictée expérimental** qui post-traite les transcriptions à l'aide de règles regex pour nettoyer la ponctuation dictée, le vocabulaire médical et les abréviations d'unités. C'est particulièrement utile pour la dictée médicale en français.
+Parakeet Web inclut un **mode dictée expérimental** qui post-traite les transcriptions à l'aide de règles regex pour nettoyer la ponctuation dictée et les abréviations d'unités. C'est particulièrement utile pour la dictée médicale en français.
 
-Les règles regex proviennent du [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) de l'association à but non lucratif [interhop.org](https://interhop.org/), créées à l'origine pour le logiciel [Murmure](https://github.com/Kieirra/murmure). Un unique fichier CSV combiné est téléchargé automatiquement au démarrage du conteneur. J'étudie la possibilité de contribuer à [Murmure](https://github.com/Kieirra/murmure) en amont.
+Les règles regex sont la liste de dictée (`rules/dictation_rules.csv`) de [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes), épinglée sur un tag de release. Elles viennent du [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) de l'association à but non lucratif [interhop.org](https://interhop.org/), écrit à l'origine pour le logiciel [Murmure](https://github.com/Kieirra/murmure), que ce dépôt remplace. Le CSV est téléchargé au démarrage du conteneur.
 
-Les règles sont en français et couvrent des catégories telles que la ponctuation, les abréviations d'unités, les modèles d'examen clinique, les corrections de noms de médicaments et les corrections de vocabulaire médical.
+Les règles sont en français et couvrent la ponctuation et la mise en page dictées (virgule, à la ligne, parenthèses, guillemets) et les constantes et unités (`tension 120 80` devient `TA : 120/80`). Les corrections de médicaments et de termes médicaux sont une étape à part (les règles de correction du même dépôt).
 
 Cette fonctionnalité est très précoce et s'améliorera rapidement.
 
 #### Comment ça marche
 
-- **Docker** : le script d'entrée télécharge l'unique fichier combiné `regex.csv` depuis le [dépôt murmure-regex](https://framagit.org/interhop/murmure-regex) à chaque démarrage du conteneur.
+- **Docker** : le script d'entrée télécharge `rules/dictation_rules.csv` de [UltiMed-ASR-FR-v2-regex-fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (tag épinglé) à chaque démarrage du conteneur.
 - **Frontend** : l'application charge les règles CSV au démarrage via un fichier manifeste et les applique comme des remplacements JavaScript `RegExp`. Après le traitement regex, chaque ligne est débarrassée des espaces de début/fin et sa première lettre est mise en majuscule. Deux modes d'affichage sont disponibles par transcription : **Brut** et **Dictée** (nettoyé par regex).
-- **Source regex personnalisée** : définissez la variable d'environnement `DICTATION_REGEX_SOURCE` pour remplacer l'URL Murmure par défaut. Il peut s'agir d'une URL de dépôt compatible GitLab (par ex. `https://framagit.org/interhop/murmure-regex`) ou d'un chemin de dossier local contenant des fichiers regex CSV (par ex. `/path/to/my/regex-csvs`). Cela vous permet d'itérer sur les règles regex localement sans attendre les changements en amont.
+- **Source regex personnalisée** : définissez la variable d'environnement `DICTATION_REGEX_SOURCE` pour remplacer l'URL par défaut. Il peut s'agir de l'URL https d'un fichier `.csv`, d'une URL de dépôt compatible GitLab contenant `regex.csv` (par ex. `https://framagit.org/interhop/murmure-regex`, désormais obsolète) ou d'un chemin de dossier local contenant des fichiers regex CSV (par ex. `/path/to/my/regex-csvs`). Cela vous permet d'itérer sur les règles regex localement sans attendre les changements en amont.
 
 </details>
 

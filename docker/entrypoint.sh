@@ -386,13 +386,15 @@ else
 fi
 
 # ---------- Dictation regex rules ------------------------------------------
-# DICTATION_REGEX_SOURCE overrides the default Murmure URL.
+# DICTATION_REGEX_SOURCE overrides the default: the dictation list of
+# UltiMed-ASR-FR-v2-regex-fixes, pinned to a release tag.
 # - If it starts with '/' or './', it's a local folder of CSV files.
-# - Otherwise it's a GitLab repo base URL; the raw CSV is fetched from
-#   /-/raw/main/regex.csv.
+# - If it ends in .csv, it's the URL of one CSV file, fetched as is.
+# - Otherwise it's a GitLab repo base URL (the old interhop murmure-regex
+#   layout); the raw CSV is fetched from /-/raw/main/regex.csv.
 REGEX_DIR="/var/regex"
-DEFAULT_MURMURE_URL="https://framagit.org/interhop/murmure-regex"
-REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_MURMURE_URL}"
+DEFAULT_DICTATION_REGEX_URL="https://raw.githubusercontent.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes/v2.1.0/rules/dictation_rules.csv"
+REGEX_SOURCE="${DICTATION_REGEX_SOURCE:-$DEFAULT_DICTATION_REGEX_URL}"
 
 if ! _validate_source "$REGEX_SOURCE"; then
   echo "[entrypoint] ERROR: DICTATION_REGEX_SOURCE has an unsupported shape: $REGEX_SOURCE"
@@ -479,7 +481,10 @@ case "$REGEX_SOURCE" in
     fi
     ;;
   *)
-    MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads"
+    case "$REGEX_SOURCE" in
+      *.csv) MURMURE_RAW="$REGEX_SOURCE" ;;
+      *) MURMURE_RAW="${REGEX_SOURCE}/-/raw/main/regex.csv?ref_type=heads" ;;
+    esac
     echo "[entrypoint] Downloading dictation regex rules from ${REGEX_SOURCE}..."
     if _fetch "$REGEX_DIR/regex.csv" "$MURMURE_RAW"; then
       if _enforce_size_cap "$REGEX_DIR/regex.csv" "$_SERVED_MAX_BYTES"; then

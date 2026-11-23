@@ -5,8 +5,9 @@
 // The popup lists curated phrases but must only show the ones the LOADED rules
 // really turn into the target, so most cases here check that filter against
 // small synthetic rule sets. The last case runs every curated phrase through
-// the real Murmure regex.csv when a local checkout is present (framagit_murmure/
-// is gitignored, so it self-skips elsewhere): a phrase that stopped working
+// the real dictation list (rules/dictation_rules.csv of UltiMed-ASR-FR-v2-regex-fixes)
+// when a local checkout is present (fallback_models/ is gitignored, so it self-skips
+// elsewhere): a phrase that stopped working
 // upstream should be noticed, not silently dropped from the popup.
 //
 // Written with the help of Claude Code.
@@ -76,8 +77,8 @@ test('a row never lists two forms that sound the same', () => {
   }
 });
 
-const MURMURE =resolve(root, 'framagit_murmure/regex.csv');
-test('every curated phrase works with the local Murmure regex.csv', { skip: !existsSync(MURMURE) && 'framagit_murmure/regex.csv not present' }, () => {
+const MURMURE = resolve(root, 'fallback_models/UltiMed-ASR-FR-v2-regex-fixes/rules/dictation_rules.csv');
+test('every curated phrase works with the local dictation_rules.csv', { skip: !existsSync(MURMURE) && 'dictation_rules.csv not present' }, () => {
   const rules = parseDictationCsv(readFileSync(MURMURE, 'utf8'), 'regex');
   const broken = DICTATION_COMMANDS.flatMap(c => c.forms.filter(f => !formWorks(f, c, rules)));
   assert.deepEqual(broken, []);
