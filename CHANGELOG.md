@@ -10,6 +10,10 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Unreleased
 
+### The experimental redux model was renamed
+
+On the hub, `Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx` (which already held the UltiMed v2 redux) is now [`Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx`](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx). The old id, and the older `...-redux-UltiMed-onnx`, still resolve to it.
+
 ### The medical model is now UltiMed v2
 
 The French medical model is now UltiMed v2, [`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx), the model whose errors the v2 drug rules below were mined from. On the hub the previous model was renamed to `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`. The old ids (`...-ultra-UltiMed-onnx` and the older `...-UltiMed-onnx`) still resolve, to v2: a saved model choice, an old `?model=` link and an operator's `VITE_MODEL_REPO` all keep working, and the entrypoint logs the substitution so the relay allowlists the right repo. `?model=ultra-ultimed` and **Mode Dictée Médical** select v2; to serve v1 on purpose, list its `-v1-onnx` id. A returning UltiMed user downloads the v2 weights once (the browser cache is keyed by repo id), and the v1 files are then dropped from the cache.

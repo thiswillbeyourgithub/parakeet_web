@@ -93,7 +93,7 @@ describe('MED_MODE_PRESET: the station the preset actually configures', () => {
     const repos = [
       'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx',
       'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx',
-      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx',
+      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx',
     ];
     assert.equal(matchModelRepo(MED_MODE_PRESET.modelQuery, repos),
       'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx');

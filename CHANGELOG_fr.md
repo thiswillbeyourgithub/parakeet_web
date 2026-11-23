@@ -10,6 +10,10 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ## Non publié
 
+### Le modèle redux expérimental a été renommé
+
+Sur le hub, `Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx` (qui contenait déjà le redux UltiMed v2) devient [`Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx`](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx). L'ancien identifiant, et le plus ancien `...-redux-UltiMed-onnx`, y mènent toujours.
+
 ### Le modèle médical est désormais UltiMed v2
 
 Le modèle médical français est désormais UltiMed v2, [`Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx`](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx), le modèle dont les erreurs ont servi à tirer les règles de médicaments v2 ci-dessous. Sur le hub, le modèle précédent a été renommé `Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx`. Les anciens identifiants (`...-ultra-UltiMed-onnx` et le plus ancien `...-UltiMed-onnx`) sont toujours reconnus, et mènent à la v2 : un choix de modèle enregistré, un ancien lien `?model=` et la variable `VITE_MODEL_REPO` d'un opérateur continuent de fonctionner, et le point d'entrée journalise la substitution pour que le relais autorise le bon dépôt. `?model=ultra-ultimed` et le **Mode Dictée Médical** sélectionnent la v2 ; pour servir la v1 délibérément, indiquez son identifiant `-v1-onnx`. Un utilisateur d'UltiMed qui revient télécharge une fois les poids v2 (le cache du navigateur est indexé par identifiant de dépôt), puis les fichiers v1 sont retirés du cache.

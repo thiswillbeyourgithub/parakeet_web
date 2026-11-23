@@ -30,6 +30,8 @@ export const ULTIMED_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v
  *
  *  - 2026-10-19: the hub renamed `-UltiMed-onnx` to `-ultra-UltiMed-onnx` and
  *    `-redux-UltiMed-onnx` to `-redux-UltiMed-experimental-onnx`.
+ * - 2026-11-23: `-redux-UltiMed-experimental-onnx` renamed to
+ *   `-redux-UltiMed-v2-experimental-onnx` (it already held the v2 redux).
  *  - 2026-11-21: `-ultra-UltiMed-onnx` was renamed again to
  *    `-ultra-UltiMed-v1-onnx` (the hub redirects there) and UltiMed v2 shipped
  *    as `-ultra-UltiMed-v2-onnx`. Both pre-v2 ids go to v2, because neither
@@ -43,7 +45,8 @@ export const ULTIMED_MODEL_REPO = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v
 export const RENAMED_REPOS = Object.freeze({
   'Olicorne/parakeet-tdt-0.6b-v3-UltiMed-onnx': ULTIMED_MODEL_REPO,
   'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx': ULTIMED_MODEL_REPO,
-  'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx',
+  'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx',
+  'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx': 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx',
 });
 
 /**

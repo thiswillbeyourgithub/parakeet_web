@@ -160,7 +160,7 @@ describe('matchModelRepo', () => {
     // (null) and ?mode=med silently kept the current model.
     const ULTRA = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx';
     const REDUX = 'Olicorne/parakeet-tdt-0.6b-v3-redux-onnx';
-    const REDUX_UM = 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx';
+    const REDUX_UM = 'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx';
     const five = [ULTRA, ULTIMED, REDUX, REDUX_UM, BASE];
     assert.equal(matchModelRepo('ultimed', five), null);
     assert.equal(matchModelRepo('ultra-ultimed', five), ULTIMED);
@@ -227,7 +227,9 @@ describe('migrateRepoId', () => {
   test('maps the pre-rename UltiMed ids to their current ids', () => {
     assert.equal(migrateRepoId(PRE_ULTRA), ULTIMED);
     assert.equal(migrateRepoId('Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-onnx'),
-      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx');
+      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx');
+    assert.equal(migrateRepoId('Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-experimental-onnx'),
+      'Olicorne/parakeet-tdt-0.6b-v3-redux-UltiMed-v2-experimental-onnx');
   });
 
   test('both v1-era UltiMed ids map to UltiMed v2, the explicit v1 id does not', () => {
