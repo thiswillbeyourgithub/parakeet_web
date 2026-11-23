@@ -8,7 +8,7 @@ Written with the help of [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Unreleased
+## 13.0.0 (2026-11-23)
 
 ### The experimental redux model was renamed
 

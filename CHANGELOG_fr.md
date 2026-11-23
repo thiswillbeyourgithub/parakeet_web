@@ -8,7 +8,7 @@ Rédigé avec l'aide de [Claude Code](https://claude.com/claude-code).
 
 ---
 
-## Non publié
+## 13.0.0 (2026-11-23)
 
 ### Le modèle redux expérimental a été renommé
 
