@@ -27,11 +27,14 @@ set -e
 # redirect to e.g. http://169.254.169.254/... (cloud instance metadata)
 # or an operator typo of file://... would be silently followed and the
 # result served same-origin under /dictation-regex/.
+# curl first: the image's wget is BusyBox, which has no --max-redirect and
+# rejects the flag outright, so preferring it made EVERY fetch fail (the
+# dictation manifest shipped empty). wget is only a fallback for a GNU wget.
 _fetch() {
-  if command -v wget >/dev/null 2>&1; then
-    wget -q --max-redirect=0 -O "$1" "$2"
-  elif command -v curl >/dev/null 2>&1; then
+  if command -v curl >/dev/null 2>&1; then
     curl -sf --proto '=https' --max-redirs 0 -o "$1" "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --max-redirect=0 -O "$1" "$2"
   else
     echo "[entrypoint] WARNING: neither wget nor curl found"
     return 1
