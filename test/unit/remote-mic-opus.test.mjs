@@ -28,11 +28,14 @@ function fakeScope({ encodeRates = OPUS_RATES, decodeRates = OPUS_RATES, decodeR
     class EncodedAudioChunk { constructor(init) { Object.assign(this, init); } }
     class AudioDecoder {
         static async isConfigSupported(c) { return { supported: decodeRates.includes(c.sampleRate) }; }
-        constructor({ output }) { this.output = output; }
+        constructor({ output }) { this.output = output; this.t = 0; }
         configure(c) { this.rate = decodeRate ?? c.sampleRate; }
         decode(chunk) {
+            // Sample i of the whole stream has value i, so tests can check
+            // exactly which samples survive decimation.
             const n = chunk.data[0] | (chunk.data[1] << 8);
-            this.output(new AudioData({ sampleRate: this.rate, numberOfFrames: n, data: new Float32Array(n).fill(0.5) }));
+            const data = Float32Array.from({ length: n }, () => this.t++);
+            this.output(new AudioData({ sampleRate: this.rate, numberOfFrames: n, data }));
         }
         async flush() {}
         close() {}
@@ -100,5 +103,19 @@ describe('encoder + decoder', () => {
         dec.decode(packPackets([new Uint8Array([0xc0, 0x03])]).buffer);
         assert.equal(got, 0);
         assert.match(errors[0], /44100/);
+    });
+
+    test('Chromium-style 48 kHz output for a 16 kHz stream is decimated, phase kept across buffers', () => {
+        // Real bug: Chromium decodes Opus at 48 kHz whatever rate was configured.
+        const scope = fakeScope({ decodeRate: 48000 });
+        const out = [];
+        const errors = [];
+        const dec = createOpusDecoder(16000, (pcm) => out.push(...pcm), (e) => errors.push(e.message), scope);
+        // Buffers of 1000 and 500 samples: neither is a multiple of 3.
+        dec.decode(packPackets([new Uint8Array([1000 & 0xff, 1000 >> 8]), new Uint8Array([500 & 0xff, 500 >> 8])]).buffer);
+        assert.deepEqual(errors, []);
+        assert.equal(out.length, 500);
+        assert.deepEqual(out.slice(0, 4), [0, 3, 6, 9]);
+        assert.ok(out.every((v, i) => v === i * 3));
     });
 });

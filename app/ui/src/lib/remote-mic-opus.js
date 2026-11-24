@@ -11,9 +11,13 @@
 // instead of 96 KB/s); a 44.1 kHz capture to the same desktop stays PCM.
 //
 // Gotchas this module handles, so callers do not have to:
-//   - native rates only: no resampling before the encoder, and the desktop
-//     decodes at the same rate, so the rate in audio-config stays the truth
-//     (decoded AudioData at any other rate is refused, not resampled);
+//   - native rates only: no resampling before the encoder, so the rate in
+//     audio-config stays the truth. Chromium's AudioDecoder ignores the
+//     configured rate and always outputs Opus at 48 kHz, so decoded audio at
+//     an integer multiple of the announced rate is decimated back to it
+//     (48 kHz -> 16 kHz keeps every 3rd sample). That needs no low-pass: the
+//     encoder only ever saw the announced rate, so the decoded signal has no
+//     content above its Nyquist. Any non-integer ratio is refused;
 //   - packets are 20 ms, so they are GROUPED: one encrypted AUDIO frame
 //     carries GROUP_PACKETS packets (500 ms, the same cadence as the PCM
 //     batches), payload = repeated [uint16 LE length][packet bytes];
@@ -151,22 +155,31 @@ export function createOpusEncoder(sampleRate, sendGroup, onError, scope = global
 }
 
 /**
- * Desktop side decoder. onPcm(float32) gets mono samples in order; a decoded
- * buffer at another rate than announced is reported through onError and
- * dropped. decode(payload) throws on a malformed group.
+ * Desktop side decoder. onPcm(float32) gets mono samples at `sampleRate`, in
+ * order (decimated when the browser decodes at a multiple of it, see the
+ * header); a non-integer rate ratio is reported through onError and dropped. decode(payload) throws on a malformed group.
  */
 export function createOpusDecoder(sampleRate, onPcm, onError, scope = globalThis) {
     let timestampUs = 0;
+    // Decimation phase carried across buffers, so a 48 kHz output split into
+    // buffers whose length is not a multiple of 3 still keeps every 3rd sample.
+    let phase = 0;
     const decoder = new scope.AudioDecoder({
         output: (data) => {
             try {
-                if (data.sampleRate !== sampleRate) {
+                const ratio = data.sampleRate / sampleRate;
+                if (!Number.isInteger(ratio) || ratio < 1) {
                     onError(new Error(`opus decoded at ${data.sampleRate} Hz, expected ${sampleRate}`));
                     return;
                 }
-                const pcm = new Float32Array(data.numberOfFrames);
-                data.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' });
-                onPcm(pcm);
+                const full = new Float32Array(data.numberOfFrames);
+                data.copyTo(full, { planeIndex: 0, format: 'f32-planar' });
+                if (ratio === 1) { onPcm(full); return; }
+                const out = new Float32Array(Math.ceil((full.length - phase) / ratio));
+                let n = 0;
+                for (let i = phase; i < full.length; i += ratio) out[n++] = full[i];
+                phase = (phase + n * ratio) - full.length;
+                onPcm(out.subarray(0, n));
             } finally {
                 data.close?.();
             }
