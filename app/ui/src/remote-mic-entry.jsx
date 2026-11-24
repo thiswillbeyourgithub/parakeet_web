@@ -24,6 +24,7 @@ import {
 import { packFrame, packEndFrame, unpackFrame, createSeqGate, FRAME_AUDIO, FRAME_CONTROL } from './lib/remote-mic-frames.js';
 import { createFrameChannel } from './lib/remote-mic-channel.js';
 import { createSendRatchet, createRecvRatchet } from './lib/remote-mic-rekey.js';
+import { probeOpusSupport, shouldSendOpus, createOpusEncoder } from './lib/remote-mic-opus.js';
 import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode, isAcceptedRemoteMicGain } from './lib/remote-mic-limits.js';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
@@ -229,6 +230,13 @@ function RemoteMicSender() {
         gain: 2.0,
     });
     const gainNodeRef = useRef(null);
+    // Opus (lib/remote-mic-opus.js): this browser's AudioEncoder support,
+    // probed once; the codecs the desktop advertised in audio-settings; and
+    // the current recording's encoder as { encoder, failed } or null (PCM).
+    const opusSupportRef = useRef(null);
+    if (!opusSupportRef.current) opusSupportRef.current = probeOpusSupport();
+    const peerCodecsRef = useRef([]);
+    const opusRef = useRef(null);
 
     // AudioWorklet emits one 128-sample Float32 chunk per render quantum
     // (~125 chunks/sec at 16 kHz, ~375/sec at 48 kHz). The WebRTC data
@@ -296,6 +304,8 @@ function RemoteMicSender() {
         if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
         sourceRef.current = null;
         pendingBatchRef.current = { buf: null, len: 0 };
+        opusRef.current?.encoder.close();
+        opusRef.current = null;
         vadRef.current = null;
         vadQueueRef.current = null;
         if (sendingTimerRef.current) { clearTimeout(sendingTimerRef.current); sendingTimerRef.current = null; }
@@ -373,6 +383,8 @@ function RemoteMicSender() {
     // file pump apply backpressure (the worklet handler fires-and-forgets).
     const pushPcmIntoBatch = useCallback(async (float32) => {
         if (!channelRef.current || !rtcRef.current) return;
+        // Opus does its own 500 ms grouping (lib/remote-mic-opus.js).
+        if (opusRef.current) return opusRef.current.encoder.encode(float32);
         const p = pendingBatchRef.current;
         if (!p.buf) return; // torn down mid-flight
         if (p.len + float32.length > p.buf.length) {
@@ -399,9 +411,32 @@ function RemoteMicSender() {
     // Float32, no quality loss because the desktop quantises to Int16 anyway
     // when writing the WAV); older desktops default to 'pcm-f32'. `extra`
     // carries optional hints such as source:'file'.
+    // Opus replaces pcm-s16 when both ends support it at this rate
+    // (lib/remote-mic-opus.js); each 500 ms group is one AUDIO frame whose
+    // integrity unit is its byte length.
     const beginWireRecording = useCallback((sampleRate, extra = {}) => {
-        channelRef.current?.sender.beginRecording();
-        sendControl({ type: 'audio-config', sampleRate, format: 'pcm-s16', ...extra });
+        const ch = channelRef.current;
+        ch?.sender.beginRecording();
+        opusRef.current?.encoder.close();
+        opusRef.current = null;
+        let format = 'pcm-s16';
+        if (ch && shouldSendOpus({ peerCodecs: peerCodecsRef.current, sampleRate, support: opusSupportRef.current })) {
+            try {
+                const opus = { failed: false };
+                opus.encoder = createOpusEncoder(sampleRate,
+                    (payload) => ch.send(packFrame(FRAME_AUDIO, ch.sender.nextAudio(payload.byteLength), payload)),
+                    (err) => {
+                        console.warn('[RemoteMic] Opus encode error:', err.message);
+                        opus.failed = true;
+                        setSendErrorCount((n) => n + 1);
+                    });
+                opusRef.current = opus;
+                format = 'opus';
+            } catch (err) {
+                console.warn('[RemoteMic] Opus unavailable, sending PCM:', err.message);
+            }
+        }
+        sendControl({ type: 'audio-config', sampleRate, format, ...extra });
         batchTargetSamplesRef.current = Math.max(128, Math.round(sampleRate * SEND_BATCH_MS / 1000));
         pendingBatchRef.current = {
             buf: new Float32Array(batchTargetSamplesRef.current + 128),
@@ -415,12 +450,22 @@ function RemoteMicSender() {
     // the desktop can tell a whole recording from a truncated one. All frames
     // enqueue in order on the transport, so audio-end stays the last thing the
     // receiver sees for this recording.
+    // With Opus the encoder is flushed first (the trailing partial packet only
+    // appears then). An encoder that failed mid-recording lost audio the
+    // totals cannot show, so no END is sent and the desktop refuses the
+    // recording instead of transcribing a hole.
     const endWireRecording = useCallback(async () => {
         await flushPendingBatch();
+        const opus = opusRef.current;
+        opusRef.current = null;
+        if (opus) {
+            try { await opus.encoder.flush(); } catch (_) { opus.failed = true; }
+            opus.encoder.close();
+        }
         const ch = channelRef.current;
         if (ch) {
             const { seq, totals } = ch.sender.nextEnd();
-            await ch.send(packEndFrame(seq, totals));
+            if (!opus?.failed) await ch.send(packEndFrame(seq, totals));
             await ch.sendControl({ type: 'audio-end' });
         }
         lastAudioEndRef.current = Date.now();
@@ -832,6 +877,10 @@ function RemoteMicSender() {
                     if (typeof msg.autoGainControl === 'boolean') {
                         audioSettingsRef.current.autoGainControl = msg.autoGainControl;
                     }
+                    // Codecs the computer can decode; anything not an array
+                    // of strings means PCM only. Applies from the next recording.
+                    peerCodecsRef.current = Array.isArray(msg.codecs) && msg.codecs.every((c) => typeof c === 'string')
+                        ? msg.codecs : [];
                     if (isAcceptedRemoteMicGain(msg.gain)) {
                         audioSettingsRef.current.gain = msg.gain;
                         if (gainNodeRef.current && audioCtxRef.current) {

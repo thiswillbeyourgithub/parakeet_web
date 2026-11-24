@@ -31,6 +31,7 @@ import {
 import { unpackFrame, createFrameVerifier, FRAME_AUDIO, FRAME_CONTROL } from '../lib/remote-mic-frames.js';
 import { createFrameChannel } from '../lib/remote-mic-channel.js';
 import { createSendRatchet, createRecvRatchet } from '../lib/remote-mic-rekey.js';
+import { probeOpusSupport, advertisedCodecs, createOpusDecoder } from '../lib/remote-mic-opus.js';
 import { createSerialQueue } from '../lib/writeQueue.js';
 import { REMOTE_MIC_MAX_SAMPLES } from '../lib/remote-mic-limits.js';
 
@@ -90,12 +91,20 @@ export function useRemoteMic({
   // FIFO keeps them in arrival order, so audio-end judges the recording only
   // after every frame sent before it has been counted.
   const remoteMicFrameQueueRef = useRef(createSerialQueue());
+  // Opus (lib/remote-mic-opus.js): which rates this browser's AudioDecoder
+  // handles, probed once, and the current recording's decoder as
+  // { decoder, failure } (failure: first decode error, fails the recording).
+  const opusSupportRef = useRef(null);
+  if (!opusSupportRef.current) opusSupportRef.current = probeOpusSupport();
+  const remoteMicOpusRef = useRef(null);
 
   // Clear the shared PCM slabs AND this feature's own counters. clearPcmChunks
   // used to reset the two refs below itself, which meant a helper shared with
   // local recording reached into remote-mic state; every remote path that
   // cleared the buffer went through it, so they all go through this instead.
   const resetRemoteMicBuffer = () => {
+    remoteMicOpusRef.current?.decoder.close();
+    remoteMicOpusRef.current = null;
     clearPcmChunks();
     remoteMicSampleCountRef.current = 0;
     remoteMicAudioConfiguredRef.current = false;
@@ -240,14 +249,22 @@ export function useRemoteMic({
   // startMicCapture (active tracks aren't retroactively mutated); the
   // gain is applied live on its GainNode so the slider gives immediate
   // feedback mid-recording.
+  // `codecs` advertises Opus decoding (lib/remote-mic-opus.js); the probe
+  // takes a few ms and is awaited so the first audio-settings already has it.
   useEffect(() => {
     if (!isRemoteMic) return;
-    sendRemoteMicControl({
-      type: 'audio-settings',
-      noiseSuppression,
-      autoGainControl,
-      gain: remoteMicGain,
+    let cancelled = false;
+    opusSupportRef.current.ready.then((support) => {
+      if (cancelled) return;
+      sendRemoteMicControl({
+        type: 'audio-settings',
+        noiseSuppression,
+        autoGainControl,
+        gain: remoteMicGain,
+        codecs: advertisedCodecs(support),
+      });
     });
+    return () => { cancelled = true; };
   }, [isRemoteMic, noiseSuppression, autoGainControl, remoteMicGain]);
 
   // ============ Remote Microphone (Phone as Mic) ============
@@ -327,6 +344,39 @@ export function useRemoteMic({
         startRemoteMic({ roomId, secret, hostSecret, qrSecret });
       };
 
+      // Append one buffer of decoded phone audio (any format) to the shared
+      // PCM slabs, updating the level meter. AES-GCM authenticates the bytes
+      // but a peer holding the key can still send NaN/Infinity Float32 (or a
+      // decoder could emit them); they would corrupt the level meter, the
+      // resampler and the model input, so such a buffer is dropped.
+      const ingestPcm = (float32) => {
+        if (float32.length === 0) return;
+        let sum = 0;
+        for (let i = 0; i < float32.length; i++) {
+          const s = float32[i];
+          if (!Number.isFinite(s)) {
+            console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
+            setRemoteMicDecryptErrors((n) => n + 1);
+            return;
+          }
+          sum += s * s;
+        }
+        // Drop chunks once the per-session sample cap is reached. The
+        // first overflow surfaces an error; later chunks short-circuit
+        // silently so a flooding phone can't spam the UI.
+        if (remoteMicSampleCountRef.current >= REMOTE_MIC_MAX_SAMPLES) return;
+        const newCount = remoteMicSampleCountRef.current + float32.length;
+        if (newCount > REMOTE_MIC_MAX_SAMPLES) {
+          remoteMicSampleCountRef.current = REMOTE_MIC_MAX_SAMPLES;
+          console.error('[RemoteMic] Sample cap reached, dropping further audio chunks');
+          setRemoteMicError(t('remoteMicCapExceeded'));
+          return;
+        }
+        appendPcmChunk(float32);
+        remoteMicSampleCountRef.current = newCount;
+        setRemoteMicLevel(Math.min(100, Math.sqrt(sum / float32.length) * 250));
+      };
+
       // The phone refused or sent a bad audio configuration: close the session.
       const refuseAudioConfig = (why, value) => {
         console.error(`[RemoteMic] ${why}:`, value);
@@ -366,9 +416,10 @@ export function useRemoteMic({
             return null;
           }
           // F-138: an unknown format would decode Int16 bytes as Float32
-          // (or vice versa) into noise without any visible error. Every
-          // protocol-3 phone sends 'pcm-s16'; 'pcm-f32' stays accepted.
-          if (msg.format !== 'pcm-f32' && msg.format !== 'pcm-s16') {
+          // (or vice versa) into noise without any visible error. 'opus' is
+          // only valid at a rate we advertised a decoder for.
+          const opusOk = msg.format === 'opus' && opusSupportRef.current.decode[sr] === true;
+          if (msg.format !== 'pcm-f32' && msg.format !== 'pcm-s16' && !opusOk) {
             refuseAudioConfig('Invalid audio-config format', msg.format);
             return null;
           }
@@ -389,6 +440,17 @@ export function useRemoteMic({
           remoteMicAudioConfiguredRef.current = true;
           remoteMicSampleRateRef.current = sr;
           remoteMicFormatRef.current = msg.format;
+          remoteMicOpusRef.current?.decoder.close();
+          remoteMicOpusRef.current = null;
+          if (opusOk) {
+            const opus = { failure: null };
+            opus.decoder = createOpusDecoder(sr, ingestPcm, (err) => {
+              console.warn('[RemoteMic] Opus decode error:', err.message);
+              opus.failure ??= `opus decode failed (${err.message})`;
+              setRemoteMicDecryptErrors((n) => n + 1);
+            });
+            remoteMicOpusRef.current = opus;
+          }
           console.log(`[RemoteMic] Phone sample rate: ${sr}Hz, format: ${msg.format}, source: ${source}`);
           setRemoteMicRecording(true);
           startRemoteMicTimer();
@@ -405,7 +467,13 @@ export function useRemoteMic({
         }
         verifier.accept(frame);
         if (msg.type === 'audio-end') {
-          return verifier.finish({ requireEnd: true });
+          // Opus decodes asynchronously: wait for the last PCM before judging.
+          const opus = remoteMicOpusRef.current;
+          if (!opus) return verifier.finish({ requireEnd: true });
+          return opus.decoder.flush().catch((e) => { opus.failure ??= `opus flush failed (${e.message})`; }).then(() => {
+            const verdict = verifier.finish({ requireEnd: true });
+            return opus.failure && verdict.ok ? { ok: false, reason: opus.failure } : verdict;
+          });
         }
         if (msg.type === 'paused' || msg.type === 'resumed') {
           // F-89: only honour paused/resumed during a recording (between
@@ -617,8 +685,12 @@ export function useRemoteMic({
               // decision: the verifier judges what the transport delivered.
               const frame = unpackFrame(await remoteMicKeyRef.current.decrypt(data));
               if (frame.kind === FRAME_CONTROL) return applyPhoneControl(frame);
-              const bytesPerSample = remoteMicFormatRef.current === 'pcm-s16' ? 2 : 4;
-              remoteMicFramesRef.current.accept(frame, Math.floor(frame.payload.byteLength / bytesPerSample));
+              // Integrity units: samples for PCM, payload bytes for Opus
+              // (whose decoded length differs from the sent one).
+              const fmt = remoteMicFormatRef.current;
+              const units = fmt === 'opus' ? frame.payload.byteLength
+                : Math.floor(frame.payload.byteLength / (fmt === 'pcm-s16' ? 2 : 4));
+              remoteMicFramesRef.current.accept(frame, units);
               if (frame.kind !== FRAME_AUDIO) return;
               // F-84: refuse binary chunks until the phone has announced its
               // sample rate via audio-config. Without this gate a hostile
@@ -635,70 +707,37 @@ export function useRemoteMic({
                 return;
               }
               const decrypted = frame.payload;
-              // Dispatch on the per-session format. 'pcm-s16' phones send
-              // little-endian Int16 (~v5.4.6+, halves the wire size);
-              // 'pcm-f32' phones send native-endian Float32 (legacy). Both
-              // sides run on little-endian hardware in practice, so the
-              // bare typed-array view is byte-order-correct without a
-              // DataView pass. The format ref is set from audio-config and
-              // is validated there; an unknown value can't reach this code.
-              let float32;
-              let sum = 0;
-              const fmt = remoteMicFormatRef.current;
-              if (fmt === 'pcm-s16') {
-                if (decrypted.byteLength % 2 !== 0) {
-                  console.warn('[RemoteMic] Dropped pcm-s16 chunk: byteLength not a multiple of 2');
-                  setRemoteMicDecryptErrors((n) => n + 1);
-                  return;
+              // Dispatch on the per-session format (validated in audio-config).
+              // 'opus' goes through the decoder, whose output reaches
+              // ingestPcm asynchronously but in order. 'pcm-s16' is
+              // little-endian Int16, 'pcm-f32' native-endian Float32; both
+              // sides run on little-endian hardware in practice, so the bare
+              // typed-array view is byte-order-correct.
+              if (fmt === 'opus') {
+                const opus = remoteMicOpusRef.current;
+                try {
+                  opus.decoder.decode(decrypted);
+                } catch (e) {
+                  // A malformed group loses audio: fail the recording too.
+                  opus.failure ??= `bad opus frame (${e.message})`;
+                  throw e;
                 }
-                const int16 = new Int16Array(decrypted);
-                float32 = new Float32Array(int16.length);
-                for (let i = 0; i < int16.length; i++) {
-                  const s = int16[i] / 0x8000;
-                  float32[i] = s;
-                  sum += s * s;
-                }
-              } else {
-                if (decrypted.byteLength % 4 !== 0) {
-                  console.warn('[RemoteMic] Dropped pcm-f32 chunk: byteLength not a multiple of 4');
-                  setRemoteMicDecryptErrors((n) => n + 1);
-                  return;
-                }
-                float32 = new Float32Array(decrypted);
-                // AES-GCM authenticates the bytes but a peer holding the
-                // legitimate key can still encrypt arbitrary 4-byte
-                // patterns; NaN/Infinity would otherwise propagate into the
-                // level meter, the resampler, and the model input,
-                // silently corrupting the user's transcript. (No equivalent
-                // check needed for pcm-s16: every 16-bit integer maps to a
-                // finite float on the / 0x8000 line above.)
-                let finite = true;
-                for (let i = 0; i < float32.length; i++) {
-                  const s = float32[i];
-                  if (!Number.isFinite(s)) { finite = false; break; }
-                  sum += s * s;
-                }
-                if (!finite) {
-                  console.warn('[RemoteMic] Dropped chunk containing non-finite samples');
-                  setRemoteMicDecryptErrors((n) => n + 1);
-                  return;
-                }
-              }
-              // Drop chunks once the per-session sample cap is reached. The
-              // first overflow surfaces an error; later chunks short-circuit
-              // silently so a flooding phone can't spam the UI.
-              if (remoteMicSampleCountRef.current >= REMOTE_MIC_MAX_SAMPLES) return;
-              const newCount = remoteMicSampleCountRef.current + float32.length;
-              if (newCount > REMOTE_MIC_MAX_SAMPLES) {
-                remoteMicSampleCountRef.current = REMOTE_MIC_MAX_SAMPLES;
-                console.error('[RemoteMic] Sample cap reached, dropping further audio chunks');
-                setRemoteMicError(t('remoteMicCapExceeded'));
                 return;
               }
-              appendPcmChunk(float32);
-              remoteMicSampleCountRef.current = newCount;
-              const rms = Math.sqrt(sum / float32.length);
-              setRemoteMicLevel(Math.min(100, rms * 250));
+              const bytesPerSample = fmt === 'pcm-s16' ? 2 : 4;
+              if (decrypted.byteLength % bytesPerSample !== 0) {
+                console.warn(`[RemoteMic] Dropped ${fmt} chunk: byteLength not a multiple of ${bytesPerSample}`);
+                setRemoteMicDecryptErrors((n) => n + 1);
+                return;
+              }
+              if (fmt === 'pcm-s16') {
+                const int16 = new Int16Array(decrypted);
+                const float32 = new Float32Array(int16.length);
+                for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
+                ingestPcm(float32);
+              } else {
+                ingestPcm(new Float32Array(decrypted));
+              }
             } catch (e) {
               // Don't swallow this: the user thinks audio is being received,
               // but every chunk is failing — surface a running count so the

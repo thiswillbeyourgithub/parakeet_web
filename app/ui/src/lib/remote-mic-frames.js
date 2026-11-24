@@ -25,7 +25,8 @@
 // A recording ends with one FRAME_END whose payload is the number of AUDIO
 // frames and samples the phone sent for that recording:
 //   bytes 0-3   chunks, uint32 LE
-//   bytes 4-7   samples, uint32 LE
+//   bytes 4-7   samples, uint32 LE (payload BYTES for format 'opus', whose
+//               decoded length differs from the sent one, see remote-mic-opus.js)
 //
 // Why: frames used to be bare ciphertext. GCM stops tampering with a single
 // frame, but a frame silently dropped (5 s backpressure timeout, relay queue
