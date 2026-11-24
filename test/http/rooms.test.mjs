@@ -179,6 +179,10 @@ describe('room re-arm for reconnection', () => {
     const newHost = await handshake(hostSecret);
     assert.equal((await handshake(secret)).status, 200);
     assert.equal(newHost.status, 200);
+    // The new pair only holds the relay's own peer-joined announcement.
+    const joined = await fetch(`${srv.baseUrl}/api/rooms/${roomId}/relay/down`, { headers: lp(hostSecret, newHost.token) });
+    assert.equal(joined.status, 200);
+    assert.equal(await joined.text(), '{"type":"peer-joined"}');
     const fresh = await fetch(`${srv.baseUrl}/api/rooms/${roomId}/relay/down`, { headers: lp(hostSecret, newHost.token) });
     assert.equal(fresh.status, 204, 'the frame queued for the old session is gone');
   });

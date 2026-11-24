@@ -466,6 +466,16 @@ export function useRemoteMic({
               console.warn(`[RemoteMic] Ignoring plaintext ${msg.type}`);
               return;
             }
+            if (msg.type === 'peer-joined') {
+              // Relay server: both slots are now held. Our public-key sent
+              // when OUR socket opened was dropped if the phone's opened
+              // later, so send it again unless a handshake already started
+              // (the phone also ignores a duplicate).
+              if (!remoteMicKeyRef.current && !remoteMicPendingRef.current && !remoteMicHandshakeInProgressRef.current) {
+                rtc.sendMessage({ type: 'public-key', key: ourKeyBase64, v: REMOTE_MIC_PROTOCOL });
+              }
+              return;
+            }
             if (msg.type === 'sender-public-key') {
               // Refuse a second handshake once one is already bound or in
               // flight. Otherwise a malicious phone could overwrite

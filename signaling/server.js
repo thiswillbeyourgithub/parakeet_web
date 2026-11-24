@@ -818,6 +818,7 @@ function attachRelay(room, ws, slotName) {
     ws.pendingReleased = false;
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
+    announcePairIfComplete(r);
 
     ws.on('message', (data, isBinary) => {
         const len = frameBytes(data);
@@ -897,6 +898,19 @@ function lpDequeue(slot) {
         _relayQueuedBytes -= n;
     }
     return frame;
+}
+
+// Sent to BOTH halves the moment a room's relay pair is complete. Frames a
+// peer sends before its partner holds a slot are dropped, so the desktop's
+// first public-key is lost whenever its relay socket opens first; this tells
+// it to send again. Plaintext and content-free: a forged copy (relay or peer)
+// at worst triggers a duplicate public-key, which the phone ignores.
+const RELAY_PEER_JOINED = Buffer.from('{"type":"peer-joined"}');
+
+function announcePairIfComplete(r) {
+    if (!r || !r.a || !r.b) return;
+    deliverToPeer(r.a, RELAY_PEER_JOINED, false);
+    deliverToPeer(r.b, RELAY_PEER_JOINED, false);
 }
 
 // Returns false only when the relay-wide queue budget refused the frame.
@@ -1306,6 +1320,7 @@ app.post('/api/rooms/:id/relay/handshake', rateLimitMiddleware('general'), valid
     };
     r[slotName] = slot;
     armLpIdleTimer(slot);
+    announcePairIfComplete(r);
     debugLog('RELAY', `LP slot ${slotName} claimed for room ${req.params.id}`);
     res.json({ slot: slotName, token });
 });

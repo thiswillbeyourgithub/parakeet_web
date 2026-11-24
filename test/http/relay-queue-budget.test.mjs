@@ -81,6 +81,17 @@ describe('WS frames share the relay-wide budget', () => {
       ws.onerror = () => reject(new Error('ws failed to open'));
     });
   }
+  // Opens both halves and consumes the {"type":"peer-joined"} the relay sends
+  // each of them once paired, so the next event is the frame under test.
+  async function pairWs(room) {
+    const phone = await openWs(room.roomId, room.secret);
+    const phoneJoined = new Promise((r) => phone.addEventListener('message', (ev) => r(ev.data), { once: true }));
+    const host = await openWs(room.roomId, room.hostSecret);
+    const hostJoined = new Promise((r) => host.addEventListener('message', (ev) => r(ev.data), { once: true }));
+    assert.equal(await phoneJoined, '{"type":"peer-joined"}');
+    assert.equal(await hostJoined, '{"type":"peer-joined"}');
+    return { phone, host };
+  }
   const nextEvent = (ws) => new Promise((resolve) => {
     ws.addEventListener('message', (ev) => resolve({ type: 'message', size: ev.data.byteLength }), { once: true });
     ws.addEventListener('close', () => resolve({ type: 'close' }), { once: true });
@@ -100,8 +111,7 @@ describe('WS frames share the relay-wide budget', () => {
     }
 
     const wsRoom = await createRoom(small);
-    const phone = await openWs(wsRoom.roomId, wsRoom.secret);
-    const host = await openWs(wsRoom.roomId, wsRoom.hostSecret);
+    const { phone, host } = await pairWs(wsRoom);
     const got = nextEvent(phone);
     host.send(new Uint8Array(200 * KiB));
     assert.equal((await got).type, 'close', '1000 KiB queued + 200 KiB must overflow 1 MiB');
@@ -114,8 +124,7 @@ describe('WS frames share the relay-wide budget', () => {
     // Sent and handed to the kernel: those bytes must be given back, or the
     // budget would leak until every frame is refused.
     const room2 = await createRoom(small);
-    const phone2 = await openWs(room2.roomId, room2.secret);
-    const host2 = await openWs(room2.roomId, room2.hostSecret);
+    const { phone: phone2, host: host2 } = await pairWs(room2);
     for (let i = 0; i < 12; i++) {
       const next = nextEvent(phone2);
       host2.send(new Uint8Array(200 * KiB));

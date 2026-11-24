@@ -61,6 +61,11 @@ describe('per-client relay requests in flight', () => {
     const hostToken = await lpHandshake(srv, roomId, hostSecret);
     const phoneToken = await lpHandshake(srv, roomId, secret);
     const downUrl = `${srv.baseUrl}/api/rooms/${roomId}/relay/down?wait=true`;
+    // Drain the relay's peer-joined announcement so the polls below are held.
+    for (const [sec, token] of [[hostSecret, hostToken], [secret, phoneToken]]) {
+      const res = await fetch(downUrl, { headers: lpHeaders(srv, sec, token) });
+      assert.equal(await res.text(), '{"type":"peer-joined"}');
+    }
     const polls = [];
     const openPoll = (sec, token) => {
       const ac = new AbortController();
