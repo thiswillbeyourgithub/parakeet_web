@@ -63,7 +63,7 @@ export class RemoteMicRTC {
         // the relay takes over). VITE_RELAY_ENABLE=false disables the
         // race entirely and the class behaves exactly as before.
         this.relayTransport = null;
-        this._RELAY_GRACE_MS = 10_000;
+        this._RELAY_GRACE_MS = 7_000;
         this._relayGraceTimer = null;
         this._relayInFlight = false;
         this._raceResolved = false;
@@ -345,7 +345,7 @@ export class RemoteMicRTC {
     //
     // Race state machine: WebRTC and the relay run in parallel after
     // the SDP exchange completes. The first to "connected" wins; the
-    // loser is torn down. Matches WebSend's 10 s grace window.
+    // loser is torn down. 7 s grace window (WebSend used 10 s).
 
     /**
      * Start the relay grace timer. Idempotent; safe to call from both
@@ -559,7 +559,7 @@ export class RemoteMicRTC {
                     this._startPolling('answer');
                     // Phone has answered: both peers now know the room
                     // and can race the relay against the WebRTC ICE
-                    // negotiation. The grace timer gives ICE 10 s to
+                    // negotiation. The grace timer gives ICE 7 s to
                     // win before claiming a relay slot.
                     this._startRelayRace();
                     return;
@@ -650,7 +650,7 @@ export class RemoteMicRTC {
         if (!answerResponse.ok) throw new Error(`Failed to store answer (HTTP ${answerResponse.status})`);
         console.log('[RemoteMicRTC] Answer sent, establishing connection...');
         this._startPolling('offer');
-        // Mirror waitForAnswer: kick off the 10 s grace race against
+        // Mirror waitForAnswer: kick off the 7 s grace race against
         // the relay so the phone falls back to wss/long-poll if ICE
         // cannot get through.
         this._startRelayRace();
