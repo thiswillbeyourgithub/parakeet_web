@@ -283,7 +283,7 @@ This feature was implemented with [Claude Code](https://www.anthropic.com/claude
 <details>
 <summary><strong>Details</strong></summary>
 
-**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is encrypted between the two browsers (ECDH P-256 + AES-GCM-256): the signaling server and any relay only carry encrypted data and never see the plaintext audio.
+**No microphone? No problem!** Use your phone as a wireless mic via WebRTC. Audio is encrypted between the two browsers (ECDH P-256 + AES-GCM-256): the signaling server and any relay only carry encrypted data and never see the plaintext audio. The keys are renewed every 10 minutes without interrupting the audio, so a key stolen later cannot decrypt what was sent before it. When both browsers support it (WebCodecs), the audio is compressed with Opus (about 16 times smaller than raw PCM), which helps on weak mobile connections; otherwise it is sent as raw 16-bit PCM.
 
 That guarantee has one limit worth knowing: the same server that relays the audio also serves the web page (the JavaScript doing the encryption) to both the computer and the phone. It holds against a relay or network that is hostile, or a server that is curious after the fact, but not against an instance that serves modified code: a compromised or malicious operator could ship a page that sends the audio elsewhere, and no in-page check can detect that. Use an instance you trust, or host your own.
 

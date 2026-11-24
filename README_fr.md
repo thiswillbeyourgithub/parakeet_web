@@ -283,7 +283,7 @@ Cette fonctionnalité a été implémentée avec [Claude Code](https://www.anthr
 <details>
 <summary><strong>Détails</strong></summary>
 
-**Pas de microphone ? Pas de problème !** Utilisez votre téléphone comme micro sans fil via WebRTC. L'audio est chiffré entre les deux navigateurs (ECDH P-256 + AES-GCM-256) : le serveur de signalisation et tout relais ne transportent que des données chiffrées et ne voient jamais l'audio en clair.
+**Pas de microphone ? Pas de problème !** Utilisez votre téléphone comme micro sans fil via WebRTC. L'audio est chiffré entre les deux navigateurs (ECDH P-256 + AES-GCM-256) : le serveur de signalisation et tout relais ne transportent que des données chiffrées et ne voient jamais l'audio en clair. Les clés sont renouvelées toutes les 10 minutes sans interrompre l'audio, si bien qu'une clé volée plus tard ne permet pas de déchiffrer ce qui a été envoyé avant. Quand les deux navigateurs le permettent (WebCodecs), l'audio est compressé en Opus (environ 16 fois plus léger que le PCM brut), ce qui aide sur les connexions mobiles faibles ; sinon il est envoyé en PCM 16 bits brut.
 
 Cette garantie a une limite à connaître : le serveur qui relaie l'audio sert aussi la page web (le JavaScript qui chiffre) à l'ordinateur et au téléphone. Elle tient face à un relais ou un réseau hostile, ou à un serveur curieux après coup, mais pas face à une instance qui sert du code modifié : un opérateur compromis ou malveillant pourrait livrer une page qui envoie l'audio ailleurs, et aucune vérification dans la page ne peut le détecter. Utilisez une instance de confiance, ou hébergez la vôtre.
 
