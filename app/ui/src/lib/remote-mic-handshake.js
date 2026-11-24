@@ -1,103 +1,57 @@
 /**
  * Shared remote-mic handshake helpers used by both the desktop receiver
- * (App.jsx) and the phone sender (remote-mic-entry.jsx).
+ * (hooks/useRemoteMic.js) and the phone sender (remote-mic-entry.jsx).
  *
  * Built with the help of Claude Code.
  *
- * Centralising this logic ensures:
- *  - Both sides feed the SAME byte order to the fingerprint hash
- *    (receiver-pub first, sender-pub second). The MITM defence is
- *    only useful if both sides agree on this — diverging here would
- *    silently break verification.
- *  - The adaptive fingerprint-length stats fetch can't hang the UI;
- *    a single AbortController + fallback path lives here, not on each
- *    side independently.
+ * Protocol v4 handshake (plaintext over the relay, then encrypted):
+ *   desktop -> phone  {type:'public-key', key, v:4}
+ *   phone -> desktop  {type:'sender-public-key', key, v:4}
+ *   both derive the session keys from ECDH + the QR secret K (lib/remote-crypto.js)
+ *   each side sends {type:'key-confirm'} as its FIRST encrypted control frame
+ * A side only binds the session once the peer's key-confirm decrypts. Its
+ * AES-GCM tag proves the peer derived the same key, i.e. saw the same two
+ * public keys and the same K: that is the transcript MAC, and it is what
+ * replaced the human fingerprint comparison of v3.
  */
-
-import { getPairFingerprint, computeFingerprintLength } from './remote-crypto.js';
-
-const STATS_TIMEOUT_MS = 2000;
-// Fail-safe fingerprint length used whenever the stats response is missing,
-// malformed, late, or otherwise untrustworthy. We pick the longest length the
-// crypto layer supports so a misbehaving (or compromised) stats endpoint can
-// never silently shrink the verification code: the worst case is "user reads
-// a slightly longer code", never "the fingerprint is too short to detect a
-// MITM swap." Defense in depth even though signaling is currently trusted.
-// 16 hex = 64 bits; matches the computeFingerprintLength floor in
-// remote-crypto.js. Anything shorter is brute-forceable in seconds by
-// a signaling-MITM attacker who runs ECDH-and-hash in a loop until
-// they find a public key whose pair-fingerprint matches what they
-// need the user to see (F-65).
-const SAFE_FALLBACK_HEX_LEN = 16;
 
 /**
- * Fetch /api/signal/stats and convert the active-room count into an
- * adaptive hex fingerprint length. Falls back silently to a sensible
- * default on timeout, network error or non-OK response — verification
- * still works, only the length heuristic is approximate.
- *
- * @param {string} [statsUrl='/api/signal/stats']
- * @param {number} [timeoutMs=STATS_TIMEOUT_MS]
- * @returns {Promise<number>} hex length suitable for getPairFingerprint
+ * Wire protocol version, announced in the handshake ({type:'public-key', v:4}
+ * and {type:'sender-public-key', v:4}). Bump it whenever the two pages stop
+ * understanding each other. The phone page is a separate entry point that can
+ * sit open in a tab across a deploy (and an old desktop tab can too), so each
+ * side refuses a peer announcing another version instead of failing in
+ * confusing ways later. 3: control messages moved inside the encryption.
+ * 4: QR secret K in the key derivation, key-confirm instead of the code check.
  */
-export async function getAdaptiveFingerprintLength(statsUrl = '/api/signal/stats', timeoutMs = STATS_TIMEOUT_MS) {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        const resp = await fetch(statsUrl, { signal: controller.signal });
-        if (!resp.ok) return SAFE_FALLBACK_HEX_LEN;
-        const data = await resp.json();
-        // Only widen the fingerprint down when activeRooms is an explicit
-        // non-negative integer; missing or non-numeric -> longest length.
-        if (!data || !Number.isInteger(data.activeRooms) || data.activeRooms < 0) {
-            return SAFE_FALLBACK_HEX_LEN;
-        }
-        return computeFingerprintLength(data.activeRooms);
-    } catch {
-        return SAFE_FALLBACK_HEX_LEN;
-    } finally {
-        clearTimeout(t);
-    }
+export const REMOTE_MIC_PROTOCOL = 4;
+
+/** Whether a handshake message announces our protocol version. */
+export function peerProtocolMatches(msg) {
+    return msg?.v === REMOTE_MIC_PROTOCOL;
 }
 
-/**
- * Compute the verification fingerprint with a fixed receiver-first order
- * regardless of which side the caller is.
- *
- * @param {'receiver'|'sender'} role - 'receiver' = computer, 'sender' = phone
- * @param {CryptoKey} ownPub - the local side's ECDH public key
- * @param {CryptoKey} theirPub - the remote side's ECDH public key
- * @param {number} hexLen
- * @returns {Promise<string>}
- */
-export async function computePairFingerprintForRole(role, ownPub, theirPub, hexLen) {
-    if (role !== 'receiver' && role !== 'sender') {
-        throw new Error(`computePairFingerprintForRole: invalid role ${role}`);
-    }
-    const receiverPub = role === 'receiver' ? ownPub : theirPub;
-    const senderPub = role === 'receiver' ? theirPub : ownPub;
-    return getPairFingerprint(receiverPub, senderPub, hexLen);
-}
+/** The first encrypted control message each side sends. */
+export const KEY_CONFIRM = Object.freeze({ type: 'key-confirm' });
 
 /**
- * How long either side waits for a fingerprint decision, local (the user's
- * Confirm/Deny) or remote (the peer's verify-ok), before treating it as a
- * deny. The local confirm used to wait forever, so a modal left open on an
- * unattended screen kept a pending pairing alive indefinitely.
+ * How long either side waits for the peer's key-confirm after sending its own
+ * public key. No human is in the loop any more, so this only has to cover a
+ * slow relay round trip.
  */
-export const VERIFY_TTL_MS = 60000;
+export const KEY_CONFIRM_TTL_MS = 15000;
 
 /**
  * Await a decision delivered through a resolver the caller registers
- * (typically into a ref read by a message handler or a modal button), or
- * `false` after `timeoutMs`. Only the first decision counts.
+ * (typically into a ref read by a message handler), or `false` after
+ * `timeoutMs`. Only the first decision counts.
  *
  * @template T
  * @param {(resolve: (value: T) => void) => void} register may call resolve synchronously
- * @param {number} [timeoutMs=VERIFY_TTL_MS]
+ * @param {number} [timeoutMs=KEY_CONFIRM_TTL_MS]
  * @returns {Promise<T|false>}
  */
-export function waitForDecision(register, timeoutMs = VERIFY_TTL_MS) {
+export function waitForDecision(register, timeoutMs = KEY_CONFIRM_TTL_MS) {
     return new Promise((resolve) => {
         let done = false;
         const finish = (value) => {
@@ -112,37 +66,13 @@ export function waitForDecision(register, timeoutMs = VERIFY_TTL_MS) {
 }
 
 /**
- * verify-ok names the fingerprint it approves, so a confirmation can only bind
- * the exact pair the peer's user compared (example: {type:'verify-ok',
- * fp:'1A2B-3C4D-5E6F-7A8B'}). A bare verify-ok, or one naming another code,
- * no longer counts as an approval.
- */
-export function verifyOkMessage(fp) {
-    return { type: 'verify-ok', fp };
-}
-
-/**
- * Wire protocol version, announced in the handshake ({type:'public-key', v:3}
- * and {type:'sender-public-key', v:3}). Bump it whenever the two pages stop
- * understanding each other. The phone page is a separate entry point that can
- * sit open in a tab across a deploy (and an old desktop tab can too), so each
- * side refuses a peer announcing another version instead of failing in
- * confusing ways later. 3: control messages moved inside the encryption.
- */
-export const REMOTE_MIC_PROTOCOL = 3;
-
-/** Whether a handshake message announces our protocol version. */
-export function peerProtocolMatches(msg) {
-    return msg?.v === REMOTE_MIC_PROTOCOL;
-}
-
-/**
  * Control messages that only travel encrypted, as FRAME_CONTROL frames
  * (lib/remote-mic-frames.js). Either side drops a plaintext copy: it can only
  * come from the relay or from a peer running another protocol, e.g. a relay
  * injecting {type:'audio-settings', gain:0} or {type:'stop'}.
  */
 const ENCRYPTED_ONLY_TYPES = new Set([
+    'key-confirm',
     // desktop to phone
     'stop-recording', 'stop', 'pause', 'resume', 'audio-settings',
     // phone to desktop
@@ -152,9 +82,4 @@ const ENCRYPTED_ONLY_TYPES = new Set([
 /** Whether a plaintext message must be dropped (its type only travels encrypted). */
 export function mustBeEncrypted(msg) {
     return ENCRYPTED_ONLY_TYPES.has(msg?.type);
-}
-
-/** The fingerprint a received verify-ok approves ('' when it names none). */
-export function approvedFingerprint(msg) {
-    return msg && typeof msg.fp === 'string' ? msg.fp : '';
 }

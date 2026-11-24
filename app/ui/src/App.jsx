@@ -23,7 +23,6 @@ import { createLiveTranscriber } from './lib/liveTranscriber.js';
 import { createCaptureQueue } from './lib/captureQueue.js';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { workerReady } from './lib/workerInit.js';
-import VerificationModal from './components/VerificationModal.jsx';
 import DictationCommandsModal from './components/DictationCommandsModal.jsx';
 import ChangelogModal from './components/ChangelogModal.jsx';
 import { CHANGELOG_VERSIONS } from './lib/changelogSource.js';
@@ -973,7 +972,7 @@ export default function App() {
   const [remoteMicGain, setRemoteMicGain] = useState(2.0);
 
   // Remote microphone ("phone as mic"): the encrypted WebRTC session, its
-  // handshake and fingerprint verification, and the batch it produces, lifted
+  // handshake and key confirmation, and the batch it produces, lifted
   // into their own hook (hooks/useRemoteMic.js). Only these 22 names cross the
   // boundary; the RTC handle, the ECDH key, the rate/format negotiation, the
   // verify resolvers, the elapsed timer and the QR loader stay inside it.
@@ -981,7 +980,7 @@ export default function App() {
     isRemoteMic, remoteMicModal, remoteMicStatus,
     remoteMicLevel, remoteMicElapsed, remoteMicError, remoteMicDecryptErrors,
     remoteMicPaused, remoteMicRecording, remoteMicQrRef,
-    remoteMicFingerprint, remoteMicVerifiedAt, remoteMicVerifyResolveRef,
+    remoteMicVerifiedAt,
     startRemoteMic, stopRemoteMic, pauseRemoteMic, resumeRemoteMic,
     disconnectRemoteMic, cancelRemoteMic, regenerateRemoteMicQr,
   } = useRemoteMic({
@@ -6039,19 +6038,6 @@ export default function App() {
         </div>
       )}
       </>)}
-
-      {/* Fingerprint compare modal: blocks until the user confirms or denies. */}
-      {remoteMicFingerprint && remoteMicVerifyResolveRef.current && (
-        <VerificationModal
-          fingerprint={remoteMicFingerprint}
-          prompt={t('verifyPrompt')}
-          warning={t('verifyWarning')}
-          confirmLabel={t('verifyConfirm')}
-          denyLabel={t('verifyDeny')}
-          onConfirm={() => remoteMicVerifyResolveRef.current && remoteMicVerifyResolveRef.current(true)}
-          onDeny={() => remoteMicVerifyResolveRef.current && remoteMicVerifyResolveRef.current(false)}
-        />
-      )}
 
       {/* Remote Microphone Modal */}
       {remoteMicModal && (

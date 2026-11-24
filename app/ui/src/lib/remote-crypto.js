@@ -75,7 +75,7 @@ export async function importPublicKey(base64Key) {
 
 /**
  * receiverPub || senderPub as raw bytes, the one canonical byte order both
- * the pair fingerprint and the HKDF info use.
+ * the HKDF info uses.
  * @param {CryptoKey} receiverPub
  * @param {CryptoKey} senderPub
  * @returns {Promise<Uint8Array>}
@@ -94,83 +94,118 @@ export const DIRECTION_PHONE_TO_DESKTOP = 'phone-to-desktop';
 /** Desktop control messages (stop, pause, audio-settings...) to the phone. */
 export const DIRECTION_DESKTOP_TO_PHONE = 'desktop-to-phone';
 
+/** Bytes of the QR secret K (128 bits, 22 base64url chars). */
+export const QR_SECRET_BYTES = 16;
+const QR_SECRET_RE = /^[A-Za-z0-9_-]{22}$/;
+
+function toBase64Url(bytes) {
+    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 /**
- * Derive a shared AES-256 key from ECDH key agreement + HKDF.
- *
- * The HKDF info binds the traffic direction and both public keys
- * (receiver first, sender second), so each direction gets its own key and the
- * key is tied to the exact pair the users compared on screen. It used to be
- * the constant 'AES-GCM-256-key': had the desktop ever encrypted too, both
- * directions would have shared one key (a frame could be reflected back to its
- * sender and still authenticate).
- *
- * Example: info = utf8('ParakeetWeb-RemoteMic-v2|phone-to-desktop|')
- *                 || receiverPub(65 bytes) || senderPub(65 bytes)
+ * Fresh QR secret K, carried only in the QR URL fragment (`#ROOM:SECRET:K`).
+ * The fragment never reaches the server, so the signaling relay cannot know
+ * K, and K is mixed into every session key: a relay that swaps the public
+ * keys ends up with keys that cannot decrypt anything. It is distinct from
+ * SECRET because SECRET is sent to the server (X-Room-Secret).
+ * Example: 'q3V0d2l0aC1jbGF1ZGUtY2'
+ * @returns {string}
+ */
+export function generateQrSecret() {
+    return toBase64Url(crypto.getRandomValues(new Uint8Array(QR_SECRET_BYTES)));
+}
+
+/** Whether a string is a well-formed QR secret. */
+export function isQrSecret(s) {
+    return typeof s === 'string' && QR_SECRET_RE.test(s);
+}
+
+/** Decode a QR secret to its 16 bytes; throws on a malformed one. */
+export function decodeQrSecret(s) {
+    if (!isQrSecret(s)) throw new Error('malformed QR secret');
+    const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==');
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+const KDF_LABEL = 'ParakeetWeb-RemoteMic-v4';
+
+function concatBytes(...parts) {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+}
+
+/**
+ * Session master secret, as a non-extractable HKDF key:
+ *   HKDF-SHA256(ikm = ECDH(priv, theirPub),
+ *               salt = utf8('ParakeetWeb-RemoteMic-v4') || K,
+ *               info = utf8('ParakeetWeb-RemoteMic-v4|master|') || receiverPub || senderPub)
+ * Binding both public keys (receiver first, on BOTH sides) and K means the
+ * two ends only agree when nobody swapped a key and both read the same QR.
  *
  * @param {CryptoKey} privateKey - Our ECDH private key
  * @param {CryptoKey} theirPublicKey - Their ECDH public key
- * @param {{receiverPub: CryptoKey, senderPub: CryptoKey, direction?: string}} pair
- *   receiverPub is the desktop's key, senderPub the phone's, on BOTH sides.
- * @returns {Promise<CryptoKey>} AES-GCM-256 key
+ * @param {{receiverPub: CryptoKey, senderPub: CryptoKey, qrSecret: string}} pair
+ * @returns {Promise<CryptoKey>}
  */
-export async function deriveSharedKey(privateKey, theirPublicKey, pair) {
+export async function deriveMasterKey(privateKey, theirPublicKey, pair) {
     if (!pair || !pair.receiverPub || !pair.senderPub) {
-        throw new Error('deriveSharedKey: receiverPub and senderPub are required');
+        throw new Error('deriveMasterKey: receiverPub and senderPub are required');
     }
-    const direction = pair.direction || DIRECTION_PHONE_TO_DESKTOP;
-    const label = new TextEncoder().encode(`ParakeetWeb-RemoteMic-v2|${direction}|`);
-    const keys = await concatPairPublicKeys(pair.receiverPub, pair.senderPub);
-    const info = new Uint8Array(label.length + keys.length);
-    info.set(label, 0);
-    info.set(keys, label.length);
-
-    const sharedSecret = await crypto.subtle.deriveBits(
-        { name: 'ECDH', public: theirPublicKey },
-        privateKey,
-        256
+    const k = decodeQrSecret(pair.qrSecret);
+    const enc = new TextEncoder();
+    const ikm = await crypto.subtle.deriveBits({ name: 'ECDH', public: theirPublicKey }, privateKey, 256);
+    const ikmKey = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+    const info = concatBytes(enc.encode(`${KDF_LABEL}|master|`), await concatPairPublicKeys(pair.receiverPub, pair.senderPub));
+    const master = await crypto.subtle.deriveBits(
+        { name: 'HKDF', hash: 'SHA-256', salt: concatBytes(enc.encode(KDF_LABEL), k), info },
+        ikmKey, 256,
     );
+    return crypto.subtle.importKey('raw', master, 'HKDF', false, ['deriveKey', 'deriveBits']);
+}
 
-    const hkdfKey = await crypto.subtle.importKey(
-        'raw', sharedSecret, 'HKDF', false, ['deriveKey']
-    );
-
+/**
+ * Directional AES-GCM key of one key epoch:
+ *   HKDF(master, salt = empty, info = utf8('ParakeetWeb-RemoteMic-v4|<direction>|<epoch>'))
+ * Each side encrypts with its own direction and decrypts with the other, so a
+ * frame reflected back to its sender never authenticates.
+ *
+ * @param {CryptoKey} master - from deriveMasterKey
+ * @param {string} direction - DIRECTION_PHONE_TO_DESKTOP or DIRECTION_DESKTOP_TO_PHONE
+ * @param {number} [epoch=0]
+ * @returns {Promise<CryptoKey>}
+ */
+export function deriveDirectionKey(master, direction, epoch = 0) {
     return crypto.subtle.deriveKey(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            // Domain-separated from WebSend to avoid key reuse across apps
-            salt: new TextEncoder().encode('ParakeetWeb-RemoteMic-v1'),
-            info
-        },
-        hkdfKey,
+        { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: new TextEncoder().encode(`${KDF_LABEL}|${direction}|${epoch}`) },
+        master,
         { name: 'AES-GCM', length: 256 },
         false,
-        ['encrypt', 'decrypt']
+        ['encrypt', 'decrypt'],
     );
 }
 
 /**
- * Both directional keys of a session, derived from the same ECDH agreement.
- * Each side encrypts with its own direction and decrypts with the other, so a
- * frame reflected back to its sender never authenticates.
- *
- * @param {CryptoKey} privateKey - Our ECDH private key
- * @param {CryptoKey} theirPublicKey - Their ECDH public key
- * @param {{receiverPub: CryptoKey, senderPub: CryptoKey}} pair - as in deriveSharedKey
- * @returns {Promise<{phoneToDesktop: CryptoKey, desktopToPhone: CryptoKey}>}
+ * Both directional keys of a session (epoch 0) plus the master they came from.
+ * @param {CryptoKey} privateKey
+ * @param {CryptoKey} theirPublicKey
+ * @param {{receiverPub: CryptoKey, senderPub: CryptoKey, qrSecret: string}} pair
+ * @returns {Promise<{master: CryptoKey, phoneToDesktop: CryptoKey, desktopToPhone: CryptoKey}>}
  */
 export async function deriveSessionKeys(privateKey, theirPublicKey, pair) {
+    const master = await deriveMasterKey(privateKey, theirPublicKey, pair);
     const [phoneToDesktop, desktopToPhone] = await Promise.all([
-        deriveSharedKey(privateKey, theirPublicKey, { ...pair, direction: DIRECTION_PHONE_TO_DESKTOP }),
-        deriveSharedKey(privateKey, theirPublicKey, { ...pair, direction: DIRECTION_DESKTOP_TO_PHONE }),
+        deriveDirectionKey(master, DIRECTION_PHONE_TO_DESKTOP),
+        deriveDirectionKey(master, DIRECTION_DESKTOP_TO_PHONE),
     ]);
-    return { phoneToDesktop, desktopToPhone };
+    return { master, phoneToDesktop, desktopToPhone };
 }
 
 /**
  * Encrypt data with AES-GCM. Each call uses a fresh random IV.
  * @param {ArrayBuffer} data - Data to encrypt
- * @param {CryptoKey} sharedKey - AES key from deriveSharedKey
+ * @param {CryptoKey} sharedKey - AES direction key from deriveSessionKeys
  * @returns {Promise<ArrayBuffer>} [12 bytes IV][ciphertext + auth tag]
  */
 export async function encrypt(data, sharedKey) {
@@ -189,7 +224,7 @@ export async function encrypt(data, sharedKey) {
 /**
  * Decrypt data with AES-GCM.
  * @param {ArrayBuffer} encryptedPackage - [12 bytes IV][ciphertext + auth tag]
- * @param {CryptoKey} sharedKey - AES key from deriveSharedKey
+ * @param {CryptoKey} sharedKey - AES direction key from deriveSessionKeys
  * @returns {Promise<ArrayBuffer>} Decrypted data
  */
 export async function decrypt(encryptedPackage, sharedKey) {
@@ -201,76 +236,4 @@ export async function decrypt(encryptedPackage, sharedKey) {
         sharedKey,
         encryptedData
     );
-}
-
-/**
- * Compute a short SHA-256 fingerprint over a deterministic concatenation of
- * both peers' raw ECDH public keys. Both sides feed bytes in the same order
- * (receiver-pub first, sender-pub second) so the resulting code is identical
- * on both screens — letting users compare verbally and detect a malicious
- * signaling server that has swapped keys for a MITM.
- *
- * Adapted from WebSend's getKeyFingerprint (https://github.com/thiswillbeyourgithub/WebSend).
- *
- * @param {CryptoKey} receiverPub - Receiver/computer ECDH public key
- * @param {CryptoKey} senderPub - Sender/phone ECDH public key
- * @param {number} [hexLength=16] - Number of hex characters (clamped to [16, 64])
- * @returns {Promise<string>} Hex fingerprint grouped as XXXX-XXXX-...
- *
- * F-80: the clamp ceiling used to be 12 hex (48 bits), which silently
- * defeated the F-65 fix that raised callers to 16. A signaling-MITM
- * attacker grinding ECDH+SHA-256 second-preimages can hit 48 bits in
- * seconds on a laptop. The clamp now floors at 16 (matching the
- * computeFingerprintLength return and SAFE_FALLBACK_HEX_LEN in
- * remote-mic-handshake.js) and ceilings at 64 (full SHA-256 output).
- *
- * A non-numeric length falls back to 16 rather than propagating NaN. It used
- * to: Math.floor(NaN) is NaN, the clamp keeps it, and hash.slice(0, NaN) then
- * yields an empty string, so BOTH screens showed a blank verification code and
- * a user comparing them would read "they match" off two empty boxes. The
- * caller is computeFingerprintLength, which reads a room count off the
- * signaling server, so the bad input is reachable from the untrusted side.
- */
-export async function getPairFingerprint(receiverPub, senderPub, hexLength = 16) {
-    const len = Number.isFinite(hexLength)
-        ? Math.max(16, Math.min(64, Math.floor(hexLength)))
-        : 16;
-    const combined = await concatPairPublicKeys(receiverPub, senderPub);
-    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', combined));
-    const bytesNeeded = Math.ceil(len / 2);
-    const hex = Array.from(hash.slice(0, bytesNeeded))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-        .toUpperCase()
-        .slice(0, len);
-    const groups = [];
-    for (let i = 0; i < hex.length; i += 4) groups.push(hex.slice(i, i + 4));
-    return groups.join('-');
-}
-
-/**
- * Adaptive fingerprint length based on active room count (birthday-bound).
- * Verbatim from WebSend.
- * - 1-10 rooms:    3 hex chars
- * - 11-100 rooms:  6 hex chars
- * - 101-1000:      9 hex chars
- * - 1000+:        12 hex chars
- *
- * NOTE: The adaptive length is now floored at 16 hex (64 bits)
- * regardless of activeRooms. Birthday-bound reasoning assumes random
- * peer pairings, but a signaling-MITM attacker is doing a TARGETED
- * second-preimage search against the specific fingerprint they want
- * the user to see. At ~10^6 ECDH+SHA-256 ops per second on commodity
- * hardware, anything below ~48 bits is laptop-trivial; the adaptive
- * floor used to be 3 hex (12 bits = 4096 outcomes) which is sub-
- * second to brute-force. 16 hex (64 bits) is the recognised floor for
- * verbal-comparison fingerprints (Signal uses 60-digit decimal, OTR
- * uses 40-hex / 160 bits). The activeRooms input is kept in the
- * signature for compatibility but no longer influences the result.
- *
- * @param {number} _activeRooms unused; kept for API stability
- * @returns {number}
- */
-export function computeFingerprintLength(_activeRooms) {
-    return 16;
 }

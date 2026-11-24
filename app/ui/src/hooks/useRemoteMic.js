@@ -1,5 +1,5 @@
 // The remote microphone ("phone as mic"): the encrypted WebRTC session with the
-// phone, its handshake and fingerprint verification, the PCM it streams in, and
+// phone, its handshake and key confirmation, the PCM it streams in, and
 // the batch that is handed to the transcription core as if it were an upload.
 //
 // The second cluster lifted out of App(). It is the most contiguous seam in the
@@ -22,11 +22,10 @@ import { resamplePcmTo16k, createWavBlob } from '../lib/audio.js';
 import { sanitizeDeviceName } from '../lib/format.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSessionKeys, decrypt
+    deriveSessionKeys, decrypt, generateQrSecret
 } from '../lib/remote-crypto.js';
 import {
-    getAdaptiveFingerprintLength, computePairFingerprintForRole,
-    waitForDecision, verifyOkMessage, approvedFingerprint,
+    waitForDecision, KEY_CONFIRM,
     REMOTE_MIC_PROTOCOL, peerProtocolMatches, mustBeEncrypted
 } from '../lib/remote-mic-handshake.js';
 import { unpackFrame, createFrameVerifier, FRAME_AUDIO, FRAME_CONTROL } from '../lib/remote-mic-frames.js';
@@ -126,67 +125,28 @@ export function useRemoteMic({
   const remoteMicFormatRef = useRef('pcm-f32');
   const remoteMicTimerRef = useRef(null);
   const remoteMicQrRef = useRef(null); // DOM ref for QR code container
-  // Fingerprint compare modal: shown after both ECDH public keys are exchanged
-  // and before any encrypted audio is processed. Mitigates a malicious
-  // signaling server that could swap keys to MITM the data channel.
-  const [remoteMicFingerprint, setRemoteMicFingerprint] = useState('');
-  // Timestamp of the most-recent successful fingerprint confirmation. The
-  // sharedKey lives for the lifetime of the WebRTC connection across many
-  // Start/Stop cycles; this surfaces that fact to the user so they
-  // understand they are NOT re-verifying per recording. F-68: re-verifying
-  // requires disconnecting the phone and re-pairing via fresh QR.
+  // Timestamp of the moment the session keys were confirmed (the peer's
+  // key-confirm decrypted). The keys live for the lifetime of the WebRTC
+  // connection across many Start/Stop cycles; the main UI shows this time.
   const [remoteMicVerifiedAt, setRemoteMicVerifiedAt] = useState(null);
-  const remoteMicVerifyResolveRef = useRef(null); // (boolean) => void
-  // F-63: bilateral verify-ok ack. After local user confirms the fingerprint
-  // we still wait for the peer's verify-ok before transitioning to the
-  // operational ('connected') state. Otherwise an attacker who controls one
-  // side (or a flaky network) could leave one peer streaming audio into a
-  // half-aborted session: the local side believes verification succeeded
-  // even though the remote user actually denied (or never responded).
-  // Waiting for the explicit peer ack collapses that ambiguous window.
-  const remoteMicPeerAckResolveRef = useRef(null); // (approvedFp: string | false) => void
-  // Buffer for a peer verify-ok/deny that arrives BEFORE the local user
-  // clicks confirm on the fingerprint modal. Whichever peer confirms first
-  // sends verify-ok while the other is still staring at the modal; without
-  // this buffer that early message hits the peer-ack handler with no
-  // resolver armed yet, gets discarded as "stray", and the locally-late
-  // peer then waits 60s for a message that already arrived. Values: the
-  // fingerprint string the peer's verify-ok approved ('' if it named none),
-  // false (peer sent verify-deny), null (no early arrival). Cleared on every handshake start/teardown via
-  // resolveRemoteMicPeerAck so a fresh re-pair never inherits stale state.
-  const remoteMicEarlyPeerVerifyRef = useRef(null);
-  // F-137: synchronous handshake-in-progress flag. The duplicate-handshake
-  // guard at the top of the 'sender-public-key' branch checks
-  // remoteMicKeyRef / remoteMicVerifyResolveRef, but those refs are only
-  // populated AFTER several awaits (importPublicKey, deriveSharedKey,
-  // getAdaptiveFingerprintLength, computePairFingerprintForRole). A
-  // malicious phone that sends two sender-public-key messages back-to-back
-  // would see both pass the guard, both compute fingerprints, and the
-  // second assignment to verifyResolveRef.current would clobber the first
-  // resolver, orphaning the first ECDH closure. Setting this ref to true
-  // synchronously before the first await closes that multi-await window.
+  // Handshake waiting for the phone's key-confirm: { key, frames, channel,
+  // resolve } or null. The keys stay out of remoteMicKeyRef until the
+  // confirm decrypts, so nothing else treats the session as bound early.
+  const remoteMicPendingRef = useRef(null);
+  // F-137: synchronous handshake-in-progress flag. remoteMicPendingRef is
+  // only set after several awaits (importPublicKey, key derivation), so a
+  // flood of sender-public-key messages would otherwise all pass the
+  // duplicate guard before any of them reached the assignment.
   const remoteMicHandshakeInProgressRef = useRef(false);
-  // Resolve any in-flight fingerprint verify and null the ref. Every teardown
-  // path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
+  // Fail any pending key-confirm wait and clear the in-progress flag. Every
+  // teardown path (onDisconnected, cancelRemoteMic, regenerateRemoteMicQr,
   // disconnectRemoteMic) must call this so the awaiting Promise inside
-  // startRemoteMic doesn't hang and pin the ECDH private key in a dead
-  // closure (a slow memory-pressure DoS if the attacker stacks attempts).
-  const resolveRemoteMicVerify = useCallback((confirmed) => {
-    if (remoteMicVerifyResolveRef.current) {
-      remoteMicVerifyResolveRef.current(confirmed);
-      remoteMicVerifyResolveRef.current = null;
-    }
-  }, []);
-  const resolveRemoteMicPeerAck = useCallback((confirmed) => {
-    if (remoteMicPeerAckResolveRef.current) {
-      remoteMicPeerAckResolveRef.current(confirmed);
-      remoteMicPeerAckResolveRef.current = null;
-    }
-    remoteMicEarlyPeerVerifyRef.current = null;
-    // F-137: every teardown path funnels through here (onDisconnected,
-    // cancelRemoteMic, regenerateRemoteMicQr, disconnectRemoteMic), so
-    // clearing the handshake-in-progress flag here lets a re-pair claim
-    // a fresh slot. The success path clears it explicitly after binding.
+  // startRemoteMic does not hang and pin the ECDH private key in a dead
+  // closure.
+  const resolveRemoteMicConfirm = useCallback((ok) => {
+    const pending = remoteMicPendingRef.current;
+    remoteMicPendingRef.current = null;
+    pending?.resolve(ok);
     remoteMicHandshakeInProgressRef.current = false;
   }, []);
 
@@ -291,7 +251,7 @@ export function useRemoteMic({
 
   // ============ Remote Microphone (Phone as Mic) ============
 
-  // `existingRoom` ({ roomId, secret, hostSecret }) re-arms a dropped session on the SAME
+  // `existingRoom` ({ roomId, secret, hostSecret, qrSecret }) re-arms a dropped session on the SAME
   // room instead of minting a new one: the phone disconnected and we want to
   // keep the same QR on screen and wait for it to come back. A fresh offer
   // alone is not enough (the server still holds the prior session's answer +
@@ -318,13 +278,16 @@ export function useRemoteMic({
       await rtc.init();
       // `secret` is the phone's credential (goes in the QR); `hostSecret`
       // authenticates this desktop and is never displayed.
-      let roomId, secret, hostSecret;
+      // `qrSecret` (K) only ever travels in the QR fragment, never to the
+      // server; a re-arm keeps it so the QR on screen stays valid.
+      let roomId, secret, hostSecret, qrSecret;
       if (existingRoom) {
         rtc.adoptRoom(existingRoom.roomId, existingRoom.hostSecret);
         await rtc.rearmRoom();
-        ({ roomId, secret, hostSecret } = existingRoom);
+        ({ roomId, secret, hostSecret, qrSecret } = existingRoom);
       } else {
         ({ roomId, secret, hostSecret } = await rtc.createRoom());
+        qrSecret = generateQrSecret();
       }
 
       // Generate ECDH key pair for E2E encryption
@@ -338,8 +301,7 @@ export function useRemoteMic({
         // having to mint a new code. stopRemoteMicTimer/resolve the pending
         // handshake waits and tear down the dead session first.
         stopRemoteMicTimer();
-        resolveRemoteMicVerify(false);
-        resolveRemoteMicPeerAck(false);
+        resolveRemoteMicConfirm(false);
         // F-88: onDisconnected used to null the ref without closing the
         // underlying RTCPeerConnection, leaving its ICE poll setInterval
         // alive against the signaling server for any disconnected-not-
@@ -361,7 +323,7 @@ export function useRemoteMic({
         // QR. The QR URL is left in place so it stays on screen meanwhile.
         setRemoteMicStatus('waiting');
         setRemoteMicModal(true);
-        startRemoteMic({ roomId, secret, hostSecret });
+        startRemoteMic({ roomId, secret, hostSecret, qrSecret });
       };
 
       // The phone refused or sent a bad audio configuration: close the session.
@@ -488,7 +450,7 @@ export function useRemoteMic({
       rtc.onMessage = async (data) => {
         if (typeof data === 'string') {
           // F-122: bound the JSON parser input. Control messages are tiny
-          // (handshake, audio-config, verify-ok/deny, paused/resumed). 4 KB
+          // (handshake, audio-config, verify-deny, paused/resumed). 4 KB
           // is generous and caps a hostile phone's per-message allocation
           // burst irrespective of the SCTP NDATA max-message-size.
           if (data.length > 4096) {
@@ -508,17 +470,9 @@ export function useRemoteMic({
               // Refuse a second handshake once one is already bound or in
               // flight. Otherwise a malicious phone could overwrite
               // remoteMicKeyRef.current mid-stream (silent key swap on the
-              // victim) or orphan the previous verify resolver, pinning
-              // the original ECDH private key in a dead closure.
-              //
-              // F-137: include the synchronous in-progress flag. The two
-              // other refs are only populated after several awaits below
-              // (importPublicKey, deriveSharedKey, stats fetch, fingerprint
-              // hash), and a flood of sender-public-key messages would
-              // otherwise all pass this guard before any of them reaches
-              // the verifyResolveRef assignment.
-              if (remoteMicKeyRef.current || remoteMicVerifyResolveRef.current || remoteMicHandshakeInProgressRef.current) {
-                console.warn('[RemoteMic] Ignoring duplicate sender-public-key — handshake already bound or in-flight');
+              // victim) or orphan the pending confirm wait.
+              if (remoteMicKeyRef.current || remoteMicPendingRef.current || remoteMicHandshakeInProgressRef.current) {
+                console.warn('[RemoteMic] Ignoring duplicate sender-public-key: handshake already bound or in flight');
                 return;
               }
               if (!peerProtocolMatches(msg)) {
@@ -532,73 +486,35 @@ export function useRemoteMic({
                 return;
               }
               remoteMicHandshakeInProgressRef.current = true;
-              // Derive both directional keys from the phone's public key
+              // Both directional keys, bound to both public keys and to the
+              // QR secret K the relay never sees (lib/remote-crypto.js).
               const theirKey = await importPublicKey(msg.key);
-              const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, { receiverPub: keyPair.publicKey, senderPub: theirKey });
-              console.log('[RemoteMic] Shared key derived, asking user to verify fingerprint');
-
-              // Compute a short adaptive fingerprint over both pubkeys.
-              // The shared helper enforces the same byte order on both sides
-              // (receiver-pub first, sender-pub second) — diverging here would
-              // silently break the MITM defence.
-              const hexLen = await getAdaptiveFingerprintLength();
-              const fp = await computePairFingerprintForRole('receiver', keyPair.publicKey, theirKey, hexLen);
-              setRemoteMicFingerprint(fp);
-
-              // Block here until the user clicks Confirm or Deny in the modal,
-              // or the VERIFY_TTL_MS window closes (counted as a deny).
-              const confirmed = await waitForDecision((resolve) => {
-                remoteMicVerifyResolveRef.current = resolve;
-              });
-              setRemoteMicFingerprint('');
-              remoteMicVerifyResolveRef.current = null;
-
-              if (!confirmed) {
-                console.warn('[RemoteMic] User denied fingerprint match — aborting');
-                rtc.sendMessage({ type: 'verify-deny' });
-                setRemoteMicError(t('verifyAborted'));
-                setRemoteMicStatus('error');
-                rtc.close();
-                return;
-              }
-              rtc.sendMessage(verifyOkMessage(fp));
-
-              // F-63: wait for the phone's reciprocal verify-ok before
-              // binding the shared key and flipping to 'connected'. The
-              // VERIFY_TTL_MS cap avoids hanging if the phone crashed or the
-              // user walked away mid-handshake; in normal use both peers ack
-              // within a second of each other. The phone's verify-ok must
-              // name THIS fingerprint to count as an approval.
-              const peerApproved = await waitForDecision((resolve) => {
-                // If the phone confirmed before we did, its verify-ok (or
-                // verify-deny) was buffered while our modal was up. Consume
-                // it now instead of arming a 60s wait for a message that
-                // already arrived.
-                if (remoteMicEarlyPeerVerifyRef.current !== null) {
-                  const early = remoteMicEarlyPeerVerifyRef.current;
-                  remoteMicEarlyPeerVerifyRef.current = null;
-                  resolve(early);
-                  return;
-                }
-                remoteMicPeerAckResolveRef.current = resolve;
-              });
-              remoteMicPeerAckResolveRef.current = null;
-              const peerAcked = peerApproved === fp;
-
-              if (!peerAcked) {
-                console.warn('[RemoteMic] Peer did not ack verify-ok (deny or timeout), aborting');
-                setRemoteMicError(t('verifyAborted'));
-                setRemoteMicStatus('error');
-                rtc.close();
-                return;
-              }
-
-              remoteMicFramesRef.current = createFrameVerifier();
-              remoteMicKeyRef.current = sessionKeys.phoneToDesktop;
-              remoteMicChannelRef.current = createFrameChannel(sessionKeys.desktopToPhone, rtc,
+              const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, { receiverPub: keyPair.publicKey, senderPub: theirKey, qrSecret });
+              const channel = createFrameChannel(sessionKeys.desktopToPhone, rtc,
                 (err) => console.warn('[RemoteMic] Encrypt/send error:', err.message));
-              // F-137: handshake is now bound, future sender-public-key
-              // messages are caught by the remoteMicKeyRef guard.
+              const frames = createFrameVerifier();
+              // Key confirmation replaces the v3 fingerprint check: the
+              // phone's first encrypted frame must be a key-confirm that
+              // decrypts under our phone-to-desktop key, which only happens
+              // when it saw the same two public keys and the same K. A relay
+              // that swapped keys cannot produce it (binary path below).
+              const confirmed = await waitForDecision((resolve) => {
+                remoteMicPendingRef.current = { key: sessionKeys.phoneToDesktop, frames, channel, resolve };
+                channel.sendControl(KEY_CONFIRM);
+              });
+              remoteMicPendingRef.current = null;
+              if (!confirmed) {
+                console.warn('[RemoteMic] Key confirmation failed (wrong QR, tampering or timeout), aborting');
+                remoteMicHandshakeInProgressRef.current = false;
+                rtc.sendMessage({ type: 'verify-deny' });
+                setRemoteMicError(t('remoteMicKeyConfirmFailed'));
+                setRemoteMicStatus('error');
+                rtc.close();
+                return;
+              }
+              // The binary path bound the keys when the confirm arrived.
+              // F-137: future sender-public-key messages are caught by the
+              // remoteMicKeyRef guard.
               remoteMicHandshakeInProgressRef.current = false;
               setRemoteMicVerifiedAt(Date.now());
               setRemoteMicStatus('connected');
@@ -607,47 +523,19 @@ export function useRemoteMic({
               setIsRemoteMic(true);
 
               startRemoteMicTimer();
-            } else if (msg.type === 'verify-ok') {
-              // F-63: phone confirmed its end. Three cases:
-              //  (a) Our peer-ack wait is already armed -> resolve it.
-              //  (b) Session already bound (remoteMicKeyRef set) -> stale
-              //      replay, ignore.
-              //  (c) Otherwise the phone confirmed before us; buffer the
-              //      arrival so the peer-ack wait consumes it as soon as
-              //      the local user clicks confirm. Without (c) the
-              //      locally-late side would wait the full 60s timeout
-              //      and surface a misleading "verifyAborted" error.
-              if (remoteMicPeerAckResolveRef.current) {
-                remoteMicPeerAckResolveRef.current(approvedFingerprint(msg));
-              } else if (remoteMicKeyRef.current) {
-                console.warn('[RemoteMic] Stray verify-ok ignored (session already bound)');
-              } else {
-                remoteMicEarlyPeerVerifyRef.current = approvedFingerprint(msg);
-                console.log('[RemoteMic] Peer verify-ok arrived before local confirm, buffered');
-              }
             } else if (msg.type === 'verify-deny') {
-              // Phone denied the fingerprint match, abort our side too.
-              // Could arrive (a) before local confirm (verifyResolve in
-              // flight), or (b) after local confirm while we're awaiting
-              // the peer ack (peerAckResolve in flight).
-              //
-              // F-87: ignore verify-deny once peer-ack has completed
-              // (remoteMicKeyRef is set). Otherwise a malicious phone
-              // could send verify-deny mid-session to wipe the user's
-              // in-flight transcript with a misleading "verifyAborted"
-              // error message. After the handshake is bound the
-              // legitimate teardown signal is rtc disconnect, not a
-              // protocol message.
-              if (remoteMicVerifyResolveRef.current) {
-                remoteMicVerifyResolveRef.current(false);
-              } else if (remoteMicPeerAckResolveRef.current) {
-                remoteMicPeerAckResolveRef.current(false);
+              // The phone refused the pairing (protocol mismatch or failed
+              // key confirmation). F-87: ignored once the session is bound,
+              // so a hostile peer cannot wipe an in-flight recording with it;
+              // after binding the teardown signal is the rtc disconnect.
+              if (remoteMicPendingRef.current) {
+                remoteMicPendingRef.current.resolve(false);
               } else if (!remoteMicKeyRef.current) {
-                setRemoteMicError(t('verifyAborted'));
+                setRemoteMicError(t('remoteMicKeyConfirmFailed'));
                 setRemoteMicStatus('error');
                 rtc.close();
               } else {
-                console.warn('[RemoteMic] Ignoring verify-deny after peer-ack (session already bound)');
+                console.warn('[RemoteMic] Ignoring verify-deny after the session is bound');
               }
             } else {
               // Catches protocol drift between desktop and phone bundles —
@@ -659,13 +547,12 @@ export function useRemoteMic({
             // be only console.error'd, leaving the UI in 'waiting' or
             // 'connecting' with the QR still up and no user-visible
             // indication of failure. importPublicKey throws on
-            // malformed base64 / wrong byte length, deriveSharedKey
+            // malformed base64 / wrong byte length, deriveSessionKeys
             // throws on incompatible curve points, and the in-flight
-            // verify resolver would dangle. Tear the session down so
+            // confirm wait would dangle. Tear the session down so
             // the user can retry instead of staring at a wedged modal.
             console.error('[RemoteMic] Error handling control message:', e);
-            resolveRemoteMicVerify(false);
-            resolveRemoteMicPeerAck(false);
+            resolveRemoteMicConfirm(false);
             setRemoteMicError(`Handshake error (${e?.message || 'unknown'})`);
             setRemoteMicStatus('error');
             try { rtc.close(); } catch (_) { /* already closing */ }
@@ -675,7 +562,30 @@ export function useRemoteMic({
           // message). Runs on the frame queue so frames are handled strictly
           // in arrival order.
           const verdict = await remoteMicFrameQueueRef.current(async () => {
-            if (!remoteMicKeyRef.current) return;
+            if (!remoteMicKeyRef.current) {
+              // Handshake pending: the only acceptable frame is the phone's
+              // key-confirm at seq 0. Anything else, or a frame that does
+              // not decrypt, fails the pairing.
+              const pending = remoteMicPendingRef.current;
+              if (!pending) return;
+              try {
+                const frame = unpackFrame(await decrypt(data, pending.key));
+                const ok = frame.kind === FRAME_CONTROL && frame.seq === 0 && frame.control.type === KEY_CONFIRM.type;
+                if (ok) {
+                  // Bind HERE, synchronously, so the next queued frame
+                  // already finds the session keys.
+                  pending.frames.accept(frame);
+                  remoteMicFramesRef.current = pending.frames;
+                  remoteMicKeyRef.current = pending.key;
+                  remoteMicChannelRef.current = pending.channel;
+                }
+                pending.resolve(ok);
+              } catch (e) {
+                console.warn('[RemoteMic] Key-confirm frame did not decrypt:', e.message);
+                pending.resolve(false);
+              }
+              return;
+            }
             // F-85: reject oversized binary messages BEFORE allocating the
             // Float32Array. F-01 caps cumulative samples but a single
             // decrypt of an N-byte ciphertext still allocates Float32Array
@@ -796,7 +706,7 @@ export function useRemoteMic({
 
       // Build QR code URL
       const baseUrl = window.location.origin;
-      const qrUrl = `${baseUrl}/remote-mic.html#${roomId}:${secret}`;
+      const qrUrl = `${baseUrl}/remote-mic.html#${roomId}:${secret}:${qrSecret}`;
 
       setRemoteMicStatus('waiting');
       setRemoteMicQrUrl(qrUrl);
@@ -905,8 +815,7 @@ export function useRemoteMic({
       rtc.close();
       if (remoteMicRtcRef.current === rtc) remoteMicRtcRef.current = null;
     }
-    resolveRemoteMicVerify(false);
-    resolveRemoteMicPeerAck(false);
+    resolveRemoteMicConfirm(false);
     remoteMicKeyRef.current = null;
     remoteMicChannelRef.current = null;
     stopRemoteMicTimer();
@@ -939,8 +848,7 @@ export function useRemoteMic({
   function regenerateRemoteMicQr() {
     // Tear down leftover state and start fresh, produces a new roomId/secret/QR.
     stopRemoteMicTimer();
-    resolveRemoteMicVerify(false);
-    resolveRemoteMicPeerAck(false);
+    resolveRemoteMicConfirm(false);
     if (remoteMicRtcRef.current) {
       try { remoteMicRtcRef.current.close(); } catch (_) {}
       remoteMicRtcRef.current = null;
@@ -958,8 +866,7 @@ export function useRemoteMic({
 
   function cancelRemoteMic() {
     stopRemoteMicTimer();
-    resolveRemoteMicVerify(false);
-    resolveRemoteMicPeerAck(false);
+    resolveRemoteMicConfirm(false);
     if (remoteMicRtcRef.current) {
       remoteMicRtcRef.current.close();
       remoteMicRtcRef.current = null;
@@ -987,10 +894,8 @@ export function useRemoteMic({
     remoteMicPaused,
     remoteMicRecording,
     remoteMicQrRef,
-    // Fingerprint verification (the human MITM check).
-    remoteMicFingerprint,
+    // When the session keys were confirmed.
     remoteMicVerifiedAt,
-    remoteMicVerifyResolveRef,
     // Controls.
     startRemoteMic,
     stopRemoteMic,

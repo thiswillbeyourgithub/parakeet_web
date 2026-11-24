@@ -290,7 +290,7 @@ Cette garantie a une limite à connaître : le serveur qui relaie l'audio sert a
 1. Cliquez sur le bouton **Micro téléphone** dans l'application
 2. Un QR code apparaît, scannez-le avec votre téléphone
 3. Accordez l'autorisation du microphone sur le téléphone
-4. **Vérifiez que le code court** qui apparaît sur les deux écrans correspond : lisez-le à voix haute ou comparez visuellement. Si les codes diffèrent, cliquez sur **Les codes diffèrent – abandonner** sur l'un ou l'autre appareil. Cette étape protège contre un serveur de signalisation malveillant qui pourrait sinon échanger les clés de chiffrement pour intercepter (MITM) le canal supposé chiffré de bout en bout. Le bouton Confirmer est désactivé pendant 3 secondes (avec un compte à rebours visible) afin qu'une pression réflexe sur Entrée/Espace ne puisse pas auto-accepter un code falsifié sans que vous l'ayez réellement lu.
+4. Les deux appareils s'appairent seuls, sans code à comparer. Le QR code contient un secret à usage unique dans son fragment `#`, que les navigateurs n'envoient jamais à aucun serveur, et les deux appareils le mêlent aux clés de chiffrement. Un serveur de signalisation qui tenterait d'échanger les clés de chiffrement (une interception MITM du canal supposé chiffré de bout en bout) ne peut pas connaître ce secret : ses clés ne correspondent pas, le premier message chiffré échoue au déchiffrement, et l'appairage s'interrompt avec une erreur au lieu de se connecter. C'est pourquoi le QR code ne doit être montré qu'au téléphone que vous appairez : quiconque le voit détient le secret.
 5. Parlez, et l'audio chiffré est diffusé vers l'ordinateur en temps réel
 6. Cliquez sur **Stop** sur l'un ou l'autre appareil, et l'audio est transcrit normalement
 
@@ -628,7 +628,7 @@ depuis la même origine avec SRI), donc rien n'est récupéré depuis un CDN à 
 Exemples :
 
 - Application principale : `https://votre-hote/?debug=1`
-- Page micro distant : `https://votre-hote/remote-mic.html?debug=1#ROOMID:SECRET`
+- Page micro distant : `https://votre-hote/remote-mic.html?debug=1#ROOMID:SECRET:K`
   (les infos de salle sont dans le fragment de hash, donc `?debug=1` va avant le `#`)
 
 Sans `?debug=1`, aucune surface de devtools n'est livrée à l'utilisateur.

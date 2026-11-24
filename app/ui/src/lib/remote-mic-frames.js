@@ -13,7 +13,7 @@
 // directions (each direction has its own key, see deriveSessionKeys). They used
 // to be plaintext JSON, so the relay could read the phone's sample rate and
 // when it paused, and could inject {"type":"stop"} or a gain of 0. Only the
-// handshake (public keys, verify-ok/deny) stays plaintext.
+// handshake (public keys, verify-deny) stays plaintext.
 //
 // 8 bytes keeps the payload aligned for both Int16Array and Float32Array views.
 //

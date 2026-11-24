@@ -290,7 +290,7 @@ That guarantee has one limit worth knowing: the same server that relays the audi
 1. Click the **Phone Mic** button in the app
 2. A QR code appears, scan it with your phone
 3. Grant microphone permission on the phone
-4. **Verify the short code** that appears on both screens matches: read it aloud or compare visually. If the codes differ, click **Codes differ – abort** on either device. This step defends against a malicious signaling server that could otherwise swap encryption keys to MITM the supposedly end-to-end channel. The Confirm button is disabled for 3 seconds (with a visible countdown) so a reflexive Enter/Space press cannot auto-accept a tampered code without you actually reading it.
+4. The two devices pair on their own, with no code to compare. The QR code carries a one-time secret in its `#` fragment, which browsers never send to any server, and both devices mix it into the encryption keys. A signaling server that tried to swap the encryption keys (a man-in-the-middle on the supposedly end-to-end channel) cannot know that secret, so its keys do not match, the first encrypted message fails to decrypt, and pairing aborts with an error instead of connecting. This is why the QR code must only be shown to the phone you are pairing: anyone who sees it holds the secret.
 5. Speak, and encrypted audio streams to the computer in real time
 6. Click **Stop** on either device, and the audio is transcribed normally
 
@@ -613,7 +613,7 @@ from same-origin with SRI), so nothing is fetched from a CDN at runtime.
 Examples:
 
 - Main app: `https://your-host/?debug=1`
-- Remote-mic page: `https://your-host/remote-mic.html?debug=1#ROOMID:SECRET`
+- Remote-mic page: `https://your-host/remote-mic.html?debug=1#ROOMID:SECRET:K`
   (the room info is in the hash fragment, so `?debug=1` goes before the `#`)
 
 Without `?debug=1`, no devtools surface is shipped to the user.

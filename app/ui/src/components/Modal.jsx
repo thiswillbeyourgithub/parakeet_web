@@ -25,7 +25,7 @@ export function useAnyModalOpen() {
 }
 
 // F-134: custom modals that don't render inside the base Modal wrapper
-// (e.g. VerificationModal) must call this hook so they still increment
+// (e.g. a custom overlay) must call this hook so they still increment
 // the open-counter and keep F-127's per-history Copy-button disable in
 // force during the most security-critical modal in the app.
 export function useRegisterModalOpen() {

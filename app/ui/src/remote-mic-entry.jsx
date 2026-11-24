@@ -18,20 +18,18 @@ import {
     deriveSessionKeys, decrypt
 } from './lib/remote-crypto.js';
 import {
-    getAdaptiveFingerprintLength, computePairFingerprintForRole,
-    waitForDecision, verifyOkMessage, approvedFingerprint,
+    waitForDecision, KEY_CONFIRM,
     REMOTE_MIC_PROTOCOL, peerProtocolMatches, mustBeEncrypted
 } from './lib/remote-mic-handshake.js';
 import { packFrame, packEndFrame, unpackFrame, createSeqGate, FRAME_AUDIO, FRAME_CONTROL } from './lib/remote-mic-frames.js';
 import { createFrameChannel } from './lib/remote-mic-channel.js';
 import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode, isAcceptedRemoteMicGain } from './lib/remote-mic-limits.js';
-import VerificationModal from './components/VerificationModal.jsx';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
 import { verifiedAddModule } from './lib/asset-integrity.js';
 import { createLevelMonitor, pickRemoteMicCaptureRate, AUDIO_FILE_ACCEPT } from './lib/audio.js';
 import { formatTime } from './lib/format.js';
-import { parseRemoteMicLink } from './lib/remote-mic-link.js';
+import { parseRemoteMicLink, parseRemoteMicHash } from './lib/remote-mic-link.js';
 import { createVad } from './lib/vad.js';
 import { createSerialQueue } from './lib/writeQueue.js';
 
@@ -149,32 +147,14 @@ function RemoteMicSender() {
     // desktop's QR with jsQR, and re-pair without leaving the page.
     const [scannerOpen, setScannerOpen] = useState(false);
     const [scannerError, setScannerError] = useState('');
-    const [fingerprint, setFingerprint] = useState('');
-    const verifyResolveRef = useRef(null); // (boolean) => void
-    // F-63: bilateral verify-ok ack. The phone must not bind the shared key
-    // (and thus start accepting/sending encrypted audio) until the receiver
-    // has reciprocated with its own verify-ok. Otherwise an attacker who
-    // gets the phone's user to confirm a poisoned fingerprint while the
-    // desktop user denies it would still leave the phone in a streaming-
-    // ready state on the next interaction. Waiting on the peer ack closes
-    // that asymmetry.
-    const peerAckResolveRef = useRef(null); // (approvedFp: string | false) => void
-    // Buffer for a peer verify-ok that arrives BEFORE the local user clicks
-    // confirm on the phone's fingerprint modal (i.e. the desktop user
-    // confirmed first). Without this, the early message would be discarded
-    // as "stray", and the phone would later wait the full 60s peer-ack
-    // timeout for a message that already arrived. Mirrors the desktop's
-    // remoteMicEarlyPeerVerifyRef. Cleared on every cleanup path.
-    const earlyPeerVerifyRef = useRef(null);
-    // F-137: synchronous handshake-in-progress flag. The duplicate-handshake
-    // guard at the top of the 'public-key' branch checks channelRef /
-    // verifyResolveRef / peerAckResolveRef, but those refs are only
-    // populated AFTER several awaits (generateKeyPair, importPublicKey,
-    // deriveSessionKeys, exportPublicKey, getAdaptiveFingerprintLength,
-    // computePairFingerprintForRole). A hostile receiver that sends two
-    // public-key messages back-to-back would otherwise see both pass the
-    // guard and clobber the resolver. Set true synchronously before the
-    // first await to close the multi-await window.
+    // Handshake waiting for the desktop's key-confirm: { key, gate, channel,
+    // resolve } or null. The keys only reach channelRef / controlInRef once
+    // the confirm decrypts, so nothing treats the session as bound early.
+    const pendingRef = useRef(null);
+    // F-137: synchronous handshake-in-progress flag. pendingRef is only set
+    // after several awaits (generateKeyPair, importPublicKey, key
+    // derivation), so back-to-back public-key messages would otherwise all
+    // pass the duplicate guard. Set true before the first await.
     const handshakeInProgressRef = useRef(false);
     const logsEndRef = useRef(null);
 
@@ -522,18 +502,12 @@ function RemoteMicSender() {
         if (rtcRef.current) { rtcRef.current.close(); rtcRef.current = null; }
         channelRef.current = null;
         controlInRef.current = null;
-        // Release any pending fingerprint or peer-ack waits so the awaiting
-        // Promises in start() don't pin the ECDH private key in a dead
-        // closure if cleanup runs mid-handshake.
-        if (verifyResolveRef.current) {
-            verifyResolveRef.current(false);
-            verifyResolveRef.current = null;
-        }
-        if (peerAckResolveRef.current) {
-            peerAckResolveRef.current(false);
-            peerAckResolveRef.current = null;
-        }
-        earlyPeerVerifyRef.current = null;
+        // Fail a pending key-confirm wait so the awaiting Promise in start()
+        // does not pin the ECDH private key in a dead closure if cleanup
+        // runs mid-handshake.
+        const pending = pendingRef.current;
+        pendingRef.current = null;
+        pending?.resolve(false);
         // F-137: cleanupAll is the funnel for every teardown path; reset the
         // synchronous handshake-in-progress flag so a re-pair can claim a
         // fresh slot. The success path clears it explicitly after binding.
@@ -753,31 +727,20 @@ function RemoteMicSender() {
         // first deep-link connect, so the catch can retry instead of erroring.
         const isReconnect = !!override;
         try {
-            let roomId, secret;
+            let roomId, secret, qrSecret;
             if (override) {
-                roomId = override.roomId;
-                secret = override.secret;
+                ({ roomId, secret, qrSecret } = override);
             } else {
-                // Parse room info from URL hash: #roomId:secret
-                // JS String#split(sep, limit) truncates rather than packing the
-                // tail, so split(':', 2) on "ROOM:abc:def" yields ["ROOM","abc"]
-                // and silently drops ":def". Today the secret alphabet excludes
-                // `:`, but slicing at the first separator removes the latent
-                // footgun if the secret format ever widens.
+                // Parse room info from the URL hash: #roomId:secret:K
+                // (lib/remote-mic-link.js). A v3 link without K is refused.
                 const hash = window.location.hash.substring(1);
-                const sep = hash.indexOf(':');
-                if (sep < 0) {
+                const link = parseRemoteMicHash(hash);
+                if (!link) {
                     setStatus(STATUS.ERROR);
-                    setErrorMsg(t('mobileInvalidLink'));
+                    setErrorMsg(t(hash.includes(':') ? 'mobileInvalidLinkMissing' : 'mobileInvalidLink'));
                     return;
                 }
-                roomId = hash.slice(0, sep);
-                secret = hash.slice(sep + 1);
-                if (!roomId || !secret) {
-                    setStatus(STATUS.ERROR);
-                    setErrorMsg(t('mobileInvalidLinkMissing'));
-                    return;
-                }
+                ({ roomId, secret, qrSecret } = link);
 
                 // Scrub the secret out of the visible URL before the browser
                 // commits it to history / autocomplete / Chrome Sync / OBS
@@ -798,7 +761,7 @@ function RemoteMicSender() {
             }
 
             // Remember the room so auto-reconnect / re-scan can rejoin it.
-            roomInfoRef.current = { roomId, secret };
+            roomInfoRef.current = { roomId, secret, qrSecret };
 
             // A fresh deep-link connect resets the reconnect budget; an
             // auto-retry keeps counting (handleConnectionLost owns the count).
@@ -893,7 +856,29 @@ function RemoteMicSender() {
             const controlQueue = createSerialQueue();
             const onBinary = (data) => controlQueue(async () => {
                 const ctl = controlInRef.current;
-                if (!ctl) return; // before pairing nothing binary is expected
+                if (!ctl) {
+                    // Handshake pending: the only acceptable frame is the
+                    // desktop's key-confirm at seq 0. Anything else, or a
+                    // frame that does not decrypt, fails the pairing.
+                    const pending = pendingRef.current;
+                    if (!pending) return; // before pairing nothing binary is expected
+                    try {
+                        const frame = unpackFrame(await decrypt(data, pending.key));
+                        const ok = frame.kind === FRAME_CONTROL && frame.seq === 0 && frame.control.type === KEY_CONFIRM.type;
+                        if (ok) {
+                            // Bind HERE, synchronously, so the next queued
+                            // frame already finds the session keys.
+                            pending.gate.accept(frame.seq);
+                            channelRef.current = pending.channel;
+                            controlInRef.current = { key: pending.key, gate: pending.gate };
+                        }
+                        pending.resolve(ok);
+                    } catch (e) {
+                        console.warn('[RemoteMic] Key-confirm frame did not decrypt:', e.message);
+                        pending.resolve(false);
+                    }
+                    return;
+                }
                 try {
                     const frame = unpackFrame(await decrypt(data, ctl.key));
                     if (frame.kind !== FRAME_CONTROL || !ctl.gate.accept(frame.seq)) {
@@ -916,17 +901,16 @@ function RemoteMicSender() {
                             // F-135: refuse a second handshake once one is in
                             // flight or already bound. Mirrors the desktop's
                             // F-86 guard (App.jsx:1448). Without this, a
-                            // hostile peer can re-send public-key mid-modal,
-                            // swap the displayed fingerprint under the user's
-                            // eyes, and orphan the prior ECDH private key.
+                            // hostile peer can re-send public-key mid-handshake
+                            // and orphan the prior ECDH private key.
                             //
                             // F-137: include the synchronous in-progress flag.
                             // The other refs are only populated after several
                             // awaits below, so a flood of public-key messages
                             // would all pass this guard before any of them
-                            // reached the verifyResolveRef assignment.
-                            if (channelRef.current || verifyResolveRef.current || peerAckResolveRef.current || handshakeInProgressRef.current) {
-                                console.warn('[RemoteMic] Ignoring duplicate public-key — handshake already bound or in-flight');
+                            // reached the pendingRef assignment.
+                            if (channelRef.current || pendingRef.current || handshakeInProgressRef.current) {
+                                console.warn('[RemoteMic] Ignoring duplicate public-key, handshake already bound or in-flight');
                                 return;
                             }
                             handshakeInProgressRef.current = true;
@@ -941,124 +925,56 @@ function RemoteMicSender() {
                                 rtc.close();
                                 return;
                             }
-                            // Computer sent its public key, derive shared key
                             setStatus(STATUS.WAITING_KEY);
                             const keyPair = await generateKeyPair();
                             const theirKey = await importPublicKey(msg.key);
-                            const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, { receiverPub: theirKey, senderPub: keyPair.publicKey });
-
-                            // Send our public key back
+                            // The QR secret K (never seen by the signaling
+                            // server) is mixed into HKDF: a relay that swapped
+                            // public keys derives different keys and the
+                            // key-confirm frames below fail to decrypt.
+                            const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, {
+                                receiverPub: theirKey,
+                                senderPub: keyPair.publicKey,
+                                qrSecret: roomInfoRef.current?.qrSecret,
+                            });
                             const ourKeyBase64 = await exportPublicKey(keyPair.publicKey);
                             rtc.sendMessage({ type: 'sender-public-key', key: ourKeyBase64, v: REMOTE_MIC_PROTOCOL });
 
-                            // Compute the same short fingerprint as the
-                            // receiver via the shared helper, which enforces a
-                            // fixed receiver-first byte order on both sides.
-                            // Defends against a malicious signaling server
-                            // that swapped keys to MITM the data channel.
-                            const hexLen = await getAdaptiveFingerprintLength();
-                            const fp = await computePairFingerprintForRole('sender', keyPair.publicKey, theirKey, hexLen);
-                            setFingerprint(fp);
-                            // Counted as a deny after VERIFY_TTL_MS.
+                            // Key confirmation: send our encrypted key-confirm
+                            // and wait for the computer's. onBinary binds the
+                            // session synchronously when it decrypts.
                             const confirmed = await waitForDecision((resolve) => {
-                                verifyResolveRef.current = resolve;
+                                const channel = createFrameChannel(sessionKeys.phoneToDesktop, rtc, (err) => {
+                                    console.warn('[RemoteMic] Encrypt/send error:', err.message);
+                                    setSendErrorCount((n) => n + 1);
+                                });
+                                pendingRef.current = { key: sessionKeys.desktopToPhone, gate: createSeqGate(), channel, resolve };
+                                channel.sendControl(KEY_CONFIRM);
                             });
-                            setFingerprint('');
-                            verifyResolveRef.current = null;
-
-                            if (!confirmed) {
-                                console.warn('[RemoteMic] User denied fingerprint match, aborting');
-                                rtc.sendMessage({ type: 'verify-deny' });
-                                setErrorMsg(t('verifyAborted'));
-                                setStatus(STATUS.ERROR);
-                                rtc.close();
-                                return;
-                            }
-                            rtc.sendMessage(verifyOkMessage(fp));
-
-                            // F-63: wait for the receiver's reciprocal
-                            // verify-ok, naming THIS fingerprint, before
-                            // binding the shared key. Same VERIFY_TTL_MS cap
-                            // as the desktop side.
-                            const peerApproved = await waitForDecision((resolve) => {
-                                // If the desktop confirmed before us, its
-                                // verify-ok was buffered while our modal
-                                // was up. Consume it now rather than
-                                // arming a 60s wait for a message that
-                                // already arrived.
-                                if (earlyPeerVerifyRef.current !== null) {
-                                    const early = earlyPeerVerifyRef.current;
-                                    earlyPeerVerifyRef.current = null;
-                                    resolve(early);
-                                    return;
-                                }
-                                peerAckResolveRef.current = resolve;
-                            });
-                            peerAckResolveRef.current = null;
-                            const peerAcked = peerApproved === fp;
-
-                            if (!peerAcked) {
-                                console.warn('[RemoteMic] Receiver did not ack verify-ok (deny or timeout), aborting');
-                                setErrorMsg(t('verifyAborted'));
-                                setStatus(STATUS.ERROR);
-                                rtc.close();
-                                return;
-                            }
-                            channelRef.current = createFrameChannel(sessionKeys.phoneToDesktop, rtc, (err) => {
-                                console.warn('[RemoteMic] Encrypt/send error:', err.message);
-                                setSendErrorCount((n) => n + 1);
-                            });
-                            controlInRef.current = { key: sessionKeys.desktopToPhone, gate: createSeqGate() };
-                            // F-137: handshake is now bound, future public-key
-                            // messages are caught by the channelRef guard.
+                            pendingRef.current = null;
                             handshakeInProgressRef.current = false;
+                            if (!confirmed || !channelRef.current) {
+                                console.warn('[RemoteMic] Key confirmation failed, aborting');
+                                rtc.sendMessage({ type: 'verify-deny' });
+                                setErrorMsg(t('remoteMicKeyConfirmFailed'));
+                                setStatus(STATUS.ERROR);
+                                rtc.close();
+                                return;
+                            }
                             // Session bound: a stable connection refills the
                             // auto-reconnect budget for the next drop.
                             reconnectAttemptsRef.current = 0;
                             setReconnectAttempt(0);
-
-                            // Phone is connected, let the user tap Start Recording when ready
                             setStatus(STATUS.READY);
-                        } else if (msg.type === 'verify-ok') {
-                            // F-63: receiver confirmed its end. Three cases:
-                            //  (a) Our peer-ack wait is armed -> resolve.
-                            //  (b) Session already bound -> stale replay,
-                            //      ignore.
-                            //  (c) Otherwise desktop confirmed before us;
-                            //      buffer the arrival so the peer-ack wait
-                            //      consumes it as soon as the local user
-                            //      taps confirm. Without (c) the locally-
-                            //      late side waits the full 60s timeout
-                            //      and surfaces a misleading abort.
-                            if (peerAckResolveRef.current) {
-                                peerAckResolveRef.current(approvedFingerprint(msg));
-                            } else if (channelRef.current) {
-                                console.warn('[RemoteMic] Stray verify-ok ignored (session already bound)');
-                            } else {
-                                earlyPeerVerifyRef.current = approvedFingerprint(msg);
-                                console.log('[RemoteMic] Peer verify-ok arrived before local confirm, buffered');
-                            }
                         } else if (msg.type === 'verify-deny') {
-                            // Receiver denied the fingerprint match, abort.
-                            // Could arrive (a) before local confirm
-                            // (verifyResolve in flight) or (b) after local
-                            // confirm while awaiting peer ack
-                            // (peerAckResolve in flight).
-                            if (verifyResolveRef.current) {
-                                verifyResolveRef.current(false);
-                            } else if (peerAckResolveRef.current) {
-                                peerAckResolveRef.current(false);
+                            if (pendingRef.current) {
+                                pendingRef.current.resolve(false);
                             } else if (channelRef.current) {
-                                // F-136: a malicious peer can send verify-deny
-                                // mid-session to wipe an in-flight recording
-                                // and surface a misleading 'fingerprints did
-                                // not match' error. Mirrors the desktop F-87
-                                // fix: once the session is bound, verify-deny
-                                // is a stale control message and must be
-                                // ignored.
+                                // F-136: once bound, verify-deny is a stale
+                                // control message and must be ignored.
                                 console.warn('[RemoteMic] Ignoring verify-deny after session bound');
                             } else {
-                                setErrorMsg(t('verifyAborted'));
+                                setErrorMsg(t('remoteMicKeyConfirmFailed'));
                                 setStatus(STATUS.ERROR);
                                 rtc.close();
                             }
@@ -1453,18 +1369,6 @@ function RemoteMicSender() {
                     if (f) sendFile(f);
                 }}
             />
-
-            {fingerprint && verifyResolveRef.current && (
-                <VerificationModal
-                    fingerprint={fingerprint}
-                    prompt={t('verifyPrompt')}
-                    warning={t('verifyWarning')}
-                    confirmLabel={t('verifyConfirm')}
-                    denyLabel={t('verifyDeny')}
-                    onConfirm={() => verifyResolveRef.current && verifyResolveRef.current(true)}
-                    onDeny={() => verifyResolveRef.current && verifyResolveRef.current(false)}
-                />
-            )}
 
             {/* Top-right menu button — always visible */}
             <button

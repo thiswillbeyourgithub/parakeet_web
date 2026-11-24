@@ -3,62 +3,85 @@
 // btoa/atob, TextEncoder), so no browser stub is needed.
 //
 // Covers the full ECDH -> HKDF -> AES-GCM round trip between two peers, the
-// public-key export/import validation guards, and the symmetric pair
-// fingerprint both screens must agree on. Built with Claude Code.
+// public-key export/import validation guards, and the v4 key schedule: the QR
+// secret K mixed into the master key (replacing the v3 fingerprint check) and
+// the per-direction, per-epoch keys. Built with Claude Code.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  generateKeyPair, exportPublicKey, importPublicKey, deriveSharedKey, deriveSessionKeys,
-  encrypt, decrypt, getPairFingerprint, computeFingerprintLength,
+  generateKeyPair, exportPublicKey, importPublicKey, deriveSessionKeys,
+  deriveMasterKey, deriveDirectionKey, DIRECTION_PHONE_TO_DESKTOP,
+  generateQrSecret, isQrSecret, decodeQrSecret, QR_SECRET_BYTES,
+  encrypt, decrypt,
 } from '../../app/ui/src/lib/remote-crypto.js';
 
-// Establish a shared key between two fresh peers (receiver + sender).
-async function pair() {
+const enc = (s) => new TextEncoder().encode(s).buffer;
+
+// Session keys for two fresh peers (a = desktop receiver, b = phone sender).
+// aKey/bKey are the phone-to-desktop key as each side derives it.
+async function pair({ qrA, qrB } = {}) {
   const a = await generateKeyPair();
   const b = await generateKeyPair();
-  const keys = { receiverPub: a.publicKey, senderPub: b.publicKey };
-  const aKey = await deriveSharedKey(a.privateKey, b.publicKey, keys);
-  const bKey = await deriveSharedKey(b.privateKey, a.publicKey, keys);
-  return { a, b, aKey, bKey };
+  const k = generateQrSecret();
+  const base = { receiverPub: a.publicKey, senderPub: b.publicKey };
+  const desk = await deriveSessionKeys(a.privateKey, b.publicKey, { ...base, qrSecret: qrA ?? k });
+  const phone = await deriveSessionKeys(b.privateKey, a.publicKey, { ...base, qrSecret: qrB ?? k });
+  return { a, b, k, desk, phone, aKey: desk.phoneToDesktop, bKey: phone.phoneToDesktop };
 }
 
-describe('HKDF info binds direction and both public keys', () => {
-  test('another direction label yields a key that cannot decrypt', async () => {
-    const { a, b, aKey } = await pair();
-    const other = await deriveSharedKey(b.privateKey, a.publicKey,
-      { receiverPub: a.publicKey, senderPub: b.publicKey, direction: 'desktop-to-phone' });
-    const packet = await encrypt(new TextEncoder().encode('x').buffer, aKey);
-    await assert.rejects(() => decrypt(packet, other));
+describe('QR secret K', () => {
+  test('generated secrets are 22-char base64url, 16 bytes, and unique', () => {
+    const k = generateQrSecret();
+    assert.ok(isQrSecret(k), k);
+    assert.equal(decodeQrSecret(k).length, QR_SECRET_BYTES);
+    assert.notEqual(generateQrSecret(), k);
+  });
+
+  test('malformed secrets are refused', () => {
+    for (const bad of ['', 'short', 'x'.repeat(23), 'a+b/'.repeat(5) + 'ab', null, 42]) {
+      assert.equal(isQrSecret(bad), false, String(bad));
+    }
+    assert.throws(() => decodeQrSecret('nope'), /malformed/);
+  });
+});
+
+describe('v4 key schedule', () => {
+  test('both sides agree per direction, directions never cross', async () => {
+    const { desk, phone } = await pair();
+    const down = await encrypt(enc('{"type":"stop"}'), desk.desktopToPhone);
+    assert.equal(new TextDecoder().decode(await decrypt(down, phone.desktopToPhone)), '{"type":"stop"}');
+    // A frame reflected back to its sender does not decrypt there.
+    await assert.rejects(() => decrypt(down, desk.phoneToDesktop));
+  });
+
+  test('a different K on one side (relay swapped keys, cannot know K) breaks agreement', async () => {
+    const { aKey, bKey } = await pair({ qrB: generateQrSecret() });
+    { const pkt = await encrypt(enc('x'), bKey); await assert.rejects(() => decrypt(pkt, aKey)); }
   });
 
   test('swapped receiver/sender order yields a different key', async () => {
-    const { a, b, aKey } = await pair();
-    const swapped = await deriveSharedKey(b.privateKey, a.publicKey,
-      { receiverPub: b.publicKey, senderPub: a.publicKey });
-    const packet = await encrypt(new TextEncoder().encode('x').buffer, aKey);
-    await assert.rejects(() => decrypt(packet, swapped));
+    const { a, b, k, aKey } = await pair();
+    const swapped = await deriveSessionKeys(b.privateKey, a.publicKey,
+      { receiverPub: b.publicKey, senderPub: a.publicKey, qrSecret: k });
+    { const pkt = await encrypt(enc('x'), aKey); await assert.rejects(() => decrypt(pkt, swapped.phoneToDesktop)); }
   });
 
-  test('session keys: both sides agree per direction, directions never cross', async () => {
-    const a = await generateKeyPair(); // desktop
-    const b = await generateKeyPair(); // phone
-    const keys = { receiverPub: a.publicKey, senderPub: b.publicKey };
-    const desk = await deriveSessionKeys(a.privateKey, b.publicKey, keys);
-    const phone = await deriveSessionKeys(b.privateKey, a.publicKey, keys);
-    const msg = new TextEncoder().encode('{"type":"stop"}').buffer;
-    const down = await encrypt(msg, desk.desktopToPhone);
-    assert.deepEqual(new Uint8Array(await decrypt(down, phone.desktopToPhone)), new Uint8Array(msg));
-    // A desktop frame reflected back to the desktop does not decrypt there.
-    await assert.rejects(() => decrypt(down, desk.phoneToDesktop));
-    const up = await encrypt(msg, phone.phoneToDesktop);
-    await assert.rejects(() => decrypt(up, phone.desktopToPhone));
+  test('epochs: same epoch agrees, another epoch cannot decrypt', async () => {
+    const { desk, phone } = await pair();
+    const d1 = await deriveDirectionKey(desk.master, DIRECTION_PHONE_TO_DESKTOP, 1);
+    const p1 = await deriveDirectionKey(phone.master, DIRECTION_PHONE_TO_DESKTOP, 1);
+    const pkt = await encrypt(enc('epoch1'), p1);
+    assert.equal(new TextDecoder().decode(await decrypt(pkt, d1)), 'epoch1');
+    await assert.rejects(() => decrypt(pkt, desk.phoneToDesktop));
   });
 
-  test('the pair is required', async () => {
+  test('the pair and a well-formed K are required', async () => {
     const a = await generateKeyPair();
     const b = await generateKeyPair();
-    await assert.rejects(() => deriveSharedKey(a.privateKey, b.publicKey), /required/);
+    await assert.rejects(() => deriveMasterKey(a.privateKey, b.publicKey), /required/);
+    await assert.rejects(() => deriveMasterKey(a.privateKey, b.publicKey,
+      { receiverPub: a.publicKey, senderPub: b.publicKey }), /malformed QR secret/);
   });
 });
 
@@ -116,52 +139,5 @@ describe('public key export / import', () => {
   });
   test('rejects a valid-base64 payload of the wrong length', async () => {
     await assert.rejects(() => importPublicKey(btoa('too short')), /expected 65-byte/);
-  });
-});
-
-describe('pair fingerprint', () => {
-  test('both peers compute the same fingerprint from the same key order', async () => {
-    const { a, b } = await pair();
-    const fpReceiver = await getPairFingerprint(a.publicKey, b.publicKey);
-    const fpSender = await getPairFingerprint(a.publicKey, b.publicKey);
-    assert.equal(fpReceiver, fpSender);
-  });
-
-  test('swapping key order changes the fingerprint (MITM key-swap is visible)', async () => {
-    const { a, b } = await pair();
-    const fp1 = await getPairFingerprint(a.publicKey, b.publicKey);
-    const fp2 = await getPairFingerprint(b.publicKey, a.publicKey);
-    assert.notEqual(fp1, fp2);
-  });
-
-  test('default length is 16 hex grouped in 4s, clamped to [16,64]', async () => {
-    const { a, b } = await pair();
-    const fp = await getPairFingerprint(a.publicKey, b.publicKey);
-    assert.equal(fp.replace(/-/g, '').length, 16);
-    assert.match(fp, /^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
-    const clampedLow = await getPairFingerprint(a.publicKey, b.publicKey, 4);
-    assert.equal(clampedLow.replace(/-/g, '').length, 16);
-    const clampedHigh = await getPairFingerprint(a.publicKey, b.publicKey, 999);
-    assert.equal(clampedHigh.replace(/-/g, '').length, 64);
-  });
-
-  test('a non-numeric length falls back to 16 instead of yielding a BLANK code', async () => {
-    // Math.floor(NaN) is NaN, the clamp keeps it, and hash.slice(0, NaN) is
-    // empty: both screens showed an empty verification box and a user
-    // comparing them would read "they match" off nothing at all. The length
-    // comes from computeFingerprintLength over a room count read off the
-    // signaling server, so the bad input is reachable from the untrusted side.
-    const { a, b } = await pair();
-    const expected = await getPairFingerprint(a.publicKey, b.publicKey, 16);
-    for (const bad of [NaN, undefined, null, 'sixteen', {}, Infinity]) {
-      const fp = await getPairFingerprint(a.publicKey, b.publicKey, bad);
-      assert.equal(fp, expected, `length ${String(bad)}`);
-      assert.equal(fp.replace(/-/g, '').length, 16);
-    }
-  });
-
-  test('computeFingerprintLength is floored at 16 regardless of room count', () => {
-    assert.equal(computeFingerprintLength(1), 16);
-    assert.equal(computeFingerprintLength(100000), 16);
   });
 });
