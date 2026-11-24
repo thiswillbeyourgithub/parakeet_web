@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 import { seedSettings, readSetting } from './seed.mjs';
 
 const BASE = 'Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx';
-const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
+const ULTIMED = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx';
 
 /** Boot the app with a two-repo instance config. */
 async function configureTwoRepos(page) {
@@ -54,7 +54,7 @@ test('the picker offers every configured repo and defaults to the first', async 
   await expect(options.nth(0)).toHaveAttribute('value', BASE);
   await expect(options.nth(1)).toHaveAttribute('value', ULTIMED);
   await expect(options.nth(0)).toHaveText('optimized');
-  await expect(options.nth(1)).toHaveText('ultra-UltiMed-v2');
+  await expect(options.nth(1)).toHaveText('ultra-UltiMed-v1');
   await expect(options.nth(1)).toHaveAttribute('title', ULTIMED);
 
   // A visitor who has never chosen gets the first entry.
@@ -181,4 +181,30 @@ test('a saved repo the operator has removed is discarded', async ({ page }) => {
   await expect(await openEngineSettings(page)).toHaveCount(0);
   await expect(page.locator('.settings-sidebar')).toContainText(BASE);
   await expect(page.locator('.settings-sidebar')).not.toContainText(ULTIMED);
+});
+
+test('an experimental repo is tagged, listed last, warns, and is not remembered', async ({ page }) => {
+  // UltiMed v2 (owner decision 2026-11-23): picking it must warn and must
+  // not survive a reload, or a visitor stays stuck on the worse model.
+  const V2 = 'Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx';
+  await page.addInitScript(([v2, base]) => {
+    window.__CONFIG__ = { VITE_MODEL_SOURCE: 'local', VITE_MODEL_REPO: [v2, base].join(',') };
+  }, [V2, BASE]);
+  await page.goto('/');
+  const picker = await openEngineSettings(page);
+  const options = picker.locator('option');
+  await expect(options.nth(1)).toHaveAttribute('value', V2);
+  await expect(options.nth(1)).toHaveText('ultra-UltiMed-v2 (experimental)');
+  await expect(picker).toHaveValue(BASE);
+
+  const dialogs = [];
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.accept(); });
+  await picker.selectOption(V2);
+  await expect.poll(() => dialogs.length).toBe(1);
+  expect(dialogs[0]).toContain('experimental');
+  await page.waitForTimeout(1500);
+  expect(await readSetting(page, 'modelRepo')).not.toBe(V2);
+
+  await page.reload();
+  await expect(await openEngineSettings(page)).toHaveValue(BASE);
 });
