@@ -1680,7 +1680,7 @@ function RemoteMicSender() {
                     <p style={{ color: '#9ca3af', fontSize: '0.8rem', marginTop: '1rem' }}>
                         {t('mobileReconnectHint')}
                     </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center', marginTop: '1.25rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center', marginTop: '1.25rem' }}>
                         <button onClick={openScanner} style={styles.sendFileButton}>
                             {t('mobileScanQrBtn')}
                         </button>
@@ -1758,7 +1758,7 @@ function RemoteMicSender() {
                     )}
 
                     {/* Pause / Resume / Stop / Disconnect */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', alignItems: 'center' }}>
                         {status === STATUS.RECORDING ? (
                             <button onClick={pauseRecording} style={styles.pauseButton}>
                                 {t('mobilePauseBtn')}
@@ -1798,16 +1798,16 @@ function RemoteMicSender() {
                     {/* Recording mode switch, remembered across sessions */}
                     <div style={{ marginTop: hasRecorded ? 0 : '1.5rem', marginBottom: '1rem' }}>
                         <p style={styles.sidebarHeading}>{t('mobileModeLabel')}</p>
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                             <button
                                 onClick={() => setHandsFree(false)}
-                                style={{ ...styles.langBtn, ...(!handsFree ? styles.langBtnActive : {}) }}
+                                style={{ ...styles.langBtn, ...styles.modeBtn, ...(!handsFree ? styles.langBtnActive : {}) }}
                             >
                                 {t('mobileModePushBtn')}
                             </button>
                             <button
                                 onClick={() => setHandsFree(true)}
-                                style={{ ...styles.langBtn, ...(handsFree ? styles.langBtnActive : {}) }}
+                                style={{ ...styles.langBtn, ...styles.modeBtn, ...(handsFree ? styles.langBtnActive : {}) }}
                             >
                                 {t('mobileModeHandsFreeBtn')}
                             </button>
@@ -1818,8 +1818,8 @@ function RemoteMicSender() {
                             </p>
                         )}
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
-                        <button onClick={startMicCapture} style={styles.newRecordingButton}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', alignItems: 'center' }}>
+                        <button onClick={startMicCapture} style={styles.recordButton}>
                             {handsFree ? t('mobileStartListeningBtn') : t('mobileStartNewBtn')}
                         </button>
                         <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={styles.sendFileButton}>
@@ -1927,6 +1927,12 @@ function RemoteMicSender() {
     );
 }
 
+// Large, well-spaced targets: the phone page is used by people of every age.
+const ACTION_BUTTON = {
+    color: 'white', border: 'none', borderRadius: '14px', padding: '1.1rem 1.5rem',
+    fontSize: '1.15rem', fontWeight: 'bold', cursor: 'pointer', width: '85%', minHeight: '3.5rem',
+};
+
 const styles = {
     menuButton: {
         position: 'fixed', top: '1rem', right: '1rem',
@@ -1972,6 +1978,7 @@ const styles = {
         border: '1px solid #3a3a5a', borderRadius: '6px',
         padding: '0.4rem 0.9rem', fontSize: '0.9rem', cursor: 'pointer',
     },
+    modeBtn: { padding: '0.8rem 1.3rem', fontSize: '1.05rem', borderRadius: '10px', minHeight: '3rem' },
     langBtnActive: {
         background: '#3b82f6', color: 'white', borderColor: '#3b82f6',
     },
@@ -1981,30 +1988,17 @@ const styles = {
         borderRadius: '50%',
         animation: 'spin 1s linear infinite',
     },
-    stopButton: {
-        background: '#ef4444', color: 'white', border: 'none',
-        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1.05rem',
-        fontWeight: 'bold', cursor: 'pointer', width: '80%',
-    },
-    pauseButton: {
-        background: '#f59e0b', color: 'white', border: 'none',
-        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1.05rem',
-        fontWeight: 'bold', cursor: 'pointer', width: '80%',
-    },
-    resumeButton: {
-        background: '#10b981', color: 'white', border: 'none',
-        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1.05rem',
-        fontWeight: 'bold', cursor: 'pointer', width: '80%',
-    },
-    newRecordingButton: {
-        background: '#ef4444', color: 'white', border: 'none',
-        borderRadius: '12px', padding: '1rem 2.5rem', fontSize: '1.1rem',
-        fontWeight: 'bold', cursor: 'pointer', width: '80%',
-    },
-    sendFileButton: {
-        background: 'transparent', color: '#60a5fa', border: '1px solid #3b82f6',
-        borderRadius: '12px', padding: '0.9rem 2.5rem', fontSize: '1rem',
-        fontWeight: 'bold', cursor: 'pointer', width: '80%',
+    stopButton: { ...ACTION_BUTTON, background: '#ef4444' },
+    pauseButton: { ...ACTION_BUTTON, background: '#f59e0b' },
+    resumeButton: { ...ACTION_BUTTON, background: '#10b981' },
+    newRecordingButton: { ...ACTION_BUTTON, background: '#ef4444' },
+    sendFileButton: { ...ACTION_BUTTON, background: 'transparent', color: '#60a5fa', border: '2px solid #3b82f6' },
+    // Round record button, after Plumed's phone recorder.
+    recordButton: {
+        display: 'block', width: '11rem', height: '11rem', margin: '0.5rem auto 0',
+        borderRadius: '50%', border: '4px solid #ef4444', background: 'rgba(239, 68, 68, 0.12)',
+        color: '#f87171', fontSize: '1.25rem', fontWeight: 'bold', cursor: 'pointer',
+        touchAction: 'manipulation', userSelect: 'none', WebkitUserSelect: 'none',
     },
     disconnectButton: {
         background: 'transparent', color: '#6b7280', border: '1px solid #3a3a5a',
