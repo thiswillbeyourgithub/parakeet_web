@@ -71,6 +71,9 @@ const SENDING_INDICATOR_MS = 1000;
 // session), so back-to-back utterances (the 60 s forced split) wait here.
 // Audio keeps queueing meanwhile, so nothing is lost.
 const MIN_RECORDING_GAP_MS = 1500;
+// Longest Opus recording kept as a PCM copy for a codec-nack re-send
+// (10 min of Int16 is ~19 MB at 16 kHz).
+const OPUS_COPY_MAX_SEC = 600;
 
 function loadHandsFree() {
     try { return localStorage.getItem(HANDS_FREE_STORAGE_KEY) === '1'; } catch (_) { return false; }
@@ -237,6 +240,13 @@ function RemoteMicSender() {
     if (!opusSupportRef.current) opusSupportRef.current = probeOpusSupport();
     const peerCodecsRef = useRef([]);
     const opusRef = useRef(null);
+    // Opus fallback: until the computer confirms it decodes our Opus
+    // (codec-ok), each Opus recording keeps an Int16 copy so a codec-nack can
+    // re-send it as PCM. Capped so a very long first recording cannot exhaust
+    // the phone's memory (past the cap a nack loses that recording).
+    const opusRejectedRef = useRef(false);
+    const opusConfirmedRef = useRef(false);
+    const lastOpusRecordingRef = useRef(null);
 
     // AudioWorklet emits one 128-sample Float32 chunk per render quantum
     // (~125 chunks/sec at 16 kHz, ~375/sec at 48 kHz). The WebRTC data
@@ -384,7 +394,16 @@ function RemoteMicSender() {
     const pushPcmIntoBatch = useCallback(async (float32) => {
         if (!channelRef.current || !rtcRef.current) return;
         // Opus does its own 500 ms grouping (lib/remote-mic-opus.js).
-        if (opusRef.current) return opusRef.current.encoder.encode(float32);
+        const opus = opusRef.current;
+        if (opus) {
+            if (opus.copy && opus.copyLen + float32.length <= OPUS_COPY_MAX_SEC * opus.sampleRate) {
+                opus.copy.push(_quantiseFloat32ToInt16(float32));
+                opus.copyLen += float32.length;
+            } else {
+                opus.copy = null;
+            }
+            return opus.encoder.encode(float32);
+        }
         const p = pendingBatchRef.current;
         if (!p.buf) return; // torn down mid-flight
         if (p.len + float32.length > p.buf.length) {
@@ -419,10 +438,15 @@ function RemoteMicSender() {
         ch?.sender.beginRecording();
         opusRef.current?.encoder.close();
         opusRef.current = null;
+        lastOpusRecordingRef.current = null;
         let format = 'pcm-s16';
-        if (ch && shouldSendOpus({ peerCodecs: peerCodecsRef.current, sampleRate, support: opusSupportRef.current })) {
+        const peerCodecs = opusRejectedRef.current ? [] : peerCodecsRef.current;
+        if (ch && shouldSendOpus({ peerCodecs, sampleRate, support: opusSupportRef.current })) {
             try {
-                const opus = { failed: false };
+                const opus = {
+                    failed: false, sampleRate, extra,
+                    copy: opusConfirmedRef.current ? null : [], copyLen: 0,
+                };
                 opus.encoder = createOpusEncoder(sampleRate,
                     (payload) => ch.send(packFrame(FRAME_AUDIO, ch.sender.nextAudio(payload.byteLength), payload)),
                     (err) => {
@@ -461,6 +485,7 @@ function RemoteMicSender() {
         if (opus) {
             try { await opus.encoder.flush(); } catch (_) { opus.failed = true; }
             opus.encoder.close();
+            if (opus.copy) lastOpusRecordingRef.current = opus;
         }
         const ch = channelRef.current;
         if (ch) {
@@ -470,6 +495,36 @@ function RemoteMicSender() {
         }
         lastAudioEndRef.current = Date.now();
     }, [flushPendingBatch]);
+
+    // codec-nack: the computer could not decode our Opus. Stop using Opus for
+    // the session and re-send the affected recording as PCM from its copy: a
+    // live one restarts as PCM and carries on, a finished one is re-sent whole.
+    // The PCM frames are stamped synchronously (no await in the loop), so live
+    // worklet audio arriving meanwhile still lands after them, in order.
+    const handleCodecNack = useCallback(async () => {
+        opusRejectedRef.current = true;
+        const live = opusRef.current;
+        const rec = live ?? lastOpusRecordingRef.current;
+        if (!rec?.copy) {
+            console.warn('[RemoteMic] Computer could not decode Opus; no copy to re-send');
+            return;
+        }
+        console.warn('[RemoteMic] Computer could not decode Opus, re-sending as PCM');
+        if (!live) {
+            const wait = lastAudioEndRef.current + MIN_RECORDING_GAP_MS - Date.now();
+            if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+            if (opusRef.current || lastOpusRecordingRef.current !== rec) return; // a new recording began
+        }
+        beginWireRecording(rec.sampleRate, rec.extra);
+        const all = new Int16Array(rec.copyLen);
+        let off = 0;
+        for (const c of rec.copy) { all.set(c, off); off += c.length; }
+        const batch = batchTargetSamplesRef.current;
+        const sends = [];
+        for (let i = 0; i < all.length; i += batch) sends.push(sendAudioChunk(all.subarray(i, i + batch)));
+        await Promise.all(sends);
+        if (!live) await endWireRecording();
+    }, [beginWireRecording, sendAudioChunk, endWireRecording]);
 
     // Hands-free: act on one VAD event. Always runs on vadQueueRef so events
     // are handled strictly in order, each awaiting its sends.
@@ -863,6 +918,13 @@ function RemoteMicSender() {
                 } else if (msg.type === 'resume') {
                     // Computer requested resume
                     resumeRecording();
+                } else if (msg.type === 'codec-nack' && msg.codec === 'opus') {
+                    handleCodecNack();
+                } else if (msg.type === 'codec-ok' && msg.codec === 'opus') {
+                    // Opus proven to work: stop keeping PCM copies.
+                    opusConfirmedRef.current = true;
+                    lastOpusRecordingRef.current = null;
+                    if (opusRef.current) opusRef.current.copy = null;
                 } else if (msg.type === 'audio-settings') {
                     // Desktop is pushing the user's audio toggles.
                     // Toggles are stored; getUserMedia constraints

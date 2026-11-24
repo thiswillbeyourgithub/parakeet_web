@@ -97,6 +97,12 @@ export function useRemoteMic({
   const opusSupportRef = useRef(null);
   if (!opusSupportRef.current) opusSupportRef.current = probeOpusSupport();
   const remoteMicOpusRef = useRef(null);
+  // Opus fallback (lib/remote-mic-opus.js): once a decode fails the desktop
+  // sends codec-nack and stops accepting Opus for the session; the phone then
+  // re-sends that recording as PCM. codec-ok tells the phone, after the first
+  // verified Opus recording, that it can stop keeping a PCM copy.
+  const opusRejectedRef = useRef(false);
+  const opusConfirmedRef = useRef(false);
 
   // Clear the shared PCM slabs AND this feature's own counters. clearPcmChunks
   // used to reset the two refs below itself, which meant a helper shared with
@@ -261,7 +267,7 @@ export function useRemoteMic({
         noiseSuppression,
         autoGainControl,
         gain: remoteMicGain,
-        codecs: advertisedCodecs(support),
+        codecs: opusRejectedRef.current ? [] : advertisedCodecs(support),
       });
     });
     return () => { cancelled = true; };
@@ -406,6 +412,12 @@ export function useRemoteMic({
           // and won't re-bind; the batch resampler reads the current
           // ref, so a mid-stream rate swap would corrupt the final
           // transcript in a way that looks like model error.
+          // Exception: the phone answering a codec-nack restarts the
+          // recording as PCM, so the failed Opus one is dropped first.
+          if (remoteMicAudioConfiguredRef.current && remoteMicOpusRef.current?.failure && opusRejectedRef.current) {
+            console.warn('[RemoteMic] Phone restarts the recording as PCM after codec-nack');
+            resetRemoteMicBuffer();
+          }
           if (remoteMicAudioConfiguredRef.current) {
             refuseAudioConfig('Duplicate audio-config mid-recording', msg.sampleRate);
             return null;
@@ -418,7 +430,7 @@ export function useRemoteMic({
           // F-138: an unknown format would decode Int16 bytes as Float32
           // (or vice versa) into noise without any visible error. 'opus' is
           // only valid at a rate we advertised a decoder for.
-          const opusOk = msg.format === 'opus' && opusSupportRef.current.decode[sr] === true;
+          const opusOk = msg.format === 'opus' && !opusRejectedRef.current && opusSupportRef.current.decode[sr] === true;
           if (msg.format !== 'pcm-f32' && msg.format !== 'pcm-s16' && !opusOk) {
             refuseAudioConfig('Invalid audio-config format', msg.format);
             return null;
@@ -446,8 +458,7 @@ export function useRemoteMic({
             const opus = { failure: null };
             opus.decoder = createOpusDecoder(sr, ingestPcm, (err) => {
               console.warn('[RemoteMic] Opus decode error:', err.message);
-              opus.failure ??= `opus decode failed (${err.message})`;
-              setRemoteMicDecryptErrors((n) => n + 1);
+              rejectOpus(opus, `opus decode failed (${err.message})`);
             });
             remoteMicOpusRef.current = opus;
           }
@@ -470,9 +481,15 @@ export function useRemoteMic({
           // Opus decodes asynchronously: wait for the last PCM before judging.
           const opus = remoteMicOpusRef.current;
           if (!opus) return verifier.finish({ requireEnd: true });
-          return opus.decoder.flush().catch((e) => { opus.failure ??= `opus flush failed (${e.message})`; }).then(() => {
+          return opus.decoder.flush().catch((e) => { rejectOpus(opus, `opus flush failed (${e.message})`); }).then(() => {
             const verdict = verifier.finish({ requireEnd: true });
-            return opus.failure && verdict.ok ? { ok: false, reason: opus.failure } : verdict;
+            // Nacked: the phone re-sends this recording as PCM, so drop it quietly.
+            if (opus.failure) return { ok: false, reason: opus.failure, replaced: true };
+            if (verdict.ok && !opusConfirmedRef.current) {
+              opusConfirmedRef.current = true;
+              sendRemoteMicControl({ type: 'codec-ok', codec: 'opus' });
+            }
+            return verdict;
           });
         }
         if (msg.type === 'paused' || msg.type === 'resumed') {
@@ -657,6 +674,9 @@ export function useRemoteMic({
                   remoteMicFramesRef.current = pending.frames;
                   remoteMicKeyRef.current = pending.key;
                   remoteMicChannelRef.current = pending.channel;
+                  // A new pairing may be a different phone: renegotiate Opus.
+                  opusRejectedRef.current = false;
+                  opusConfirmedRef.current = false;
                 }
                 pending.resolve(ok);
               } catch (e) {
@@ -715,12 +735,13 @@ export function useRemoteMic({
               // typed-array view is byte-order-correct.
               if (fmt === 'opus') {
                 const opus = remoteMicOpusRef.current;
+                // Already nacked: the rest of this stream is replaced by PCM.
+                if (opus.failure) return;
                 try {
                   opus.decoder.decode(decrypted);
                 } catch (e) {
-                  // A malformed group loses audio: fail the recording too.
-                  opus.failure ??= `bad opus frame (${e.message})`;
-                  throw e;
+                  // A malformed group loses audio: nack so the phone re-sends.
+                  rejectOpus(opus, `bad opus frame (${e.message})`);
                 }
                 return;
               }
@@ -815,6 +836,11 @@ export function useRemoteMic({
       return;
     }
 
+    if (!verdict.ok && verdict.replaced) {
+      console.warn(`[RemoteMic] Opus recording dropped, awaiting its PCM re-send: ${verdict.reason}`);
+      setAwaitingFinal(false);
+      return;
+    }
     if (!verdict.ok) {
       console.error(`[RemoteMic] Discarding incomplete recording: ${verdict.reason}`);
       setRemoteMicError(t('remoteMicIncomplete'));
@@ -879,6 +905,17 @@ export function useRemoteMic({
 
   // Desktop-to-phone commands travel encrypted on the verified channel; with no
   // verified session there is nobody to obey them, so they are dropped.
+  // First Opus failure of the session: mark the recording, tell the phone to
+  // re-send it as PCM, and refuse Opus from then on.
+  function rejectOpus(opus, reason) {
+    if (opus.failure) return;
+    opus.failure = reason;
+    setRemoteMicDecryptErrors((n) => n + 1);
+    if (opusRejectedRef.current) return;
+    opusRejectedRef.current = true;
+    sendRemoteMicControl({ type: 'codec-nack', codec: 'opus' });
+  }
+
   function sendRemoteMicControl(msg) {
     const channel = remoteMicChannelRef.current;
     if (!channel) return Promise.resolve();
