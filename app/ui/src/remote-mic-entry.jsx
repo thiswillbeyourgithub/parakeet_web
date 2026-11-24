@@ -15,7 +15,7 @@ import { createRoot } from 'react-dom/client';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSessionKeys, decrypt
+    deriveSessionKeys, DIRECTION_PHONE_TO_DESKTOP, DIRECTION_DESKTOP_TO_PHONE
 } from './lib/remote-crypto.js';
 import {
     waitForDecision, KEY_CONFIRM,
@@ -23,6 +23,7 @@ import {
 } from './lib/remote-mic-handshake.js';
 import { packFrame, packEndFrame, unpackFrame, createSeqGate, FRAME_AUDIO, FRAME_CONTROL } from './lib/remote-mic-frames.js';
 import { createFrameChannel } from './lib/remote-mic-channel.js';
+import { createSendRatchet, createRecvRatchet } from './lib/remote-mic-rekey.js';
 import { REMOTE_MIC_MAX_SAMPLES, fileTooLargeToDecode, isAcceptedRemoteMicGain } from './lib/remote-mic-limits.js';
 import { I18nProvider, useI18n } from './i18n.jsx';
 import { acquireKeepalive, releaseKeepalive } from './lib/keepalive.js';
@@ -863,7 +864,7 @@ function RemoteMicSender() {
                     const pending = pendingRef.current;
                     if (!pending) return; // before pairing nothing binary is expected
                     try {
-                        const frame = unpackFrame(await decrypt(data, pending.key));
+                        const frame = unpackFrame(await pending.key.decrypt(data));
                         const ok = frame.kind === FRAME_CONTROL && frame.seq === 0 && frame.control.type === KEY_CONFIRM.type;
                         if (ok) {
                             // Bind HERE, synchronously, so the next queued
@@ -880,7 +881,7 @@ function RemoteMicSender() {
                     return;
                 }
                 try {
-                    const frame = unpackFrame(await decrypt(data, ctl.key));
+                    const frame = unpackFrame(await ctl.key.decrypt(data));
                     if (frame.kind !== FRAME_CONTROL || !ctl.gate.accept(frame.seq)) {
                         console.warn('[RemoteMic] Dropping unexpected or replayed frame from the computer');
                         return;
@@ -944,11 +945,11 @@ function RemoteMicSender() {
                             // and wait for the computer's. onBinary binds the
                             // session synchronously when it decrypts.
                             const confirmed = await waitForDecision((resolve) => {
-                                const channel = createFrameChannel(sessionKeys.phoneToDesktop, rtc, (err) => {
+                                const channel = createFrameChannel(createSendRatchet(sessionKeys.master, DIRECTION_PHONE_TO_DESKTOP), rtc, (err) => {
                                     console.warn('[RemoteMic] Encrypt/send error:', err.message);
                                     setSendErrorCount((n) => n + 1);
                                 });
-                                pendingRef.current = { key: sessionKeys.desktopToPhone, gate: createSeqGate(), channel, resolve };
+                                pendingRef.current = { key: createRecvRatchet(sessionKeys.master, DIRECTION_DESKTOP_TO_PHONE), gate: createSeqGate(), channel, resolve };
                                 channel.sendControl(KEY_CONFIRM);
                             });
                             pendingRef.current = null;

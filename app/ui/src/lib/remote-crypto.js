@@ -127,7 +127,7 @@ export function decodeQrSecret(s) {
     return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
-const KDF_LABEL = 'ParakeetWeb-RemoteMic-v4';
+export const KDF_LABEL = 'ParakeetWeb-RemoteMic-v4';
 
 function concatBytes(...parts) {
     const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));

@@ -4,26 +4,26 @@
 //
 // The phone uses it for audio, END and its control messages, the desktop for
 // its control messages (stop, pause, audio-settings...). Example:
-//   const ch = createFrameChannel(keys.desktopToPhone, rtc, onError);
+//   const ch = createFrameChannel(createSendRatchet(keys.master, DIRECTION_DESKTOP_TO_PHONE), rtc, onError);
 //   ch.sendControl({ type: 'pause' });   // FRAME_CONTROL seq 0, encrypted
 //
 // Built with Claude Code.
 
-import { encrypt } from './remote-crypto.js';
 import { createSerialQueue } from './writeQueue.js';
 import { createFrameSender, packControlFrame } from './remote-mic-frames.js';
 
 /**
- * @param {CryptoKey} key this direction's AES-GCM key
+ * @param {{encrypt: (frame: ArrayBuffer) => Promise<ArrayBuffer>}} ratchet this
+ *   direction's createSendRatchet (lib/remote-mic-rekey.js), rekeys every 10 min
  * @param {{sendBinary: (data: ArrayBuffer) => Promise<boolean>|boolean}} rtc transport
  * @param {(err: Error) => void} onError called when encrypting or sending throws
  */
-export function createFrameChannel(key, rtc, onError) {
+export function createFrameChannel(ratchet, rtc, onError) {
     const queue = createSerialQueue();
     const sender = createFrameSender();
     const send = (frame) => queue(async () => {
         try {
-            await rtc.sendBinary(await encrypt(frame, key));
+            await rtc.sendBinary(await ratchet.encrypt(frame));
         } catch (err) {
             onError(err);
         }

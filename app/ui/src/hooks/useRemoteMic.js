@@ -22,7 +22,7 @@ import { resamplePcmTo16k, createWavBlob } from '../lib/audio.js';
 import { sanitizeDeviceName } from '../lib/format.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
-    deriveSessionKeys, decrypt, generateQrSecret
+    deriveSessionKeys, generateQrSecret, DIRECTION_PHONE_TO_DESKTOP, DIRECTION_DESKTOP_TO_PHONE
 } from '../lib/remote-crypto.js';
 import {
     waitForDecision, KEY_CONFIRM,
@@ -30,6 +30,7 @@ import {
 } from '../lib/remote-mic-handshake.js';
 import { unpackFrame, createFrameVerifier, FRAME_AUDIO, FRAME_CONTROL } from '../lib/remote-mic-frames.js';
 import { createFrameChannel } from '../lib/remote-mic-channel.js';
+import { createSendRatchet, createRecvRatchet } from '../lib/remote-mic-rekey.js';
 import { createSerialQueue } from '../lib/writeQueue.js';
 import { REMOTE_MIC_MAX_SAMPLES } from '../lib/remote-mic-limits.js';
 
@@ -112,7 +113,7 @@ export function useRemoteMic({
   const [remoteMicPaused, setRemoteMicPaused] = useState(false);
   const [remoteMicRecording, setRemoteMicRecording] = useState(false);
   const remoteMicRtcRef = useRef(null);
-  // phone-to-desktop key (decrypts the phone's frames); set once verified.
+  // phone-to-desktop receive ratchet (lib/remote-mic-rekey.js): decrypts the phone's frames across rekeys; set once verified.
   const remoteMicKeyRef = useRef(null);
   // desktop-to-phone encrypted channel for our control messages
   // (lib/remote-mic-channel.js); set together with remoteMicKeyRef.
@@ -500,7 +501,7 @@ export function useRemoteMic({
               // QR secret K the relay never sees (lib/remote-crypto.js).
               const theirKey = await importPublicKey(msg.key);
               const sessionKeys = await deriveSessionKeys(keyPair.privateKey, theirKey, { receiverPub: keyPair.publicKey, senderPub: theirKey, qrSecret });
-              const channel = createFrameChannel(sessionKeys.desktopToPhone, rtc,
+              const channel = createFrameChannel(createSendRatchet(sessionKeys.master, DIRECTION_DESKTOP_TO_PHONE), rtc,
                 (err) => console.warn('[RemoteMic] Encrypt/send error:', err.message));
               const frames = createFrameVerifier();
               // Key confirmation replaces the v3 fingerprint check: the
@@ -509,7 +510,7 @@ export function useRemoteMic({
               // when it saw the same two public keys and the same K. A relay
               // that swapped keys cannot produce it (binary path below).
               const confirmed = await waitForDecision((resolve) => {
-                remoteMicPendingRef.current = { key: sessionKeys.phoneToDesktop, frames, channel, resolve };
+                remoteMicPendingRef.current = { key: createRecvRatchet(sessionKeys.master, DIRECTION_PHONE_TO_DESKTOP), frames, channel, resolve };
                 channel.sendControl(KEY_CONFIRM);
               });
               remoteMicPendingRef.current = null;
@@ -579,7 +580,7 @@ export function useRemoteMic({
               const pending = remoteMicPendingRef.current;
               if (!pending) return;
               try {
-                const frame = unpackFrame(await decrypt(data, pending.key));
+                const frame = unpackFrame(await pending.key.decrypt(data));
                 const ok = frame.kind === FRAME_CONTROL && frame.seq === 0 && frame.control.type === KEY_CONFIRM.type;
                 if (ok) {
                   // Bind HERE, synchronously, so the next queued frame
@@ -614,7 +615,7 @@ export function useRemoteMic({
             try {
               // Unwrap the integrity frame and count it BEFORE any local drop
               // decision: the verifier judges what the transport delivered.
-              const frame = unpackFrame(await decrypt(data, remoteMicKeyRef.current));
+              const frame = unpackFrame(await remoteMicKeyRef.current.decrypt(data));
               if (frame.kind === FRAME_CONTROL) return applyPhoneControl(frame);
               const bytesPerSample = remoteMicFormatRef.current === 'pcm-s16' ? 2 : 4;
               remoteMicFramesRef.current.accept(frame, Math.floor(frame.payload.byteLength / bytesPerSample));
