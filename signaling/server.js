@@ -27,7 +27,7 @@ const DEV = process.env.DEV === '1';
 
 // Test-only escape hatch: when TEST_DISABLE_RATE_LIMIT=1 every rate-limit
 // middleware becomes a pass-through. The integration suite (test/http/*) spins
-// many rooms per file and would otherwise trip the roomCreation cap (5/min).
+// many rooms per file and would otherwise trip the roomCreation cap (30/min).
 // Read once here (before any rateLimitMiddleware call at module-eval time, so
 // it is out of the const's temporal dead zone) and never flippable by a
 // request. MUST never be set in production. Mirrors WebSend's flag of the same
@@ -325,7 +325,7 @@ const { sweepRoom } = require('./room-expiry.js');
 const { clientIpKey } = require('./client-ip.js');
 
 // Live-room caps. Rooms only leave memory through the expiry sweep (up to
-// ROOM_MAX_LIFETIME), so the 5/min creation rate alone still let one client
+// ROOM_MAX_LIFETIME), so the 30/min creation rate alone still let one client
 // park 300 rooms an hour, and a client rotating addresses park any number.
 // ROOMS_MAX bounds the whole instance (503 when full), ROOMS_MAX_PER_CLIENT
 // bounds one client key (an IPv4 or an IPv6 /64, 429 when reached). A real
@@ -349,13 +349,13 @@ const RATE_LIMIT_CONFIG = {
     // F-118: coarse per-IP cap applied to /api/* BEFORE any other
     // middleware (including validateOrigin), so unauthorized
     // requests cost an attacker against the same budget as
-    // authorized ones. 200/min is two orders of magnitude above a
-    // fresh session's peak (~10 /api/* requests in the first
-    // minute), so legitimate users never hit it.
-    preflight: { windowMs: 60 * 1000, maxRequests: 200 },
-    roomCreation: { windowMs: 60 * 1000, maxRequests: 5 },
-    roomLookup: { windowMs: 60 * 1000, maxRequests: 30 },
-    general: { windowMs: 60 * 1000, maxRequests: 100 },
+    // authorized ones. 600/min sits above the `general` bucket (400)
+    // so it never caps it first, and leaves room for many users behind
+    // one hospital NAT IP, whose sessions all share this counter.
+    preflight: { windowMs: 60 * 1000, maxRequests: 600 },
+    roomCreation: { windowMs: 60 * 1000, maxRequests: 30 },
+    roomLookup: { windowMs: 60 * 1000, maxRequests: 120 },
+    general: { windowMs: 60 * 1000, maxRequests: 400 },
     // iceConfig gates /api/config which mints time-limited TURN credentials
     // valid against the shared coturn instance for TURN_CREDENTIAL_TTL.
     // A legitimate handshake only fetches once per session, so a tight cap
@@ -1232,11 +1232,11 @@ app.post('/api/rooms/:id/ice/offer', rateLimitMiddleware('general'), requireHost
 });
 
 // Polled at ~1 Hz by remote-webrtc.js during ICE negotiation. The
-// `roomLookup` bucket (30/min) is too tight for that cadence,
+// `roomLookup` bucket (120/min) is too tight for that cadence,
 // especially when the phone and desktop share a NAT IP and both
 // peers consume the same per-IP counter — a single connect attempt
 // can saturate it within 15 s and 429-block any retry for a full
-// minute. The sibling POST already uses `general` (100/min); the GET
+// minute. The sibling POST already uses `general` (400/min); the GET
 // is also gated by validateRoomSecret so it is not an enumeration
 // oracle, and matching its limit keeps the trickle-ICE round-trip
 // inside one consistent bucket.

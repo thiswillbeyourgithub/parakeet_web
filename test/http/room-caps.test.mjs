@@ -26,7 +26,7 @@ async function createRooms(srv, n) {
 describe('per-client live-room cap', () => {
   let srv;
   // Limiter live (the cap shares the per-IP escape hatch), cap below the
-  // 5/min creation rate so it is the cap that bites, not the rate.
+  // 30/min creation rate so it is the cap that bites, not the rate.
   before(async () => { srv = await startServer({ TEST_DISABLE_RATE_LIMIT: '0', ROOMS_MAX_PER_CLIENT: '3' }); });
   after(async () => { await stopServer(srv); });
 

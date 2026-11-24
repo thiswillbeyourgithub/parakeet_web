@@ -6,7 +6,7 @@
  * Tier-2 tests hit the real Express endpoints over loopback with `fetch`; no
  * routes or middleware are mocked. Behaviour is tuned per spawn via env vars
  * (notably TEST_DISABLE_RATE_LIMIT=1, the rate-limit escape hatch added to
- * server.js, so a file that churns rooms doesn't trip the 5/min cap).
+ * server.js, so a file that churns rooms doesn't trip the 30/min cap).
  *
  * Usage:
  *   import { test, before, after } from 'node:test';

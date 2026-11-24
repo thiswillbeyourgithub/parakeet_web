@@ -20,13 +20,12 @@ describe('roomCreation cap with the limiter live', () => {
   before(async () => { srv = await startServer({ TEST_DISABLE_RATE_LIMIT: '0' }); });
   after(async () => { await stopServer(srv); });
 
-  test('the 6th room creation in a window is 429 with Retry-After', async () => {
-    // roomCreation cap is 5/min per IP.
+  test('the 31st room creation in a window is 429 with Retry-After', async () => {
+    // roomCreation cap is 30/min per IP.
     const statuses = [];
-    for (let i = 0; i < 6; i++) statuses.push((await postRoom(srv)).status);
-    assert.deepEqual(statuses.slice(0, 5), [200, 200, 200, 200, 200], 'first five allowed');
-    const sixth = statuses[5];
-    assert.equal(sixth, 429, 'sixth blocked');
+    for (let i = 0; i < 31; i++) statuses.push((await postRoom(srv)).status);
+    assert.ok(statuses.slice(0, 30).every((s) => s === 200), `first thirty allowed, got ${statuses.join(',')}`);
+    assert.equal(statuses[30], 429, '31st blocked');
 
     const blocked = await postRoom(srv);
     assert.equal(blocked.status, 429);
@@ -41,7 +40,7 @@ describe('the escape hatch disables the cap', () => {
 
   test('many room creations all succeed when TEST_DISABLE_RATE_LIMIT=1', async () => {
     const statuses = [];
-    for (let i = 0; i < 12; i++) statuses.push((await postRoom(srv)).status);
+    for (let i = 0; i < 40; i++) statuses.push((await postRoom(srv)).status);
     assert.ok(statuses.every((s) => s === 200), `all 200, got ${statuses.join(',')}`);
   });
 });
