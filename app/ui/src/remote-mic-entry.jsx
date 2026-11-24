@@ -74,6 +74,8 @@ const MIN_RECORDING_GAP_MS = 1500;
 // Longest Opus recording kept as a PCM copy for a codec-nack re-send
 // (10 min of Int16 is ~19 MB at 16 kHz).
 const OPUS_COPY_MAX_SEC = 600;
+// getUserMedia failures that leave the session usable (file sending still works).
+const MIC_REFUSAL_ERRORS = new Set(['NotAllowedError', 'NotFoundError', 'NotReadableError', 'SecurityError', 'OverconstrainedError']);
 
 function loadHandsFree() {
     try { return localStorage.getItem(HANDS_FREE_STORAGE_KEY) === '1'; } catch (_) { return false; }
@@ -132,6 +134,7 @@ function RemoteMicSender() {
     const { t, lang, setLang } = useI18n();
     const [status, setStatus] = useState(STATUS.INIT);
     const [errorMsg, setErrorMsg] = useState('');
+    const [micNotice, setMicNotice] = useState(''); // non-fatal mic refusal, shown on READY
     const [audioLevel, setAudioLevel] = useState(0);
     const [elapsed, setElapsed] = useState(0);
     const [logs, setLogs] = useState(() => logBuffer.snapshot());
@@ -1122,6 +1125,7 @@ function RemoteMicSender() {
     }, [cleanupAll, t, handleConnectionLost]);
 
     const startMicCapture = useCallback(async () => {
+        setMicNotice('');
         try {
             // Request microphone access. Toggles come from the desktop
             // (audio-settings message) so the phone honours the same user
@@ -1233,6 +1237,14 @@ function RemoteMicSender() {
 
         } catch (e) {
             console.error('[RemoteMic] Mic capture error:', e);
+            // getUserMedia refusing (permission denied, no mic) happens before
+            // anything is sent, so the session is intact: stay connected, the
+            // user may only want to send a file.
+            if (MIC_REFUSAL_ERRORS.has(e.name) && !streamRef.current && channelRef.current) {
+                setMicNotice(e.name === 'NotAllowedError' ? t('mobileMicDenied') : t('mobileMicFailed') + e.message);
+                setStatus(STATUS.READY);
+                return;
+            }
             setStatus(STATUS.ERROR);
             if (e.name === 'NotAllowedError') {
                 setErrorMsg(t('mobileMicDenied'));
@@ -1771,6 +1783,11 @@ function RemoteMicSender() {
                     {hasRecorded && (
                         <p style={{ color: '#9ca3af', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
                             {t('mobileStartAnother')}
+                        </p>
+                    )}
+                    {micNotice && (
+                        <p style={{ color: '#fbbf24', fontSize: '0.95rem', marginBottom: '1rem' }}>
+                            ⚠ {micNotice}
                         </p>
                     )}
                     {fileWarning && (
