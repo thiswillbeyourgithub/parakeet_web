@@ -12,6 +12,14 @@ import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { getLocalModelFile, LocalDownloadError, HubDownloadError } from '../../app/src/hub.js';
 
+// Node loads its Response class (undici) lazily on first use, which measured
+// 57 ms to 2.7 s depending on load. The fake fetch below builds the first
+// Response INSIDE the 404 test's timed window, so that one-off cost alone
+// could cross the 900 ms bound that detects the backoff ladder and fail the
+// test with no retry at all (seen in the pre-push hook, 2 of 5 isolated runs).
+// Paying it here keeps the bound measuring only hub.js.
+new Response('');
+
 let calls = 0;
 const originalFetch = globalThis.fetch;
 beforeEach(() => { calls = 0; });
