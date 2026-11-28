@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useTransition, useCallback, useMemo } from
 import { ParakeetModel, getParakeetModel, checkLocalModelFiles, resolveLocalModelBase, listLocalRepoFiles, listRepoFiles, HubDownloadError, LocalDownloadError, QuantUnavailableError, liveOrtServes, liveOrtVariant } from 'parakeet.js';
 import { planOrtRuntimeSwitch, readPendingOrtReload, writePendingOrtReload, clearPendingOrtReload, DEFAULT_CPU_RUNTIME, normalizeCpuRuntime, effectiveOrtVariant, pageRuntimeServes } from './lib/ortRuntimeSwitch.js';
 import { parseModelRepos, matchModelRepo, migrateRepoId, isExperimentalRepo } from './lib/modelRepos.js';
+import '../vendor/atkinson-hyperlegible-next/fonts.css';
 import './App.css';
 import { useI18n } from './i18n.jsx';
 import Banner from './components/Banner.jsx';

@@ -664,6 +664,8 @@ Le code de l'application est sous licence **AGPLv3** (voir le fichier LICENSE).
 
 Certaines listes de phrase boosting fournies incluent des noms de bactéries dérivés de LPSN (List of Prokaryotic names with Standing in Nomenclature), qui est sous licence **CC BY-SA 4.0**, pas AGPLv3 : la liste `lorn` (List of Recommended Names for bacteria of medical importance) et les noms de bactéries fusionnés dans la liste `french_medical`. Voir [ATTRIBUTION.md](./ATTRIBUTION.md) pour les détails et l'attribution requise.
 
+La police de l'interface, [Atkinson Hyperlegible Next](https://github.com/googlefonts/atkinson-hyperlegible-next) du Braille Institute, est fournie sous **SIL Open Font License 1.1** (voir `app/ui/vendor/atkinson-hyperlegible-next/LICENSE`).
+
 ### Remerciements
 
 - **[ysdede/parakeet.js](https://github.com/ysdede/parakeet.js)** – Projet original dont celui-ci est forké

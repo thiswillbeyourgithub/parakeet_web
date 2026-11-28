@@ -12,6 +12,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
+import '../vendor/atkinson-hyperlegible-next/fonts.css';
 import { RemoteMicRTC } from './lib/remote-webrtc.js';
 import {
     generateKeyPair, exportPublicKey, importPublicKey,
